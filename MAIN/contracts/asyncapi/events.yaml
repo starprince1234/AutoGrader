@@ -1,0 +1,275 @@
+asyncapi: 3.0.0
+info:
+  title: AutoGrader domain events
+  version: 0.16.0
+  description: |
+    Asynchronous contract between modules, carried by NATS JetStream.
+
+    Delivery is at-least-once, so every consumer must deduplicate by `event_id`
+    (inbox pattern). Producers use an outbox so an event is never lost while its
+    business change commits. Messages that exceed the delivery limit go to a DLQ and
+    are never dropped silently.
+
+    Payloads are notifications, not data transport: they carry identifiers and
+    de-identified values only. Source code, reference answers, hidden test cases,
+    expected outputs, credentials and PII are forbidden in every payload. See
+    MAIN/docs/api/events.md for the per-event semantics and the full prohibition list.
+  license:
+    name: Course project (internal)
+defaultContentType: application/json
+servers:
+  nats:
+    host: 'nats:4222'
+    protocol: nats
+    description: |
+      Single JetStream instance, operated by B4 (RQ-B-4-20). Optional in the sense
+      that synchronous API paths keep working when it is down, but events are never
+      replaced by synchronous cross-module calls.
+
+channels:
+  submissionAccepted:
+    address: autograder.v1.submission.accepted
+    description: A submission passed validation, is stored by digest and is queued.
+    messages:
+      submissionAccepted:
+        $ref: '#/components/messages/submissionAccepted'
+  evaluationStarted:
+    address: autograder.v1.evaluation.started
+    description: An evaluation run acquired execution capacity and began.
+    messages:
+      evaluationStarted:
+        $ref: '#/components/messages/evaluationStarted'
+  evaluationProgress:
+    address: autograder.v1.evaluation.progress
+    description: |
+      Stage or per-case progress. Carries a monotonic `sequence` for ordering and
+      deduplication. Never carries hidden case inputs or expected outputs, because
+      this stream may be surfaced to the student.
+    messages:
+      evaluationProgress:
+        $ref: '#/components/messages/evaluationProgress'
+  evaluationCompleted:
+    address: autograder.v1.evaluation.completed
+    description: |
+      The evaluation finished and its report and evidence are already persisted.
+      Published only after persistence, so a consumer can never observe the event
+      before the report is readable. Consumed by B3 to build de-identified
+      statistics (RQ-B-3-30).
+    messages:
+      evaluationCompleted:
+        $ref: '#/components/messages/evaluationCompleted'
+  evaluationFailed:
+    address: autograder.v1.evaluation.failed
+    description: |
+      The evaluation could not be completed for a system reason. This is not a
+      statement about the student's code, and it is distinct from a security
+      rejection.
+    messages:
+      evaluationFailed:
+        $ref: '#/components/messages/evaluationFailed'
+  questionVersionPublished:
+    address: autograder.v1.question.version.published
+    description: A question version was published and is now immutable.
+    messages:
+      questionVersionPublished:
+        $ref: '#/components/messages/questionVersionPublished'
+  rosterImportCompleted:
+    address: autograder.v1.roster.import.completed
+    description: |
+      A roster import committed atomically. Contains counts and identifiers only:
+      no student name, number or email ever travels in this payload.
+    messages:
+      rosterImportCompleted:
+        $ref: '#/components/messages/rosterImportCompleted'
+
+operations:
+  publishSubmissionAccepted:
+    action: send
+    channel:
+      $ref: '#/channels/submissionAccepted'
+    summary: B2 announces an accepted submission.
+    messages:
+      - $ref: '#/channels/submissionAccepted/messages/submissionAccepted'
+  publishEvaluationStarted:
+    action: send
+    channel:
+      $ref: '#/channels/evaluationStarted'
+    summary: B2 announces the start of an evaluation run.
+    messages:
+      - $ref: '#/channels/evaluationStarted/messages/evaluationStarted'
+  publishEvaluationProgress:
+    action: send
+    channel:
+      $ref: '#/channels/evaluationProgress'
+    summary: B2 announces progress; throttled to avoid an event flood.
+    messages:
+      - $ref: '#/channels/evaluationProgress/messages/evaluationProgress'
+  publishEvaluationCompleted:
+    action: send
+    channel:
+      $ref: '#/channels/evaluationCompleted'
+    summary: B2 announces a completed evaluation after persisting the report.
+    messages:
+      - $ref: '#/channels/evaluationCompleted/messages/evaluationCompleted'
+  publishEvaluationFailed:
+    action: send
+    channel:
+      $ref: '#/channels/evaluationFailed'
+    summary: B2 announces a technical failure.
+    messages:
+      - $ref: '#/channels/evaluationFailed/messages/evaluationFailed'
+  publishQuestionVersionPublished:
+    action: send
+    channel:
+      $ref: '#/channels/questionVersionPublished'
+    summary: B3 announces an immutable published question version.
+    messages:
+      - $ref: '#/channels/questionVersionPublished/messages/questionVersionPublished'
+  publishRosterImportCompleted:
+    action: send
+    channel:
+      $ref: '#/channels/rosterImportCompleted'
+    summary: B4 announces a committed roster import.
+    messages:
+      - $ref: '#/channels/rosterImportCompleted/messages/rosterImportCompleted'
+  consumeEvaluationCompleted:
+    action: receive
+    channel:
+      $ref: '#/channels/evaluationCompleted'
+    summary: |
+      B3 builds question statistics from de-identified completions. B3 has no path to
+      student source code or student identity; the privacy boundary is structural,
+      not a matter of convention.
+    messages:
+      - $ref: '#/channels/evaluationCompleted/messages/evaluationCompleted'
+  consumeQuestionVersionPublished:
+    action: receive
+    channel:
+      $ref: '#/channels/questionVersionPublished'
+    summary: B2 learns which question versions are available and may be scheduled.
+    messages:
+      - $ref: '#/channels/questionVersionPublished/messages/questionVersionPublished'
+
+components:
+  messages:
+    submissionAccepted:
+      name: submissionAccepted
+      title: Submission accepted
+      contentType: application/json
+      payload:
+        $ref: './../schemas/event-envelope.schema.json'
+      examples:
+        - name: accepted
+          summary: A submission that passed validation and is queued.
+          payload:
+            event_id: 00000000-0000-4000-8000-000000000301
+            event_type: autograder.v1.submission.accepted
+            schema_version: 1
+            occurred_at: '2026-09-15T08:00:05.000Z'
+            correlation_id: 00000000-0000-4000-8000-000000000302
+            causation_id: null
+            producer: B2
+            payload:
+              submission_id: 00000000-0000-4000-8000-000000000101
+              student_id: 00000000-0000-4000-8000-000000000102
+              course_id: 00000000-0000-4000-8000-000000000103
+              section_id: 00000000-0000-4000-8000-000000000104
+              question_version_id: 00000000-0000-4000-8000-000000000105
+              intake: api
+    evaluationStarted:
+      name: evaluationStarted
+      title: Evaluation started
+      contentType: application/json
+      payload:
+        $ref: './../schemas/event-envelope.schema.json'
+    evaluationProgress:
+      name: evaluationProgress
+      title: Evaluation progress
+      contentType: application/json
+      payload:
+        $ref: './../schemas/event-envelope.schema.json'
+      examples:
+        - name: dynamic-execution
+          summary: >-
+            Two of five cases finished. No hidden input or expected output is present.
+            `causation_id` is null: the causal chain is carried by `correlation_id` plus
+            the payload's `evaluation_run_id`, and this field is only for a directly
+            causing event, which B2's progress events do not have (see
+            docs/contracts/changes/CHG-0004-causation-id-null-in-production.md).
+          payload:
+            event_id: 00000000-0000-4000-8000-000000000303
+            event_type: autograder.v1.evaluation.progress
+            schema_version: 1
+            occurred_at: '2026-09-15T08:01:00.000Z'
+            correlation_id: 00000000-0000-4000-8000-000000000302
+            causation_id: null
+            producer: B2
+            payload:
+              evaluation_run_id: 00000000-0000-4000-8000-000000000004
+              stage: dynamic_execution
+              sequence: 7
+              cases_total: 5
+              cases_done: 2
+    evaluationCompleted:
+      name: evaluationCompleted
+      title: Evaluation completed
+      contentType: application/json
+      payload:
+        $ref: './../schemas/event-envelope.schema.json'
+      examples:
+        - name: completed
+          summary: Official example, kept in sync with contracts/examples/event-evaluation-completed.json
+          payload:
+            event_id: 00000000-0000-4000-8000-000000000001
+            event_type: autograder.v1.evaluation.completed
+            schema_version: 1
+            occurred_at: '2026-09-15T12:00:00Z'
+            correlation_id: 00000000-0000-4000-8000-000000000002
+            causation_id: null
+            producer: B2
+            payload:
+              submission_id: 00000000-0000-4000-8000-000000000003
+              evaluation_run_id: 00000000-0000-4000-8000-000000000004
+              question_version_id: 00000000-0000-4000-8000-000000000005
+              score: 86
+              max_score: 100
+              is_pass: true
+              result_digest: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+    evaluationFailed:
+      name: evaluationFailed
+      title: Evaluation failed (technical)
+      contentType: application/json
+      payload:
+        $ref: './../schemas/event-envelope.schema.json'
+    questionVersionPublished:
+      name: questionVersionPublished
+      title: Question version published
+      contentType: application/json
+      payload:
+        $ref: './../schemas/event-envelope.schema.json'
+    rosterImportCompleted:
+      name: rosterImportCompleted
+      title: Roster import completed
+      contentType: application/json
+      payload:
+        $ref: './../schemas/event-envelope.schema.json'
+      examples:
+        - name: committed
+          summary: Counts only; no student identity travels in the event.
+          payload:
+            event_id: 00000000-0000-4000-8000-000000000401
+            event_type: autograder.v1.roster.import.completed
+            schema_version: 1
+            occurred_at: '2026-09-15T07:35:00.000Z'
+            correlation_id: 00000000-0000-4000-8000-000000000402
+            causation_id: null
+            producer: B4
+            payload:
+              roster_import_id: 00000000-0000-4000-8000-000000000403
+              course_id: 00000000-0000-4000-8000-000000000103
+              section_id: 00000000-0000-4000-8000-000000000104
+              accepted_rows: 47
+              rejected_rows: 3
+  schemas:
+    EventEnvelope:
+      $ref: './../schemas/event-envelope.schema.json'

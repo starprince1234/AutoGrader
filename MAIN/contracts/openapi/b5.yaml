@@ -1,0 +1,87 @@
+openapi: 3.1.0
+info:
+  title: AutoGrader B5 Conformance API
+  version: 0.16.0
+  description: |
+    Platform conformance audit. Owned by B5.
+
+    B5 exists to make the project's headline property **demonstrable rather than asserted**:
+    "a module that obeys MAIN's specification can be plugged in without changing MAIN"
+    (PRD section 8.6). Every other module was written alongside MAIN while the conventions
+    were still being decided; B5 is written *after* they were frozen, by following them, and
+    it is governed by the same gates as everything else. If B5 loads and passes, the property
+    is evidenced; if it does not, the property was never true.
+
+    Its second job is the runtime half of contract conformance. MAIN's gates check the
+    contract statically (`autograder_host.checks`); this module answers the same question
+    about the **running** composition -- which endpoints the assembled application actually
+    serves, and where that set differs from what `contracts/**` declares.
+  license:
+    name: Course project (internal)
+servers:
+  - url: /
+    description: Served by the MAIN composition host, same origin as the B1 client.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /api/v1/platform/conformance:
+    get:
+      operationId: getConformanceReport
+      summary: Report how the running composition differs from the contract
+      description: |
+        Compares three views of the platform and returns the differences:
+
+          1. the paths declared in `MAIN/contracts/openapi/*.yaml`;
+          2. the `/health/*` and platform-level routes the host itself serves (which are
+             deliberately **outside** the contract -- they are not module endpoints);
+          3. the routes each loaded module declares in its descriptor.
+
+        Each difference is reported with which side is missing it, never as a bare count: a
+        number cannot be acted on. Being a *report*, it does not fail a request when the
+        platform is inconsistent -- an inconsistency is exactly what a caller came to read.
+        The machine-checkable form of the same question lives in MAIN's gates, which do fail.
+
+        Authorization: any authenticated principal may read it. It exposes endpoint *names*
+        and counts, never payloads, code, credentials or question content, so it is not a
+        reconnaissance surface beyond what the contract already publishes.
+      tags: [conformance]
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Traceparent'
+      responses:
+        '200':
+          description: Conformance report.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ConformanceReport'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+
+components:
+  schemas:
+    ConformanceReport:
+      type: object
+      description: |
+        Differences between the contract, the host's own routes and the loaded modules'
+        declared routes. `consistent` is true only when all three agree.
+      required: [consistent, loaded_modules, contract_path_count, differences]
+      properties:
+        consistent: {type: boolean}
+        loaded_modules:
+          type: array
+          description: Module names in the order the host loaded them (capability DAG order).
+          items: {type: string}
+        contract_path_count: {type: integer, minimum: 0}
+        differences:
+          type: array
+          description: One entry per disagreement; empty when `consistent` is true.
+          items:
+            type: object
+            required: [kind, detail]
+            properties:
+              kind:
+                type: string
+                enum: [contract_path_unserved, descriptor_route_undeclared]
+              detail: {type: string, minLength: 1, maxLength: 500}
+            additionalProperties: false
+      additionalProperties: false

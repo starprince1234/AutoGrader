@@ -1,0 +1,18 @@
+{
+  "event_id": "00000000-0000-4000-8000-000000000001",
+  "event_type": "autograder.v1.evaluation.completed",
+  "schema_version": 1,
+  "occurred_at": "2026-09-15T12:00:00Z",
+  "correlation_id": "00000000-0000-4000-8000-000000000002",
+  "causation_id": null,
+  "producer": "B2",
+  "payload": {
+    "submission_id": "00000000-0000-4000-8000-000000000003",
+    "evaluation_run_id": "00000000-0000-4000-8000-000000000004",
+    "question_version_id": "00000000-0000-4000-8000-000000000005",
+    "score": 86,
+    "max_score": 100,
+    "is_pass": true,
+    "result_digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  }
+}

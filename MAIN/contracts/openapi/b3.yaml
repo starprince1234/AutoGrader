@@ -1,0 +1,1253 @@
+openapi: 3.1.0
+info:
+  title: AutoGrader B3 Question Bank API
+  version: 0.16.0
+  description: |
+    Question bank: stems with graphics, reference answers, immutable question
+    versions, assignments, three test-suite adapters and de-identified statistics.
+    Owned by B3 (RQ-B-3-10/20/30/40/50/60/99).
+
+    Hard boundary: B3 does not execute student code, does not compute or store
+    scores, and does not own evaluation evidence. Public DTOs below never expose
+    reference answers, hidden test cases or expected outputs; those exist only in
+    the internal evaluation package consumed by B2.
+
+    Every path below is declared in B3/module.yaml `routes`.
+  license:
+    name: Course project (internal)
+servers:
+  - url: /
+    description: Served by the MAIN composition host, same origin as the B1 client.
+
+# Document-level default: every B3 operation requires a bearer access token. The two internal
+# operations (`tags: [internal]`, consumed by B2's runner) override this with `serviceToken`,
+# because there is no user on whose behalf a service-to-service call happens.
+security:
+  - bearerAuth: []
+
+paths:
+  /api/v1/questions:
+    get:
+      operationId: listQuestions
+      summary: List questions in the caller's course scope
+      description: |
+        Returns the public question DTO only. Asserted by contract test: the response
+        must not contain reference_answer, hidden cases or expected_output.
+      tags: [questions]
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Cursor'
+        - $ref: './common.yaml#/components/parameters/Limit'
+        - {name: course_id, in: query, required: false, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+        - {name: language, in: query, required: false, schema: {$ref: './common.yaml#/components/schemas/Language'}}
+        - {name: published_only, in: query, required: false, schema: {type: boolean, default: true}}
+        - name: tags
+          in: query
+          required: false
+          schema: {type: array, maxItems: 20, items: {type: string, minLength: 1, maxLength: 40, pattern: '^[a-z0-9][a-z0-9-]*$'}}
+          style: form
+          explode: true
+          description: |
+            Filter by topic tag (CHG-0013). Added because tags became writable in CHG-0008 and
+            were then readable but not *retrievable*: a teacher could label 106 questions and
+            still have no way to ask for "the process-scheduling ones". Matching is all-of
+            rather than any-of, which is the useful reading for a coverage view; a caller who
+            wants a union can repeat the request.
+      responses:
+        '200':
+          description: Page of public question DTOs.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: './common.yaml#/components/schemas/CursorPage'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: {$ref: '#/components/schemas/QuestionPublic'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+    post:
+      operationId: createQuestion
+      summary: Create a question with a first draft version
+      description: |
+        `course_id` is a required query parameter, not a body field: a question is created
+        inside a course scope and `QuestionDraftInput` is closed
+        (`additionalProperties: false`), so the scope travels beside the body rather than
+        inside it. This was declared after `CHG-B3-0002`; the parameter itself has been
+        accepted by the implementation since the question bank phase.
+      tags: [questions]
+      parameters:
+        - {name: course_id, in: query, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/QuestionDraftInput'}
+      responses:
+        '201':
+          description: Question and draft version created.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/QuestionPublic'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+
+  /api/v1/questions/coverage:
+    get:
+      operationId: getQuestionTagCoverage
+      summary: Per-tag question counts for one course (RQ-B-3-20, CHG-0020)
+      description: |
+        `tags` can be written (CHG-0008) and searched (CHG-0013), but their **distribution** had no
+        outlet: `CursorPage` carries only `next_cursor` -- no total -- and counting by paging is not
+        something a reader can do. So "does this topic have two questions or twenty?" had no answer
+        short of walking the bank by hand.
+
+        **Counts only.** The response deliberately carries no `question_id` list: with ids it stops
+        being a distribution and becomes a way to walk the bank one question at a time. Same reason
+        `CHG-0015`'s quality summary is counts-only.
+
+        Declared **before** `/questions/{question_id}` on purpose: it is a literal segment under a
+        collection that also has a parameterised child, and a router that declares the
+        parameterised route first will swallow it (the same trap `quality-summary` documents).
+      tags: [questions]
+      parameters:
+        - name: course_id
+          in: query
+          required: true
+          schema: {$ref: './common.yaml#/components/schemas/Uuid'}
+        - name: published_only
+          in: query
+          required: false
+          schema: {type: boolean, default: true}
+          description: "Same default and the same reason as `listQuestions`: a client that forgets this parameter must see less, never more."
+      responses:
+        '200':
+          description: Per-tag counts, plus how many questions carry at least one tag.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/QuestionTagCoverage'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+
+  /api/v1/questions/{question_id}:
+    parameters:
+      - {name: question_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    get:
+      operationId: getQuestion
+      summary: Read a question and its version history (public DTO)
+      tags: [questions]
+      responses:
+        '200':
+          description: Public question DTO.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/QuestionPublic'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+    patch:
+      operationId: updateQuestionDraft
+      summary: Update the mutable draft of a question
+      description: |
+        Only drafts are mutable. Editing a published version returns 409 unless
+        `as_new_version=true` is passed, in which case the edit produces a **new** version
+        and the published one stays immutable -- the requirement is that a published version
+        is never edited in place, not that editing is forbidden.
+      tags: [questions]
+      parameters:
+        - name: as_new_version
+          in: query
+          required: false
+          schema: {type: boolean, default: false}
+          description: |
+            Declared by CHG-0008. B3 has implemented this parameter since the version model
+            was built (`B3/src/autograder_b3/api/router.py`), but it was absent from the
+            contract, so a client could not discover it and an API client generated from
+            this file could not use it at all -- while the summary above promised the
+            opposite behaviour for a published version.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/QuestionDraftInput'}
+      responses:
+        '200':
+          description: Draft updated.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/QuestionPublic'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+
+  /api/v1/questions/{question_id}/assets:
+    parameters:
+      - {name: question_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    post:
+      operationId: uploadQuestionAsset
+      summary: Upload a stem graphic for a question (RQ-B-3-10)
+      description: |
+        Only a question whose current version is still a draft accepts a new graphic: a
+        published version is immutable, and its stem already references the assets that
+        existed when it was published.
+
+        The server computes `content_sha256`; a digest supplied by the caller is never
+        trusted as authoritative. `content_type` is restricted to an image allow-list, so
+        a stored asset can never be served as a document.
+      tags: [questions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AssetUploadInput'}
+      responses:
+        '201':
+          description: Stored asset metadata. The bytes are read back from the asset path.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/StemAssetUploadResult'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+
+  /api/v1/questions/{question_id}/assets/{asset_id}:
+    parameters:
+      - {name: question_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+      - {name: asset_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    get:
+      operationId: getQuestionAsset
+      summary: Read a stem graphic over the controlled asset path (RQ-B-3-10 acceptance 5)
+      description: |
+        Returns the raw image bytes. Authorization is evaluated per request: an asset that
+        exists but belongs to a question outside the caller's course scope is answered
+        with 403, and a request without a usable token with 401. An `asset_id` that does
+        not exist is 404 — asset ids are UUID v4, so the 403/404 split does not expose a
+        guessable namespace.
+
+        Responses carry `X-Content-Type-Options: nosniff` and
+        `Content-Security-Policy: default-src 'none'; sandbox` so a stored graphic can never
+        execute as a document, and an `ETag` equal to the stored `content_sha256`.
+
+        Because the request needs a bearer token, a browser cannot use a bare
+        `<img src>`: a client must fetch the bytes with its token and render them from an
+        object URL it created itself (B1 does this in
+        `src/features/questions/useQuestionAsset.ts`).
+      tags: [questions]
+      responses:
+        '200':
+          description: Image bytes.
+          content:
+            image/png: {schema: {type: string, format: binary}}
+            image/jpeg: {schema: {type: string, format: binary}}
+            image/gif: {schema: {type: string, format: binary}}
+            image/webp: {schema: {type: string, format: binary}}
+            image/svg+xml: {schema: {type: string, format: binary}}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
+  /api/v1/questions/{question_id}/statistics:
+    parameters:
+      - {name: question_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    get:
+      operationId: getQuestionStatistics
+      summary: De-identified answer statistics (RQ-B-3-30)
+      description: |
+        Built exclusively from `autograder.v1.evaluation.completed` events. The
+        aggregation never reads student source code or student identity. Duplicate
+        deliveries are deduplicated by evaluation_run_id, so replays are idempotent.
+      tags: [statistics]
+      parameters:
+        - {name: from, in: query, required: false, schema: {$ref: './common.yaml#/components/schemas/Timestamp'}}
+        - {name: to, in: query, required: false, schema: {$ref: './common.yaml#/components/schemas/Timestamp'}}
+      responses:
+        '200':
+          description: Aggregate statistics for the question.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/QuestionStatistics'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
+  /api/v1/questions/{question_id}/authoring-assistance:
+    parameters:
+      - {name: question_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    post:
+      operationId: requestAuthoringAssistance
+      summary: Ask for authoring suggestions on a draft question (RQ-T-10)
+      description: |
+        Teacher/assistant only, inside the authoring flow. The model reviews the question the
+        teacher is **currently writing** and returns advice: quality observations, comparison
+        policy fitness, ambiguous wording, difficulty estimate.
+
+        Three boundaries, all from `ADR-0009` decision 3, and all normative:
+
+        1. **Advice, never an edit.** Nothing here writes to the question bank. The response is
+           suggestions; the teacher decides what to change and remains the author of record.
+           There is deliberately no "apply" parameter -- accepting a suggestion means the
+           teacher editing the draft through `updateQuestionDraft`, so the audit trail shows a
+           human action.
+        2. **Suggestions stay away from student-visible surfaces.** The teacher may show the
+           model the draft they are writing, but the *response* must not restate reference
+           answers, hidden cases or expected outputs in any position a student could read. The
+           response schema has no field for protected content, which is what makes that
+           structural rather than a promise.
+        3. **Off by default.** With no provider configured this returns `409` naming the missing
+           configuration; the authoring flow is fully usable without it.
+      tags: [questions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AuthoringAssistanceRequest'}
+      responses:
+        '200':
+          description: Suggestions. The draft is unchanged.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AuthoringAssistance'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+
+  /api/v1/questions/{question_id}/diagnostics:
+    parameters:
+      - {name: question_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    get:
+      operationId: getQuestionDiagnostics
+      summary: Deterministic comparison-policy findings (CHG-0013)
+      description: |
+        Reports whether this question's declared comparison policy is likely to misjudge, using
+        fixed rules over the version's own declarations. Every rule exists because the project
+        actually hit the failure it describes: `CMP-001` CRLF-vs-LF expected output (the bank
+        authoring round lost time to it on Windows), `CMP-002` non-ASCII stdin decoding (the
+        verifier's GBK-vs-C.UTF-8 mismatch, which could make a problem pass locally and behave
+        differently on the runner), `CMP-003` `exact` combined with trailing whitespace the stem
+        never promised, `CMP-004` `numeric_tolerance` with no tolerance value.
+
+        The response carries the rule id, a severity and readable text. It never echoes an
+        expected output, which is why it is safe to show a teacher next to a protected version.
+      tags: [questions]
+      responses:
+        '200':
+          description: Findings; an empty list means no rule fired, not "not checked".
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ComparisonDiagnostics'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
+  /api/v1/question-versions/{question_version_id}/reference-answer:
+    parameters:
+      - {name: question_version_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    get:
+      operationId: getReferenceAnswer
+      summary: The version's own reference answer, for the verification path (CHG-0023)
+      description: |
+        `CHG-0019` requires B2 to execute a version's reference answer so that `publish` can be
+        backed by a real verification instead of a teacher's self-attestation. That endpoint had
+        **no implementable semantics** until this one existed: nothing in the contract carried the
+        reference answer to B2. `CHG-0023` records that finding and closes it.
+
+        **Why its own endpoint instead of adding a field to the evaluation package.** The reference
+        answer is needed only by the *verification* path; the evaluation package is fetched for
+        *every* evaluation. Putting it in the package would ship a reference solution over the wire
+        on every evaluation that does not need it -- a needless expansion of protected content in
+        flight -- and would change the compiler's output, which changes `package_digest` for every
+        published version and so invalidates every digest already bound into a recorded result.
+        Neither cost is acceptable for one extra field.
+
+        **This is protected content.** It is readable only with `serviceToken` (the same scheme the
+        evaluation package uses, so no new credential and no new trust relationship), and it is
+        deliberately **not** the version's public representation: `QuestionVersionPublic` has no
+        such field and `QuestionDraftInput` documents that the answer is never echoed back through a
+        public DTO. A teacher reaches the reference answer through the authoring write path, which
+        is a different, already-existing route.
+
+        The response carries **only** the answer. Hidden-case expectations and fixtures are not
+        copied here: they already have their own channels, and this endpoint exists to add the one
+        missing input rather than to become a general protected-content firehose.
+
+        `409` means **the version's state makes verification impossible**, and it covers exactly two
+        states (`CHG-0026`). They are named rather than left to be inferred, because the earlier
+        wording defined `409` as "no reference answer" in one sentence and as "its state makes
+        verification impossible" in the next -- two readings in one paragraph, and a reader had to
+        guess which one was the rule:
+
+        1. the version has **no reference answer for its declared language**; or
+        2. the version **has** an answer but no `content_digest` (a version with no test cases has
+           nothing to attest), so an answer executed against it could not be bound to anything.
+
+        The `detail` must say **which** of the two it is: they call for different actions (write the
+        answer, or add test cases), and a client that collapsed them would send the teacher to fix
+        the wrong thing.
+
+        Deliberately not `404` in either case: the resource is there, and collapsing them would tell
+        a client "this version does not exist" when it does (`governance.md` hard rule 1).
+      tags: [internal]
+      security: [{serviceToken: []}]
+      responses:
+        '200':
+          description: The version's reference answer for its declared language.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ReferenceAnswer'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
+
+  /api/v1/question-versions/{question_version_id}:
+    parameters:
+      - {name: question_version_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    get:
+      operationId: getQuestionVersion
+      summary: Read one immutable question version (public DTO)
+      tags: [questions]
+      responses:
+        '200':
+          description: Public version DTO.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/QuestionVersionPublic'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
+  /api/v1/question-versions/{question_version_id}/publish:
+    parameters:
+      - {name: question_version_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    post:
+      operationId: publishQuestionVersion
+      summary: Publish and freeze a question version (RQ-B-3-20)
+      description: |
+        Publication validates completeness: a non-empty stem with reachable assets, a
+        reference answer, at least one test case, a valid adapter declaration and an
+        explicit comparison policy. On success the version becomes immutable, a
+        content digest is bound, and `autograder.v1.question.version.published` is
+        emitted without any protected content.
+
+        Added by CHG-0008: publication **also** requires a reference-answer attestation
+        whose `content_digest` matches the version's recomputed content. Rationale: B3 must
+        not execute student code and must not execute reference answers either, so it cannot
+        verify a question itself -- but "the reference answer actually produces the expected
+        output" is exactly the property that decides whether a student can pass. Without an
+        attestation requirement, a question whose reference answer never ran can be
+        published and reach a student. MAIN's bank verifier does run the reference answers
+        and now records that fact as a digest-bound attestation (`RQ-T-10` context, see
+        `MAIN/docs/adr/ADR-0009-ai-assistance-two-track.md` and the bank tooling under
+        `MAIN/scripts/`). Editing the content changes the digest and therefore invalidates
+        the attestation, so a stale attestation cannot be reused.
+      tags: [questions]
+      responses:
+        '200':
+          description: Version published and now immutable.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/QuestionVersionPublic'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+
+  /api/v1/question-versions/{question_version_id}/fixtures:
+    parameters:
+      - {name: question_version_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    post:
+      operationId: uploadVersionFixture
+      summary: Upload fixture bytes for a draft version (RQ-B-3-50)
+      description: |
+        `QuestionDraftInput.adapter.files[]` carries only `{path, content_sha256, mount}`,
+        so it has nowhere to put bytes; this operation is where they enter. The returned
+        `content_sha256` is computed by the server over the decoded bytes and is the
+        authoritative value the manifest must then declare.
+
+        Fixture content is protected: it never appears in a public DTO, an event, a log or
+        a student-accessible location, and these bytes are not readable back over HTTP.
+      tags: [internal]
+      security:
+        - serviceToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/FixtureUploadInput'}
+      responses:
+        '201':
+          description: Stored fixture metadata. The bytes are never returned.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FixtureUploadResult'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+
+  /api/v1/question-versions/{question_version_id}/archive:
+    parameters:
+      - {name: question_version_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    post:
+      operationId: archiveQuestionVersion
+      summary: Archive a published version so it can no longer be assigned
+      description: "A version referenced by historical evaluations cannot be deleted; it can only be archived."
+      tags: [questions]
+      responses:
+        '200': {description: Version archived.}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
+
+  /api/v1/question-versions/{question_version_id}/attestations:
+    parameters:
+      - {name: question_version_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    post:
+      operationId: recordReferenceAttestation
+      summary: Record a digest-bound reference-answer attestation (CHG-0008)
+      description: |
+        Records the fact that some **external verifier** ran this version's reference answer
+        against every test case and observed the declared expected output. B3 stores and
+        enforces it; B3 does **not** run anything (`B3/AGENTS.md`: 我禁止：执行学生代码 --
+        and the same restraint applies to reference answers).
+
+        Why the split matters: "the reference answer really produces the expected output"
+        is the single property that decides whether a question is answerable at all, and
+        nothing in the platform checked it before a student saw the question. The verifier
+        executes; B3 only records. That keeps the executor and the recorder separate, which
+        is the same principle as `CHG-B3-0002` ("a client-declared digest is never trusted"):
+        here the declared digest is only ever *cross-checked* against the content B3 hashes
+        itself, so an attestation for different content is rejected rather than believed.
+
+        `publish` requires a matching, unexpired attestation. Editing the content changes
+        the digest and silently invalidates it.
+
+        **Only a draft accepts an attestation** (`CHG-0028`). A published version's content is
+        already frozen, so a new attestation could not change what students receive -- the gate has
+        to be satisfied *before* the version goes out, not after. This is the other half of why
+        `getEvaluationPackage` must serve drafts: together they are what makes "verify the draft,
+        record the attestation, then publish" executable at all. `409` on this operation therefore
+        means "not a draft".
+      tags: [internal]
+      security:
+        - serviceToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ReferenceAttestationInput'}
+      responses:
+        '201':
+          description: Attestation recorded.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ReferenceAttestationPublic'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+
+  /api/v1/question-versions/{question_version_id}/evaluation-package:
+    parameters:
+      - {name: question_version_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    get:
+      operationId: getEvaluationPackage
+      summary: Internal evaluation package (service-to-service only)
+      description: |
+        INTERNAL. Consumed by B2 only. This is the highest-risk coupling point in the
+        system: B2's runner core depends on this structure, so it is frozen in
+        MAIN/contracts/schemas/evaluation-package.schema.json and changes must go
+        through MAIN/docs/contracts/change-protocol.md.
+
+        **Served for a draft as well as a published version** (`CHG-0028`). That is not a
+        convenience: the publish gate requires a reference-verification attestation before a version
+        goes out, and `recordReferenceAttestation` accepts only a draft, so the verifier must be
+        able to obtain the executable inputs **while the version is still a draft**. Refusing drafts
+        here made the whole publish path impossible -- the teacher could write a draft and then
+        never publish it.
+
+        The two cases differ in one respect, and it is the reason the summary no longer says
+        "immutable" outright:
+
+        * **published** -- an immutable artifact. `created_at` is the version's `published_at`, and
+          the compiled digest is compared against the digest recorded at publish time. A mismatch
+          means protected content changed after publication and is refused.
+        * **draft** -- a snapshot of the version's *current* content, so it changes when the draft
+          changes. `created_at` is the content's own timestamp (**not** `published_at`, which does
+          not exist yet), and there is **no** recorded digest to compare against. The response still
+          carries a `package_digest`: it is the digest of what was just compiled, it is honest, and
+          it is simply not yet bound to any record.
+
+        The response carries hidden test cases and their expected outputs. It does **not** carry the
+        reference answer -- that has its own channel (`CHG-0023`), added because the earlier
+        description here claimed otherwise and an implementation was written against that claim.
+        It must never be reachable from a student-facing surface, and it still requires service
+        authentication: being internal is not a substitute for authorization.
+
+        `409` on this operation means the version has **no compilable content** (for instance, no
+        test cases at all). It deliberately does **not** mean "this is a draft" -- that reading is
+        what made the publish path impossible, and `CHG-0028` removed it.
+      tags: [internal]
+      security:
+        - serviceToken: []
+      responses:
+        '200':
+          description: Immutable evaluation package.
+          content:
+            application/json:
+              schema: {$ref: './../schemas/evaluation-package.schema.json'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
+
+  /api/v1/assignments:
+    get:
+      operationId: listAssignments
+      summary: List assignments (作业集合) in the caller's course scope
+      tags: [assignments]
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Cursor'
+        - $ref: './common.yaml#/components/parameters/Limit'
+        - {name: course_id, in: query, required: false, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+        - {name: section_id, in: query, required: false, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+      responses:
+        '200':
+          description: Page of assignments.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: './common.yaml#/components/schemas/CursorPage'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: {$ref: '#/components/schemas/AssignmentPublic'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+    post:
+      operationId: createAssignment
+      summary: Create an assignment from published question versions
+      description: "Only published versions may be referenced; a draft reference returns 409."
+      tags: [assignments]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [course_id, section_id, title, question_version_ids]
+              properties:
+                course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+                section_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+                title: {type: string, minLength: 1, maxLength: 200}
+                due_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+                question_version_ids:
+                  type: array
+                  minItems: 1
+                  items: {$ref: './common.yaml#/components/schemas/Uuid'}
+              additionalProperties: false
+      responses:
+        '201': {description: Assignment created.}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+
+components:
+  schemas:
+    FixtureUploadInput:
+      type: object
+      description: |
+        Fixture bytes plus the logical path and mount point they belong to. The digest is
+        computed by the server; declaring a digest here would let a caller bind a version
+        to bytes it never uploaded.
+      required: [path, content_base64]
+      properties:
+        path: {type: string, minLength: 1, maxLength: 200}
+        mount:
+          type: string
+          enum: [input, expected_output]
+          default: input
+          description: "`input` is a fixture handed to the code; `expected_output` is a file the code must produce."
+        content_base64:
+          type: string
+          contentEncoding: base64
+      additionalProperties: false
+
+    FixtureUploadResult:
+      type: object
+      description: "Stored fixture metadata. The bytes themselves are never returned."
+      required: [fixture_id, question_version_id, path, mount, content_sha256, size_bytes]
+      properties:
+        fixture_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        question_version_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        path: {type: string}
+        mount: {type: string, enum: [input, expected_output]}
+        content_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        size_bytes: {type: integer, minimum: 0}
+      additionalProperties: false
+
+    AssetUploadInput:
+      type: object
+      description: |
+        A stem graphic, base64-encoded. `content_sha256` is computed by the server from
+        the decoded bytes and is never taken from the request: a client-declared digest
+        would let a caller bind a version to a graphic it did not upload.
+      required: [content_base64, content_type]
+      properties:
+        content_base64:
+          type: string
+          contentEncoding: base64
+        content_type:
+          type: string
+          description: "Restricted to the image allow-list (png, jpeg, gif, webp, svg+xml)."
+        alt_text:
+          type: [string, "null"]
+          maxLength: 500
+      additionalProperties: false
+
+    StemAssetUploadResult:
+      type: object
+      description: Metadata for a stored graphic. The bytes are read back from the asset path.
+      required: [asset_id, content_type, content_sha256, size_bytes, alt_text]
+      properties:
+        asset_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        content_type: {type: string}
+        content_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+        size_bytes: {type: integer, minimum: 0}
+        alt_text: {type: [string, "null"]}
+      additionalProperties: false
+
+    AuthoringAssistanceRequest:
+      type: object
+      description: |
+        What to ask about. Kept narrow on purpose: the model is given the question the teacher
+        is writing and a list of the advice kinds wanted, not free rein over bank state.
+      required: [topics]
+      properties:
+        topics:
+          type: array
+          minItems: 1
+          maxItems: 6
+          uniqueItems: true
+          description: |
+            Which kinds of advice are wanted. An enum rather than free text so the prompt
+            surface stays enumerable -- a caller cannot ask the model to "do anything else",
+            and every supported use is a documented one.
+          items:
+            type: string
+            enum: [quality, comparison_policy, wording, difficulty, coverage]
+        notes: {type: [string, "null"], maxLength: 1000, description: "Optional context from the teacher."}
+      additionalProperties: false
+
+    AuthoringAssistance:
+      type: object
+      description: |
+        Advice about a draft question (RQ-T-10). Note what is absent: there is no field
+        carrying a reference answer, a hidden case or an expected output, and no field that
+        mutates the question. Both omissions are the design (`ADR-0009` decision 3).
+      required: [question_id, status, suggestions, disclaimers]
+      properties:
+        question_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        status:
+          type: string
+          enum: [unavailable, ready, failed]
+          description: "`unavailable` = no model provider is configured (the default)."
+        suggestions:
+          type: array
+          description: Empty unless `status` is `ready`.
+          items:
+            type: object
+            required: [topic, message]
+            properties:
+              topic: {type: string, enum: [quality, comparison_policy, wording, difficulty, coverage]}
+              message: {type: string, minLength: 1, maxLength: 2000}
+              #: `advisory` is the only value today. The field exists so that a future
+              #: deterministic rule (which could be authoritative) is distinguishable from
+              #: model advice rather than silently mixed in with it.
+              confidence: {type: string, enum: [advisory]}
+            additionalProperties: false
+        provenance:
+          anyOf: [{$ref: '#/components/schemas/AuthoringProvenance'}, {type: "null"}]
+        disclaimers:
+          type: array
+          minItems: 1
+          description: Non-empty. Clients must show these with the suggestions.
+          items: {type: string, minLength: 1, maxLength: 200}
+      additionalProperties: false
+
+    AuthoringProvenance:
+      type: object
+      required: [provider, model, prompt_version]
+      properties:
+        provider: {type: string, minLength: 1, maxLength: 100}
+        model: {type: string, minLength: 1, maxLength: 100}
+        prompt_version: {type: string, minLength: 1, maxLength: 100}
+      additionalProperties: false
+
+    RevisionDiff:
+      type: object
+      description: |
+        Structural delta between two consecutive question versions (CHG-0013). Every field is
+        a count, a digest or a presence flag, so nothing here can reveal protected content;
+        B3's own boundary test rejects a protected key name, and the key set is asserted.
+      properties:
+        case_count_before: {type: ["integer", "null"], minimum: 0}
+        case_count_after: {type: ["integer", "null"], minimum: 0}
+        case_set_changed: {type: ["boolean", "null"]}
+        weights_changed: {type: ["boolean", "null"]}
+        fixtures_changed: {type: ["boolean", "null"]}
+        stem_length_before: {type: ["integer", "null"], minimum: 0}
+        stem_length_after: {type: ["integer", "null"], minimum: 0}
+        adapter_kind_changed: {type: ["boolean", "null"]}
+        size_limits_changed: {type: ["boolean", "null"]}
+        reference_answer_digest_before:
+          anyOf: [{$ref: './common.yaml#/components/schemas/Sha256'}, {type: "null"}]
+          description: "Digest only -- the answer itself never leaves the protected store."
+        reference_answer_digest_after:
+          anyOf: [{$ref: './common.yaml#/components/schemas/Sha256'}, {type: "null"}]
+      additionalProperties: false
+
+    ComparisonDiagnostics:
+      type: object
+      description: |
+        Deterministic comparison-policy findings for one question (CHG-0013). These are **rules,
+        not model advice**: the same input always yields the same list, so a teacher may treat
+        them as part of the question's quality record. Model-generated authoring suggestions
+        live on a different endpoint (`RQ-T-10`) and carry `confidence: advisory`; mixing the
+        two would make an authoritative finding indistinguishable from a guess.
+      required: [question_id, findings]
+      properties:
+        question_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        findings:
+          type: array
+          items:
+            type: object
+            required: [rule_id, severity, message]
+            properties:
+              rule_id: {type: string, pattern: '^CMP-[0-9]{3}$'}
+              severity: {type: string, enum: [error, warning, info]}
+              message: {type: string, minLength: 1, maxLength: 500}
+              ordinal:
+                type: ["integer", "null"]
+                minimum: 0
+                description: "Which case the finding is about, when it is case-specific."
+            additionalProperties: false
+      additionalProperties: false
+
+    QuestionTagCoverage:
+      type: object
+      description: |
+        How a course's question bank is distributed across tags (RQ-B-3-20, CHG-0020). Every field
+        is a count or a tag string; there is deliberately no `question_id` list, because a
+        distribution with ids attached is a way to walk the bank rather than a way to see its shape.
+
+        One thing this shape must **not** be read as: `sum(tags[].question_count)` is not
+        `total_questions`. A question may carry several tags (`QuestionDraftInput.tags` allows up to
+        20), so per-tag counts overlap by design. The checkable identity is
+        `tagged_questions + untagged_questions == total_questions`, and it is what a consumer should
+        assert; the per-tag numbers answer "how many questions mention this topic", which is a
+        different and equally useful question.
+      required: [course_id, total_questions, tagged_questions, untagged_questions, tags]
+      properties:
+        course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        total_questions: {type: integer, minimum: 0, description: "Questions visible to this caller in this scope -- the same visibility rule `listQuestions` applies."}
+        tagged_questions: {type: integer, minimum: 0, description: "Questions carrying at least one tag."}
+        untagged_questions: {type: integer, minimum: 0, description: "Questions with no tag at all. Reported separately so an untagged bank reads as *untagged* rather than as an empty response (the same discipline as `unmeasured_runs` in `CHG-0015`)."}
+        tags:
+          type: array
+          description: "Per-tag counts, highest first; ties broken by tag ascending so the response is deterministic rather than merely sorted."
+          items:
+            type: object
+            required: [tag, question_count]
+            properties:
+              tag: {type: string, minLength: 1, maxLength: 40, pattern: '^[a-z0-9][a-z0-9-]*$'}
+              question_count: {type: integer, minimum: 1, description: "Questions carrying this tag. Never zero: a tag with no questions is absent from the list rather than present with a 0."}
+            additionalProperties: false
+      additionalProperties: false
+
+    QuestionPublic:
+      type: object
+      description: |
+        PUBLIC representation. Reference answers, hidden test cases and expected
+        outputs are intentionally absent from this schema; a contract test asserts
+        their absence in real responses. Adding any of them here would be a P3
+        contract violation.
+      required: [question_id, course_id, title, stem_markdown, language, status]
+      properties:
+        question_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        title: {type: string, minLength: 1, maxLength: 300}
+        stem_markdown:
+          type: string
+          description: "Rich-text stem. Rendered as a safe subset; embedded scripts and inline handlers are rejected by the client."
+        stem_assets:
+          type: array
+          description: "Controlled asset references for graphics in the stem (RQ-B-1-40)."
+          items:
+            type: object
+            required: [asset_id, content_type]
+            properties:
+              asset_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+              content_type: {type: string}
+              alt_text: {type: [string, "null"]}
+            additionalProperties: false
+        language: {$ref: './common.yaml#/components/schemas/Language'}
+        status: {type: string, enum: [draft, published, archived]}
+        tags:
+          type: array
+          maxItems: 20
+          description: |
+            Topic tags in their declared form. `CHG-0022` added the shape here: tags are
+            validated on write and **rejected, never rewritten** (`domain/tags.py`), and re-read
+            values are validated again, so these bounds and pattern are facts about what this
+            system can emit rather than a preference. Before `CHG-0022` this field said only
+            `type: string`, which left a consumer unable to tell whether a tag could be reused
+            as a `listQuestions.tags` filter value.
+          items: {type: string, minLength: 1, maxLength: 40, pattern: '^[a-z0-9][a-z0-9-]*$'}
+        versions:
+          type: array
+          description: |
+            Full version history, newest first. Required, not decorative: `publish`
+            takes a `question_version_id`, and without a way to discover one the publish
+            flow is unreachable by any API client. It is also what RQ-B-1-40 acceptance
+            5 needs to render a historical version.
+          items: {$ref: '#/components/schemas/QuestionVersionSummary'}
+        created_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+        updated_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+
+    QuestionVersionSummary:
+      type: object
+      description: "One entry of a question's version history."
+      required: [question_version_id, version, status]
+      properties:
+        question_version_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        version: {type: integer, minimum: 1}
+        status: {type: string, enum: [draft, published, archived]}
+        published_at:
+          anyOf: [{$ref: './common.yaml#/components/schemas/Timestamp'}, {type: "null"}]
+          description: |
+            When this version was published. **Null for a draft** (`CHG-0024`): a draft has no
+            publication time, and omitting the field instead would make "absent" mean both "not
+            published yet" and "this response predates the field". Before `CHG-0024` this was
+            declared non-nullable, so any version history containing a draft -- the normal state
+            during authoring -- could not be read by a strict consumer of this contract.
+      additionalProperties: false
+
+    QuestionVersionPublic:
+      type: object
+      description: "PUBLIC representation of an immutable question version."
+      required: [question_version_id, question_id, version, status, language, adapter_kind, stem_markdown]
+      properties:
+        question_version_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        question_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        version: {type: integer, minimum: 1}
+        status: {type: string, enum: [draft, published, archived]}
+        language: {$ref: './common.yaml#/components/schemas/Language'}
+        adapter_kind:
+          type: string
+          enum: [stdin, file, callable]
+          description: "Which of the three test frameworks the version uses (RQ-B-3-40/50/60)."
+        content_digest:
+          allOf: [{$ref: './common.yaml#/components/schemas/Sha256'}]
+          description: "Bound into every evaluation, so a change to the question cannot silently alter past results."
+        revision_note:
+          type: [string, "null"]
+          maxLength: 500
+          description: |
+            Why this version exists (CHG-0013). Optional, and only meaningful for versions
+            after the first: an immutable-version model is only auditable if the *reason* for a
+            new version is recorded next to it, otherwise a reader sees two versions and has to
+            guess what changed. B3 derives a structural delta automatically, but a derived
+            delta cannot say "the deadline example was wrong".
+        revision_diff:
+          anyOf: [{$ref: '#/components/schemas/RevisionDiff'}, {type: "null"}]
+          description: |
+            Structural difference from the previous version (CHG-0013): counts, digests and
+            presence flags only. It deliberately carries **no** protected content -- no
+            reference answer, no hidden case, no expected output -- so it is safe on the public
+            version DTO. Null for a first version, where there is nothing to diff against.
+        stem_markdown:
+          type: string
+          description: |
+            The stem **of this version**. A version is an immutable snapshot, so
+            rendering a historical version needs its own stem; substituting the
+            question's current stem would show the wrong content while looking correct
+            (RQ-B-1-40 acceptance 5).
+        stem_assets:
+          type: array
+          description: "Graphics attached to this version, same shape as QuestionPublic.stem_assets."
+          items:
+            type: object
+            required: [asset_id, content_type]
+            properties:
+              asset_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+              content_type: {type: string}
+              alt_text: {type: [string, "null"]}
+            additionalProperties: false
+        published_at:
+          anyOf: [{$ref: './common.yaml#/components/schemas/Timestamp'}, {type: "null"}]
+          description: |
+            When this version was published. **Null for a draft** (`CHG-0024`): a draft has no
+            publication time, and omitting the field instead would make "absent" mean both "not
+            published yet" and "this response predates the field". Before `CHG-0024` this was
+            declared non-nullable, so any version history containing a draft -- the normal state
+            during authoring -- could not be read by a strict consumer of this contract.
+        max_files: {type: integer, minimum: 1}
+        max_total_bytes: {type: integer, minimum: 1}
+      additionalProperties: false
+
+    QuestionDraftInput:
+      type: object
+      description: |
+        Editable draft content. `reference_answer` and `cases` are accepted on this
+        write path only and are never echoed back through a public DTO.
+
+        **Omission preserves (CHG-0017).** Both protected fields are optional, and leaving
+        one out means "I am not saying anything about this field", not "clear it":
+
+          * `cases` omitted -- the version keeps the cases it already has. Supplying it
+            replaces the whole set. There is deliberately no way to clear every case: a
+            version with no cases cannot be evaluated, so it would be a state the rest of
+            the system has to treat as broken rather than as empty.
+          * `reference_answer` omitted **or blank** -- the stored answer is kept as it is.
+            A blank string is not a way to remove it either, for the same reason.
+
+        This is what lets a caller rename a question or correct its tags without reading and
+        re-submitting hidden test cases and the reference answer. Before CHG-0017 the only
+        accepted shape required `cases` on every write, so every edit -- including a
+        title-only one -- had to carry the protected content out to the client and back.
+        That is precisely the round-trip the executor/recorder split exists to avoid.
+      required: [title, stem_markdown, language, adapter]
+      properties:
+        title: {type: string, minLength: 1, maxLength: 300}
+        stem_markdown: {type: string, minLength: 1}
+        language: {$ref: './common.yaml#/components/schemas/Language'}
+        reference_answer:
+          type: string
+          description: |
+            PROTECTED. Never leaves the question bank. Omitted or blank keeps the stored
+            answer unchanged (CHG-0017); omission never removes it.
+        adapter: {$ref: '#/components/schemas/AdapterManifest'}
+        cases:
+          type: array
+          minItems: 1
+          description: |
+            PROTECTED. Omitted keeps the version's existing cases unchanged; supplied
+            replaces the whole set (CHG-0017). Never echoed back through a public DTO.
+          items: {$ref: '#/components/schemas/TestCaseInput'}
+        max_files: {type: integer, minimum: 1, maximum: 100, default: 20}
+        max_total_bytes: {type: integer, minimum: 1, maximum: 10485760, default: 1048576}
+        tags:
+          type: array
+          maxItems: 20
+          uniqueItems: true
+          description: |
+            Topic tags. Added by CHG-0008. `tags` already existed in B3's public DTO, in the
+            `b3` schema and in `QuestionPublic` -- but the **write** path
+            (`QuestionDraftInput`, closed with `additionalProperties: false`) had no such
+            field, so no client could ever set one: the read path declared a value that was
+            structurally impossible to produce. Every question in the bank therefore has an
+            empty tag list. Normalised form is lowercase with hyphens; the vocabulary itself
+            belongs to B3 and is validated there.
+          items: {type: string, minLength: 1, maxLength: 40, pattern: '^[a-z0-9][a-z0-9-]*$'}
+        revision_note:
+          type: [string, "null"]
+          maxLength: 500
+          description: |
+            Why this revision exists (CHG-0013). Only meaningful together with
+            `as_new_version=true`: when a published version is superseded, this is where the
+            author records *why*. Without it a reader sees two immutable versions and has to
+            guess what changed and for what reason -- and B3's automatically derived structural
+            delta cannot express "the deadline example was wrong".
+      additionalProperties: false
+
+    ReferenceAnswer:
+      type: object
+      description: |
+        A version's own reference answer, delivered to the verification path (CHG-0023).
+
+        **PROTECTED.** Never returned by any public DTO, never placed in a contract example, never
+        logged and never published in an event. `b3.reference_answers` sits in the module's
+        `PROTECTED_TABLES`, and this schema is the only contract surface that names its content.
+
+        `content_digest` is the *same* digest `CHG-0008`'s attestation binds to, which is what makes
+        "the answer that was executed" and "the content that was attested" the same thing rather
+        than two values that merely happen to agree.
+      required: [question_version_id, content_digest, language, adapter_kind, reference_answer]
+      properties:
+        question_version_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        content_digest:
+          allOf: [{$ref: './common.yaml#/components/schemas/Sha256'}]
+          description: "The version's content digest. The reference answer is part of the content it covers, so this binds answer to version."
+        language: {$ref: './common.yaml#/components/schemas/Language'}
+        adapter_kind:
+          type: string
+          enum: [stdin, file, callable]
+          description: "The version's declared framework. Repeats `QuestionVersionPublic`'s vocabulary rather than inventing a second one."
+        reference_answer:
+          type: string
+          minLength: 1
+          description: "PROTECTED. The answer's source. Exactly one answer exists per (version, language); this is the one for the version's declared language."
+      additionalProperties: false
+
+    AdapterManifest:
+      type: object
+      description: |
+        Declarative description of how a question is exercised. One shared structure
+        for all three frameworks so that adding a question type does not require
+        changing B2's runner core (RQ-B-3-40/50/60).
+      required: [kind]
+      properties:
+        kind: {type: string, enum: [stdin, file, callable]}
+        args:
+          type: array
+          description: "Argument vector. Passed as an array, never interpolated into a shell string."
+          items: {type: string}
+        stdin: {type: [string, "null"]}
+        expect_exit_code: {type: [integer, "null"]}
+        comparison:
+          type: object
+          description: "Declared by the question author. Student code must not be able to influence it."
+          required: [stdout]
+          properties:
+            stdout: {type: string, enum: [exact, ignore_trailing_whitespace, numeric_tolerance, ignored]}
+            stderr: {type: string, enum: [exact, ignore_trailing_whitespace, ignored]}
+            numeric_tolerance: {type: [number, "null"], minimum: 0}
+          additionalProperties: false
+        files:
+          type: array
+          description: "Required for kind=file: fixtures copied into the sandbox workspace."
+          items:
+            type: object
+            required: [path, content_sha256]
+            properties:
+              path: {type: string, pattern: '^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$'}
+              content_sha256: {$ref: './common.yaml#/components/schemas/Sha256'}
+              mount: {type: string, enum: [input, expected_output]}
+            additionalProperties: false
+        callable:
+          type: object
+          description: "Required for kind=callable: the entry point resolved inside the workspace."
+          required: [module, attribute]
+          properties:
+            module: {type: string}
+            attribute: {type: string}
+            arguments_json: {type: [string, "null"]}
+          additionalProperties: false
+      additionalProperties: false
+
+    TestCaseInput:
+      type: object
+      description: "PROTECTED. A hidden test case; never present in a public DTO or an event."
+      required: [name, ordinal]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 200}
+        ordinal: {type: integer, minimum: 0}
+        weight: {type: number, exclusiveMinimum: 0, default: 1}
+        visible_to_student: {type: boolean, default: false}
+        stdin: {type: [string, "null"]}
+        args:
+          type: array
+          items: {type: string}
+        expected_stdout: {type: [string, "null"], description: "PROTECTED."}
+        expected_stderr: {type: [string, "null"], description: "PROTECTED."}
+        expected_exit_code: {type: [integer, "null"]}
+      additionalProperties: false
+
+    ReferenceAttestationInput:
+      type: object
+      description: |
+        A verifier's claim that a version's reference answer reproduces its expected
+        outputs (CHG-0008). The execution happens outside B3; this is only the record.
+      required: [content_digest, verifier, cases_total, cases_passed]
+      properties:
+        content_digest:
+          allOf: [{$ref: './common.yaml#/components/schemas/Sha256'}]
+          description: |
+            Digest of the *content the verifier ran*. B3 recomputes the version's content
+            digest and rejects a mismatch (409), so an attestation can never be carried over
+            to different content.
+        verifier: {type: string, minLength: 1, maxLength: 200, description: "Who ran it, e.g. `MAIN/scripts/verify_question_bank.py`."}
+        cases_total: {type: integer, minimum: 1, maximum: 1000}
+        cases_passed: {type: integer, minimum: 0, maximum: 1000}
+        verified_at: {anyOf: [{$ref: './common.yaml#/components/schemas/Timestamp'}, {type: "null"}]}
+        notes: {type: [string, "null"], maxLength: 2000}
+      additionalProperties: false
+
+    ReferenceAttestationPublic:
+      type: object
+      description: |
+        PUBLIC shape of an attestation. It deliberately carries **no** reference answer, no
+        hidden case and no expected output -- only the fact, the counts and the digest, all
+        of which are safe for a teacher to see. A student-visible surface is not defined:
+        "this question was verified" is not information a student needs.
+      required: [attestation_id, question_version_id, content_digest, verifier, cases_total, cases_passed]
+      properties:
+        attestation_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        question_version_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        content_digest: {$ref: './common.yaml#/components/schemas/Sha256'}
+        verifier: {type: string}
+        cases_total: {type: integer, minimum: 1}
+        cases_passed: {type: integer, minimum: 0}
+        verified_at: {anyOf: [{$ref: './common.yaml#/components/schemas/Timestamp'}, {type: "null"}]}
+      additionalProperties: false
+
+    AssignmentPublic:
+      type: object
+      description: |
+        A homework set that groups published question versions for one section.
+        Recorded by CHG-0007: the operation previously returned an undocumented body
+        ("Page of assignments."), so a client could not tell what an assignment even
+        contains — while the platform had already created eight of them. The shape below
+        is what B3 in fact returns and what the live API was measured to return.
+      required: [assignment_id, course_id, section_id, title, status, question_version_ids]
+      properties:
+        assignment_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        section_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        title: {type: string, minLength: 1, maxLength: 300}
+        status: {type: string, enum: [open, archived]}
+        due_at: {anyOf: [{$ref: './common.yaml#/components/schemas/Timestamp'}, {type: "null"}]}
+        question_version_ids:
+          type: array
+          items: {$ref: './common.yaml#/components/schemas/Uuid'}
+        created_at: {anyOf: [{$ref: './common.yaml#/components/schemas/Timestamp'}, {type: "null"}]}
+        updated_at: {anyOf: [{$ref: './common.yaml#/components/schemas/Timestamp'}, {type: "null"}]}
+      additionalProperties: false
+
+    QuestionStatistics:
+      type: object
+      description: |
+        Aggregate statistics derived solely from de-identified
+        `evaluation.completed` events. Contains no student identity and no source
+        code. See MAIN/docs/api/events.md section 3.4.
+      required: [question_id, attempt_count, pass_rate]
+      properties:
+        question_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        question_version_id: {anyOf: [{$ref: './common.yaml#/components/schemas/Uuid'}, {type: "null"}]}
+        attempt_count: {type: integer, minimum: 0, description: "Total evaluation runs (RQ-B-3-30 回答次数分布)."}
+        pass_rate: {type: number, minimum: 0, maximum: 1}
+        score_distribution:
+          type: object
+          description: "Bucket label to count, e.g. {\"0-59\": 3, \"60-79\": 8}."
+          additionalProperties: {type: integer, minimum: 0}
+        failure_category_distribution:
+          type: object
+          additionalProperties: {type: integer, minimum: 0}
+        computed_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+      additionalProperties: false

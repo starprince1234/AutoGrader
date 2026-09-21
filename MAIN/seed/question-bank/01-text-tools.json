@@ -1,0 +1,1256 @@
+[
+  {
+    "title": "统计行数、词数与字节数",
+    "stem_markdown": "## 题目\n\n实现一个精简的文本统计工具：把标准输入整体读入，一次性报告行数、词数和字节数。\n\n### 输入\n\n任意文本，可能为空，也可能包含非 ASCII 字符。\n\n### 输出\n\n一行三个整数，用单个空格分隔，依次是行数、词数、字节数，末尾换行。\n\n计数规则：\n\n1. 行数：把输入按换行符切分后得到的行数，结尾的换行符不会额外产生一行。\n2. 词数：按空白（空格、制表符、换行）切分后得到的非空片段个数。\n3. 字节数：输入按 UTF-8 编码后的字节总数。\n\n### 示例\n\n输入：\n\n```\nalpha beta\n\ngamma\n```\n\n输出：\n\n```\n3 3 18\n```\n\n示例的正文里有一个空行：它计入行数，但不贡献任何词。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\ndata = sys.stdin.buffer.read()\ntext = data.decode(\"utf-8\")\nprint(len(text.splitlines()), len(text.split()), len(data))\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "alpha beta\n\ngamma\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：一个空行与三个词",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "alpha beta\n\ngamma\n",
+        "args": [],
+        "expected_stdout": "3 3 18\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：包含非 ASCII 字符",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "héllo wörld\n",
+        "args": [],
+        "expected_stdout": "1 2 14\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：完全空的输入",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "",
+        "args": [],
+        "expected_stdout": "0 0 0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：制表符与连续空格",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a\tb   c\n\n",
+        "args": [],
+        "expected_stdout": "2 3 9\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "unix",
+      "text",
+      "counting"
+    ]
+  },
+  {
+    "title": "输出正文的前 N 行与后 N 行",
+    "stem_markdown": "## 题目\n\n模仿 head 与 tail 的行为，从一段文本里取出开头的 N 行和结尾的 N 行。\n\n### 输入\n\n第一行是一个非负整数 N。其后是正文，正文可以为空，行数也可能少于 N。\n\n### 输出\n\n先输出正文的前 N 行，再输出单独一行 `--` 作为分隔，最后输出正文的后 N 行。正文不足 N 行时，前一段和后一段都输出全部正文行。N 为 0 时两段都不输出行，但分隔行 `--` 仍然要输出。\n\n### 示例\n\n输入：\n\n```\n2\na\nb\nc\nd\ne\n```\n\n输出：\n\n```\na\nb\n--\nd\ne\n```\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\nlines = sys.stdin.read().splitlines()\nn = int(lines[0].strip())\nbody = lines[1:]\ncount = min(n, len(body))\ntail = body[len(body) - count:] if count else []\nprint(\"\\n\".join(body[:count] + [\"--\"] + tail))\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "2\na\nb\nc\nd\ne\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：五行取前二后二",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "2\na\nb\nc\nd\ne\n",
+        "args": [],
+        "expected_stdout": "a\nb\n--\nd\ne\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：N 等于 0",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "0\np\nq\n",
+        "args": [],
+        "expected_stdout": "--\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：N 大于正文行数",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "3\nx\ny\n",
+        "args": [],
+        "expected_stdout": "x\ny\n--\nx\ny\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：正文为空",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2\n",
+        "args": [],
+        "expected_stdout": "--\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "unix",
+      "text"
+    ]
+  },
+  {
+    "title": "折叠相邻的重复行",
+    "stem_markdown": "## 题目\n\n把每一段连续重复的行压缩成一行，效果类似 uniq。\n\n### 输入\n\n若干行文本，可能包含相邻的重复行，也可能为空。\n\n### 输出\n\n按原有顺序输出压缩后的行，每行一条。只有位置相邻且内容完全相同的行才会被合并；中间隔了别的行就不算相邻。输入为空时输出为空。\n\n### 示例\n\n输入：\n\n```\nred\nred\nblue\nred\nred\nred\ngreen\n```\n\n输出：\n\n```\nred\nblue\nred\ngreen\n```\n\n示例中第一行到第二行被合并，第四行到第六行被合并，但第三行的 blue 与第四行的 red 并不相邻，所以两条都保留了下来。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\nlines = sys.stdin.read().splitlines()\nout = [line for index, line in enumerate(lines) if index == 0 or line != lines[index - 1]]\nprint(\"\\n\".join(out), end=\"\\n\" if out else \"\")\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "red\nred\nblue\nred\nred\nred\ngreen\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：多段连续重复",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "red\nred\nblue\nred\nred\nred\ngreen\n",
+        "args": [],
+        "expected_stdout": "red\nblue\nred\ngreen\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：全部相同",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "same\nsame\nsame\n",
+        "args": [],
+        "expected_stdout": "same\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：完全没有相邻重复",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "one\ntwo\nthree\n",
+        "args": [],
+        "expected_stdout": "one\ntwo\nthree\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：空输入",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "",
+        "args": [],
+        "expected_stdout": "",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "unix",
+      "text",
+      "dedup"
+    ]
+  },
+  {
+    "title": "按首次出现顺序对行去重",
+    "stem_markdown": "## 题目\n\n对输入中的行去重，只保留每一行第一次出现的那一次。\n\n### 输入\n\n若干行文本，可能包含重复行。\n\n### 输出\n\n按首次出现的先后顺序输出互不相同的行。两行是否相同按整行内容严格比较：区分大小写，行首行尾的空格也算内容。输入为空时输出为空。\n\n### 示例\n\n输入：\n\n```\nb\na\nb\nc\na\nd\n```\n\n输出：\n\n```\nb\na\nc\nd\n```\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\nseen = set()\nout = []\nfor line in sys.stdin.read().splitlines():\n    if line not in seen:\n        seen.add(line)\n        out.append(line)\nprint(\"\\n\".join(out), end=\"\\n\" if out else \"\")\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "b\na\nb\nc\na\nd\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：重复出现的行只留第一次",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "b\na\nb\nc\na\nd\n",
+        "args": [],
+        "expected_stdout": "b\na\nc\nd\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：所有行完全相同",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "z\nz\nz\n",
+        "args": [],
+        "expected_stdout": "z\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：空输入",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "",
+        "args": [],
+        "expected_stdout": "",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：多组交错重复",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "x\ny\nx\ny\nz\nx\n",
+        "args": [],
+        "expected_stdout": "x\ny\nz\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "unix",
+      "text",
+      "dedup"
+    ]
+  },
+  {
+    "title": "按次数与词序输出词频表",
+    "stem_markdown": "## 题目\n\n统计每个词出现了多少次，并按规定顺序输出。\n\n### 输入\n\n若干行文本。词由空白（空格、制表符、换行）切分得到，区分大小写。\n\n### 输出\n\n每行输出 `<次数> <词>`，中间用一个空格分隔，末尾换行。排序规则：先按次数从大到小；次数相同时，按词的字典序从小到大（按 Unicode 码位逐字符比较）。输入为空时输出为空。\n\n### 示例\n\n输入：\n\n```\napple banana apple cherry banana apple\n```\n\n输出：\n\n```\n3 apple\n2 banana\n1 cherry\n```\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\ncounts = {}\nfor word in sys.stdin.read().split():\n    counts[word] = counts.get(word, 0) + 1\nitems = sorted(counts.items(), key=lambda item: (-item[1], item[0]))\nout = [\"{0} {1}\".format(count, word) for word, count in items]\nprint(\"\\n\".join(out), end=\"\\n\" if out else \"\")\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "apple banana apple cherry banana apple\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：三种词各出现若干次",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "apple banana apple cherry banana apple\n",
+        "args": [],
+        "expected_stdout": "3 apple\n2 banana\n1 cherry\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：次数相同时按字典序",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "b a b a c\n",
+        "args": [],
+        "expected_stdout": "2 a\n2 b\n1 c\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：大小写不同的词分开统计",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "Zebra apple Zebra apple\n",
+        "args": [],
+        "expected_stdout": "2 Zebra\n2 apple\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：空输入",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "",
+        "args": [],
+        "expected_stdout": "",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "unix",
+      "text",
+      "counting"
+    ]
+  },
+  {
+    "title": "按分隔符和序号提取字段",
+    "stem_markdown": "## 题目\n\n按给定的分隔符和字段序号，从每条记录里取出一个字段，相当于 cut -d 与 -f 的简化版。\n\n### 输入\n\n第一行给出分隔符和字段序号，两者用一个空格隔开：分隔符是单个非空白字符，字段序号是从 1 开始的整数。其后每行是一条记录，字段之间用该分隔符隔开；记录行数可以为 0。\n\n### 输出\n\n每条记录输出一行：该记录被分隔后的第 k 个字段的原文，不做 strip，字段里原本的空格原样保留。如果这条记录被分隔后不足 k 个字段，就输出一个空行。\n\n### 示例\n\n输入：\n\n```\n; 2\n10;20;30\n40;50;60\n```\n\n输出：\n\n```\n20\n50\n```\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\nlines = sys.stdin.read().splitlines()\ndelimiter, position = lines[0].split()\nposition = int(position)\nout = []\nfor line in lines[1:]:\n    fields = line.split(delimiter)\n    out.append(fields[position - 1] if position <= len(fields) else \"\")\nprint(\"\\n\".join(out), end=\"\\n\" if out else \"\")\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "; 2\n10;20;30\n40;50;60\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：取第二列",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "; 2\n10;20;30\n40;50;60\n",
+        "args": [],
+        "expected_stdout": "20\n50\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：分隔符根本没出现",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": ", 1\nplain line here\n",
+        "args": [],
+        "expected_stdout": "plain line here\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：字段数不足",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "| 3\nx|y|z\np|q\n",
+        "args": [],
+        "expected_stdout": "z\n\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：中间字段为空串",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "| 3\na||b\n",
+        "args": [],
+        "expected_stdout": "b\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "unix",
+      "text"
+    ]
+  },
+  {
+    "title": "按给定顺序重排每行的字段",
+    "stem_markdown": "## 题目\n\n按照第一行给出的列顺序，重排每条记录的字段。\n\n### 输入\n\n第一行是若干个从 1 开始的列号，用空白分隔，表示输出时的字段顺序；列号可以重复，也可以只取其中一部分。其后每行是一条记录，字段用空白分隔。保证每条记录的字段数不小于列号中的最大值。记录行数可以为 0。\n\n### 输出\n\n每条记录输出一行：按第一行给出的顺序取出对应字段，用单个空格连接。\n\n### 示例\n\n输入：\n\n```\n3 1\nalpha beta gamma\none two three\n```\n\n输出：\n\n```\ngamma alpha\nthree one\n```\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\nlines = sys.stdin.read().splitlines()\norder = [int(token) for token in lines[0].split()]\nout = [\" \".join(line.split()[index - 1] for index in order) for line in lines[1:]]\nprint(\"\\n\".join(out), end=\"\\n\" if out else \"\")\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "3 1\nalpha beta gamma\none two three\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：第三列放在第一列前面",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "3 1\nalpha beta gamma\none two three\n",
+        "args": [],
+        "expected_stdout": "gamma alpha\nthree one\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：同一列被取两次",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2 2 1\np q r\n",
+        "args": [],
+        "expected_stdout": "q q p\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：只取最后一列",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "4\nw x y z\n",
+        "args": [],
+        "expected_stdout": "z\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：丢掉没有点名的字段",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2 1\na b c d\n",
+        "args": [],
+        "expected_stdout": "b a\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "unix",
+      "text"
+    ]
+  },
+  {
+    "title": "转置空白分隔的网格",
+    "stem_markdown": "## 题目\n\n把一个用空白分隔的网格转置后输出。\n\n### 输入\n\n若干行，每行是用空白分隔的字段。保证所有行的字段个数相同，且没有空行。\n\n### 输出\n\n转置后的网格：原网格的第 j 列变成输出的第 j 行，字段之间用单个空格连接。\n\n### 示例\n\n输入：\n\n```\n1 2 3\n4 5 6\n```\n\n输出：\n\n```\n1 4\n2 5\n3 6\n```\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\nrows = [line.split() for line in sys.stdin.read().splitlines()]\ncolumns = list(zip(*rows)) if rows else []\nout = [\" \".join(column) for column in columns]\nprint(\"\\n\".join(out), end=\"\\n\" if out else \"\")\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "1 2 3\n4 5 6\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：两行三列",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "1 2 3\n4 5 6\n",
+        "args": [],
+        "expected_stdout": "1 4\n2 5\n3 6\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：只有一行",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a b c d\n",
+        "args": [],
+        "expected_stdout": "a\nb\nc\nd\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：只有一列",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1\n2\n3\n",
+        "args": [],
+        "expected_stdout": "1 2 3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：三行两列",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "r1c1 r1c2\nr2c1 r2c2\nr3c1 r3c2\n",
+        "args": [],
+        "expected_stdout": "r1c1 r2c1 r3c1\nr1c2 r2c2 r3c2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "unix",
+      "text"
+    ]
+  },
+  {
+    "title": "按指定列的数值大小排序记录",
+    "stem_markdown": "## 题目\n\n按指定列的数值大小对记录排序，相当于 sort 的 -k 与 -n 组合。\n\n### 输入\n\n第一行是一个从 1 开始的列号 k。其后每行是一条记录，字段用空白分隔；第 k 个字段保证是整数，可以是负数。记录行数可以为 0。\n\n### 输出\n\n按第 k 个字段的数值从小到大输出记录。数值相同时，按该记录所有字段用单个空格重新拼接后的字符串做字典序升序。输出时字段一律用单个空格重新拼接，不保留输入里的多余空格。\n\n### 示例\n\n输入：\n\n```\n2\nitem 10 x\nitem -3 y\nitem 2 z\n```\n\n输出：\n\n```\nitem -3 y\nitem 2 z\nitem 10 x\n```\n\n注意这是数值比较：-3 比 2 小，2 比 10 小。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\nlines = sys.stdin.read().splitlines()\nkey_position = int(lines[0].strip())\nrecords = [line.split() for line in lines[1:]]\nrecords.sort(key=lambda fields: (int(fields[key_position - 1]), \" \".join(fields)))\nout = [\" \".join(fields) for fields in records]\nprint(\"\\n\".join(out), end=\"\\n\" if out else \"\")\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "2\nitem 10 x\nitem -3 y\nitem 2 z\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：含负数的数值排序",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "2\nitem 10 x\nitem -3 y\nitem 2 z\n",
+        "args": [],
+        "expected_stdout": "item -3 y\nitem 2 z\nitem 10 x\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：键相同再按整行比较",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1\n5 beta\n5 alpha\n",
+        "args": [],
+        "expected_stdout": "5 alpha\n5 beta\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：负数与多位数混排",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "3\nr1 a -20\nr2 b 5\nr3 c -100\n",
+        "args": [],
+        "expected_stdout": "r3 c -100\nr1 a -20\nr2 b 5\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：只有一条记录",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2\nonly 7\n",
+        "args": [],
+        "expected_stdout": "only 7\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "unix",
+      "text",
+      "sort"
+    ]
+  },
+  {
+    "title": "把行的顺序完全颠倒",
+    "stem_markdown": "## 题目\n\n把输入的行序完全颠倒后输出，效果类似 tac。\n\n### 输入\n\n若干行文本，可以为空。\n\n### 输出\n\n逆序后的行，每行一条。空行同样参与逆序。输入为空时输出为空。\n\n### 示例\n\n输入：\n\n```\nfirst\nsecond\nthird\n```\n\n输出：\n\n```\nthird\nsecond\nfirst\n```\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\nlines = sys.stdin.read().splitlines()\nlines.reverse()\nprint(\"\\n\".join(lines), end=\"\\n\" if lines else \"\")\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "first\nsecond\nthird\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：三行倒序",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "first\nsecond\nthird\n",
+        "args": [],
+        "expected_stdout": "third\nsecond\nfirst\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：只有一行",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "solo\n",
+        "args": [],
+        "expected_stdout": "solo\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：空输入",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "",
+        "args": [],
+        "expected_stdout": "",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：正文中间有空行",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a\n\nb\n",
+        "args": [],
+        "expected_stdout": "b\n\na\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "unix",
+      "text"
+    ]
+  },
+  {
+    "title": "给每行加右对齐的行号",
+    "stem_markdown": "## 题目\n\n给每一行加上行号，并让行号按给定宽度右对齐，效果类似 nl -ba。\n\n### 输入\n\n第一行是一个正整数 W，表示行号的对齐宽度。其后是正文，正文可以为空。正文中的空行也要编号。\n\n### 输出\n\n对正文的第 i 行（i 从 1 开始），输出：行号右对齐到宽度 W、再补一个空格、再跟上该行原文。如果行号的位数已经不少于 W，就按实际位数输出，不截断。\n\n### 示例\n\n输入：\n\n```\n3\nalpha\nbeta\ngamma\n```\n\n输出：\n\n```\n  1 alpha\n  2 beta\n  3 gamma\n```\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\nlines = sys.stdin.read().splitlines()\nwidth = int(lines[0].strip())\nout = [\"{0:>{1}} {2}\".format(number, width, line) for number, line in enumerate(lines[1:], start=1)]\nprint(\"\\n\".join(out), end=\"\\n\" if out else \"\")\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "3\nalpha\nbeta\ngamma\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：宽度 3 编号三行",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "3\nalpha\nbeta\ngamma\n",
+        "args": [],
+        "expected_stdout": "  1 alpha\n  2 beta\n  3 gamma\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：空行也占用一个行号",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "4\nhead\n\nmid\ntail\n",
+        "args": [],
+        "expected_stdout": "   1 head\n   2 \n   3 mid\n   4 tail\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：宽度小于行号位数",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1\nrow1\nrow2\nrow3\nrow4\nrow5\nrow6\nrow7\nrow8\nrow9\nrow10\nrow11\nrow12\n",
+        "args": [],
+        "expected_stdout": "1 row1\n2 row2\n3 row3\n4 row4\n5 row5\n6 row6\n7 row7\n8 row8\n9 row9\n10 row10\n11 row11\n12 row12\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：正文为空",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "5\n",
+        "args": [],
+        "expected_stdout": "",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "unix",
+      "text"
+    ]
+  },
+  {
+    "title": "统计命中子串的行数并忽略大小写",
+    "stem_markdown": "## 题目\n\n统计有多少行包含指定的子串，比较时忽略大小写。\n\n### 输入\n\n第一行是模式串，可能为空串；其后是若干行待检查的文本。第一行本身不参与匹配。待检查的文本可以为空。\n\n### 输出\n\n一个整数，末尾换行：至少包含一次该模式的行数。同一行里出现多次也只算一行。比较时忽略大小写。模式为空串时，每一行都算命中。\n\n### 示例\n\n输入：\n\n```\ncat\nThe Cat sat\ndog\nCATALOG\n```\n\n输出：\n\n```\n2\n```\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\nlines = sys.stdin.read().splitlines()\nneedle = lines[0].casefold()\nprint(sum(1 for line in lines[1:] if needle in line.casefold()))\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "cat\nThe Cat sat\ndog\nCATALOG\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：两种大小写都命中",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "cat\nThe Cat sat\ndog\nCATALOG\n",
+        "args": [],
+        "expected_stdout": "2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：一行都没有命中",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "zzz\nalpha\nbeta\n",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：同一行命中多次只算一行",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "ab\nababab\nxabyab\n",
+        "args": [],
+        "expected_stdout": "2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：模式为空串",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\nalpha\n\n",
+        "args": [],
+        "expected_stdout": "2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "unix",
+      "text",
+      "filter"
+    ]
+  },
+  {
+    "title": "统计不含指定子串的行数",
+    "stem_markdown": "## 题目\n\n统计有多少行不包含指定的子串，相当于 grep -v 之后再数行。\n\n### 输入\n\n第一行是模式串，可能为空串；其后是若干行待检查的文本。第一行本身不参与匹配。待检查的文本可以为空。\n\n### 输出\n\n一个整数，末尾换行：完全不包含该模式的行数。这里按子串判断，且区分大小写。模式为空串时每一行都包含它，因此结果是 0。\n\n### 示例\n\n输入：\n\n```\nerr\nerr: disk full\nall good\nERR: net\n```\n\n输出：\n\n```\n2\n```\n\n示例中 all good 和 ERR: net 都不含 err，所以答案是 2；ERR: net 之所以算不含，是因为比较区分大小写。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\nlines = sys.stdin.read().splitlines()\nneedle = lines[0]\nprint(sum(1 for line in lines[1:] if needle not in line))\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "err\nerr: disk full\nall good\nERR: net\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：区分大小写的反向计数",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "err\nerr: disk full\nall good\nERR: net\n",
+        "args": [],
+        "expected_stdout": "2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：没有任何行命中",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "needle\nplain one\nplain two\n",
+        "args": [],
+        "expected_stdout": "2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：所有行都命中",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "x\nax\nxb\n",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：模式为空串",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\nrow one\nrow two\n",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "unix",
+      "text",
+      "filter"
+    ]
+  },
+  {
+    "title": "删除每行末尾的指定后缀",
+    "stem_markdown": "## 题目\n\n删掉每一行末尾出现的指定后缀，相当于用 sed 做一次行尾替换。\n\n### 输入\n\n第一行是后缀字符串，非空，允许包含空格，按原样使用，不做 strip。其后是若干行文本。\n\n### 输出\n\n逐行处理并输出：如果该行以后缀结尾，就删掉末尾这一次出现的后缀，只删一次；否则原样输出。行与后缀完全相同时，结果是一个空行。\n\n### 示例\n\n输入：\n\n```\n.txt\nnotes.txt\nreadme.md\narchive.txt.txt\n```\n\n输出：\n\n```\nnotes\nreadme.md\narchive.txt\n```\n\n示例中 archive.txt.txt 只掉了一层后缀，readme.md 没有该后缀所以保持原样。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\nlines = sys.stdin.read().splitlines()\nsuffix = lines[0]\nout = [line[: -len(suffix)] if line.endswith(suffix) else line for line in lines[1:]]\nprint(\"\\n\".join(out), end=\"\\n\" if out else \"\")\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": ".txt\nnotes.txt\nreadme.md\narchive.txt.txt\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：只删掉一层后缀",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": ".txt\nnotes.txt\nreadme.md\narchive.txt.txt\n",
+        "args": [],
+        "expected_stdout": "notes\nreadme.md\narchive.txt\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：整行就等于后缀",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": ".log\n.log\ndata.log\n",
+        "args": [],
+        "expected_stdout": "\ndata\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：后缀只出现在行中间",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "x\naxb\nxa\n",
+        "args": [],
+        "expected_stdout": "axb\nxa\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：后缀本身含空格",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": " the end\nstory the end\nstory the end!\n",
+        "args": [],
+        "expected_stdout": "story\nstory the end!\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "unix",
+      "text",
+      "transform"
+    ]
+  },
+  {
+    "title": "替换每行中第 N 次出现的子串",
+    "stem_markdown": "## 题目\n\n把每一行里第 N 次出现的子串替换成另一个子串。\n\n### 输入\n\n第一行是整数 N，满足 N 大于等于 1。第二行是被查找的子串 old，非空，允许包含空格。第三行是用来替换的子串 new，可以为空串。其后是若干行待处理的文本。\n\n### 输出\n\n逐行处理并输出。查找规则：从左到右扫描该行，每个位置都是一个候选起点，也就是允许重叠（在位置 i 命中后，下一个候选位置从 i+1 开始），第 N 个命中的位置就是要替换的位置。如果这一行命中的位置不足 N 个，就原样输出该行。\n\n### 示例\n\n输入：\n\n```\n2\nab\nX\nababab\nab\nzabab\n```\n\n输出：\n\n```\nabXab\nab\nzabX\n```\n\n示例的待处理文本里，第二行 ab 只出现了一次、不足两次，所以保持原样。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\nlines = sys.stdin.read().splitlines()\nposition = int(lines[0].strip())\nold, new = lines[1], lines[2]\nout = []\nfor line in lines[3:]:\n    found = -1\n    start = 0\n    seen = 0\n    while True:\n        found = line.find(old, start)\n        if found < 0:\n            break\n        seen += 1\n        if seen == position:\n            break\n        start = found + 1\n    if seen == position:\n        out.append(line[:found] + new + line[found + len(old):])\n    else:\n        out.append(line)\nprint(\"\\n\".join(out), end=\"\\n\" if out else \"\")\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "2\nab\nX\nababab\nab\nzabab\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：替换第二次出现",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "2\nab\nX\nababab\nab\nzabab\n",
+        "args": [],
+        "expected_stdout": "abXab\nab\nzabX\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：允许重叠的候选起点",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2\naa\n-\naaaaa\n",
+        "args": [],
+        "expected_stdout": "a-aa\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：其中一行命中次数不足",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "3\nq\nQ\nqqq\nqq\n",
+        "args": [],
+        "expected_stdout": "qqQ\nqq\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：替换成空串",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1\nxx\n\naaxxbxx\n",
+        "args": [],
+        "expected_stdout": "aabxx\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "unix",
+      "text",
+      "transform"
+    ]
+  },
+  {
+    "title": "按键列连接两段输入",
+    "stem_markdown": "## 题目\n\n把两段输入按第一个字段（键）连接起来，相当于 join 的内连接。\n\n### 输入\n\n输入分成两段，中间用单独一行 `---` 分隔。每段若干行，每行是用空白分隔的字段，第一个字段是键，后面的字段是值。数据行不会等于 `---`。同一个键在同一段里最多出现一次。两段都可以为空。\n\n### 输出\n\n只保留在两段里都出现过的键，按键的字典序升序，每个键输出一行：键、左段的值字段、右段的值字段，全部用单个空格连接。某个键在两段中都没有额外字段时，该行只输出键本身。没有公共键时输出为空。\n\n### 示例\n\n输入：\n\n```\nb 2\na 1\nd 4\n---\na apple\nc cherry\nb berry\n```\n\n输出：\n\n```\na 1 apple\nb 2 berry\n```\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\nlines = sys.stdin.read().splitlines()\ndivide = lines.index(\"---\")\nleft = {}\nfor line in lines[:divide]:\n    fields = line.split()\n    left[fields[0]] = fields[1:]\nright = {}\nfor line in lines[divide + 1:]:\n    fields = line.split()\n    right[fields[0]] = fields[1:]\nout = [\" \".join([key] + left[key] + right[key]) for key in sorted(left.keys() & right.keys())]\nprint(\"\\n\".join(out), end=\"\\n\" if out else \"\")\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "b 2\na 1\nd 4\n---\na apple\nc cherry\nb berry\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：三个键里两个能配上",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "b 2\na 1\nd 4\n---\na apple\nc cherry\nb berry\n",
+        "args": [],
+        "expected_stdout": "a 1 apple\nb 2 berry\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：完全没有公共键",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "k1 1\nk2 2\n---\nk3 3\n",
+        "args": [],
+        "expected_stdout": "",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：键上都没有值字段",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "m\nn 9\n---\nm\nn 8\n",
+        "args": [],
+        "expected_stdout": "m\nn 9 8\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：右侧有多个值字段",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "s p q\n---\ns r\n",
+        "args": [],
+        "expected_stdout": "s p q r\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "unix",
+      "text",
+      "join"
+    ]
+  },
+  {
+    "title": "比较两段已排序文本的独有行与公共行",
+    "stem_markdown": "## 题目\n\n比较两段已经排好序的文本，找出只在左段出现的行和两段都有的行，相当于 comm 的一部分功能。\n\n### 输入\n\n输入分成两段，中间用单独一行 `---` 分隔。每段内部已经按字典序升序排列，并且段内没有重复行。数据行不会等于 `---`。两段都可以为空。\n\n### 输出\n\n先按左段的顺序输出只出现在左段、没有出现在右段的所有行；然后输出单独一行 `--`；最后按左段的顺序输出两段都有的行。即使前一段为空，分隔行 `--` 也一定要输出。\n\n### 示例\n\n输入：\n\n```\nant\nbee\ncat\ndog\n---\nbee\ndog\neel\n```\n\n输出：\n\n```\nant\ncat\n--\nbee\ndog\n```\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\nlines = sys.stdin.read().splitlines()\ndivide = lines.index(\"---\")\nleft, right = lines[:divide], lines[divide + 1:]\nright_set = set(right)\nonly_left = [line for line in left if line not in right_set]\ncommon = [line for line in left if line in right_set]\nout = only_left + [\"--\"] + common\nprint(\"\\n\".join(out))\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "ant\nbee\ncat\ndog\n---\nbee\ndog\neel\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：左段独有与公共行",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "ant\nbee\ncat\ndog\n---\nbee\ndog\neel\n",
+        "args": [],
+        "expected_stdout": "ant\ncat\n--\nbee\ndog\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：两段完全相同",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a\nb\n---\na\nb\n",
+        "args": [],
+        "expected_stdout": "--\na\nb\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：没有公共行",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a\nc\n---\nb\nd\n",
+        "args": [],
+        "expected_stdout": "a\nc\n--\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：左段为空",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "---\nb\nc\n",
+        "args": [],
+        "expected_stdout": "--\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "unix",
+      "text",
+      "join"
+    ]
+  },
+  {
+    "title": "合并两段已排序的整数序列",
+    "stem_markdown": "## 题目\n\n把两段已经排好序的整数序列合并成一个升序序列。\n\n### 输入\n\n输入分成两段，中间用单独一行 `---` 分隔。每段每行是一个整数，段内已经按数值升序排列，允许出现重复值。数据行不会等于 `---`。两段都可以为空。\n\n### 输出\n\n把所有整数按数值升序输出，每行一个，重复值全部保留。结果为空时输出为空。\n\n### 示例\n\n输入：\n\n```\n1\n4\n9\n---\n2\n3\n10\n```\n\n输出：\n\n```\n1\n2\n3\n4\n9\n10\n```\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\nlines = sys.stdin.read().splitlines()\ndivide = lines.index(\"---\")\nleft = [int(line) for line in lines[:divide] if line.strip()]\nright = [int(line) for line in lines[divide + 1:] if line.strip()]\nout = [str(value) for value in sorted(left + right)]\nprint(\"\\n\".join(out), end=\"\\n\" if out else \"\")\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "1\n4\n9\n---\n2\n3\n10\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：两段交错合并",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "1\n4\n9\n---\n2\n3\n10\n",
+        "args": [],
+        "expected_stdout": "1\n2\n3\n4\n9\n10\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：负数与重复值",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "-5\n0\n0\n3\n---\n-5\n2\n3\n",
+        "args": [],
+        "expected_stdout": "-5\n-5\n0\n0\n2\n3\n3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：右段为空",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "7\n8\n---\n",
+        "args": [],
+        "expected_stdout": "7\n8\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：每段各一个元素",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "5\n---\n1\n",
+        "args": [],
+        "expected_stdout": "1\n5\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "unix",
+      "text",
+      "sort"
+    ]
+  }
+]

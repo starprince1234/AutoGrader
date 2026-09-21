@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autograder.local/contracts/module-manifest.schema.json",
+  "type": "object",
+  "required": ["schema_version", "module", "contract_version", "entry_point", "provides", "requires", "routes", "events", "database"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "module": {
+      "type": "string",
+      "pattern": "^B[0-9]{1,3}$",
+      "$comment": "ADR-0013: the module count is open. `^B[1-4]$` made 'a fifth module can be added without touching MAIN' unverifiable, and MAIN/pyproject.toml separately hard-depended on the three business modules. This is the single place the pattern is defined."
+    },
+    "contract_version": {"type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+(?:-[0-9A-Za-z.-]+)?$"},
+    "entry_point": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_.]+:[A-Za-z_][A-Za-z0-9_]+$"},
+    "provides": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "requires": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+    "routes": {"type": "array", "items": {"type": "string", "pattern": "^/"}, "uniqueItems": true},
+    "events": {
+      "type": "object",
+      "required": ["publishes", "subscribes"],
+      "properties": {
+        "publishes": {"type": "array", "items": {"type": "string", "pattern": "^autograder\\.v1\\."}, "uniqueItems": true},
+        "subscribes": {"type": "array", "items": {"type": "string", "pattern": "^autograder\\.v1\\."}, "uniqueItems": true}
+      },
+      "additionalProperties": false
+    },
+    "database": {
+      "type": "object",
+      "required": ["schema", "migration_head"],
+      "properties": {
+        "schema": {"type": "string", "pattern": "^(none|b[0-9]{1,3})$"},
+        "migration_head": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

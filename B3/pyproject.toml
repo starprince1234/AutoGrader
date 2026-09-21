@@ -1,0 +1,50 @@
+[project]
+name = "autograder-b3"
+version = "0.1.0"
+description = "AutoGrader B3 question-bank and evaluation-package plugin"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "alembic>=1.16,<2",
+  "fastapi>=0.115,<1",
+  "nats-py>=2.10,<3",
+  "psycopg[binary]>=3.2,<4",
+  "pydantic>=2.10,<3",
+  "sqlalchemy>=2.0,<3",
+  "autograder-platform==0.1.0",
+  "cryptography>=43,<47",
+]
+
+[dependency-groups]
+dev = [
+  "httpx>=0.28,<1",
+  "jsonschema>=4.23,<5",
+  "pytest>=8.3,<9",
+  "pytest-cov>=6,<7",
+  "ruff>=0.9,<1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+extend-exclude = ["tools/reporting"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B008", "E501", "I001"]
+
+[project.entry-points."autograder.modules"]
+b3 = "autograder_b3.plugin:create_module"
+
+[tool.uv.sources]
+autograder-platform = { path = "../MAIN/sdk" }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/autograder_b3"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

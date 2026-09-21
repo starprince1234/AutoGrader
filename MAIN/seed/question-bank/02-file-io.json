@@ -1,0 +1,621 @@
+[
+  {
+    "title": "读文件找出最长行并输出其长度",
+    "stem_markdown": "## 题目\n\n工作区中已有 `input/data.txt`。这个文件由若干行英文短语组成，每行长度都不一样，\n行内不含制表符，行首和行尾也没有多余的空格。\n\n请读出整个文件，找出**最长的一行**，输出这一行的字符个数。\n\n### 输入\n\n工作区中已有 `input/data.txt`，内容为：\n\n```\nalpha\noperating system\nunix\nprocess scheduling\nfile\n```\n\n### 输出\n\n一个整数：最长行的字符数，**不把行尾的换行符计算在内**，末尾换行。\n如果有多行并列最长，输出这个长度即可。\n\n### 示例\n\n上面的文件里最长的一行是 `process scheduling`，它有 18 个字符（不含换行符），\n所以程序输出：\n\n```\n18\n```\n\n### 要求\n\n- 只使用 Python 标准库，不要联网。\n- 读文件时必须显式指定 `encoding=\"utf-8\"`。\n- 不要修改已有文件，也不要创建新文件。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\nwith open(\"input/data.txt\", encoding=\"utf-8\") as handle:\n    longest = max(len(line.rstrip(\"\\n\")) for line in handle)\n\nprint(longest)\n",
+    "adapter": {
+      "kind": "file",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "fixtures": [
+      {
+        "path": "input/data.txt",
+        "mount": "input",
+        "content": "alpha\noperating system\nunix\nprocess scheduling\nfile\n"
+      }
+    ],
+    "cases": [
+      {
+        "name": "示例：五行短语",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "",
+        "args": [],
+        "expected_stdout": "18\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "file",
+      "text"
+    ]
+  },
+  {
+    "title": "统计文件中的非空行数",
+    "stem_markdown": "## 题目\n\n工作区中已有 `input/data.txt`。文件里有内容行，也有完全空的行和只写了空格的行。\n\n请统计**非空行**的个数：一行去掉首尾空白字符（空格、制表符、换行符）之后如果还剩字符，\n就算一个非空行。\n\n### 输入\n\n工作区中已有 `input/data.txt`，内容见下面的代码块。注意第 4 行只有 3 个空格，\n看起来是空的；第 2 行和第 6 行是完全空行。\n\n```\nfirst\n\nsecond\n   \nthird\n\nfourth\n```\n\n### 输出\n\n一个整数：非空行的行数，末尾换行。\n\n### 示例\n\n第 1、3、5、7 行有内容，第 2、6 行是空行，第 4 行只有空格，\n所以非空行共有 4 行，程序输出：\n\n```\n4\n```\n\n### 要求\n\n- 只使用 Python 标准库，不要联网。\n- 读文件时必须显式指定 `encoding=\"utf-8\"`。\n- 不要修改已有文件，也不要创建新文件。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\nwith open(\"input/data.txt\", encoding=\"utf-8\") as handle:\n    count = sum(1 for line in handle if line.strip())\n\nprint(count)\n",
+    "adapter": {
+      "kind": "file",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "fixtures": [
+      {
+        "path": "input/data.txt",
+        "mount": "input",
+        "content": "first\n\nsecond\n   \nthird\n\nfourth\n"
+      }
+    ],
+    "cases": [
+      {
+        "name": "示例：含空行与空白行",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "",
+        "args": [],
+        "expected_stdout": "4\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "file",
+      "text"
+    ]
+  },
+  {
+    "title": "定宽文件：求数量列之和",
+    "stem_markdown": "## 题目\n\n工作区中已有 `input/data.txt`。这是一个**定宽**文本文件：每行长度相同，字段之间没有分隔符，\n全靠列的固定位置来区分。\n\n每行的布局是：\n\n- 第 1 到第 10 个字符：商品名，左对齐，不足 10 个字符时在右边补空格；\n- 第 11 到第 16 个字符：数量，右对齐，用前导零补足 6 位。\n\n请把每一行的数量列取出来，按十进制整数相加，输出总和。\n\n### 输入\n\n工作区中已有 `input/data.txt`，内容为（每行 16 个字符）：\n\n```\napple     000012\nbanana    000007\ncherry    000031\ndate      000004\n```\n\n### 输出\n\n一个整数：所有行数量列的总和，末尾换行。\n\n### 示例\n\n四行的数量依次是 12、7、31、4，`12 + 7 + 31 + 4 = 54`，所以程序输出：\n\n```\n54\n```\n\n### 要求\n\n- 只使用 Python 标准库，不要联网。\n- 读文件时必须显式指定 `encoding=\"utf-8\"`。\n- 不要修改已有文件，也不要创建新文件。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\ntotal = 0\n\nwith open(\"input/data.txt\", encoding=\"utf-8\") as handle:\n    for line in handle:\n        text = line.rstrip(\"\\n\")\n        if not text:\n            continue\n        total += int(text[10:16])\n\nprint(total)\n",
+    "adapter": {
+      "kind": "file",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "fixtures": [
+      {
+        "path": "input/data.txt",
+        "mount": "input",
+        "content": "apple     000012\nbanana    000007\ncherry    000031\ndate      000004\n"
+      }
+    ],
+    "cases": [
+      {
+        "name": "示例：四行定宽记录",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "",
+        "args": [],
+        "expected_stdout": "54\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "file",
+      "fixedwidth"
+    ]
+  },
+  {
+    "title": "找出文件中重复出现的行并排序输出",
+    "stem_markdown": "## 题目\n\n工作区中已有 `input/data.txt`，每一行是一个小写单词。\n\n请找出所有**至少出现两次**的行，把每个这样的行内容输出一次。\n只出现一次的行不要输出。\n\n### 输入\n\n工作区中已有 `input/data.txt`，内容为：\n\n```\nbeta\nalpha\nbeta\ngamma\nalpha\nbeta\ndelta\n```\n\n### 输出\n\n每行一个重复出现过的行内容，按字典序（Python 字符串升序）排列，末尾换行。\n如果没有任何行重复出现，程序不输出任何内容。\n\n### 示例\n\n`beta` 出现了 3 次，`alpha` 出现了 2 次，`gamma` 和 `delta` 各出现 1 次。\n按字典序输出这两个重复行：\n\n```\nalpha\nbeta\n```\n\n### 要求\n\n- 只使用 Python 标准库，不要联网。\n- 读文件时必须显式指定 `encoding=\"utf-8\"`。\n- 不要修改已有文件，也不要创建新文件。\n",
+    "language": "python",
+    "reference_answer": "import sys\nfrom collections import Counter\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\nwith open(\"input/data.txt\", encoding=\"utf-8\") as handle:\n    lines = [line.rstrip(\"\\n\") for line in handle if line.strip()]\n\ncounts = Counter(lines)\nfor text in sorted(word for word, times in counts.items() if times > 1):\n    print(text)\n",
+    "adapter": {
+      "kind": "file",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "fixtures": [
+      {
+        "path": "input/data.txt",
+        "mount": "input",
+        "content": "beta\nalpha\nbeta\ngamma\nalpha\nbeta\ndelta\n"
+      }
+    ],
+    "cases": [
+      {
+        "name": "示例：两个重复单词",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "",
+        "args": [],
+        "expected_stdout": "alpha\nbeta\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "file",
+      "text"
+    ]
+  },
+  {
+    "title": "解析 key=value 配置并输出指定键的值",
+    "stem_markdown": "## 题目\n\n工作区中已有 `input/config.ini`，是 `key=value` 形式的配置文件，读取规则是：\n\n1. 以 `#` 开头的行是注释，忽略；\n2. 去掉首尾空白后为空的行，忽略；\n3. 其余每行都是 `key=value`，等号两侧可能有空格，key 和 value 都要去掉首尾空白。\n\n程序接收一个命令行参数作为**键名**，请输出这个键对应的值。\n\n### 调用方式\n\n评分时这样运行你的程序（键名从 `sys.argv[1]` 读取）：\n\n```\npython3 solution.py <键名>\n```\n\n### 输入\n\n工作区中已有 `input/config.ini`，内容为：\n\n```\n# 服务配置\nhost = 127.0.0.1\nport=8080\nname=autograder\nretries=3\n```\n\n### 输出\n\n一行：该键对应的值（已去掉首尾空白），末尾换行。\n如果配置文件里没有这个键，输出 `missing`。\n\n### 示例\n\n运行 `python3 solution.py port` 时，`port` 的值是 `8080`，所以程序输出：\n\n```\n8080\n```\n\n### 要求\n\n- 只使用 Python 标准库，不要联网。\n- 读文件时必须显式指定 `encoding=\"utf-8\"`。\n- 不要修改已有文件，也不要创建新文件。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\nwanted = sys.argv[1]\nfound = None\n\nwith open(\"input/config.ini\", encoding=\"utf-8\") as handle:\n    for raw in handle:\n        line = raw.strip()\n        if not line or line.startswith(\"#\"):\n            continue\n        key, separator, value = line.partition(\"=\")\n        if separator and key.strip() == wanted:\n            found = value.strip()\n\nprint(found if found is not None else \"missing\")\n",
+    "adapter": {
+      "kind": "file",
+      "args": [
+        "port"
+      ],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "fixtures": [
+      {
+        "path": "input/config.ini",
+        "mount": "input",
+        "content": "# 服务配置\nhost = 127.0.0.1\nport=8080\nname=autograder\nretries=3\n"
+      }
+    ],
+    "cases": [
+      {
+        "name": "示例：port",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "",
+        "args": [
+          "port"
+        ],
+        "expected_stdout": "8080\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：带空格的键",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "",
+        "args": [
+          "host"
+        ],
+        "expected_stdout": "127.0.0.1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：不存在的键",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "",
+        "args": [
+          "worker"
+        ],
+        "expected_stdout": "missing\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "file",
+      "config"
+    ]
+  },
+  {
+    "title": "统计单词频率并输出出现最多的 3 个",
+    "stem_markdown": "## 题目\n\n工作区中已有 `input/text.txt`，是一段英文文本。请统计每个单词出现的次数：\n\n1. 按空白字符（空格、换行）切分每一行，得到一个个单词；\n2. 去掉每个单词**首尾**的 `.` `,` `!` `?` `;` `:` 字符；\n3. 把单词转成小写；\n4. 去掉标点后如果单词变成空串，则不计入统计。\n\n然后输出出现次数最多的 3 个单词。\n\n### 输入\n\n工作区中已有 `input/text.txt`，内容为：\n\n```\nthe quick fox jumps over the lazy dog.\nthe dog barks, and the fox runs.\nfox and dog are friends\n```\n\n### 输出\n\n3 行，每行格式为 `单词 次数`（单词和次数之间用一个空格分隔），末尾换行。\n如果出现次数相同，按单词的字典序升序排列（即次数多者在前，次数相同时字母序小者在前）。\n\n### 示例\n\n`the` 出现 4 次；`dog` 和 `fox` 都出现 3 次，按字典序 `dog` 在前、`fox` 在后，\n所以程序输出：\n\n```\nthe 4\ndog 3\nfox 3\n```\n\n### 要求\n\n- 只使用 Python 标准库，不要联网。\n- 读文件时必须显式指定 `encoding=\"utf-8\"`。\n- 不要修改已有文件，也不要创建新文件。\n",
+    "language": "python",
+    "reference_answer": "import sys\nfrom collections import Counter\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\ncounts = Counter()\n\nwith open(\"input/text.txt\", encoding=\"utf-8\") as handle:\n    for line in handle:\n        for token in line.split():\n            word = token.strip(\".,!?;:\").lower()\n            if word:\n                counts[word] += 1\n\nranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))\nfor word, times in ranked[:3]:\n    print(word, times)\n",
+    "adapter": {
+      "kind": "file",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "fixtures": [
+      {
+        "path": "input/text.txt",
+        "mount": "input",
+        "content": "the quick fox jumps over the lazy dog.\nthe dog barks, and the fox runs.\nfox and dog are friends\n"
+      }
+    ],
+    "cases": [
+      {
+        "name": "示例：三行英文文本",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "",
+        "args": [],
+        "expected_stdout": "the 4\ndog 3\nfox 3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "file",
+      "text"
+    ]
+  },
+  {
+    "title": "CSV 按列名求平均值并保留两位小数",
+    "stem_markdown": "## 题目\n\n工作区中已有 `input/scores.csv`。文件第一行是表头（用逗号分隔的列名），\n其余每行是一条记录：第一列是姓名，后面的列都是整数。\n\n程序接收一个命令行参数作为**列名**，请输出这一列所有数值的平均值，\n四舍五入保留两位小数。\n\n### 调用方式\n\n评分时这样运行你的程序（列名从 `sys.argv[1]` 读取）：\n\n```\npython3 solution.py <列名>\n```\n\n### 输入\n\n工作区中已有 `input/scores.csv`，内容为：\n\n```\nname,math,english\nalice,90,80\nbob,75,88\ncarol,88,95\n```\n\n### 输出\n\n一行：该列的平均值，用 `f\"{value:.2f}\"` 的格式保留两位小数，末尾换行。\n保证传入的列名一定存在，且该列一定是整数。\n\n### 示例\n\n运行 `python3 solution.py math` 时，`math` 列的平均值是 `(90 + 75 + 88) / 3 = 84.333...`，\n保留两位小数后输出：\n\n```\n84.33\n```\n\n### 要求\n\n- 只使用 Python 标准库，不要联网。\n- 读文件时必须显式指定 `encoding=\"utf-8\"`。\n- 不要修改已有文件，也不要创建新文件。\n",
+    "language": "python",
+    "reference_answer": "import sys\nimport csv\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\ncolumn = sys.argv[1]\n\nwith open(\"input/scores.csv\", encoding=\"utf-8\", newline=\"\") as handle:\n    rows = list(csv.DictReader(handle))\n\nvalues = [int(row[column]) for row in rows]\nprint(f\"{sum(values) / len(values):.2f}\")\n",
+    "adapter": {
+      "kind": "file",
+      "args": [
+        "math"
+      ],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "fixtures": [
+      {
+        "path": "input/scores.csv",
+        "mount": "input",
+        "content": "name,math,english\nalice,90,80\nbob,75,88\ncarol,88,95\n"
+      }
+    ],
+    "cases": [
+      {
+        "name": "示例：math 列",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "",
+        "args": [
+          "math"
+        ],
+        "expected_stdout": "84.33\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：english 列",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "",
+        "args": [
+          "english"
+        ],
+        "expected_stdout": "87.67\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "file",
+      "csv"
+    ]
+  },
+  {
+    "title": "判断文件的行是否已按字典序排列",
+    "stem_markdown": "## 题目\n\n工作区中已有 `input/data.txt`，每一行是一个小写单词。\n\n请判断这些行是否已经按字典序**非递减**排列：从第 1 行到最后一行，\n每一行都不大于它的下一行（相邻两行相同也算有序）。\n\n### 输入\n\n工作区中已有 `input/data.txt`，内容为：\n\n```\nant\nbee\ncow\ndog\neel\nfox\nhen\ngnat\n```\n\n### 输出\n\n一行：如果已经有序输出 `yes`，否则输出 `no`，末尾换行。\n\n### 示例\n\n第 7 行是 `hen`，第 8 行是 `gnat`；`hen` 大于 `gnat`，顺序在这里被破坏，\n所以程序输出：\n\n```\nno\n```\n\n### 要求\n\n- 只使用 Python 标准库，不要联网。\n- 读文件时必须显式指定 `encoding=\"utf-8\"`。\n- 不要修改已有文件，也不要创建新文件。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\nwith open(\"input/data.txt\", encoding=\"utf-8\") as handle:\n    lines = [line.rstrip(\"\\n\") for line in handle if line.strip()]\n\nordered = all(lines[index] <= lines[index + 1] for index in range(len(lines) - 1))\nprint(\"yes\" if ordered else \"no\")\n",
+    "adapter": {
+      "kind": "file",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "fixtures": [
+      {
+        "path": "input/data.txt",
+        "mount": "input",
+        "content": "ant\nbee\ncow\ndog\neel\nfox\nhen\ngnat\n"
+      }
+    ],
+    "cases": [
+      {
+        "name": "示例：末尾逆序的单词表",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "",
+        "args": [],
+        "expected_stdout": "no\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "file",
+      "text"
+    ]
+  },
+  {
+    "title": "输出分隔文件中每一行的第 N 个字段",
+    "stem_markdown": "## 题目\n\n工作区中已有 `input/records.txt`。文件每行有 3 个字段，字段之间用单个竖线 `|` 分隔，\n字段内容里不会再出现竖线。\n\n程序接收一个命令行参数 N，请输出每一行的**第 N 个字段**，一行一个，顺序与文件一致。\n\n### 调用方式\n\n评分时这样运行你的程序（N 从 `sys.argv[1]` 读取，保证 1 ≤ N ≤ 3）：\n\n```\npython3 solution.py <N>\n```\n\n### 输入\n\n工作区中已有 `input/records.txt`，内容为：\n\n```\nalice|30|beijing\nbob|25|shanghai\ncarol|41|shenzhen\n```\n\n### 输出\n\n每行一个字段值，末尾换行。\n\n### 示例\n\n运行 `python3 solution.py 2` 时，要输出每行的第 2 个字段，所以程序输出：\n\n```\n30\n25\n41\n```\n\n### 要求\n\n- 只使用 Python 标准库，不要联网。\n- 读文件时必须显式指定 `encoding=\"utf-8\"`。\n- 不要修改已有文件，也不要创建新文件。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\nposition = int(sys.argv[1]) - 1\n\nwith open(\"input/records.txt\", encoding=\"utf-8\") as handle:\n    for line in handle:\n        fields = line.rstrip(\"\\n\").split(\"|\")\n        print(fields[position])\n",
+    "adapter": {
+      "kind": "file",
+      "args": [
+        "2"
+      ],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "fixtures": [
+      {
+        "path": "input/records.txt",
+        "mount": "input",
+        "content": "alice|30|beijing\nbob|25|shanghai\ncarol|41|shenzhen\n"
+      }
+    ],
+    "cases": [
+      {
+        "name": "示例：第 2 个字段",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "",
+        "args": [
+          "2"
+        ],
+        "expected_stdout": "30\n25\n41\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：第 3 个字段",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "",
+        "args": [
+          "3"
+        ],
+        "expected_stdout": "beijing\nshanghai\nshenzhen\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "file",
+      "text"
+    ]
+  },
+  {
+    "title": "按行拼接两个文件并插入分隔符",
+    "stem_markdown": "## 题目\n\n工作区中已有 `input/left.txt` 和 `input/right.txt`，两个文件的行数相同，\n每行内部没有多余的空格。\n\n程序接收一个命令行参数作为**分隔符**，请把两个文件逐行拼接：\n输出的第 i 行等于「左文件的第 i 行 + 分隔符 + 右文件的第 i 行」。\n\n### 调用方式\n\n评分时这样运行你的程序（分隔符从 `sys.argv[1]` 读取，原样使用，可能不止一个字符）：\n\n```\npython3 solution.py <分隔符>\n```\n\n### 输入\n\n工作区中已有 `input/left.txt`，内容为：\n\n```\nalpha\nbeta\ngamma\n```\n\n工作区中已有 `input/right.txt`，内容为：\n\n```\none\ntwo\nthree\n```\n\n### 输出\n\n每行一个拼接结果，末尾换行。输出的行数与较短的那个文件相同，\n超出较短文件的行直接忽略。\n\n### 示例\n\n运行 `python3 solution.py -` 时，用短横线作为分隔符，所以程序输出：\n\n```\nalpha-one\nbeta-two\ngamma-three\n```\n\n### 要求\n\n- 只使用 Python 标准库，不要联网。\n- 读文件时必须显式指定 `encoding=\"utf-8\"`。\n- 不要修改已有文件，也不要创建新文件。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\nseparator = sys.argv[1]\n\nwith open(\"input/left.txt\", encoding=\"utf-8\") as handle:\n    left = [line.rstrip(\"\\n\") for line in handle]\n\nwith open(\"input/right.txt\", encoding=\"utf-8\") as handle:\n    right = [line.rstrip(\"\\n\") for line in handle]\n\nfor first, second in zip(left, right):\n    print(first + separator + second)\n",
+    "adapter": {
+      "kind": "file",
+      "args": [
+        "-"
+      ],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "fixtures": [
+      {
+        "path": "input/left.txt",
+        "mount": "input",
+        "content": "alpha\nbeta\ngamma\n"
+      },
+      {
+        "path": "input/right.txt",
+        "mount": "input",
+        "content": "one\ntwo\nthree\n"
+      }
+    ],
+    "cases": [
+      {
+        "name": "示例：短横线分隔",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "",
+        "args": [
+          "-"
+        ],
+        "expected_stdout": "alpha-one\nbeta-two\ngamma-three\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：双冒号分隔",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "",
+        "args": [
+          "::"
+        ],
+        "expected_stdout": "alpha::one\nbeta::two\ngamma::three\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "file",
+      "text"
+    ]
+  },
+  {
+    "title": "统计包含指定子串的行数",
+    "stem_markdown": "## 题目\n\n工作区中已有 `input/data.txt`，每一行是一条日志。\n\n程序接收一个命令行参数作为**子串**，请统计有多少行包含这个子串。\n匹配是**字面量、区分大小写**的：不要把参数当正则表达式解释。\n\n### 调用方式\n\n评分时这样运行你的程序（子串从 `sys.argv[1]` 读取）：\n\n```\npython3 solution.py <子串>\n```\n\n### 输入\n\n工作区中已有 `input/data.txt`，内容为：\n\n```\nerror: disk full\nwarning: disk almost full\nerror: network down\ninfo: all good\nerror: disk full\n```\n\n### 输出\n\n一个整数：包含该子串的行数，末尾换行。子串出现在行的任意位置都算。\n\n### 示例\n\n运行 `python3 solution.py error` 时，第 1、3、5 行包含 `error`，所以程序输出：\n\n```\n3\n```\n\n### 要求\n\n- 只使用 Python 标准库，不要联网。\n- 读文件时必须显式指定 `encoding=\"utf-8\"`。\n- 不要修改已有文件，也不要创建新文件。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\nneedle = sys.argv[1]\ncount = 0\n\nwith open(\"input/data.txt\", encoding=\"utf-8\") as handle:\n    for line in handle:\n        if needle in line:\n            count += 1\n\nprint(count)\n",
+    "adapter": {
+      "kind": "file",
+      "args": [
+        "error"
+      ],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "fixtures": [
+      {
+        "path": "input/data.txt",
+        "mount": "input",
+        "content": "error: disk full\nwarning: disk almost full\nerror: network down\ninfo: all good\nerror: disk full\n"
+      }
+    ],
+    "cases": [
+      {
+        "name": "示例：error",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "",
+        "args": [
+          "error"
+        ],
+        "expected_stdout": "3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：大小写敏感",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "",
+        "args": [
+          "Error"
+        ],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "file",
+      "text"
+    ]
+  },
+  {
+    "title": "检查文件每一行是否为回文并报告行号",
+    "stem_markdown": "## 题目\n\n工作区中已有 `input/lines.txt`。文件每一行是一段文本，可能包含空格，也可能有大写字母。\n\n请逐行判断它是不是回文，判断时：\n\n- 忽略大小写；\n- 忽略所有空白字符（空格、制表符等）。\n\n行号从 1 开始计算。如果某一行不是回文，就把它的行号输出出来（每行一个，按升序）。\n如果所有非空行都是回文，就输出 `all`。\n注意：去掉空白后没有任何字符的行走（空行、只有空格的行）直接跳过，既不检查也不报错。\n\n### 输入\n\n工作区中已有 `input/lines.txt`，内容为：\n\n```\nlevel\nA man a plan a canal panama\nradar\nhello\nWas it a car or a cat I saw\ncivic\nworld\n```\n\n### 输出\n\n每行一个行号，末尾换行；如果没有任何不合规的行，则只输出 `all`。\n\n### 示例\n\n第 4 行 `hello` 反过来是 `olleh`，不是回文；第 7 行 `world` 也不是回文。\n其余各行忽略空格和大小写后都是回文。所以程序输出：\n\n```\n4\n7\n```\n\n### 要求\n\n- 只使用 Python 标准库，不要联网。\n- 读文件时必须显式指定 `encoding=\"utf-8\"`。\n- 不要修改已有文件，也不要创建新文件。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\noffenders = []\n\nwith open(\"input/lines.txt\", encoding=\"utf-8\") as handle:\n    for number, raw in enumerate(handle, start=1):\n        text = \"\".join(raw.split()).lower()\n        if not text:\n            continue\n        if text != text[::-1]:\n            offenders.append(number)\n\nif offenders:\n    print(\"\\n\".join(str(number) for number in offenders))\nelse:\n    print(\"all\")\n",
+    "adapter": {
+      "kind": "file",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "fixtures": [
+      {
+        "path": "input/lines.txt",
+        "mount": "input",
+        "content": "level\nA man a plan a canal panama\nradar\nhello\nWas it a car or a cat I saw\ncivic\nworld\n"
+      }
+    ],
+    "cases": [
+      {
+        "name": "示例：两行不合规",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "",
+        "args": [],
+        "expected_stdout": "4\n7\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "file",
+      "text"
+    ]
+  }
+]

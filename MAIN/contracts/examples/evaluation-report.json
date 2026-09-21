@@ -1,0 +1,69 @@
+{
+  "evaluation_run_id": "00000000-0000-4000-8000-000000000004",
+  "submission_id": "00000000-0000-4000-8000-000000000003",
+  "question_version_id": "00000000-0000-4000-8000-000000000105",
+  "state": "completed",
+  "overall": {
+    "score": 86,
+    "max_score": 100,
+    "is_pass": true,
+    "summary": "Static checks clean; 2 of 3 weighted cases passed."
+  },
+  "static_findings": [
+    {
+      "rule_id": "PY-UNUSED-IMPORT",
+      "severity": "info",
+      "file": "solution.py",
+      "line": 2,
+      "column": 1,
+      "message": "Unused import 'sys'.",
+      "blocking": false
+    }
+  ],
+  "security_conclusion": {
+    "status": "not_found",
+    "findings": []
+  },
+  "case_evidence": [
+    {
+      "case_id": "00000000-0000-4000-8000-000000000201",
+      "ordinal": 0,
+      "weight": 1,
+      "awarded": 86,
+      "passed": true,
+      "failure_category": null,
+      "actual_output_digest": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+      "actual_output_excerpt": "3\n",
+      "expected_output_excerpt": "3\n",
+      "duration_ms": 41,
+      "message": null
+    },
+    {
+      "case_id": "00000000-0000-4000-8000-000000000202",
+      "ordinal": 1,
+      "weight": 2,
+      "awarded": 0,
+      "passed": false,
+      "failure_category": "output_mismatch",
+      "actual_output_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "actual_output_excerpt": "1\n",
+      "expected_output_excerpt": null,
+      "duration_ms": 12,
+      "message": "Output differs (hidden case: expected output withheld from the student view)."
+    }
+  ],
+  "binding": {
+    "submission_digest": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "question_version_binding": "1111111111111111111111111111111111111111111111111111111111111111",
+    "package_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "runner_policy_digest": "2222222222222222222222222222222222222222222222222222222222222222",
+    "environment_digest": "3333333333333333333333333333333333333333333333333333333333333333",
+    "interpreter_version": "CPython 3.12.3"
+  },
+  "total_check": {
+    "sum_of_awards": 86,
+    "matches_total": true
+  },
+  "result_digest": "4444444444444444444444444444444444444444444444444444444444444444",
+  "generated_at": "2026-09-15T08:01:30.000Z"
+}

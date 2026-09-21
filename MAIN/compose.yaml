@@ -1,0 +1,163 @@
+# AutoGrader platform: PostgreSQL + NATS JetStream + the composition host.
+#
+# `docker compose up -d --build` from `MAIN/` is the documented deployment route
+# (`docs/runbooks/container-deployment.md`). It needs no local Python, no local Node and no
+# gitignored env file: the host image builds the B1 SPA itself and generates its own
+# signing key on first start.
+#
+# ## Why every module gets its own DSN
+#
+# The host is ONE process serving B2+B3+B4, and all three modules read the same generic
+# names (`DATABASE_URL`, `NATS_URL`) because each is independently runnable. The host
+# therefore exposes each `<MODULE>_`-prefixed variable under its unprefixed name **inside
+# that module's own settings view** (ADR-0008). That prefix is what keeps the per-module
+# least-privilege roles from collapsing into one connection identity (ADR-0001), and it is
+# why there is exactly one unprefixed `DATABASE_URL` below -- the platform superuser, used
+# only by the entrypoint's migrations and by B4's `ops.provision`. The application never
+# connects as it.
+#
+# ## Resource budget
+#
+# `mem_limit`/`cpus` are the per-component numbers from
+# `docs/architecture/resource-budget.md` §1/§2, not round figures: host 160 MB / 0.35,
+# PostgreSQL 96 MB / 0.15, NATS 32 MB / 0.05. The entrypoint adds no resident process --
+# migrations and provisioning are short-lived children of the same container.
+#
+# ## Host ports
+#
+# `POSTGRES_PORT` / `NATS_PORT` / `HOST_PORT` select the published host ports and default to
+# the project convention (55432 / 54222 / 18000). They are parameters for one reason: a
+# second instance of this stack has to be able to run beside the first one, and
+# `docs/runbooks/local-development.md` §5 already tells an operator to remap a port when
+# something else holds it. Only the host side moves; the in-container addresses -- and
+# therefore every DSN above and the host's own JWKS URL -- stay fixed.
+#
+# ## Credentials
+#
+# Local-only values, identical to the roles `infra/postgres/init.sql` creates. They are
+# deliberately weak and are the reason every module runs with `*_ENV=development`; B4
+# refuses a weak password outside development and refuses a superuser connection in any
+# environment. Production supplies real passwords through the secret store.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: autograder
+      POSTGRES_USER: autograder_platform
+      POSTGRES_PASSWORD: change-me-local-only
+    ports: ["${POSTGRES_PORT:-55432}:5432"]
+    volumes:
+      - autograder_main_postgres:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+    mem_limit: 96m
+    cpus: 0.15
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U autograder_platform -d autograder"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    ports: ["${NATS_PORT:-54222}:4222"]
+    volumes: ["autograder_main_nats:/data"]
+    mem_limit: 32m
+    cpus: 0.05
+
+  host:
+    build:
+      context: ..
+      dockerfile: MAIN/host/Dockerfile
+    environment:
+      # --- migrations and operations (never handed to a module) --------------------
+      PLATFORM_DATABASE_URL: postgresql+psycopg://autograder_platform:change-me-local-only@postgres:5432/autograder
+      # `ops.provision` and `ops.bootstrap_admin` are the only B4 entry points allowed a
+      # privileged connection; the admin DSN is what provision authenticates with.
+      B4_ADMIN_DATABASE_URL: postgresql+psycopg://autograder_platform:change-me-local-only@postgres:5432/autograder
+      B4_DB_PASSWORD: change-me
+      JWT_PRIVATE_KEY_FILE: /var/lib/autograder/jwt/jwt-ed25519.pem
+      # The image root IS the module root: it holds MAIN/contracts and the four B*/ roots
+      # the runtime registry validates against.
+      B4_MODULE_ROOT: /app
+      B1_DIST_DIR: /app/B1/dist
+
+      # --- B2: submissions, evaluation, grades -------------------------------------
+      B2_DATABASE_URL: postgresql+psycopg://autograder_b2:change-me@postgres:5432/autograder
+      B2_NATS_URL: nats://nats:4222
+      B2_ENV: development
+      B2_ARTIFACT_ROOT: /var/lib/autograder/artifacts
+      B2_WORKSPACE_ROOT: /var/lib/autograder/workspace
+      B2_JWKS_PATH: /var/lib/autograder/jwks/jwks.json
+      B2_B3_BASE_URL: http://127.0.0.1:8000
+      # The whole `Authorization` header value, scheme included: B2 sends it verbatim.
+      B2_B3_AUTHORIZATION: Bearer local-integration-service-token
+
+      # --- B3: question bank -------------------------------------------------------
+      B3_DATABASE_URL: postgresql+psycopg://autograder_b3_app:change-me-app-local-only@postgres:5432/autograder
+      B3_DATABASE_PROTECTED_URL: postgresql+psycopg://autograder_b3_internal:change-me-internal-local-only@postgres:5432/autograder
+      B3_NATS_URL: nats://nats:4222
+      # B3 reads B4's published key set as `B4_JWKS_URL` -- the **provider** names the
+      # variable, not the consumer. `B3_JWKS_URL` would be re-exposed inside B3's settings
+      # view as `JWKS_URL`, which nothing reads, and the token verifier would silently never
+      # be built (measured: `/health/ready` reported `token_verifier=None` and every
+      # authenticated route answered 500). B4 itself ignores this variable, so it is set
+      # once, unprefixed, exactly as `.env.integration` does.
+      #
+      # B4 is a plugin in this same process, so the JWKS endpoint is this container's own
+      # address; the fetch is lazy and happens on the first authenticated request, after
+      # the server is listening.
+      B4_JWKS_URL: http://127.0.0.1:8000/api/v1/auth/jwks
+      B3_JWT_ISSUER: autograder
+      B3_JWT_AUDIENCE: autograder-api
+      B3_SERVICE_TOKEN: local-integration-service-token
+
+      # --- B4: identity, courses, roster, registry, messaging ----------------------
+      B4_DATABASE_URL: postgresql+psycopg://autograder_b4:change-me@postgres:5432/autograder
+      B4_NATS_URL: nats://nats:4222
+      B4_ENV: development
+      B4_JWT_ISSUER: autograder
+      B4_JWT_AUDIENCE: autograder-api
+    ports: ["${HOST_PORT:-18000}:8000"]
+    volumes:
+      # The signing key is data, not image content: regenerating it on every deploy would
+      # invalidate every live access token, and baking one in would put a private key in a
+      # build artifact.
+      - autograder_main_jwt:/var/lib/autograder/jwt
+      - autograder_main_jwks:/var/lib/autograder/jwks
+      - autograder_main_artifacts:/var/lib/autograder/artifacts
+      # Scratch, and declared as a volume on purpose: `B2_WORKSPACE_ROOT` holds student code
+      # while a sandbox runs, so it must not be a path inside the image layer -- a container
+      # that is ever run read-only would otherwise fail at the first evaluation. It is
+      # anonymous (not named below) because it is disposable by definition.
+      - /var/lib/autograder/workspace
+    depends_on:
+      postgres:
+        condition: service_healthy
+      nats:
+        condition: service_started
+    mem_limit: 160m
+    cpus: 0.35
+    healthcheck:
+      # `/health/ready` is the only honest liveness signal here: the process can be up
+      # while a plugin is unhealthy, and a `running` container that serves nothing is
+      # exactly the failure this check exists to surface.
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import json,urllib.request;d=json.load(urllib.request.urlopen('http://127.0.0.1:8000/health/ready',timeout=5));raise SystemExit(0 if d.get('ready') is True else 1)",
+        ]
+      interval: 10s
+      timeout: 10s
+      retries: 6
+      start_period: 60s
+
+volumes:
+  autograder_main_postgres:
+  autograder_main_nats:
+  autograder_main_jwt:
+  autograder_main_jwks:
+  autograder_main_artifacts:

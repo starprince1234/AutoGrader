@@ -1,0 +1,24 @@
+# ADR 0002 题目版本 → 不可变 package 的编译与摘要绑定
+
+- **状态**：接受（2026-09-15；签名冻结见 `ADR-0005`，实现见 `src/autograder_b3/compile/`）
+- **背景**：
+  - B2 runner 只应消费一个结构统一、内容寻址、不可变的 `evaluation-package`，无需理解题目业务语义。
+  - `RQ-B-3-40/50/60` 是三种测试框架（stdin/file/callable），若为三种题型设计三套并行 package 结构，将破坏"新增题型不改 B2 runner 核心"（`MAIN/docs/workstreams/B3.md` §5 WP-B3-B 风险）。
+  - `evaluation-package.schema.json` 是 B2↔B3 的**最高风险耦合点**（`workstreams/B3.md` §4）。
+- **决策**：
+  - 题目版本经"package 编译器"编译成**不可变** evaluation package，绑定 `package_digest`（规范化后的内容摘要，SHA-256）。
+  - 三种 adapter（stdin/file/callable）**共用同一 package 结构与统一校验入口**，仅 adapter 段语义不同；adapter 类型由受限枚举表达（与 B2 runner policy 同枚举）。
+  - package 编译是确定性纯函数：同一 `question_version` 的同一内容 → 同一 `package_digest`。
+  - 绑定摘要（`question_version_id` + 版本内容摘要 + package 规范化摘要）写入 package，供评测可重放（`identifiers.md` §4）。
+  - 契约以 `../../../MAIN/contracts/schemas/evaluation-package.schema.json` 为唯一权威；先冻结再实现，变更走 `../../../MAIN/docs/contracts/change-protocol.md`。
+- **后果**：
+  - 获得：B2 只按 `adapter` 类型分派，新增题型不改 B2 核心；package 可缓存、可校验摘要。
+  - 获得：fixture 以摘要绑定，评测证据可引用摘要而非原始内容（隐私友好）。
+  - 付出：需要维护 package 编译器与统一校验入口；摘要算法必须与 MAIN 契约一致。
+  - 遗留风险：package 规范化算法若在 B2/B3 之间不一致，会导致"同一内容摘要不同"进而破坏可重放；需以契约层明确规范化规则（必要时进契约 schema）。
+- **关联**：
+  - 需求：`RQ-B-3-40/50/60`、`RQ-B-0-10`（language 枚举）、`RQ-B-0-30`（Unix 作业表达能力）
+  - 契约：`evaluation-package.schema.json`、`event-envelope.schema.json`
+  - 模型：`../architecture/models.md` §2（编译流程）、§4（adapter manifest）
+  - 组件：`../architecture/components.md`（扩展点）
+  - 测试：`../testing/cases.md` TC-ADP-01/02/03

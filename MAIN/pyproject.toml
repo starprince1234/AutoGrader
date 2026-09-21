@@ -1,0 +1,66 @@
+[project]
+name = "autograder-main"
+version = "0.1.0"
+description = "AutoGrader contract authority and composition host"
+requires-python = ">=3.12,<3.13"
+# The composition host must not depend on any particular module. It used to list
+# autograder-b2/b3/b4 here, which made the project's headline goal -- "a new module can be
+# added without touching MAIN" -- false at the *install* layer: with no ../B2 directory,
+# `uv sync` could not build MAIN's own environment at all (see ADR-0013). The business
+# modules now live in the `modules` extra, so the core installs and its gates run on a
+# machine that has no module source, and an integrated deployment opts in explicitly:
+# `uv sync --extra modules`.
+dependencies = [
+  "autograder-platform==0.1.0",
+  "fastapi>=0.115,<1",
+  "nats-py>=2.10,<3",
+  "psycopg[binary]>=3.2,<4",
+  "pydantic>=2.10,<3",
+  "sqlalchemy>=2.0,<3",
+  "uvicorn[standard]>=0.34,<1",
+]
+
+[project.optional-dependencies]
+# Every module the host is expected to compose in this deployment. Adding a module means
+# adding it here *or* installing it independently -- never editing host code.
+modules = [
+  "autograder-b2==0.1.0",
+  "autograder-b3==0.1.0",
+  "autograder-b4==0.1.0",
+  "autograder-b5==0.1.0",
+]
+
+[dependency-groups]
+dev = [
+  "jsonschema>=4.23,<5",
+  "httpx>=0.28,<1",
+  "pyyaml>=6.0,<7",
+  "pytest>=8.3,<9",
+  "pytest-cov>=6,<7",
+  "ruff>=0.9,<1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["host/src/autograder_host", "sdk/src/autograder_platform"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B008", "E501", "I001"]
+
+[tool.pytest.ini_options]
+testpaths = ["host/tests"]
+
+[tool.uv.sources]
+autograder-b2 = { path = "../B2" }
+autograder-b3 = { path = "../B3" }
+autograder-b4 = { path = "../B4" }
+autograder-b5 = { path = "../B5" }
+autograder-platform = { path = "sdk" }

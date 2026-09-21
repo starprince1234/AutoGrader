@@ -1,0 +1,154 @@
+[
+  {
+    "title": "统计输入的行数",
+    "stem_markdown": "## 题目\n\n从标准输入读取文本，输出它的行数。\n\n### 输入\n\n若干行文本，可能为空。\n\n### 输出\n\n一个整数，表示行数，末尾换行。\n\n### 示例\n\n输入：\n\n```\na\nb\nc\n```\n\n输出：\n\n```\n3\n```\n",
+    "language": "python",
+    "reference_answer": "import sys\nprint(len(sys.stdin.read().splitlines()))\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "a\nb\nc\n",
+      "expect_exit_code": 0,
+      "comparison": {"stdout": "ignore_trailing_whitespace", "stderr": "ignored", "numeric_tolerance": null}
+    },
+    "cases": [
+      {
+        "name": "示例：三行",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "a\nb\nc\n",
+        "args": [],
+        "expected_stdout": "3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：空输入",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": ["unix", "text"]
+  },
+  {
+    "title": "按字段求和",
+    "stem_markdown": "## 题目\n\n每行是若干以空格分隔的整数，输出所有整数之和。\n\n### 示例\n\n输入：\n\n```\n1 2 3\n4 5\n```\n\n输出：\n\n```\n15\n```\n",
+    "language": "python",
+    "reference_answer": "import sys\nprint(sum(int(token) for line in sys.stdin for token in line.split()))\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "1 2 3\n4 5\n",
+      "expect_exit_code": 0,
+      "comparison": {"stdout": "ignore_trailing_whitespace", "stderr": "ignored", "numeric_tolerance": null}
+    },
+    "cases": [
+      {
+        "name": "示例：两行",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "1 2 3\n4 5\n",
+        "args": [],
+        "expected_stdout": "15\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：负数",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "-1 -2\n10\n",
+        "args": [],
+        "expected_stdout": "7\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": ["unix", "text"]
+  },
+  {
+    "title": "从工作区文件读取并汇总",
+    "stem_markdown": "## 题目\n\n工作区中已有 `input/data.txt`，每行一个整数。输出它们的最大值与最小值（空格分隔，最大值在前）。\n\n### 示例\n\n若文件内容为：\n\n```\n3\n1\n4\n```\n\n输出：\n\n```\n4 1\n```\n",
+    "language": "python",
+    "reference_answer": "values = [int(line) for line in open('input/data.txt', encoding='utf-8') if line.strip()]\nprint(max(values), min(values))\n",
+    "adapter": {
+      "kind": "file",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {"stdout": "ignore_trailing_whitespace", "stderr": "ignored", "numeric_tolerance": null}
+    },
+    "fixtures": [
+      {"path": "input/data.txt", "mount": "input", "content": "3\n1\n4\n"}
+    ],
+    "cases": [
+      {
+        "name": "示例：三行整数",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "",
+        "args": [],
+        "expected_stdout": "4 1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": ["file", "io"]
+  },
+  {
+    "title": "Shell：统计行数",
+    "stem_markdown": "## 题目\n\n用 bash 从标准输入读取文本，输出行数。\n\n### 示例\n\n输入：\n\n```\nx\ny\n```\n\n输出：\n\n```\n2\n```\n",
+    "language": "bash",
+    "reference_answer": "#!/usr/bin/env bash\nset -euo pipefail\ncount=0\nwhile IFS= read -r _line; do\n  count=$((count + 1))\ndone\nprintf '%s\\n' \"$count\"\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "x\ny\n",
+      "expect_exit_code": 0,
+      "comparison": {"stdout": "ignore_trailing_whitespace", "stderr": "ignored", "numeric_tolerance": null}
+    },
+    "cases": [
+      {
+        "name": "示例：两行",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "x\ny\n",
+        "args": [],
+        "expected_stdout": "2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：三行",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a\nb\nc\n",
+        "args": [],
+        "expected_stdout": "3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": ["bash", "text"]
+  }
+]

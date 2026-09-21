@@ -1,0 +1,28 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: autograder
+      POSTGRES_USER: autograder_b3
+      POSTGRES_PASSWORD: change-me-local-only
+    # Module-local database for B3-only work and for the test suite. It is
+    # deliberately NOT the platform port (55432 belongs to MAIN/compose.yaml): B3's
+    # tests drop and re-migrate the b3 schema, which must not touch the shared
+    # platform database. `.env.example` and `alembic.ini` point at the platform
+    # integration target and are checked against MAIN/compose.yaml by MAIN/host.
+    # See docs/runbooks/local-development.md.
+    ports:
+      - "55434:5432"
+    volumes:
+      - b3_postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+    mem_limit: 96m
+    cpus: 0.15
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U autograder_b3 -d autograder"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  b3_postgres_data:

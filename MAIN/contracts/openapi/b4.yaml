@@ -1,0 +1,674 @@
+openapi: 3.1.0
+info:
+  title: AutoGrader B4 Platform API
+  version: 0.16.0
+  description: |
+    Identity, courses, sections, enrollments, roster import, audit and the runtime
+    module registry. Owned by B4 (RQ-B-4-10/20/30/40/50/99).
+
+    Ownership split for RQ-B-4-40: this file is authored by MAIN (design-time
+    authority); B4 owns the *runtime* registry endpoints defined here. See
+    MAIN/docs/adr/ADR-0003-api-authority-and-runtime-registry.md.
+
+    Every path below is declared in B4/module.yaml `routes`.
+  license:
+    name: Course project (internal)
+servers:
+  - url: /
+    description: Served by the MAIN composition host, same origin as the B1 client.
+
+# Document-level default: every B4 operation requires a bearer access token. The three
+# session/JWKS operations are public by design and say so individually:
+#   * `createSession`  — credentials are in the body; there is nothing to authenticate yet.
+#   * `refreshSession` — authenticated by the HttpOnly refresh cookie, not by a bearer token.
+#   * `getJwks`        — every module verifies tokens locally, so the key set must be readable
+#                        without a token (it is public key material and reveals nothing).
+security:
+  - bearerAuth: []
+
+paths:
+  /api/v1/auth/session:
+    post:
+      operationId: createSession
+      summary: Authenticate and open a session
+      description: |
+        Verifies credentials, returns a short-lived Ed25519 access token, and sets the
+        refresh credential as an HttpOnly + Secure + SameSite cookie. The refresh
+        credential is never returned in the response body. Failures do not reveal
+        whether the principal exists.
+      tags: [auth]
+      security: []
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Traceparent'
+        - $ref: './common.yaml#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username: {type: string, minLength: 1, maxLength: 200}
+                password: {type: string, minLength: 1, maxLength: 400, format: password}
+              additionalProperties: false
+      responses:
+        '200':
+          description: Session created.
+          headers:
+            Set-Cookie:
+              schema: {type: string}
+              description: "HttpOnly; Secure; SameSite refresh credential. Never exposed to JavaScript."
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [access_token, token_type, expires_in, username, roles, scope]
+                properties:
+                  access_token: {type: string, description: "Short-lived Ed25519 JWT."}
+                  token_type: {type: string, const: Bearer}
+                  expires_in: {type: integer, minimum: 1}
+                  username:
+                    type: string
+                    description: |
+                      Login identifier of the authenticated principal. The token itself
+                      carries only `sub` (a UUID) by design, so without this field a
+                      client cannot say *who* is signed in after a refresh -- the header
+                      rendered "-" until integration caught it.
+                  roles:
+                    type: array
+                    items: {$ref: './common.yaml#/components/schemas/Role'}
+                  scope:
+                    type: array
+                    items: {$ref: './common.yaml#/components/schemas/CourseScope'}
+                additionalProperties: false
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+        '429': {$ref: './common.yaml#/components/responses/TooManyRequests'}
+        '503': {$ref: './common.yaml#/components/responses/ServiceUnavailable'}
+
+  /api/v1/auth/session/refresh:
+    post:
+      operationId: refreshSession
+      summary: Rotate the refresh credential and issue a new access token
+      tags: [auth]
+      security: []
+      responses:
+        '200':
+          description: Access token reissued; the refresh credential is rotated.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [access_token, token_type, expires_in, username, roles, scope]
+                properties:
+                  access_token: {type: string}
+                  token_type: {type: string, const: Bearer}
+                  expires_in: {type: integer, minimum: 1}
+                  username:
+                    type: string
+                    description: "See createSession: the principal's login name, so a refreshed page can still show who is signed in."
+                  roles:
+                    type: array
+                    items: {$ref: './common.yaml#/components/schemas/Role'}
+                  scope:
+                    type: array
+                    items: {$ref: './common.yaml#/components/schemas/CourseScope'}
+                additionalProperties: false
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+
+  /api/v1/auth/session/logout:
+    delete:
+      operationId: deleteSession
+      summary: Invalidate the current session
+      tags: [auth]
+      responses:
+        '204': {description: Session invalidated.}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+
+  /api/v1/auth/jwks:
+    get:
+      operationId: getJwks
+      summary: Publish the Ed25519 public keys
+      description: |
+        Every module verifies tokens locally against this key set instead of calling
+        B4 on the request path. Keys are identified by `kid` and rotated from the
+        runbook procedure.
+      tags: [auth]
+      security: []
+      responses:
+        '200':
+          description: JWK Set.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [keys]
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      type: object
+                      required: [kty, crv, kid, x]
+                      properties:
+                        kty: {type: string, const: OKP}
+                        crv: {type: string, const: Ed25519}
+                        kid: {type: string}
+                        x: {type: string}
+                        use: {type: string, const: sig}
+                        alg: {type: string, const: EdDSA}
+                      additionalProperties: true
+                additionalProperties: false
+
+  /api/v1/users:
+    get:
+      operationId: listUsers
+      summary: List platform users (admin only)
+      tags: [users]
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Cursor'
+        - $ref: './common.yaml#/components/parameters/Limit'
+        - {name: role, in: query, required: false, schema: {$ref: './common.yaml#/components/schemas/Role'}}
+      responses:
+        '200':
+          description: Page of users.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: './common.yaml#/components/schemas/CursorPage'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: {$ref: '#/components/schemas/UserSummary'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+    post:
+      operationId: createUser
+      summary: Create a platform user (admin only)
+      tags: [users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [display_name, username, roles]
+              properties:
+                display_name: {type: string, minLength: 1, maxLength: 200}
+                username: {type: string, minLength: 1, maxLength: 200}
+                student_number: {type: [string, "null"], maxLength: 64}
+                email: {type: [string, "null"], format: email, maxLength: 320}
+                roles:
+                  type: array
+                  minItems: 1
+                  items: {$ref: './common.yaml#/components/schemas/Role'}
+                password: {type: string, format: password, description: "Hashed with Argon2id or bcrypt at rest; never logged."}
+              additionalProperties: false
+      responses:
+        '201': {description: User created.}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+
+  /api/v1/users/{user_id}:
+    parameters:
+      - {name: user_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    patch:
+      operationId: updateUser
+      summary: Update a user or reassign roles (admin only)
+      tags: [users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                display_name: {type: string, minLength: 1, maxLength: 200}
+                email: {type: [string, "null"], format: email, maxLength: 320}
+                roles:
+                  type: array
+                  items: {$ref: './common.yaml#/components/schemas/Role'}
+                expected_updated_at:
+                  allOf: [{$ref: './common.yaml#/components/schemas/Timestamp'}]
+                  description: "Optimistic concurrency guard; a mismatch returns 409 rather than silently overwriting."
+              additionalProperties: false
+      responses:
+        '200': {description: User updated; an audit record is written.}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+    delete:
+      operationId: deleteUser
+      summary: Deactivate a user (admin only)
+      tags: [users]
+      responses:
+        '204': {description: User deactivated; an audit record is written.}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
+  /api/v1/courses:
+    get:
+      operationId: listCourses
+      summary: List courses within the caller's authorization scope
+      tags: [courses]
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Cursor'
+        - $ref: './common.yaml#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Page of courses.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: './common.yaml#/components/schemas/CursorPage'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: {$ref: '#/components/schemas/CourseSummary'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+    post:
+      operationId: createCourse
+      summary: Create a course (teacher or admin)
+      tags: [courses]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [course_code, title]
+              properties:
+                course_code: {type: string, minLength: 1, maxLength: 64}
+                title: {type: string, minLength: 1, maxLength: 200}
+              additionalProperties: false
+      responses:
+        '201': {description: Course created.}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
+
+  /api/v1/courses/{course_id}/sections:
+    parameters:
+      - {name: course_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    get:
+      operationId: listSections
+      summary: List sections (课序) of a course
+      tags: [courses]
+      responses:
+        '200': {description: Sections of the course.}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+    post:
+      operationId: createSection
+      summary: Create a section (teacher or admin)
+      tags: [courses]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [section_code]
+              properties:
+                section_code: {type: string, minLength: 1, maxLength: 64}
+                term: {type: [string, "null"], maxLength: 64}
+              additionalProperties: false
+      responses:
+        '201': {description: Section created.}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
+
+  /api/v1/sections/{section_id}/enrollments:
+    parameters:
+      - {name: section_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    get:
+      operationId: listEnrollments
+      summary: List the roster of a section
+      description: Returns student identity fields only to callers authorized for the section.
+      tags: [courses]
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Cursor'
+        - $ref: './common.yaml#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Page of enrollments.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: './common.yaml#/components/schemas/CursorPage'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: {$ref: '#/components/schemas/EnrollmentPublic'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
+  /api/v1/enrollments/{enrollment_id}:
+    parameters:
+      - {name: enrollment_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    patch:
+      operationId: updateEnrollment
+      summary: Edit a roster entry (RQ-B-1-20)
+      description: |
+        Requires write permission for the section. Concurrency is guarded by
+        expected_updated_at; a mismatch returns 409 instead of overwriting. Every
+        successful edit writes an audit record with the actor, target and a digest
+        of the before/after values.
+      tags: [courses]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                student_number: {type: string, maxLength: 64}
+                display_name: {type: string, minLength: 1, maxLength: 200}
+                expected_updated_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+              additionalProperties: false
+      responses:
+        '200': {description: Enrollment updated.}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+    delete:
+      operationId: deleteEnrollment
+      summary: Remove a roster entry
+      tags: [courses]
+      responses:
+        '204': {description: Enrollment removed; an audit record is written.}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
+  /api/v1/roster-imports:
+    post:
+      operationId: createRosterImport
+      summary: Upload a roster file and start parsing (RQ-B-1-10)
+      description: |
+        Accepts a PDF or XLSX roster. Parsing never guesses: when a column cannot be
+        mapped unambiguously the import stops in `mapping_required` and waits for a
+        human decision. No roster row is persisted before confirmation.
+      tags: [roster]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, course_id, section_id]
+              properties:
+                file: {type: string, format: binary}
+                course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+                section_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+              additionalProperties: false
+      responses:
+        '202':
+          description: Import accepted for parsing.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RosterImportPreview'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '413': {$ref: './common.yaml#/components/responses/PayloadTooLarge'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+
+  /api/v1/roster-imports/{roster_import_id}:
+    parameters:
+      - {name: roster_import_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    get:
+      operationId: getRosterImport
+      summary: Read the parse preview and per-row validation result
+      tags: [roster]
+      responses:
+        '200':
+          description: Current import state and preview. Rejected rows are always listed, never dropped silently.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RosterImportPreview'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
+  /api/v1/roster-imports/{roster_import_id}/mapping:
+    parameters:
+      - {name: roster_import_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    put:
+      operationId: setRosterColumnMapping
+      summary: Confirm or correct the column mapping
+      description: "Required when the import is in `mapping_required`; the mapping is recorded for traceability."
+      tags: [roster]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [columns]
+              properties:
+                columns:
+                  type: object
+                  description: "Map of target field name to source column header."
+                  additionalProperties: {type: string}
+              additionalProperties: false
+      responses:
+        '200': {description: Mapping accepted; validation runs again.}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+
+  /api/v1/roster-imports/{roster_import_id}/confirm:
+    parameters:
+      - {name: roster_import_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    post:
+      operationId: confirmRosterImport
+      summary: Commit the previewed roster atomically (RQ-B-1-10)
+      description: |
+        Idempotent: repeating the confirmation does not duplicate rows. Atomic: either
+        every accepted row is written or none is. Emits
+        `autograder.v1.roster.import.completed` on success; the payload carries no PII.
+      tags: [roster]
+      parameters:
+        - $ref: './common.yaml#/components/parameters/IdempotencyKey'
+      responses:
+        '202': {description: Commit accepted.}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+
+  /api/v1/audit-records:
+    get:
+      operationId: listAuditRecords
+      summary: Query audit records (admin or authorized teacher)
+      tags: [audit]
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Cursor'
+        - $ref: './common.yaml#/components/parameters/Limit'
+        - {name: course_id, in: query, required: false, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+        - {name: from, in: query, required: false, schema: {$ref: './common.yaml#/components/schemas/Timestamp'}}
+        - {name: to, in: query, required: false, schema: {$ref: './common.yaml#/components/schemas/Timestamp'}}
+      responses:
+        '200': {description: Page of audit records.}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+
+  /api/v1/modules:
+    get:
+      operationId: listRegisteredModules
+      summary: Runtime module registry (RQ-B-4-40)
+      description: |
+        Reports the modules the composition host actually loaded, so "plug and play"
+        is observable at runtime rather than asserted in prose. The registry content
+        must agree with each module's module.yaml and SDK descriptor; a disagreement
+        is reported as a failure, never smoothed over.
+      tags: [platform]
+      responses:
+        '200':
+          description: Loaded modules and their declared capabilities.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [modules]
+                properties:
+                  modules:
+                    type: array
+                    items: {$ref: '#/components/schemas/RegisteredModule'}
+                additionalProperties: false
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '503': {$ref: './common.yaml#/components/responses/ServiceUnavailable'}
+
+  /api/v1/modules/{module}/health:
+    parameters:
+      - {name: module, in: path, required: true, schema: {type: string, pattern: '^B[0-9]{1,3}$'}}
+    get:
+      operationId: getModuleHealth
+      summary: Per-module health reported through the host
+      tags: [platform]
+      responses:
+        '200': {description: Module health report.}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '503': {$ref: './common.yaml#/components/responses/ServiceUnavailable'}
+
+components:
+  schemas:
+    EnrollmentPublic:
+      type: object
+      description: |
+        One row of a section's roster. Recorded by CHG-0007: the operation previously
+        returned an undocumented body ("Page of enrollments.").
+
+        `student_id` was added by the same change because its absence made a required
+        feature impossible: B2's grade rows identify a student only by platform user id,
+        while the roster exposed only `student_number`/`display_name` — and B2 legitimately
+        cannot supply those (it owns only the `b2` schema, so its `student_number` and
+        `display_name` are always null by design). With no shared key, a client could not
+        answer "who has not submitted yet" without dumping the admin-only user list.
+        `student_id` is the platform user id and is **nullable**: a roster row that was
+        never matched to a user account has none (the column is nullable in `b4`).
+      required: [enrollment_id, section_id, student_number, display_name, is_active]
+      properties:
+        enrollment_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        section_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        student_id: {anyOf: [{$ref: './common.yaml#/components/schemas/Uuid'}, {type: "null"}]}
+        student_number: {type: string, minLength: 1, maxLength: 64}
+        display_name: {type: string, minLength: 1, maxLength: 200}
+        is_active: {type: boolean}
+        updated_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+      additionalProperties: false
+
+    UserSummary:
+      type: object
+      required: [user_id, username, display_name, roles]
+      properties:
+        user_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        username:
+          type: string
+          description: "Login identifier. Required in the summary: it is the only field by which an administrator can recognise or look up an account, and an admin screen that cannot show it is unusable (RQ-B-4-50)."
+        display_name: {type: string}
+        student_number: {type: [string, "null"]}
+        roles:
+          type: array
+          items: {$ref: './common.yaml#/components/schemas/Role'}
+        created_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+      additionalProperties: false
+
+    CourseSummary:
+      type: object
+      required: [course_id, course_code, title]
+      properties:
+        course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        course_code: {type: string}
+        title: {type: string}
+      additionalProperties: false
+
+    RosterImportPreview:
+      type: object
+      description: |
+        Parse preview for a roster import. `database.schema` of B4 is untouched while
+        the import sits in `previewed`. Rows that fail validation appear in `rejected`
+        with a reason; they are never dropped silently.
+      required: [roster_import_id, status, course_id, section_id, detected_columns]
+      properties:
+        roster_import_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        status:
+          type: string
+          enum: [uploaded, parsed, mapping_required, validating, previewed, committed, rejected, failed_parse]
+        course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        section_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        detected_columns:
+          type: array
+          items: {type: string}
+        proposed_mapping:
+          type: object
+          additionalProperties: {type: string}
+        accepted_rows:
+          type: array
+          items: {$ref: '#/components/schemas/RosterRowPreview'}
+        rejected_rows:
+          type: array
+          items: {$ref: '#/components/schemas/RosterRowPreview'}
+        created_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+      additionalProperties: false
+
+    RosterRowPreview:
+      type: object
+      required: [row_number]
+      properties:
+        row_number: {type: integer, minimum: 1}
+        values:
+          type: object
+          description: "Normalized field values for review. Contains student identity fields; returned only to authorized callers."
+          additionalProperties: true
+        reason: {type: [string, "null"], description: "Why the row was rejected; required for entries in rejected_rows."}
+      additionalProperties: false
+
+    RegisteredModule:
+      type: object
+      description: "One loaded module as observed at runtime by the composition host."
+      required: [module, contract_version, provides, requires, routes, publishes, subscribes, database_schema, migration_head, healthy]
+      properties:
+        module: {type: string, pattern: '^B[0-9]{1,3}$'}
+        contract_version: {type: string}
+        provides:
+          type: array
+          items: {type: string}
+        requires:
+          type: array
+          items: {type: string}
+        routes:
+          type: array
+          items: {type: string, pattern: '^/'}
+        publishes:
+          type: array
+          items: {type: string, pattern: '^autograder\.v1\.'}
+        subscribes:
+          type: array
+          items: {type: string, pattern: '^autograder\.v1\.'}
+        database_schema: {type: string, enum: [none, b2, b3, b4]}
+        migration_head: {type: string}
+        healthy: {type: boolean}
+        detail: {type: string}
+      additionalProperties: false

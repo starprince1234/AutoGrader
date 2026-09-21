@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autograder.local/contracts/language.schema.json",
+  "title": "Graded language",
+  "description": "The two languages the system may grade (RQ-B-0-10). B3 declares it per question version; B2 selects interpreter, static checker and sandbox policy from it. Free-form language strings are forbidden.",
+  "type": "string",
+  "enum": ["python", "bash"],
+  "$comment": "Python maps to the CPython 3.x interpreter plus an AST checker; bash maps to bash 5.x with `bash -n` plus structured rules. Adding a language requires a P3 contract change plus a sandbox policy review (see MAIN/docs/contracts/change-protocol.md)."
+}

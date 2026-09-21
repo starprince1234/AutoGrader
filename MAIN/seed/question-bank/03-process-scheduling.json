@@ -1,0 +1,1122 @@
+[
+  {
+    "title": "FCFS 调度的平均等待时间",
+    "stem_markdown": "## FCFS 调度的平均等待时间\n\n按**先来先服务**（FCFS）调度一批进程，求所有进程的平均等待时间。\n\n### 输入格式\n\n- 第 1 行：整数 `n`，进程数（1 ≤ n ≤ 20）。\n- 接下来 `n` 行：每行三个整数 `pid arrival burst`，依次为进程编号、到达时刻、需要占用 CPU 的时间。\n  - `pid` 互不相同；`arrival ≥ 0`；`burst ≥ 1`。\n  - 这 `n` 行按 `arrival` **非递减**给出；`arrival` 相同时，先出现的那一行先被调度。\n\n### 调度约定\n\n1. 调度非抢占：进程一旦拿到 CPU 就一直运行到执行完毕。\n2. 就绪队列为空时 CPU 空闲，直到下一个进程到达。\n3. 等待时间 = 开始运行时刻 − 到达时刻。\n4. 平均等待时间 = 等待时间总和 ÷ n。\n\n### 输出格式\n\n一行，平均等待时间，**固定保留两位小数**（例如 `5.75`、`12.30`），末尾换行。\n\n### 示例\n\n输入：\n\n```\n4\n1 0 5\n2 1 3\n3 2 8\n4 3 6\n```\n\n输出：\n\n```\n5.75\n```\n\n四个进程的开始时刻依次是 0、5、8、16，等待时间依次是 0、4、6、13，总和 23，平均 23 ÷ 4 = 5.75。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\n\ndef main():\n    data = sys.stdin.read().split()\n    if not data:\n        return\n    idx = 0\n    n = int(data[idx])\n    idx += 1\n    procs = []\n    for _ in range(n):\n        pid = int(data[idx])\n        arrival = int(data[idx + 1])\n        burst = int(data[idx + 2])\n        idx += 3\n        procs.append((pid, arrival, burst))\n\n    clock = 0\n    total = 0\n    for pid, arrival, burst in procs:\n        if clock < arrival:\n            clock = arrival\n        total += clock - arrival\n        clock += burst\n\n    print(f\"{total / n:.2f}\")\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "4\n1 0 5\n2 1 3\n3 2 8\n4 3 6\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：四个进程依次到达",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "4\n1 0 5\n2 1 3\n3 2 8\n4 3 6\n",
+        "args": [],
+        "expected_stdout": "5.75\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：中间出现空闲",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "3\n10 0 4\n11 2 6\n12 3 2\n",
+        "args": [],
+        "expected_stdout": "3.00\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：到达时刻有间隔",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "5\n1 5 3\n2 5 4\n3 6 2\n4 12 5\n5 13 1\n",
+        "args": [],
+        "expected_stdout": "3.40\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：无空闲时间的连续到达",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "4\n7 0 2\n8 1 2\n9 2 2\n10 3 2\n",
+        "args": [],
+        "expected_stdout": "1.50\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "os",
+      "scheduling",
+      "fcfs"
+    ]
+  },
+  {
+    "title": "非抢占式 SJF 的平均等待时间",
+    "stem_markdown": "## 非抢占式 SJF 的平均等待时间\n\n按**非抢占式最短作业优先**（SJF）调度一批进程，求所有进程的平均等待时间。\n\n### 输入格式\n\n- 第 1 行：整数 `n`，进程数（1 ≤ n ≤ 20）。\n- 接下来 `n` 行：每行三个整数 `pid arrival burst`，依次为进程编号、到达时刻、CPU 执行时间。\n  - `pid` 互不相同；`arrival ≥ 0`；`burst ≥ 1`。\n  - 各行的先后顺序**没有**调度含义，请按下面的规则自行判断。\n\n### 调度约定\n\n1. 非抢占：进程一旦开始运行就运行到结束，中途不会被换下。\n2. CPU 空闲时，如果已有进程到达，就在**已到达且尚未运行**的进程中选一个开始运行；如果没有进程到达，CPU 空闲到下一个进程的到达时刻。\n3. 选择依据依次为：\n   - `burst` 最小；\n   - 若 `burst` 相同，`arrival` 最小；\n   - 若 `arrival` 也相同，`pid` 最小。\n4. 等待时间 = 开始运行时刻 − 到达时刻；平均等待时间 = 等待时间总和 ÷ n。\n\n### 输出格式\n\n一行，平均等待时间，**固定保留两位小数**，末尾换行。\n\n### 示例\n\n输入：\n\n```\n4\n1 0 7\n2 2 4\n3 4 1\n4 5 4\n```\n\n输出：\n\n```\n4.00\n```\n\n进程 1 在 0 时刻开始运行到 7（等待 0）。7 时刻另外三个进程都已到达，其中进程 3 的 `burst` 最小（1），运行 7–8（等待 3）。8 时刻进程 2 与进程 4 的 `burst` 都是 4，按较小的 `arrival`（2 < 5）先选进程 2，运行 8–12（等待 6）。最后进程 4 运行 12–16（等待 7）。等待时间总和 0+3+6+7 = 16，平均 16 ÷ 4 = 4.00。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\n\ndef main():\n    data = sys.stdin.read().split()\n    if not data:\n        return\n    idx = 0\n    n = int(data[idx])\n    idx += 1\n    procs = []\n    for _ in range(n):\n        pid = int(data[idx])\n        arrival = int(data[idx + 1])\n        burst = int(data[idx + 2])\n        idx += 3\n        procs.append([pid, arrival, burst])\n\n    pending = list(procs)\n    clock = 0\n    total = 0\n    while pending:\n        ready = [p for p in pending if p[1] <= clock]\n        if not ready:\n            clock = min(p[1] for p in pending)\n            continue\n        ready.sort(key=lambda p: (p[2], p[1], p[0]))\n        chosen = ready[0]\n        total += clock - chosen[1]\n        clock += chosen[2]\n        pending.remove(chosen)\n\n    print(f\"{total / n:.2f}\")\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "4\n1 0 7\n2 2 4\n3 4 1\n4 5 4\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：短作业插队",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "4\n1 0 7\n2 2 4\n3 4 1\n4 5 4\n",
+        "args": [],
+        "expected_stdout": "4.00\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：CPU 先空闲后连续忙",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "5\n1 3 5\n2 0 2\n3 4 3\n4 6 1\n5 8 2\n",
+        "args": [],
+        "expected_stdout": "2.00\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：burst 相同看到达时间",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "4\n1 0 3\n2 1 7\n3 2 2\n4 3 4\n",
+        "args": [],
+        "expected_stdout": "2.75\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：同时到达按 pid 决胜",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "4\n11 0 1\n12 0 3\n13 2 2\n14 5 2\n",
+        "args": [],
+        "expected_stdout": "1.00\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "os",
+      "scheduling",
+      "sjf"
+    ]
+  },
+  {
+    "title": "时间片轮转（RR）的完成顺序",
+    "stem_markdown": "## 时间片轮转（RR）的完成顺序\n\n用时间片轮转调度一批进程，输出它们**完成的先后顺序**。\n\n### 输入格式\n\n- 第 1 行：两个整数 `n quantum`，进程数与时间片长度（1 ≤ n ≤ 20，quantum ≥ 1）。\n- 接下来 `n` 行：每行三个整数 `pid arrival burst`，依次为进程编号、到达时刻、CPU 执行时间。\n  - `pid` 互不相同；`arrival ≥ 0`；`burst ≥ 1`。各行顺序无调度含义。\n\n### 调度约定（务必按此实现）\n\n1. 时间从 0 开始，就绪队列是先入先出队列。\n2. 在任一时刻 `t`，先把**所有 `arrival` 恰好等于 `t` 且尚未入队**的进程按 `pid` 升序追加到队尾。\n3. 若 CPU 空闲且队列非空，取队首进程 P，让它运行 `min(quantum, P 的剩余时间)` 个时间单位。\n4. 若 P 在这段时间内把剩余时间跑完，则 P 完成，记入完成顺序。\n5. 否则 P 运行满一个时间片后被抢占：先把**这一时刻新到达**的进程按 `pid` 升序入队，再把 P 放到队尾。（注意顺序：新到达的进程排在 P 前面。）\n6. 若 CPU 空闲且就绪队列为空，时间直接跳到下一个尚未入队的进程的到达时刻。\n7. 进程的剩余时间恰好等于 `quantum` 时，它在该时间片内完成，不再回到队列。\n\n### 输出格式\n\n一行，按完成时刻从早到晚给出进程编号，用单个空格分隔，末尾换行。\n\n### 示例\n\n输入：\n\n```\n3 4\n1 0 5\n2 1 4\n3 2 2\n```\n\n输出：\n\n```\n2 3 1\n```\n\n调度过程：\n\n| 运行区间 | 进程 | 运行结束后的剩余时间 |\n|---|---|---|\n| 0 – 4 | 1 | 1 |\n| 4 – 8 | 2 | 0（完成） |\n| 8 – 10 | 3 | 0（完成） |\n| 10 – 11 | 1 | 0（完成） |\n\n因此完成顺序是 2 3 1。\n",
+    "language": "python",
+    "reference_answer": "import sys\nfrom collections import deque\n\n\ndef main():\n    data = sys.stdin.read().split()\n    if not data:\n        return\n    idx = 0\n    n = int(data[idx])\n    quantum = int(data[idx + 1])\n    idx += 2\n    procs = []\n    for _ in range(n):\n        pid = int(data[idx])\n        arrival = int(data[idx + 1])\n        burst = int(data[idx + 2])\n        idx += 3\n        procs.append((arrival, pid, burst))\n\n    procs.sort(key=lambda p: (p[0], p[1]))\n    remaining = {p[1]: p[2] for p in procs}\n    ready = deque()\n    position = 0\n    clock = 0\n    finish_order = []\n\n    def admit(now):\n        nonlocal position\n        while position < n and procs[position][0] <= now:\n            ready.append(procs[position][1])\n            position += 1\n\n    admit(0)\n    while len(finish_order) < n:\n        if not ready:\n            clock = procs[position][0]\n            admit(clock)\n        pid = ready.popleft()\n        run = min(quantum, remaining[pid])\n        clock += run\n        remaining[pid] -= run\n        admit(clock)\n        if remaining[pid] == 0:\n            finish_order.append(pid)\n        else:\n            ready.append(pid)\n\n    print(\" \".join(str(pid) for pid in finish_order))\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "3 4\n1 0 5\n2 1 4\n3 2 2\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：经典三进程",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "3 4\n1 0 5\n2 1 4\n3 2 2\n",
+        "args": [],
+        "expected_stdout": "2 3 1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：两个进程同时开始",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "4 3\n1 0 4\n2 0 3\n3 1 2\n4 2 1\n",
+        "args": [],
+        "expected_stdout": "2 3 4 1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：抢先入队顺序的考验",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "5 2\n1 0 5\n2 1 1\n3 1 3\n4 4 2\n5 4 2\n",
+        "args": [],
+        "expected_stdout": "2 4 5 3 1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：长作业与后到短作业",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "4 2\n1 0 7\n2 0 3\n3 5 4\n4 9 2\n",
+        "args": [],
+        "expected_stdout": "2 4 3 1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "os",
+      "scheduling",
+      "round-robin"
+    ]
+  },
+  {
+    "title": "优先级调度的平均等待时间",
+    "stem_markdown": "## 优先级调度的平均等待时间\n\n按**非抢占式优先级调度**运行一批进程，求所有进程的平均等待时间。\n\n### 输入格式\n\n- 第 1 行：整数 `n`，进程数（1 ≤ n ≤ 20）。\n- 接下来 `n` 行：每行四个整数 `pid arrival burst priority`，依次为进程编号、到达时刻、CPU 执行时间、优先级。\n  - `pid` 互不相同；`arrival ≥ 0`；`burst ≥ 1`；`priority ≥ 0`。\n  - **优先级数值越小，优先级越高**（例如 `priority = 1` 比 `priority = 3` 先运行）。\n  - 各行顺序无调度含义。\n\n### 调度约定\n\n1. 非抢占：进程一旦开始运行就运行到结束。\n2. CPU 空闲时，若已有进程到达，则在已到达且未运行的进程中选择一个开始运行；若无人到达，CPU 空闲到下一个到达时刻。\n3. 选择依据依次为：\n   - `priority` 数值最小；\n   - 若相同，`arrival` 最小；\n   - 若仍相同，`pid` 最小。\n4. 等待时间 = 开始运行时刻 − 到达时刻；平均等待时间 = 等待时间总和 ÷ n。\n\n### 输出格式\n\n一行，平均等待时间，**固定保留两位小数**，末尾换行。\n\n### 示例\n\n输入：\n\n```\n4\n1 0 4 2\n2 1 3 1\n3 2 6 3\n4 3 2 1\n```\n\n输出：\n\n```\n3.50\n```\n\n0 时刻只有进程 1 到达，运行 0–4（等待 0）。4 时刻进程 2（priority 1）、进程 3（priority 3）、进程 4（priority 1）都已到达，数值最小的是 1，进程 2 与进程 4 并列，取 `arrival` 较小的进程 2，运行 4–7（等待 3）。7 时刻进程 4（priority 1）优先于进程 3（priority 3），运行 7–9（等待 4）。最后进程 3 运行 9–15（等待 7）。总和 0+3+4+7 = 14，平均 14 ÷ 4 = 3.50。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\n\ndef main():\n    data = sys.stdin.read().split()\n    if not data:\n        return\n    idx = 0\n    n = int(data[idx])\n    idx += 1\n    procs = []\n    for _ in range(n):\n        pid = int(data[idx])\n        arrival = int(data[idx + 1])\n        burst = int(data[idx + 2])\n        priority = int(data[idx + 3])\n        idx += 4\n        procs.append([pid, arrival, burst, priority])\n\n    pending = list(procs)\n    clock = 0\n    total = 0\n    while pending:\n        ready = [p for p in pending if p[1] <= clock]\n        if not ready:\n            clock = min(p[1] for p in pending)\n            continue\n        ready.sort(key=lambda p: (p[3], p[1], p[0]))\n        chosen = ready[0]\n        total += clock - chosen[1]\n        clock += chosen[2]\n        pending.remove(chosen)\n\n    print(f\"{total / n:.2f}\")\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "4\n1 0 4 2\n2 1 3 1\n3 2 6 3\n4 3 2 1\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：优先级与到达时间共同决定",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "4\n1 0 4 2\n2 1 3 1\n3 2 6 3\n4 3 2 1\n",
+        "args": [],
+        "expected_stdout": "3.50\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：优先级相同按 pid",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "3\n1 0 5 2\n2 0 5 2\n3 0 5 1\n",
+        "args": [],
+        "expected_stdout": "5.00\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：等待期间不断有新进程到达",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "5\n1 0 3 3\n2 2 4 1\n3 2 2 2\n4 6 1 2\n5 8 2 1\n",
+        "args": [],
+        "expected_stdout": "2.40\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：CPU 空闲后高优先级到达",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "4\n1 0 2 5\n2 0 2 5\n3 0 2 4\n4 10 3 1\n",
+        "args": [],
+        "expected_stdout": "1.50\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "os",
+      "scheduling",
+      "priority"
+    ]
+  },
+  {
+    "title": "FIFO 页面置换的缺页次数",
+    "stem_markdown": "## FIFO 页面置换的缺页次数\n\n用**先入先出**（FIFO）页面置换算法处理一个页面访问串，输出总的缺页次数。\n\n### 输入格式\n\n- 第 1 行：整数 `f`，可用帧数（1 ≤ f ≤ 10）。\n- 第 2 行：整数 `n`，访问串长度（1 ≤ n ≤ 100）。\n- 第 3 行：`n` 个整数，依次为每次访问的页面号（0 ≤ 页面号 ≤ 99），用空格分隔。\n\n### 输出格式\n\n一行，一个整数：缺页总次数，末尾换行。\n\n### 规则\n\n1. 内存有 `f` 个帧，初始时全部为空；访问串按给定顺序逐页访问。\n2. 被访问页面**不在**任何帧中即为一次**缺页**；已经在某个帧中称为命中，不产生缺页。\n3. 缺页时若还有空闲帧，把页面放入**编号最小**的空闲帧。\n4. 缺页且没有空闲帧时，淘汰**最早被装入**内存的那一页（先入先出），把新页面装入该帧。\n5. 命中和缺页都要继续处理下一个访问。\n\n### 示例\n\n输入：\n\n```\n3\n12\n1 2 3 4 1 2 5 1 2 3 4 5\n```\n\n输出：\n\n```\n9\n```\n\n前三个访问 1、2、3 依次装入三个帧并各缺页一次；访问 4 时淘汰最先装入的 1；随后访问 1、2 又各淘汰当前最早装入的页；访问 5 淘汰 4；访问 1、2 命中；访问 3 淘汰 1，访问 4 淘汰 2；访问 5 命中。总共 9 次缺页。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\n\ndef main():\n    data = sys.stdin.read().split()\n    if not data:\n        return\n    frames = int(data[0])\n    n = int(data[1])\n    refs = [int(x) for x in data[2:2 + n]]\n\n    loaded = []          # 驻留页面，按装入先后排列\n    faults = 0\n    for page in refs:\n        if page in loaded:\n            continue\n        faults += 1\n        if len(loaded) < frames:\n            loaded.append(page)\n        else:\n            loaded.pop(0)\n            loaded.append(page)\n\n    print(faults)\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "3\n12\n1 2 3 4 1 2 5 1 2 3 4 5\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：三帧经典访问串",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "3\n12\n1 2 3 4 1 2 5 1 2 3 4 5\n",
+        "args": [],
+        "expected_stdout": "9\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：含 0 号页且不再回头",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "4\n10\n7 0 1 2 0 3 0 4 2 3\n",
+        "args": [],
+        "expected_stdout": "6\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：两帧反复抖动",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2\n8\n1 2 1 3 1 4 1 5\n",
+        "args": [],
+        "expected_stdout": "6\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：重复访问减少缺页",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "3\n10\n4 1 2 4 5 1 3 2 5 4\n",
+        "args": [],
+        "expected_stdout": "6\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "os",
+      "memory",
+      "fifo"
+    ]
+  },
+  {
+    "title": "LRU 页面置换的缺页次数",
+    "stem_markdown": "## LRU 页面置换的缺页次数\n\n用**最近最少使用**（LRU）页面置换算法处理一个页面访问串，输出总的缺页次数。\n\n### 输入格式\n\n- 第 1 行：整数 `f`，可用帧数（1 ≤ f ≤ 10）。\n- 第 2 行：整数 `n`，访问串长度（1 ≤ n ≤ 100）。\n- 第 3 行：`n` 个整数，依次为每次访问的页面号（0 ≤ 页面号 ≤ 99），用空格分隔。\n\n### 输出格式\n\n一行，一个整数：缺页总次数，末尾换行。\n\n### 规则\n\n1. 内存有 `f` 个帧，初始时全部为空。\n2. 被访问页面不在任何帧中即为一次缺页；已在帧中为命中，不产生缺页。\n3. 缺页时若还有空闲帧，把页面放入**编号最小**的空闲帧。\n4. 缺页且没有空闲帧时，淘汰**最久没有被访问**的那一页，把新页面装入该帧。\n5. 无论命中还是缺页，都要把被访问页面的\"最近一次访问时刻\"更新为当前这次访问。\n6. 由于每次访问的时刻都不同，驻留页面之间不会出现\"最久未使用\"并列的情况。\n\n### 示例\n\n输入：\n\n```\n3\n12\n1 2 3 4 1 2 5 1 2 3 4 5\n```\n\n输出：\n\n```\n10\n```\n\n与 FIFO 相同的访问串在 LRU 下缺页 10 次：淘汰依据是\"距离当前最久没有被访问\"，例如访问 5 时被淘汰的是 4（而不是 FIFO 中的最先装入者），最后访问 4 时淘汰的是 2。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\n\ndef main():\n    data = sys.stdin.read().split()\n    if not data:\n        return\n    frames = int(data[0])\n    n = int(data[1])\n    refs = [int(x) for x in data[2:2 + n]]\n\n    resident = set()\n    last_used = {}\n    faults = 0\n    for index, page in enumerate(refs):\n        if page in resident:\n            last_used[page] = index\n            continue\n        faults += 1\n        if len(resident) < frames:\n            resident.add(page)\n        else:\n            victim = min(sorted(resident), key=lambda q: last_used[q])\n            resident.discard(victim)\n            resident.add(page)\n        last_used[page] = index\n\n    print(faults)\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "3\n12\n1 2 3 4 1 2 5 1 2 3 4 5\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：三帧经典访问串",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "3\n12\n1 2 3 4 1 2 5 1 2 3 4 5\n",
+        "args": [],
+        "expected_stdout": "10\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：含 0 号页且不再回头",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "4\n10\n7 0 1 2 0 3 0 4 2 3\n",
+        "args": [],
+        "expected_stdout": "6\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：两帧反复抖动",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2\n8\n1 2 1 3 1 4 1 5\n",
+        "args": [],
+        "expected_stdout": "5\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：重复访问减少缺页",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "3\n10\n4 1 2 4 5 1 3 2 5 4\n",
+        "args": [],
+        "expected_stdout": "9\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "os",
+      "memory",
+      "lru"
+    ]
+  },
+  {
+    "title": "最佳置换（OPT）的缺页次数",
+    "stem_markdown": "## 最佳置换（OPT）的缺页次数\n\n用**最佳置换**（Belady 最优算法，OPT）处理一个页面访问串，输出总的缺页次数。\n\n### 输入格式\n\n- 第 1 行：整数 `f`，可用帧数（1 ≤ f ≤ 10）。\n- 第 2 行：整数 `n`，访问串长度（1 ≤ n ≤ 100）。\n- 第 3 行：`n` 个整数，依次为每次访问的页面号（0 ≤ 页面号 ≤ 99），用空格分隔。\n\n### 输出格式\n\n一行，一个整数：缺页总次数，末尾换行。\n\n### 规则\n\n1. 内存有 `f` 个帧，初始时全部为空。\n2. 被访问页面不在任何帧中即为一次缺页；已在帧中为命中，不产生缺页。\n3. 缺页时若还有空闲帧，把页面放入**编号最小**的空闲帧。\n4. 缺页且没有空闲帧时，淘汰\"**下一次被访问的时间最晚**\"的那一页（即未来最久才会用到、甚至再也用不到的页），把新页面装入该帧。\n5. 若某页在当前位置之后再也不会被访问，它的\"下一次访问位置\"视为 +∞，比任何真实位置都晚。\n6. 若出现并列（例如两页都再也不被访问，或下一次访问位置相同），淘汰其中**页面号最小**的一页。\n\n### 示例\n\n输入：\n\n```\n3\n12\n1 2 3 4 1 2 5 1 2 3 4 5\n```\n\n输出：\n\n```\n7\n```\n\n访问 4 时，帧中 1、2、3 的下一次访问位置分别是 4、5、10，最晚的是 3，于是淘汰 3；访问 5 时帧中 1、2、4 的下一次访问位置分别是 7、8、10，淘汰 4；访问 3 时 1 与 2 都不再出现（并列 +∞），淘汰页面号较小的 1；访问 4 时 2 与 3 都不再出现，淘汰 2。总共 7 次缺页，这也是该访问串在所有置换策略下的最少缺页次数。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\n\ndef main():\n    data = sys.stdin.read().split()\n    if not data:\n        return\n    frames = int(data[0])\n    n = int(data[1])\n    refs = [int(x) for x in data[2:2 + n]]\n\n    resident = set()\n    faults = 0\n    for index, page in enumerate(refs):\n        if page in resident:\n            continue\n        faults += 1\n        if len(resident) < frames:\n            resident.add(page)\n            continue\n        victim = None\n        victim_next = -1\n        for q in sorted(resident):\n            nxt = n + 1\n            for j in range(index + 1, n):\n                if refs[j] == q:\n                    nxt = j\n                    break\n            if nxt > victim_next:\n                victim_next = nxt\n                victim = q\n        resident.discard(victim)\n        resident.add(page)\n\n    print(faults)\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "3\n12\n1 2 3 4 1 2 5 1 2 3 4 5\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：三帧经典访问串",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "3\n12\n1 2 3 4 1 2 5 1 2 3 4 5\n",
+        "args": [],
+        "expected_stdout": "7\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：含 0 号页且不再回头",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "4\n10\n7 0 1 2 0 3 0 4 2 3\n",
+        "args": [],
+        "expected_stdout": "6\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：两帧反复抖动",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2\n8\n1 2 1 3 1 4 1 5\n",
+        "args": [],
+        "expected_stdout": "5\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：重复访问减少缺页",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "3\n10\n4 1 2 4 5 1 3 2 5 4\n",
+        "args": [],
+        "expected_stdout": "6\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "os",
+      "memory",
+      "optimal"
+    ]
+  },
+  {
+    "title": "时钟（二次机会）置换的缺页次数",
+    "stem_markdown": "## 时钟（二次机会）置换的缺页次数\n\n用**时钟算法**（Clock / second chance）处理一个页面访问串，输出总的缺页次数。\n\n### 输入格式\n\n- 第 1 行：整数 `f`，可用帧数（1 ≤ f ≤ 10）。\n- 第 2 行：整数 `n`，访问串长度（1 ≤ n ≤ 100）。\n- 第 3 行：`n` 个整数，依次为每次访问的页面号（0 ≤ 页面号 ≤ 99），用空格分隔。\n\n### 输出格式\n\n一行，一个整数：缺页总次数，末尾换行。\n\n### 规则\n\n1. `f` 个帧编号为 0 … f−1，在逻辑上排成一个环；有一个指针（hand）初始指向帧 0；每帧有一个引用位，初始为 0；所有帧初始为空。\n2. 访问页面 `p` 时先看它是否已在某个帧中：\n   - **命中**：把该帧的引用位置为 1，缺页次数不变，hand 不动。\n   - **缺页**：从 hand 当前指向的帧开始，按帧号递增（到 f−1 后回到 0）逐帧检查：\n     - 若当前帧为空：把 `p` 放入该帧，引用位置 1，检查结束；\n     - 若当前帧的引用位为 0：淘汰该帧中原有的页，把 `p` 放入该帧，引用位置 1，检查结束；\n     - 若当前帧的引用位为 1：把它的引用位置 0（给它\"第二次机会\"），hand 前进一帧，继续检查。\n   - 放入 `p` 之后，hand 指向**该帧的下一帧**（帧号加 1，模 f）。\n3. 输出缺页总次数。\n\n### 示例\n\n输入：\n\n```\n3\n10\n1 2 3 4 1 2 5 2 3 6\n```\n\n输出：\n\n```\n9\n```\n\n下表是逐次访问后的状态，`*` 表示该帧引用位为 1，`–` 表示空帧；\"淘汰\"列为本次缺页被换出的页面：\n\n| 步骤 | 访问页 | 结果 | 淘汰 | 帧 0 | 帧 1 | 帧 2 | hand |\n|---|---|---|---|---|---|---|---|\n| 1 | 1 | 缺页 | – | 1* | – | – | 1 |\n| 2 | 2 | 缺页 | – | 1* | 2* | – | 2 |\n| 3 | 3 | 缺页 | – | 1* | 2* | 3* | 0 |\n| 4 | 4 | 缺页 | 1 | 4* | 2 | 3 | 1 |\n| 5 | 1 | 缺页 | 2 | 4* | 1* | 3 | 2 |\n| 6 | 2 | 缺页 | 3 | 4* | 1* | 2* | 0 |\n| 7 | 5 | 缺页 | 4 | 5* | 1 | 2 | 1 |\n| 8 | 2 | 命中 | – | 5* | 1 | 2* | 1 |\n| 9 | 3 | 缺页 | 1 | 5* | 3* | 2* | 2 |\n| 10 | 6 | 缺页 | 2 | 5 | 3 | 6* | 0 |\n\n共 9 次缺页。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\n\ndef main():\n    data = sys.stdin.read().split()\n    if not data:\n        return\n    frames = int(data[0])\n    n = int(data[1])\n    refs = [int(x) for x in data[2:2 + n]]\n\n    page_in_frame = [None] * frames\n    ref_bit = [0] * frames\n    hand = 0\n    faults = 0\n\n    for page in refs:\n        holder = None\n        for k in range(frames):\n            if page_in_frame[k] == page:\n                holder = k\n                break\n        if holder is not None:\n            ref_bit[holder] = 1\n            continue\n\n        faults += 1\n        while True:\n            if page_in_frame[hand] is None or ref_bit[hand] == 0:\n                page_in_frame[hand] = page\n                ref_bit[hand] = 1\n                hand = (hand + 1) % frames\n                break\n            ref_bit[hand] = 0\n            hand = (hand + 1) % frames\n\n    print(faults)\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "3\n10\n1 2 3 4 1 2 5 2 3 6\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：三帧含一次命中",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "3\n10\n1 2 3 4 1 2 5 2 3 6\n",
+        "args": [],
+        "expected_stdout": "9\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：两帧反复换入换出",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2\n8\n4 5 4 1 2 4 5 3\n",
+        "args": [],
+        "expected_stdout": "7\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：四帧含 0 号页",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "4\n10\n7 0 1 2 0 3 0 4 2 3\n",
+        "args": [],
+        "expected_stdout": "6\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：三帧长访问串",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "3\n12\n2 3 1 4 2 5 1 3 4 2 5 1\n",
+        "args": [],
+        "expected_stdout": "12\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "os",
+      "memory",
+      "clock"
+    ]
+  },
+  {
+    "title": "零额外缺页所需的最少帧数",
+    "stem_markdown": "## 零额外缺页所需的最少帧数\n\n一个页面访问串在**最佳置换（OPT）**下运行时，每个不同的页面第一次被访问时都必然缺页（初始内存为空）。求**最少**需要多少个帧，才能让缺页次数恰好等于访问串中不同页面的个数——也就是除了这些\"首次访问\"之外不再发生任何额外的缺页。\n\n### 输入格式\n\n- 第 1 行：整数 `n`，访问串长度（1 ≤ n ≤ 100）。\n- 第 2 行：`n` 个整数，依次为每次访问的页面号（0 ≤ 页面号 ≤ 99），用空格分隔。\n\n### 输出格式\n\n一行，一个整数：所需的最少帧数，末尾换行。\n\n### 判据与算法约定\n\n1. 设不同页面的个数为 `P`，则当帧数取 `P` 时每个页面都能各占一帧，缺页次数必然等于 `P`，所以答案一定存在，且 1 ≤ 答案 ≤ P。\n2. 请从帧数 1 开始逐个尝试：对每个帧数 `f`，用 OPT 模拟该访问串，统计缺页次数；第一个使缺页次数等于 `P` 的 `f` 就是答案。\n3. OPT 的规则：帧初始为空；缺页且有空闲帧时放入编号最小的空闲帧；缺页且无空闲帧时，淘汰\"下一次被访问的位置最晚\"的页；之后不再被访问的页视为 +∞；并列时淘汰页面号最小的页。\n\n### 示例\n\n输入：\n\n```\n8\n1 2 3 1 2 4 1 5\n```\n\n输出：\n\n```\n3\n```\n\n该访问串共有 5 个不同页面（1、2、3、4、5）。帧数为 1 时每次都缺页（8 次）；帧数为 2 时缺页 6 次；帧数为 3 时缺页恰好 5 次，与不同页面个数相等，因此答案是 3。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\n\ndef opt_faults(refs, frames):\n    n = len(refs)\n    resident = set()\n    faults = 0\n    for index in range(n):\n        page = refs[index]\n        if page in resident:\n            continue\n        faults += 1\n        if len(resident) < frames:\n            resident.add(page)\n            continue\n        victim = None\n        victim_next = -1\n        for q in sorted(resident):\n            nxt = n + 1\n            for j in range(index + 1, n):\n                if refs[j] == q:\n                    nxt = j\n                    break\n            if nxt > victim_next:\n                victim_next = nxt\n                victim = q\n        resident.discard(victim)\n        resident.add(page)\n    return faults\n\n\ndef main():\n    data = sys.stdin.read().split()\n    if not data:\n        return\n    n = int(data[0])\n    refs = [int(x) for x in data[1:1 + n]]\n\n    distinct = len(set(refs))\n    answer = distinct\n    for frames in range(1, distinct + 1):\n        if opt_faults(refs, frames) == distinct:\n            answer = frames\n            break\n    print(answer)\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "8\n1 2 3 1 2 4 1 5\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：五个不同页面",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "8\n1 2 3 1 2 4 1 5\n",
+        "args": [],
+        "expected_stdout": "3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：同一页面反复访问",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "6\n5 5 5 1 2 3\n",
+        "args": [],
+        "expected_stdout": "1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：四个页面循环出现",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "10\n1 2 3 4 1 2 3 4 1 2\n",
+        "args": [],
+        "expected_stdout": "4\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：两段各用几个页面",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "9\n1 2 3 2 1 4 5 4 5\n",
+        "args": [],
+        "expected_stdout": "3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "os",
+      "memory",
+      "working-set"
+    ]
+  },
+  {
+    "title": "FCFS 磁盘调度的总移动量",
+    "stem_markdown": "## FCFS 磁盘调度的总移动量\n\n磁头从给定位置出发，按**先来先服务**（FCFS）顺序响应一批柱面请求，求磁头移动的总距离。\n\n### 输入格式\n\n- 第 1 行：整数 `head`，磁头初始所在柱面号（0 ≤ head ≤ 1000）。\n- 第 2 行：整数 `n`，请求个数（1 ≤ n ≤ 100）。\n- 第 3 行：`n` 个整数，依次给出请求的柱面号（0 ≤ 柱面号 ≤ 1000），用空格分隔；请求可能重复。\n\n### 输出格式\n\n一行，一个整数：磁头移动的总柱面数，末尾换行。\n\n### 规则\n\n1. 严格按请求给出的先后顺序服务，不重新排序。\n2. 每服务一个请求，磁头从当前位置移动到该请求的柱面，移动距离为两者之差的绝对值。\n3. 总移动量 = 所有相邻位置距离之和（第一个距离从 `head` 算到第一个请求）。\n\n### 示例\n\n输入：\n\n```\n50\n7\n82 145 20 96 170 35 110\n```\n\n输出：\n\n```\n580\n```\n\n磁头路径为 50 → 82 → 145 → 20 → 96 → 170 → 35 → 110，各段距离 32、63、125、76、74、135、75，合计 580。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\n\ndef main():\n    data = sys.stdin.read().split()\n    if not data:\n        return\n    head = int(data[0])\n    n = int(data[1])\n    requests = [int(x) for x in data[2:2 + n]]\n\n    total = 0\n    current = head\n    for cylinder in requests:\n        total += abs(cylinder - current)\n        current = cylinder\n\n    print(total)\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "50\n7\n82 145 20 96 170 35 110\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：七个乱序请求",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "50\n7\n82 145 20 96 170 35 110\n",
+        "args": [],
+        "expected_stdout": "580\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：往返跨越整个盘面",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "100\n6\n55 58 39 18 90 160\n",
+        "args": [],
+        "expected_stdout": "230\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：先向左再向右",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "120\n5\n10 200 30 190 60\n",
+        "args": [],
+        "expected_stdout": "760\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：单调向同一方向",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "60\n4\n60 40 20 0\n",
+        "args": [],
+        "expected_stdout": "60\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "os",
+      "disk",
+      "fcfs"
+    ]
+  },
+  {
+    "title": "SSTF 磁盘调度的总移动量",
+    "stem_markdown": "## SSTF 磁盘调度的总移动量\n\n磁头从给定位置出发，用**最短寻道时间优先**（SSTF）策略响应一批柱面请求，求磁头移动的总距离。\n\n### 输入格式\n\n- 第 1 行：整数 `head`，磁头初始柱面号（0 ≤ head ≤ 1000）。\n- 第 2 行：整数 `n`，请求个数（1 ≤ n ≤ 100）。\n- 第 3 行：`n` 个整数，依次给出请求的柱面号（0 ≤ 柱面号 ≤ 1000），用空格分隔；请求可能重复。\n\n### 输出格式\n\n一行，一个整数：磁头移动的总柱面数，末尾换行。\n\n### 规则\n\n1. 每服务完一个请求，就在**尚未服务**的请求中挑一个离当前磁头位置最近的来服务。\n2. 若有两个请求与当前位置的距离相同，选择**柱面号较小**的那个。\n3. 总移动量 = 每次实际移动距离（当前位置与目标柱面之差的绝对值）之和。\n\n### 示例\n\n输入：\n\n```\n50\n7\n82 145 20 96 170 35 110\n```\n\n输出：\n\n```\n180\n```\n\n从 50 出发依次选择 35（距离 15）、20（15）、82（62）、96（14）、110（14）、145（35）、170（25），合计 180。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\n\ndef main():\n    data = sys.stdin.read().split()\n    if not data:\n        return\n    head = int(data[0])\n    n = int(data[1])\n    pending = [int(x) for x in data[2:2 + n]]\n\n    total = 0\n    current = head\n    while pending:\n        target = min(pending, key=lambda c: (abs(c - current), c))\n        total += abs(target - current)\n        current = target\n        pending.remove(target)\n\n    print(total)\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "50\n7\n82 145 20 96 170 35 110\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：七个乱序请求",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "50\n7\n82 145 20 96 170 35 110\n",
+        "args": [],
+        "expected_stdout": "180\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：两侧请求交错",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "100\n6\n55 58 39 18 90 160\n",
+        "args": [],
+        "expected_stdout": "224\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：从远端逐步收敛",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "120\n5\n10 200 30 190 60\n",
+        "args": [],
+        "expected_stdout": "300\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：距离并列时取小柱面",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "50\n4\n40 60 20 80\n",
+        "args": [],
+        "expected_stdout": "90\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "os",
+      "disk",
+      "sstf"
+    ]
+  },
+  {
+    "title": "SCAN（电梯）磁盘调度的总移动量",
+    "stem_markdown": "## SCAN（电梯）磁盘调度的总移动量\n\n磁头从给定位置出发，按 **SCAN（电梯）** 策略响应一批柱面请求，求磁头移动的总距离。\n\n### 输入格式\n\n- 第 1 行：三个由空格分隔的记号 `head dir maxcyl`\n  - `head`：磁头初始柱面号（0 ≤ head ≤ maxcyl）；\n  - `dir`：初始移动方向，取值为 `left`（向柱面号减小的方向）或 `right`（向柱面号增大的方向）；\n  - `maxcyl`：最大柱面号（1 ≤ maxcyl ≤ 1000）。\n- 第 2 行：整数 `n`，请求个数（1 ≤ n ≤ 100）。\n- 第 3 行：`n` 个整数，依次给出请求的柱面号（0 ≤ 柱面号 ≤ maxcyl），用空格分隔；请求可能重复。\n\n### 输出格式\n\n一行，一个整数：磁头移动的总柱面数，末尾换行。\n\n### 规则\n\n1. 磁头先沿 `dir` 一直移动到该方向的边界：`left` 的边界是柱面 0，`right` 的边界是柱面 `maxcyl`。\n2. 移动途中经过的请求按经过的先后顺序被服务；与磁头位置相同的请求立即被服务。同一柱面有多个请求时，服务它们不产生额外移动。\n3. 到达边界后立即掉头，沿相反方向继续移动并服务剩下的请求，直到所有请求都被服务完；此时磁头停在被服务的最后一个请求所在的柱面。\n4. 若到达边界时已经没有未服务的请求，磁头停在边界，不再移动。\n5. 总移动量 = 磁头实际走过的距离总和。\n\n### 示例\n\n输入：\n\n```\n50 left 199\n7\n82 145 20 96 170 35 110\n```\n\n输出：\n\n```\n220\n```\n\n初始方向向左：磁头从 50 走到 0（途中服务柱面 35、20），掉头后向右走，依次服务 82、96、110、145、170，停在 170。总移动量 = 50 + 170 = 220。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\n\ndef main():\n    data = sys.stdin.read().split()\n    if not data:\n        return\n    head = int(data[0])\n    direction = data[1].lower()\n    max_cylinder = int(data[2])\n    n = int(data[3])\n    requests = [int(x) for x in data[4:4 + n]]\n\n    if direction == \"left\":\n        boundary = 0\n    else:\n        boundary = max_cylinder\n\n    total = abs(head - boundary)\n    if direction == \"left\":\n        remaining = [c for c in requests if c > head]\n        if remaining:\n            total += abs(boundary - max(remaining))\n    else:\n        remaining = [c for c in requests if c < head]\n        if remaining:\n            total += abs(boundary - min(remaining))\n\n    print(total)\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "50 left 199\n7\n82 145 20 96 170 35 110\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：向左到底再折返",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "50 left 199\n7\n82 145 20 96 170 35 110\n",
+        "args": [],
+        "expected_stdout": "220\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：向右到底再折返",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "100 right 199\n6\n55 58 39 18 90 160\n",
+        "args": [],
+        "expected_stdout": "280\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：两端都有请求",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "120 left 200\n5\n10 200 30 190 60\n",
+        "args": [],
+        "expected_stdout": "320\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：请求全在同一侧",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "80 left 200\n2\n30 40\n",
+        "args": [],
+        "expected_stdout": "80\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "os",
+      "disk",
+      "scan"
+    ]
+  },
+  {
+    "title": "C-SCAN 磁盘调度的总移动量",
+    "stem_markdown": "## C-SCAN 磁盘调度的总移动量\n\n磁头从给定位置出发，按 **C-SCAN（单向扫描）** 策略响应一批柱面请求，求磁头移动的总距离。\n\n### 输入格式\n\n- 第 1 行：三个由空格分隔的记号 `head dir maxcyl`\n  - `head`：磁头初始柱面号（0 ≤ head ≤ maxcyl）；\n  - `dir`：服务方向，取值为 `left`（向柱面号减小的方向）或 `right`（向柱面号增大的方向）；\n  - `maxcyl`：最大柱面号（1 ≤ maxcyl ≤ 1000）。\n- 第 2 行：整数 `n`，请求个数（1 ≤ n ≤ 100）。\n- 第 3 行：`n` 个整数，依次给出请求的柱面号（0 ≤ 柱面号 ≤ maxcyl），用空格分隔；请求可能重复。\n\n### 输出格式\n\n一行，一个整数：磁头移动的总柱面数，末尾换行。\n\n### 规则\n\n1. 磁头先沿 `dir` 移动到该方向的边界：`left` 的边界是柱面 0，`right` 的边界是柱面 `maxcyl`；途中经过的请求按经过顺序被服务，与磁头位置相同的请求立即被服务。\n2. **若这时还有未服务的请求**：磁头从该边界直接移动到另一端的边界（`left` 到达 0 后移动到 `maxcyl`；`right` 到达 `maxcyl` 后移动到 0）。这段返回路程**不服务任何请求**，但**计入**总移动量。\n3. 到达另一端边界后，磁头再次沿 `dir` 方向移动，服务剩余请求，直到全部服务完，磁头停在最后一个被服务的请求所在的柱面。\n4. **若到达第一个边界时所有请求都已服务完**：磁头停在边界，不进行返回。\n5. 总移动量 = 磁头实际走过的距离总和（包含第 2 步的返回路程）。\n\n### 示例\n\n输入：\n\n```\n50 left 199\n7\n82 145 20 96 170 35 110\n```\n\n输出：\n\n```\n366\n```\n\n初始方向向左：磁头从 50 走到 0（途中服务 35、20），然后直接返回柱面 199，再向左走，依次服务 170、145、110、96、82，停在 82。总移动量 = 50 + 199 + (199 − 82) = 366。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\n\ndef main():\n    data = sys.stdin.read().split()\n    if not data:\n        return\n    head = int(data[0])\n    direction = data[1].lower()\n    max_cylinder = int(data[2])\n    n = int(data[3])\n    requests = [int(x) for x in data[4:4 + n]]\n\n    if direction == \"left\":\n        boundary = 0\n        other = max_cylinder\n    else:\n        boundary = max_cylinder\n        other = 0\n\n    total = abs(head - boundary)\n    if direction == \"left\":\n        remaining = [c for c in requests if c > head]\n        if remaining:\n            total += abs(boundary - other)\n            total += abs(other - min(remaining))\n    else:\n        remaining = [c for c in requests if c < head]\n        if remaining:\n            total += abs(boundary - other)\n            total += abs(other - max(remaining))\n\n    print(total)\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "50 left 199\n7\n82 145 20 96 170 35 110\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：向左到底后整程返回",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "50 left 199\n7\n82 145 20 96 170 35 110\n",
+        "args": [],
+        "expected_stdout": "366\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：向右到底后整程返回",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "100 right 199\n6\n55 58 39 18 90 160\n",
+        "args": [],
+        "expected_stdout": "388\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：边界上恰好也有请求",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "120 left 200\n5\n10 200 30 190 60\n",
+        "args": [],
+        "expected_stdout": "330\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：一次扫描就服务完毕",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "80 right 120\n2\n90 100\n",
+        "args": [],
+        "expected_stdout": "40\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "os",
+      "disk",
+      "c-scan"
+    ]
+  },
+  {
+    "title": "银行家算法的安全性判定",
+    "stem_markdown": "## 银行家算法的安全性判定\n\n给定系统当前的可用资源、每个进程已分配的资源以及每个进程的最大需求，用银行家算法的安全性检查判断当前状态是否**安全**。\n\n### 输入格式\n\n- 第 1 行：两个整数 `n m`，进程数与资源种类数（1 ≤ n ≤ 10，1 ≤ m ≤ 5）。\n- 第 2 行：`m` 个整数，当前可用资源向量 `Available`。\n- 接下来 `n` 行：每行 `2m` 个整数，前 `m` 个是该进程的 `Allocation`（已分配），后 `m` 个是该进程的 `Max`（最大需求）。第 `i` 行对应进程 i（i 从 0 开始计数）。\n- 保证对每个进程、每种资源都有 `Allocation ≤ Max`。\n\n### 输出格式\n\n一行：状态安全时输出 `safe`，否则输出 `unsafe`，末尾换行。\n\n### 安全性检查规则\n\n1. 计算 `Need[i][j] = Max[i][j] − Allocation[i][j]`。\n2. 令 `Work = Available`，所有进程的 `Finish` 初值为 false。\n3. 反复查找一个满足 `Finish[i] == false` 且对每种资源 `j` 都有 `Need[i][j] ≤ Work[j]` 的进程 i；若找到，就假设它执行完成并归还全部资源：`Work[j] += Allocation[i][j]`，`Finish[i] = true`。\n4. 直到找不到这样的进程为止。若此时所有进程的 `Finish` 都为 true，说明存在安全序列，输出 `safe`；否则输出 `unsafe`。\n5. 只要存在**任一**安全序列就是 `safe`，因此挑选进程的先后顺序不影响结论；你可以按任意顺序反复扫描。\n\n### 示例\n\n输入：\n\n```\n4 3\n2 1 2\n1 0 1 3 2 2\n0 1 0 2 1 1\n1 1 1 3 3 3\n0 0 1 1 1 2\n```\n\n输出：\n\n```\nsafe\n```\n\n可用资源为 (2, 1, 2)。先让进程 1 完成（Need 为 (2, 0, 1)），归还后 Work = (2, 2, 2)；接着进程 0（Need (2, 2, 1)）完成，Work = (3, 2, 3)；再是进程 2（Need (2, 2, 2)），Work = (4, 3, 4)；最后进程 3（Need (1, 1, 1)），全部进程完成，因此状态安全。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\n\ndef main():\n    data = sys.stdin.read().split()\n    if not data:\n        return\n    idx = 0\n    n = int(data[idx])\n    m = int(data[idx + 1])\n    idx += 2\n    work = [int(x) for x in data[idx:idx + m]]\n    idx += m\n    allocation = []\n    maximum = []\n    for _ in range(n):\n        allocation.append([int(x) for x in data[idx:idx + m]])\n        idx += m\n        maximum.append([int(x) for x in data[idx:idx + m]])\n        idx += m\n\n    need = [[maximum[i][j] - allocation[i][j] for j in range(m)] for i in range(n)]\n    finish = [False] * n\n    completed = 0\n    while True:\n        progressed = False\n        for i in range(n):\n            if finish[i]:\n                continue\n            if all(need[i][j] <= work[j] for j in range(m)):\n                for j in range(m):\n                    work[j] += allocation[i][j]\n                finish[i] = True\n                completed += 1\n                progressed = True\n        if not progressed:\n            break\n\n    print(\"safe\" if completed == n else \"unsafe\")\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "4 3\n2 1 2\n1 0 1 3 2 2\n0 1 0 2 1 1\n1 1 1 3 3 3\n0 0 1 1 1 2\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：四个进程三种资源且安全",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "4 3\n2 1 2\n1 0 1 3 2 2\n0 1 0 2 1 1\n1 1 1 3 3 3\n0 0 1 1 1 2\n",
+        "args": [],
+        "expected_stdout": "safe\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：没有任何进程能满足",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "3 2\n0 1\n1 0 2 1\n0 1 1 1\n1 1 2 2\n",
+        "args": [],
+        "expected_stdout": "unsafe\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：资源宽裕的明显安全状态",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "4 2\n3 1\n1 0 2 1\n2 1 3 2\n0 1 1 2\n1 1 4 2\n",
+        "args": [],
+        "expected_stdout": "safe\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：资源 0 完全耗尽",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "4 3\n0 1 1\n1 0 0 2 2 1\n0 1 1 1 3 2\n1 0 1 2 2 3\n0 1 0 2 2 2\n",
+        "args": [],
+        "expected_stdout": "unsafe\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "os",
+      "deadlock",
+      "banker"
+    ]
+  },
+  {
+    "title": "用资源分配矩阵做死锁检测",
+    "stem_markdown": "## 用资源分配矩阵做死锁检测\n\n给定当前可用资源、每个进程已占用的资源和每个进程还在申请的资源，用死锁检测算法判断系统是否处于死锁状态。\n\n### 输入格式\n\n- 第 1 行：两个整数 `n m`，进程数与资源种类数（1 ≤ n ≤ 10，1 ≤ m ≤ 5）。\n- 第 2 行：`m` 个整数，当前可用资源向量 `Available`。\n- 接下来 `n` 行：每行 `2m` 个整数，前 `m` 个是该进程当前占用的资源 `Allocation`，后 `m` 个是它仍在申请的资源 `Request`。\n- 进程按输入行的先后顺序编号，第一行是进程 0，第二行是进程 1，依此类推。\n\n### 输出格式\n\n- 若没有进程处于死锁：一行 `no deadlock`。\n- 否则：一行，先输出单词 `deadlock`，再按**编号升序**输出所有无法完成的进程编号，用单个空格分隔（例如格式形如 `deadlock 0 2`，仅为格式示意）。\n- 末尾换行。\n\n### 检测规则\n\n1. 令 `Work = Available`。\n2. `Finish` 初值：某进程当前占用资源全为 0 时，它不持有任何资源，必然能够完成，`Finish` 记为 true；其余进程记为 false。\n3. 反复查找一个 `Finish == false` 且对每种资源 `j` 都有 `Request[i][j] ≤ Work[j]` 的进程 i；若找到，就认为它能运行完成并归还全部占用资源：`Work[j] += Allocation[i][j]`，`Finish[i] = true`。若找不到这样的进程，检测结束。\n4. 检测结束时 `Finish` 仍为 false 的进程就是死锁进程。由于\"能完成的进程集合\"是唯一确定的，扫描顺序不影响结果。\n\n### 示例\n\n输入：\n\n```\n3 2\n0 0\n1 0 0 1\n0 1 1 0\n0 0 0 1\n```\n\n输出：\n\n```\ndeadlock 0 1\n```\n\n可用资源为 (0, 0)：进程 0 还需要 1 个 1 类资源，进程 1 还需要 1 个 0 类资源，都无法满足；进程 2 当前不占用任何资源，按规则视为可完成。没有任何进程能释放资源，因此进程 0 和进程 1 死锁。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\n\ndef main():\n    data = sys.stdin.read().split()\n    if not data:\n        return\n    idx = 0\n    n = int(data[idx])\n    m = int(data[idx + 1])\n    idx += 2\n    work = [int(x) for x in data[idx:idx + m]]\n    idx += m\n    allocation = []\n    request = []\n    for _ in range(n):\n        allocation.append([int(x) for x in data[idx:idx + m]])\n        idx += m\n        request.append([int(x) for x in data[idx:idx + m]])\n        idx += m\n\n    finish = [all(x == 0 for x in allocation[i]) for i in range(n)]\n    while True:\n        progressed = False\n        for i in range(n):\n            if finish[i]:\n                continue\n            if all(request[i][j] <= work[j] for j in range(m)):\n                for j in range(m):\n                    work[j] += allocation[i][j]\n                finish[i] = True\n                progressed = True\n        if not progressed:\n            break\n\n    stuck = [i for i in range(n) if not finish[i]]\n    if stuck:\n        print(\"deadlock \" + \" \".join(str(i) for i in stuck))\n    else:\n        print(\"no deadlock\")\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "3 2\n0 0\n1 0 0 1\n0 1 1 0\n0 0 0 1\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：两个进程互相等待",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "3 2\n0 0\n1 0 0 1\n0 1 1 0\n0 0 0 1\n",
+        "args": [],
+        "expected_stdout": "deadlock 0 1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：可用资源足够时全部完成",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "4 3\n1 1 1\n1 0 0 1 0 0\n0 1 0 0 1 0\n0 0 1 1 0 0\n0 0 0 0 0 1\n",
+        "args": [],
+        "expected_stdout": "no deadlock\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：三个进程同时卡住",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "4 3\n0 1 0\n1 0 0 1 1 0\n0 1 1 0 0 1\n2 0 0 1 0 0\n0 0 0 0 0 0\n",
+        "args": [],
+        "expected_stdout": "deadlock 0 1 2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：依次释放后全部完成",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "3 2\n1 0\n0 1 1 0\n1 0 0 0\n0 0 0 0\n",
+        "args": [],
+        "expected_stdout": "no deadlock\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "os",
+      "deadlock",
+      "detection"
+    ]
+  },
+  {
+    "title": "首次适应与最佳适应的分配基址",
+    "stem_markdown": "## 首次适应与最佳适应的分配基址\n\n一块连续内存被划分成若干空闲分区。依次到来若干个内存请求，请分别用**首次适应**和**最佳适应**两种策略进行分配，给出每次请求选中的分区基址。\n\n### 输入格式\n\n- 第 1 行：整数 `k`，空闲分区个数（1 ≤ k ≤ 20）。\n- 接下来 `k` 行：每行两个整数 `base size`，表示一个空闲分区的起始地址与长度；这些行按 `base` **升序**给出，分区之间互不重叠。\n- 接下来 1 行：整数 `q`，请求个数（1 ≤ q ≤ 20）。\n- 接下来 `q` 行：每行一个整数，表示本次请求的大小。\n\n### 输出格式\n\n一行，共 `2q` 个整数，用单个空格分隔，末尾换行：\n\n- 前 `q` 个整数：按请求先后顺序，每个请求在**首次适应**策略下选中的分区基址；\n- 后 `q` 个整数：按请求先后顺序，每个请求在**最佳适应**策略下选中的分区基址。\n\n某个策略下无法满足某个请求时，该策略对应位置输出 `-1`。\n\n### 规则\n\n1. 两种策略**各自独立**模拟：初始空闲分区表相同（就是输入给出的那份），此后互不影响。\n2. **首次适应**：在空闲分区表中按输入顺序选**第一个** `size ≥ 请求大小` 的分区；若没有分区的长度够大，本次分配失败。\n3. **最佳适应**：在空闲分区表中选 `size ≥ 请求大小` 且 `size` **最小**的分区；若长度并列，选 `base` 最小的那个；若没有分区的长度够大，本次分配失败。\n4. 分配成功后该分区被切走一块：`base` 变为 `base + 请求大小`，`size` 变为 `size − 请求大小`；若剩余长度为 0，则把该分区从空闲分区表中删除。\n5. 分配失败：该策略的空闲分区表保持不变，这次结果记为 `-1`，继续处理下一个请求。\n\n### 示例\n\n输入：\n\n```\n3\n100 50\n200 80\n400 30\n3\n30\n45\n20\n```\n\n输出：\n\n```\n100 200 130 400 100 200\n```\n\n首次适应：请求 30 命中分区 100（长 50）；请求 45 命中分区 200（长 80）；请求 20 命中分区 100 剩余的部分（此时它已在地址 130、长 20），正好用尽后被删除。最佳适应：请求 30 命中最小的可用分区 400（长 30，用尽后删除）；请求 45 命中分区 100（长 50 是最小的够用者）；请求 20 时分区 100 只剩 5，改命中分区 200。所以输出的前三个数是 100、200、130，后三个数是 400、100、200。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\n\ndef run(blocks, sizes, mode):\n    memory = [list(b) for b in blocks]\n    result = []\n    for want in sizes:\n        pick = -1\n        if mode == \"first\":\n            for index in range(len(memory)):\n                if memory[index][1] >= want:\n                    pick = index\n                    break\n        else:\n            for index in range(len(memory)):\n                if memory[index][1] < want:\n                    continue\n                if pick == -1:\n                    pick = index\n                elif memory[index][1] < memory[pick][1]:\n                    pick = index\n                elif memory[index][1] == memory[pick][1] and memory[index][0] < memory[pick][0]:\n                    pick = index\n        if pick == -1:\n            result.append(-1)\n            continue\n        base, size = memory[pick]\n        result.append(base)\n        if size == want:\n            memory.pop(pick)\n        else:\n            memory[pick] = [base + want, size - want]\n    return result\n\n\ndef main():\n    data = sys.stdin.read().split()\n    if not data:\n        return\n    idx = 0\n    k = int(data[idx])\n    idx += 1\n    blocks = []\n    for _ in range(k):\n        base = int(data[idx])\n        size = int(data[idx + 1])\n        idx += 2\n        blocks.append([base, size])\n    q = int(data[idx])\n    idx += 1\n    sizes = [int(x) for x in data[idx:idx + q]]\n\n    first = run(blocks, sizes, \"first\")\n    best = run(blocks, sizes, \"best\")\n    print(\" \".join(str(x) for x in first + best))\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "3\n100 50\n200 80\n400 30\n3\n30\n45\n20\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：三次请求两种策略给出不同基址",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "3\n100 50\n200 80\n400 30\n3\n30\n45\n20\n",
+        "args": [],
+        "expected_stdout": "100 200 130 400 100 200\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：请求过大导致分配失败",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "4\n0 100\n200 200\n500 60\n700 40\n3\n120\n50\n150\n",
+        "args": [],
+        "expected_stdout": "200 0 -1 200 500 -1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：连续多次分配与失败交替",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2\n1000 400\n2000 100\n4\n100\n350\n100\n50\n",
+        "args": [],
+        "expected_stdout": "1000 -1 1100 1200 2000 1000 -1 1350\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：刚好用尽的分区被删除",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "3\n0 20\n100 20\n200 20\n4\n20\n20\n20\n20\n",
+        "args": [],
+        "expected_stdout": "0 100 200 -1 0 100 200 -1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "os",
+      "memory",
+      "allocation"
+    ]
+  }
+]

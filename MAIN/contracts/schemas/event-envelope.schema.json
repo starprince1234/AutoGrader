@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autograder.local/contracts/event-envelope.schema.json",
+  "type": "object",
+  "required": ["event_id", "event_type", "schema_version", "occurred_at", "correlation_id", "producer", "payload"],
+  "properties": {
+    "event_id": {"type": "string", "format": "uuid"},
+    "event_type": {"type": "string", "pattern": "^autograder\\.v1\\."},
+    "schema_version": {"type": "integer", "minimum": 1},
+    "occurred_at": {"type": "string", "format": "date-time"},
+    "correlation_id": {"type": "string", "format": "uuid"},
+    "causation_id": {"type": ["string", "null"], "format": "uuid"},
+    "producer": {"type": "string", "pattern": "^B[1-4]$"},
+    "payload": {"type": "object"}
+  },
+  "additionalProperties": false
+}

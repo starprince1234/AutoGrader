@@ -1,0 +1,15 @@
+{
+  "submission_id": "00000000-0000-4000-8000-000000000101",
+  "student_id": "00000000-0000-4000-8000-000000000102",
+  "course_id": "00000000-0000-4000-8000-000000000103",
+  "section_id": "00000000-0000-4000-8000-000000000104",
+  "question_version_id": "00000000-0000-4000-8000-000000000105",
+  "files": [
+    {
+      "path": "solution.py",
+      "content_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "content_base64": "ZGVmIG1haW4oKToKICAgIHByaW50KCJoZWxsbyIpCg=="
+    }
+  ],
+  "idempotency_key": "student-102-qv-105-attempt-1"
+}

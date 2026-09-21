@@ -1,0 +1,65 @@
+[project]
+name = "autograder-b4"
+version = "0.1.0"
+description = "AutoGrader identity and platform plugin"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "alembic>=1.16,<2",
+    "argon2-cffi>=23,<26",
+    "autograder-platform==0.1.0",
+    "cryptography>=44,<47",
+    "email-validator>=2.2,<3",
+    "fastapi>=0.115,<1",
+    "jsonschema>=4.23,<5",
+    "nats-py>=2.10,<3",
+    "openpyxl>=3.1,<4",
+    "psycopg[binary]>=3.2,<4",
+    "pydantic>=2.10,<3",
+    "pyjwt>=2.10,<3",
+    "pypdf>=5,<7",
+    "python-multipart>=0.0.20,<1",
+    "pyyaml>=6,<7",
+    "sqlalchemy>=2.0,<3",
+]
+
+[dependency-groups]
+dev = [
+    "bcrypt>=4,<6",
+    "httpx>=0.28,<1",
+    "pytest>=8.3,<9",
+    "pytest-cov>=6,<7",
+    "ruff>=0.9,<1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.entry-points."autograder.modules"]
+b4 = "autograder_b4.plugin:create_module"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/autograder_b4"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "C4", "SIM", "RUF", "BLE", "PTH", "T20"]
+
+[tool.ruff.lint.per-file-ignores]
+# FastAPI resolves dependencies from argument defaults; `Depends(...)`/`Query(...)` in a
+# signature is the framework's contract, not an accidental call in a default.
+"src/autograder_b4/api/*.py" = ["B008"]
+# Operator entry points report to stdout by design; they are not application logging.
+"src/autograder_b4/ops/*.py" = ["T20"]
+# Tests print diagnostics and use dependency-style fixtures deliberately.
+"tests/*.py" = ["T20", "B008"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.uv.sources]
+autograder-platform = { path = "../MAIN/sdk" }

@@ -1,0 +1,1244 @@
+[
+  {
+    "title": "LRU 缓存：输出最终缓存内容",
+    "stem_markdown": "## 题目\n\n模拟一个**最近最少使用（LRU）缓存**。缓存最多保存 `C` 个互不相同的页号，按引用串的顺序处理每一次页号访问：\n\n- 该页已在缓存中（**命中**）：不改变缓存内容，只把它标记为**最近使用**。\n- 该页不在缓存中（**缺失**）：把它放入缓存；若放入前缓存已满，先淘汰**最久未使用**的那一页。\n\n### 输入\n\n共三行：\n\n1. 第一行：一个整数 `C`（`1 <= C <= 100`），缓存容量。\n2. 第二行：一个整数 `N`（`0 <= N <= 1000`），引用串长度。\n3. 第三行：`N` 个整数，以空格分隔，依次是引用串中的页号（`0 <= 页号 <= 10^6`）。`N = 0` 时该行为空行。\n\n### 输出\n\n一行：最终缓存里的页号，按**从最久未使用到最近使用**的顺序，用单个空格分隔。缓存为空时输出一个空行。\n\n### 示例\n\n输入：\n\n```\n3\n6\n1 2 3 2 4 1\n```\n\n输出：\n\n```\n2 4 1\n```\n\n过程：依次访问 `1`、`2`、`3` 均缺失并放入；再次访问 `2` 命中，`2` 变为最近使用；访问 `4` 时缓存已满，淘汰最久未使用的 `1`；访问 `1` 时缓存已满，淘汰最久未使用的 `3`。最终按“最久未使用 → 最近使用”排列，得到上面的输出。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\ndef emit(text):\n    sys.stdout.buffer.write(text.encode(\"utf-8\"))\n\ndef main():\n    data = sys.stdin.read().split()\n    if not data:\n        return\n    pos = 0\n    cap = int(data[pos]); pos += 1\n    n = int(data[pos]); pos += 1\n    refs = [int(tok) for tok in data[pos:pos + n]]\n    order = []                      # least recently used -> most recently used\n    for key in refs:\n        if key in order:\n            order.remove(key)\n        elif len(order) >= cap:\n            order.pop(0)\n        order.append(key)\n    emit(\" \".join(str(k) for k in order) + \"\\n\")\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "3\n6\n1 2 3 2 4 1\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：容量 3 的引用串",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "3\n6\n1 2 3 2 4 1\n",
+        "args": [],
+        "expected_stdout": "2 4 1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：容量 1 时的反复替换",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1\n4\n4 4 7 4\n",
+        "args": [],
+        "expected_stdout": "4\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：容量大于去重后的页号个数",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "5\n5\n9 8 7 9 8\n",
+        "args": [],
+        "expected_stdout": "7 9 8\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：空引用串",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2\n0\n\n",
+        "args": [],
+        "expected_stdout": "\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "cache",
+      "os"
+    ]
+  },
+  {
+    "title": "定长 FIFO 队列：输出最终队列与丢弃次数",
+    "stem_markdown": "## 题目\n\n模拟一个**定长先进先出（FIFO）队列**，容量为 `C` 个元素。依次执行 `M` 条指令：\n\n- `PUSH x`：把整数 `x` 入队。若队列已满，**丢弃这次入队**（新元素不进入队列，队列内容不变），并让「丢弃计数」加一。\n- `POP`：若队列非空，移除队首元素；若队列为空，什么都不做（既不是错误，也不计数）。\n\n### 输入\n\n1. 第一行：一个整数 `C`（`1 <= C <= 100`），队列容量。\n2. 第二行：一个整数 `M`（`0 <= M <= 500`），指令条数。\n3. 接下来 `M` 行，每行一条指令：`PUSH x` 或 `POP`。`PUSH` 与操作数之间用单个空格分隔，`x` 为整数（`-10^6 <= x <= 10^6`）。\n\n### 输出\n\n两行：\n\n1. 第一行：全部指令执行完后队列中剩余的元素，按**队首到队尾**的顺序用单个空格分隔；队列为空时输出一个空行。\n2. 第二行：被丢弃的 `PUSH` 次数（一个整数）。\n\n### 示例\n\n输入：\n\n```\n3\n6\nPUSH 5\nPUSH 7\nPOP\nPUSH 9\nPUSH 11\nPUSH 13\n```\n\n输出：\n\n```\n7 9 11\n1\n```\n\n过程：`PUSH 5`、`PUSH 7` 后队列为 `[5, 7]`；`POP` 移除 `5`；`PUSH 9`、`PUSH 11` 后队列为 `[7, 9, 11]`；此时队列已满，最后一条 `PUSH 13` 被丢弃，丢弃计数为 `1`。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\ndef emit(text):\n    sys.stdout.buffer.write(text.encode(\"utf-8\"))\n\ndef main():\n    data = sys.stdin.read().split()\n    if not data:\n        return\n    pos = 0\n    cap = int(data[pos]); pos += 1\n    m = int(data[pos]); pos += 1\n    queue = []\n    dropped = 0\n    for _ in range(m):\n        op = data[pos]; pos += 1\n        if op == \"PUSH\":\n            value = int(data[pos]); pos += 1\n            if len(queue) < cap:\n                queue.append(value)\n            else:\n                dropped += 1\n        else:\n            if queue:\n                queue.pop(0)\n    emit(\" \".join(str(v) for v in queue) + \"\\n\")\n    emit(str(dropped) + \"\\n\")\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "3\n6\nPUSH 5\nPUSH 7\nPOP\nPUSH 9\nPUSH 11\nPUSH 13\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：容量 3 的入队出队",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "3\n6\nPUSH 5\nPUSH 7\nPOP\nPUSH 9\nPUSH 11\nPUSH 13\n",
+        "args": [],
+        "expected_stdout": "7 9 11\n1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：丢弃后再连续出队",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2\n5\nPUSH 1\nPUSH 2\nPUSH 3\nPOP\nPOP\n",
+        "args": [],
+        "expected_stdout": "\n1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：空队列上出队",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "4\n4\nPOP\nPOP\nPUSH -5\nPOP\n",
+        "args": [],
+        "expected_stdout": "\n0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：容量 1 的重复丢弃",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1\n3\nPUSH 0\nPUSH 0\nPUSH 0\n",
+        "args": [],
+        "expected_stdout": "0\n2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "queue",
+      "simulation"
+    ]
+  },
+  {
+    "title": "环形缓冲区：按最旧到最新输出内容",
+    "stem_markdown": "## 题目\n\n模拟一个**环形缓冲区（ring buffer）**。缓冲区有 `C` 个槽位，初始全空。依次写入 `W` 个整数：每个新值写入下一个空闲槽位；当缓冲区已经写满时，新值**覆盖当前最旧的那个元素**（旧元素被丢弃），\"最旧\"的指针随之前移一格。\n\n### 输入\n\n1. 第一行：一个整数 `C`（`1 <= C <= 100`），槽位数。\n2. 第二行：一个整数 `W`（`0 <= W <= 1000`），写入次数。\n3. 第三行：`W` 个整数，以空格分隔，依次是写入的值（`-10^6 <= 值 <= 10^6`）。`W = 0` 时该行为空行。\n\n### 输出\n\n一行：写入全部结束后缓冲区中仍然保留的元素，按**最旧到最新**的顺序用单个空格分隔。缓冲区为空时输出一个空行。\n\n### 示例\n\n输入：\n\n```\n3\n5\n1 2 3 4 5\n```\n\n输出：\n\n```\n3 4 5\n```\n\n过程：写入前 `3` 个值后缓冲区为 `[1, 2, 3]`；写入 `4` 时已满，覆盖最旧的 `1`，剩下 `[2, 3, 4]`；写入 `5` 时已满，覆盖最旧的 `2`，剩下 `[3, 4, 5]`，按最旧到最新即上面的输出。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\ndef emit(text):\n    sys.stdout.buffer.write(text.encode(\"utf-8\"))\n\ndef main():\n    data = sys.stdin.read().split()\n    if not data:\n        return\n    pos = 0\n    cap = int(data[pos]); pos += 1\n    w = int(data[pos]); pos += 1\n    values = [int(tok) for tok in data[pos:pos + w]]\n    buf = [0] * cap\n    head = 0\n    count = 0\n    for value in values:\n        if count < cap:\n            buf[(head + count) % cap] = value\n            count += 1\n        else:\n            buf[head] = value\n            head = (head + 1) % cap\n    ordered = [buf[(head + i) % cap] for i in range(count)]\n    emit(\" \".join(str(v) for v in ordered) + \"\\n\")\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "3\n5\n1 2 3 4 5\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：容量 3 写入 5 个值",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "3\n5\n1 2 3 4 5\n",
+        "args": [],
+        "expected_stdout": "3 4 5\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：容量 2 的多次回绕",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2\n7\n10 20 30 40 50 60 70\n",
+        "args": [],
+        "expected_stdout": "60 70\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：未写满",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "5\n3\n1 2 3\n",
+        "args": [],
+        "expected_stdout": "1 2 3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：负数与恰好写满",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "4\n4\n-1 -2 -3 -4\n",
+        "args": [],
+        "expected_stdout": "-1 -2 -3 -4\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "buffer",
+      "simulation"
+    ]
+  },
+  {
+    "title": "位图分配：输出每次请求分配到的块号",
+    "stem_markdown": "## 题目\n\n用**位图（bitmap）**管理磁盘块：共有 `T` 个块，编号 `0` 到 `T-1`，初始全部空闲。依次处理 `R` 个\"连续分配\"请求，第 `i` 个请求需要 `k_i` 个**编号连续**的空闲块。\n\n分配采用**首次适应**：从编号 `0` 开始向右扫描，取第一个满足 `s, s+1, ..., s+k_i-1` 全部空闲的起始块号 `s`；把这段块标记为已分配。若不存在这样的 `s`，本次请求失败，位图不变。\n\n本题只做分配，不做释放。\n\n### 输入\n\n1. 第一行：一个整数 `T`（`1 <= T <= 200`），块总数。\n2. 第二行：一个整数 `R`（`0 <= R <= 100`），请求个数。\n3. 第三行：`R` 个整数，以空格分隔，依次是每个请求需要的连续块数（`1 <= k_i <= T`）。`R = 0` 时该行为空行。\n\n### 输出\n\n`R` 行，第 `i` 行对应第 `i` 个请求：\n\n- 分配成功：本次分配到的块号，按**从小到大**用单个空格分隔；\n- 分配失败：单独一行 `-1`。\n\n### 示例\n\n输入：\n\n```\n8\n3\n2 3 2\n```\n\n输出：\n\n```\n0 1\n2 3 4\n5 6\n```\n\n过程：请求 `2` 个块 → 分配 `0 1`；请求 `3` 个块 → 从编号 `2` 起连续 `2 3 4` 空闲，分配 `2 3 4`；再请求 `2` 个块 → 从编号 `5` 起连续 `5 6` 空闲，分配 `5 6`。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\ndef emit(text):\n    sys.stdout.buffer.write(text.encode(\"utf-8\"))\n\ndef main():\n    data = sys.stdin.read().split()\n    if not data:\n        return\n    pos = 0\n    total = int(data[pos]); pos += 1\n    r = int(data[pos]); pos += 1\n    sizes = [int(tok) for tok in data[pos:pos + r]]\n    used = [False] * total\n    out = []\n    for need in sizes:\n        start = -1\n        for s in range(0, total - need + 1):\n            if not any(used[s + i] for i in range(need)):\n                start = s\n                break\n        if start < 0:\n            out.append(\"-1\")\n        else:\n            for i in range(start, start + need):\n                used[i] = True\n            out.append(\" \".join(str(i) for i in range(start, start + need)))\n    emit(\"\\n\".join(out) + \"\\n\")\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "8\n3\n2 3 2\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：连续三次成功分配",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "8\n3\n2 3 2\n",
+        "args": [],
+        "expected_stdout": "0 1\n2 3 4\n5 6\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：空间碎片导致失败",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "10\n5\n4 4 4 4 1\n",
+        "args": [],
+        "expected_stdout": "0 1 2 3\n4 5 6 7\n-1\n-1\n8\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：一次吃掉全部块",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "5\n4\n5 1 1 1\n",
+        "args": [],
+        "expected_stdout": "0 1 2 3 4\n-1\n-1\n-1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：单块请求后无法再满足长请求",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "6\n2\n1 6\n",
+        "args": [],
+        "expected_stdout": "0\n-1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "bitmap",
+      "allocator"
+    ]
+  },
+  {
+    "title": "首次适应空闲链表：输出每次分配的起始地址",
+    "stem_markdown": "## 题目\n\n用**空闲链表**模拟内存分配，策略是**首次适应（first fit）**。空闲内存由若干互不重叠的空闲区间组成，每个区间给出「起始地址」和「长度」。依次处理 `R` 个大小为 `k` 的分配请求：\n\n- 从链表头开始扫描，选中**第一个长度大于等于 `k`** 的空闲区间；\n- 从该区间的**起始地址**处切出 `k` 个单位分配出去：该区间起始地址加 `k`、长度减 `k`；长度变成 `0` 时把该区间从链表中删除；\n- 链表中不存在长度大于等于 `k` 的区间时，本次请求失败，链表不变。\n\n分配出去的内存不会归还（本题不处理释放）。\n\n### 输入\n\n1. 第一行：一个整数 `N`（`0 <= N <= 100`），空闲区间个数。\n2. 第二行：`2N` 个整数，以空格分隔，依次是每个区间的 `起始地址 长度`。区间按起始地址**升序**给出，起始地址互不相同（`0 <= 起始地址 <= 10^9`，`1 <= 长度 <= 10^4`）。`N = 0` 时该行为空行。\n3. 第三行：一个整数 `R`（`0 <= R <= 100`），请求个数。\n4. 第四行：`R` 个整数，以空格分隔，依次是每个请求的大小（`1 <= k <= 10^4`）。`R = 0` 时该行为空行。\n\n### 输出\n\n`R` 行，每行一个整数：本次分配到的**起始地址**；本次请求失败时输出 `-1`。\n\n### 示例\n\n输入：\n\n```\n3\n0 10 100 5 200 20\n4\n4 8 6 7\n```\n\n输出：\n\n```\n0\n200\n4\n208\n```\n\n过程：三个空闲区间是 `[0,10)`、`[100,105)`、`[200,220)`。请求 `4` 时第一个区间就够大，得到地址 `0`，该区间变成 `[4,10)`；请求 `8` 时 `[4,10)` 只有 `6` 个单位、`[100,105)` 只有 `5` 个，都不够，只有 `[200,220)` 够大，得到地址 `200`；请求 `6` 时链表头部的 `[4,10)` 正好够大，得到地址 `4` 并整段用完；请求 `7` 时只剩 `[208,220)` 够大，得到地址 `208`。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\ndef emit(text):\n    sys.stdout.buffer.write(text.encode(\"utf-8\"))\n\ndef main():\n    data = sys.stdin.read().split()\n    if not data:\n        return\n    pos = 0\n    n = int(data[pos]); pos += 1\n    segments = []\n    for _ in range(n):\n        start = int(data[pos]); size = int(data[pos + 1]); pos += 2\n        segments.append([start, size])\n    r = int(data[pos]); pos += 1\n    sizes = [int(tok) for tok in data[pos:pos + r]]\n    out = []\n    for need in sizes:\n        chosen = -1\n        for i in range(len(segments)):\n            if segments[i][1] >= need:\n                chosen = i\n                break\n        if chosen < 0:\n            out.append(\"-1\")\n            continue\n        out.append(str(segments[chosen][0]))\n        segments[chosen][0] += need\n        segments[chosen][1] -= need\n        if segments[chosen][1] == 0:\n            del segments[chosen]\n    emit(\"\\n\".join(out) + \"\\n\")\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "3\n0 10 100 5 200 20\n4\n4 8 6 7\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：首次适应扫描链表头",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "3\n0 10 100 5 200 20\n4\n4 8 6 7\n",
+        "args": [],
+        "expected_stdout": "0\n200\n4\n208\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：用完整段后再用后面的段",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2\n0 4 10 4\n3\n5 4 4\n",
+        "args": [],
+        "expected_stdout": "-1\n0\n10\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：从同一段头部连续切分",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1\n50 10\n3\n3 3 5\n",
+        "args": [],
+        "expected_stdout": "50\n53\n-1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：没有空闲区间",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "0\n\n2\n10 20\n",
+        "args": [],
+        "expected_stdout": "-1\n-1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "allocator",
+      "memory"
+    ]
+  },
+  {
+    "title": "最佳适应空闲链表：输出每次分配的起始地址",
+    "stem_markdown": "## 题目\n\n用**空闲链表**模拟内存分配，策略是**最佳适应（best fit）**。空闲内存由若干互不重叠的空闲区间组成，每个区间给出「起始地址」和「长度」。依次处理 `R` 个大小为 `k` 的分配请求：\n\n- 在所有**长度大于等于 `k`** 的空闲区间中，选择**长度最小**的那个；若长度最小的区间不止一个，选择其中**起始地址最小**的；\n- 从该区间的**起始地址**处切出 `k` 个单位分配出去：该区间起始地址加 `k`、长度减 `k`；长度变成 `0` 时把该区间从链表中删除；\n- 不存在长度大于等于 `k` 的区间时，本次请求失败，链表不变。\n\n分配出去的内存不会归还（本题不处理释放）。\n\n### 输入\n\n1. 第一行：一个整数 `N`（`0 <= N <= 100`），空闲区间个数。\n2. 第二行：`2N` 个整数，以空格分隔，依次是每个区间的 `起始地址 长度`。区间按起始地址**升序**给出，起始地址互不相同（`0 <= 起始地址 <= 10^9`，`1 <= 长度 <= 10^4`）。`N = 0` 时该行为空行。\n3. 第三行：一个整数 `R`（`0 <= R <= 100`），请求个数。\n4. 第四行：`R` 个整数，以空格分隔，依次是每个请求的大小（`1 <= k <= 10^4`）。`R = 0` 时该行为空行。\n\n### 输出\n\n`R` 行，每行一个整数：本次分配到的**起始地址**；本次请求失败时输出 `-1`。\n\n### 示例\n\n输入：\n\n```\n3\n0 10 100 5 200 20\n4\n4 8 6 7\n```\n\n输出：\n\n```\n100\n0\n200\n206\n```\n\n过程：三个空闲区间是 `[0,10)`、`[100,105)`、`[200,220)`。请求 `4` 时够大的区间长度分别是 `10`、`5`、`20`，最小的是 `5`，于是用 `[100,105)`，得到地址 `100`；请求 `8` 时可用的长度是 `10`（地址 `0`）与 `20`（地址 `200`），较小的是 `10`，得到地址 `0`；请求 `6` 时可用长度是 `6`（地址 `4`）与 `20`（地址 `200`），得到地址 `4` 并整段用完；请求 `7` 时只剩 `20` 的那个区间，得到地址 `200`。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\ndef emit(text):\n    sys.stdout.buffer.write(text.encode(\"utf-8\"))\n\ndef main():\n    data = sys.stdin.read().split()\n    if not data:\n        return\n    pos = 0\n    n = int(data[pos]); pos += 1\n    segments = []\n    for _ in range(n):\n        start = int(data[pos]); size = int(data[pos + 1]); pos += 2\n        segments.append([start, size])\n    r = int(data[pos]); pos += 1\n    sizes = [int(tok) for tok in data[pos:pos + r]]\n    out = []\n    for need in sizes:\n        chosen = -1\n        for i in range(len(segments)):\n            if segments[i][1] >= need:\n                if chosen < 0 or segments[i][1] < segments[chosen][1]:\n                    chosen = i\n                elif segments[i][1] == segments[chosen][1]:\n                    if segments[i][0] < segments[chosen][0]:\n                        chosen = i\n        if chosen < 0:\n            out.append(\"-1\")\n            continue\n        out.append(str(segments[chosen][0]))\n        segments[chosen][0] += need\n        segments[chosen][1] -= need\n        if segments[chosen][1] == 0:\n            del segments[chosen]\n    emit(\"\\n\".join(out) + \"\\n\")\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "3\n0 10 100 5 200 20\n4\n4 8 6 7\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：最佳适应挑选最小可用区间",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "3\n0 10 100 5 200 20\n4\n4 8 6 7\n",
+        "args": [],
+        "expected_stdout": "100\n0\n200\n206\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：长度相同按起始地址取小",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2\n0 4 10 4\n3\n5 4 8\n",
+        "args": [],
+        "expected_stdout": "-1\n0\n-1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：小请求优先吃紧的区间",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2\n0 4 10 4\n4\n8 1 2 1\n",
+        "args": [],
+        "expected_stdout": "-1\n0\n1\n3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：两个等长区间依次用尽",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2\n0 6 10 6\n3\n6 6 6\n",
+        "args": [],
+        "expected_stdout": "0\n10\n-1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "allocator",
+      "memory"
+    ]
+  },
+  {
+    "title": "伙伴系统：输出每次请求分到的块大小",
+    "stem_markdown": "## 题目\n\n伙伴系统（buddy allocator）把内存池划分成若干块，块大小必须是**最小块大小 `B` 的 2 的幂次倍**，即形如 `B * 2^t`（`t >= 0`）。内存池总大小为 `S`。\n\n对每个大小为 `k` 的分配请求，分配器给出的块大小是**不小于 `k` 的最小合法块大小**。若这个块大小大于整个内存池 `S`，请求失败。\n\n本题只考察**块大小的选取**与总容量上限，不模拟空闲链表、伙伴分裂、合并与回收。\n\n### 输入\n\n1. 第一行：一个整数 `S`（`1 <= S <= 2^30`，保证是 `2` 的幂）。\n2. 第二行：一个整数 `B`（`1 <= B <= S`，保证是 `2` 的幂）。\n3. 第三行：一个整数 `R`（`0 <= R <= 100`），请求个数。\n4. 第四行：`R` 个整数，以空格分隔，依次是每个请求的字节数（`1 <= k <= 2^30`）。`R = 0` 时该行为空行。\n\n### 输出\n\n`R` 行，每行一个整数：本次请求分配到的块大小；若块大小大于 `S` 则输出 `-1`。\n\n### 示例\n\n输入：\n\n```\n4096\n16\n5\n20 16 1 4096 5000\n```\n\n输出：\n\n```\n32\n16\n16\n4096\n-1\n```\n\n过程：`B = 16`，合法块大小是 `16, 32, 64, ...`。请求 `20` 不小于它的最小合法块大小是 `32`；请求 `16` 恰好是 `16`；请求 `1` 也向上取到最小合法块 `16`；请求 `4096` 正好等于内存池大小 `4096`，仍然可以满足；请求 `5000` 需要向上取到 `8192`，超过内存池 `4096`，因此失败。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\ndef emit(text):\n    sys.stdout.buffer.write(text.encode(\"utf-8\"))\n\ndef main():\n    data = sys.stdin.read().split()\n    if not data:\n        return\n    pos = 0\n    total = int(data[pos]); pos += 1\n    minimum = int(data[pos]); pos += 1\n    r = int(data[pos]); pos += 1\n    sizes = [int(tok) for tok in data[pos:pos + r]]\n    out = []\n    for need in sizes:\n        units = (need + minimum - 1) // minimum\n        size = minimum\n        while size < units * minimum:\n            size *= 2\n        out.append(str(size) if size <= total else \"-1\")\n    emit(\"\\n\".join(out) + \"\\n\")\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "4096\n16\n5\n20 16 1 4096 5000\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：向上取整到 2 的幂次倍",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "4096\n16\n5\n20 16 1 4096 5000\n",
+        "args": [],
+        "expected_stdout": "32\n16\n16\n4096\n-1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：恰好跨过 64 的边界",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1024\n64\n4\n1 63 64 65\n",
+        "args": [],
+        "expected_stdout": "64\n64\n64\n128\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：最小块为 1 字节",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1048576\n1\n3\n1 3 1048577\n",
+        "args": [],
+        "expected_stdout": "1\n4\n-1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：最小块等于内存池",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "8\n8\n2\n8 9\n",
+        "args": [],
+        "expected_stdout": "8\n-1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "allocator",
+      "buddy"
+    ]
+  },
+  {
+    "title": "inode 块映射：由逻辑块号求物理块号",
+    "stem_markdown": "## 题目\n\n某文件系统的索引节点（inode）用 **12 个直接指针 + 1 个一级间接块**定位文件的数据块，一级间接块可以存放 `N` 个指针。\n\n逻辑块号从 `0` 开始编号：\n\n- 逻辑块 `0 .. 11` 由 12 个直接指针定位；\n- 逻辑块 `12 .. 12+N-1` 由一级间接块中的第 `0 .. N-1` 个指针定位；\n- 其他逻辑块号超出寻址范围。\n\n指针值为 `-1` 表示该位置**未分配**（空洞），对应的逻辑块无法定位；其余指针为非负整数（`0 <= 指针 <= 10^9`）。\n\n### 输入\n\n1. 第一行：一个整数 `N`（`1 <= N <= 50`），一级间接块可容纳的指针个数。\n2. 第二行：`12` 个整数，以空格分隔，依次是 `12` 个直接指针。\n3. 第三行：`N` 个整数，以空格分隔，依次是一级间接块中的 `N` 个指针。\n4. 第四行：一个整数 `Q`（`0 <= Q <= 100`），查询个数。\n5. 第五行：`Q` 个整数，以空格分隔，依次是待查询的逻辑块号（`-10^9 <= 逻辑块号 <= 10^9`）。`Q = 0` 时该行为空行。\n\n### 输出\n\n`Q` 行，每行一个整数：该逻辑块对应的**物理块号**；若逻辑块号为负、超出寻址范围，或对应指针为 `-1`，则输出 `-1`。\n\n### 示例\n\n输入：\n\n```\n4\n100 101 102 103 104 105 106 107 108 109 -1 -1\n500 501 -1 503\n6\n0 5 10 12 15 20\n```\n\n输出：\n\n```\n100\n105\n-1\n500\n503\n-1\n```\n\n过程：逻辑块 `0` 与 `5` 落在直接指针区间，得到 `100`、`105`；逻辑块 `10` 的直接指针是 `-1`，输出 `-1`；逻辑块 `12` 是间接区间的第 `0` 项，得到 `500`；逻辑块 `15` 是间接区间的第 `3` 项，得到 `503`；逻辑块 `20` 超过了最大可寻址逻辑块 `15`，输出 `-1`。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\ndef emit(text):\n    sys.stdout.buffer.write(text.encode(\"utf-8\"))\n\ndef main():\n    data = sys.stdin.read().split()\n    if not data:\n        return\n    pos = 0\n    n = int(data[pos]); pos += 1\n    direct = [int(tok) for tok in data[pos:pos + 12]]; pos += 12\n    indirect = [int(tok) for tok in data[pos:pos + n]]; pos += n\n    q = int(data[pos]); pos += 1\n    queries = [int(tok) for tok in data[pos:pos + q]]\n    out = []\n    for logical in queries:\n        if logical < 0:\n            out.append(\"-1\")\n        elif logical < 12:\n            out.append(str(direct[logical]))\n        elif logical < 12 + n:\n            out.append(str(indirect[logical - 12]))\n        else:\n            out.append(\"-1\")\n    emit(\"\\n\".join(out) + \"\\n\")\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "4\n100 101 102 103 104 105 106 107 108 109 -1 -1\n500 501 -1 503\n6\n0 5 10 12 15 20\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：直接、间接与越界查询",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "4\n100 101 102 103 104 105 106 107 108 109 -1 -1\n500 501 -1 503\n6\n0 5 10 12 15 20\n",
+        "args": [],
+        "expected_stdout": "100\n105\n-1\n500\n503\n-1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：单个间接指针与负逻辑块号",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1\n7 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1\n42\n5\n-1 0 11 12 13\n",
+        "args": [],
+        "expected_stdout": "-1\n7\n-1\n42\n-1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：间接块首尾项",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "3\n2 3 5 7 11 13 17 19 23 29 31 37\n-1 41 -1\n4\n2 4 13 14\n",
+        "args": [],
+        "expected_stdout": "5\n11\n41\n-1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：全部直接指针为空洞",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2\n-1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1 -1\n5 6\n5\n0 11 12 13 99\n",
+        "args": [],
+        "expected_stdout": "-1\n-1\n5\n6\n-1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "filesystem",
+      "inode"
+    ]
+  },
+  {
+    "title": "路径规范化：解析 . 与 .. 得到规范绝对路径",
+    "stem_markdown": "## 题目\n\n给定一个**绝对路径**字符串，把它规范化（canonicalise）：\n\n- 路径以 `/` 开头，根目录写作 `/`；\n- 重复的 `/`（包括连续多个斜杠）等价于一个 `/`；\n- `.` 表示当前目录，直接忽略；\n- `..` 表示上级目录：若还有上级目录就回退一级；若已经在根目录，则停留在根目录（即 `/..` 的结果仍是 `/`）；\n- 结果必须以 `/` 开头；除根目录外**不能**以 `/` 结尾；根目录输出为单个 `/`。\n\n路径中的组件区分大小写，且不会出现空组件以外的特殊形式。\n\n### 输入\n\n一行，一个非空字符串（不含空格和制表符，长度不超过 `1000`），表示待规范化的绝对路径。行尾可以有换行符，也可以没有。\n\n### 输出\n\n一行：规范化后的绝对路径。\n\n### 示例\n\n输入：\n\n```\n/home//alice/./docs/.././notes/\n```\n\n输出：\n\n```\n/home/alice/notes\n```\n\n过程：按 `/` 切分后依次是空组件、`home`、空组件、`alice`、`.`、`docs`、`..`、`.`、`notes`、空组件。空组件和 `.` 忽略；`docs` 入栈后被 `..` 弹掉；最后栈里是 `home`、`alice`、`notes`，拼成上面的输出。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\ndef emit(text):\n    sys.stdout.buffer.write(text.encode(\"utf-8\"))\n\ndef main():\n    text = sys.stdin.read()\n    line = text.split(\"\\n\")[0]\n    stack = []\n    for part in line.split(\"/\"):\n        if part == \"\" or part == \".\":\n            continue\n        if part == \"..\":\n            if stack:\n                stack.pop()\n        else:\n            stack.append(part)\n    emit(\"/\" + \"/\".join(stack) + \"\\n\")\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "/home//alice/./docs/.././notes/\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：包含 . 与 .. 的路径",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "/home//alice/./docs/.././notes/\n",
+        "args": [],
+        "expected_stdout": "/home/alice/notes\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：根目录之上回退",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "/../..//\n",
+        "args": [],
+        "expected_stdout": "/\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：回退超过已有的层级",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "/a/b/c/../../../../d/./\n",
+        "args": [],
+        "expected_stdout": "/d\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：多余斜杠与末尾回退",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "/tmp/././x/../y//z/../w\n",
+        "args": [],
+        "expected_stdout": "/tmp/y/w\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "path",
+      "filesystem"
+    ]
+  },
+  {
+    "title": "目录树查找：解析相对路径并输出绝对路径",
+    "stem_markdown": "## 题目\n\n给定一棵**只包含目录**的目录树，以及若干次路径查找，输出解析后的绝对路径。\n\n目录树用若干行绝对路径给出，每行一个目录，父目录一定出现在子目录之前；根目录写成 `/`。这些路径本身已经是规范形式，不含 `.`、`..`、连续斜杠，也不以 `/` 结尾（根目录除外）。\n\n每次查找给出「当前目录」和一个待解析路径，解析规则与 shell 一致，且**只做词法解析**：\n\n- 待解析路径以 `/` 开头时从根目录开始解析，否则从当前目录开始解析；\n- 空组件（连续 `/`）与 `.` 直接忽略；\n- `..` 回退一级，已经在根目录时停留在根目录；\n- 解析结束后得到一条绝对路径：若它正好是树中列出的某个目录，输出该路径；否则输出 `NOT FOUND`。只检查**最终结果**，不检查中间层级是否存在。\n\n### 输入\n\n1. 第一行：一个整数 `N`（`1 <= N <= 200`），目录条数。\n2. 接下来 `N` 行：每行一个绝对路径，表示一个目录；保证其中包含 `/`，且父目录先于子目录出现。\n3. 接下来一行：一个整数 `Q`（`0 <= Q <= 100`），查找次数。\n4. 接下来 `Q` 行：每行两个由单个空格分隔的字符串 `当前目录` 和 `待解析路径`。当前目录一定是树中已列出的目录，且不以 `/` 结尾（根目录写作 `/`）。\n\n### 输出\n\n`Q` 行，每行一个字符串：解析得到的绝对路径，或 `NOT FOUND`。\n\n### 示例\n\n输入：\n\n```\n7\n/\n/home\n/home/alice\n/home/bob\n/etc\n/etc/nginx\n/var\n4\n/home/alice ../../etc/nginx\n/home/alice .\n/var ../etc\n/etc/nginx ../nginx/./sites\n```\n\n输出：\n\n```\n/etc/nginx\n/home/alice\n/etc\nNOT FOUND\n```\n\n过程：第一行查找从 `/home/alice` 出发，`..` 回到 `/home`，再 `..` 回到根，然后进入 `etc/nginx`，得到 `/etc/nginx`，它确实在树中；第二行查找的 `.` 表示当前目录，结果 `/home/alice` 在树中；第三行从 `/var` 出发回退到根再进入 `etc`，得到 `/etc`；第四行得到 `/etc/nginx/sites`，树中没有列出这个目录，因此输出 `NOT FOUND`。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\ndef emit(text):\n    sys.stdout.buffer.write(text.encode(\"utf-8\"))\n\ndef main():\n    lines = [ln.strip() for ln in sys.stdin.read().split(\"\\n\")]\n    lines = [ln for ln in lines if ln]\n    if not lines:\n        return\n    pos = 0\n    n = int(lines[pos]); pos += 1\n    tree = set()\n    for _ in range(n):\n        tree.add(lines[pos]); pos += 1\n    q = int(lines[pos]); pos += 1\n    out = []\n    for _ in range(q):\n        fields = lines[pos].split(); pos += 1\n        cwd = fields[0]\n        target = fields[1]\n        if target.startswith(\"/\"):\n            stack = []\n            rest = target\n        else:\n            stack = [p for p in cwd.split(\"/\") if p]\n            rest = target\n        for part in rest.split(\"/\"):\n            if part == \"\" or part == \".\":\n                continue\n            if part == \"..\":\n                if stack:\n                    stack.pop()\n            else:\n                stack.append(part)\n        resolved = \"/\" + \"/\".join(stack)\n        out.append(resolved if resolved in tree else \"NOT FOUND\")\n    emit(\"\\n\".join(out) + \"\\n\")\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "7\n/\n/home\n/home/alice\n/home/bob\n/etc\n/etc/nginx\n/var\n4\n/home/alice ../../etc/nginx\n/home/alice .\n/var ../etc\n/etc/nginx ../nginx/./sites\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：相对回退与不存在的目录",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "7\n/\n/home\n/home/alice\n/home/bob\n/etc\n/etc/nginx\n/var\n4\n/home/alice ../../etc/nginx\n/home/alice .\n/var ../etc\n/etc/nginx ../nginx/./sites\n",
+        "args": [],
+        "expected_stdout": "/etc/nginx\n/home/alice\n/etc\nNOT FOUND\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：绝对目标与回退到根",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "5\n/\n/a\n/a/b\n/a/b/c\n/x\n4\n/a/b /x\n/a/b/c ../../..\n/ /a/b/./c\n/a nonexistent\n",
+        "args": [],
+        "expected_stdout": "/x\n/\n/a/b/c\nNOT FOUND\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：多余斜杠与结尾斜杠",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "5\n/\n/a\n/a/b\n/a/b/c\n/x\n2\n/a/b ..//b/./c//\n/x ..\n",
+        "args": [],
+        "expected_stdout": "/a/b/c\n/\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：回退超过层级后继续拼接",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "5\n/\n/a\n/a/b\n/a/b/c\n/x\n2\n/a/b ../../../\n/ ./a/b\n",
+        "args": [],
+        "expected_stdout": "/\n/a/b\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "filesystem",
+      "path"
+    ]
+  },
+  {
+    "title": "按内容去重：输出重复文件分组",
+    "stem_markdown": "## 题目\n\n给出一批\"文件\"（文件名 + 文本内容），按**内容**去重：内容完全相同的文件属于同一组。内容是否相同由内容的 UTF-8 字节决定，实现时可以用任意确定性哈希（例如 `hashlib.sha256`）；**不要使用 Python 内置的 `hash()`**，它每次运行的取值可能不同。\n\n输出所有**至少包含两个文件**的分组，每组占一行。\n\n### 输入\n\n1. 第一行：一个整数 `N`（`0 <= N <= 200`），文件个数。\n2. 接下来 `N` 行：每行是 `文件名 内容`，两部分之间用**单个空格**分隔。文件名只含小写字母、数字、`.`、`_`、`-`，且互不相同；内容只含小写字母和数字，长度在 `1` 到 `64` 之间，不含空格。\n\n### 输出\n\n- 每个重复分组输出一行：该组的文件名，按**字典序升序**用单个空格分隔；\n- 各行的顺序按该组中**字典序最小的文件名**升序排列；\n- 若不存在任何内容重复的文件，输出单独一行 `NO DUPLICATES`。\n\n### 示例\n\n输入：\n\n```\n6\na.txt hello\nb.txt world\nc.txt hello\nd.txt xyz\ne.txt world\nf.txt hello\n```\n\n输出：\n\n```\na.txt c.txt f.txt\nb.txt e.txt\n```\n\n过程：`a.txt`、`c.txt`、`f.txt` 的内容都是 `hello`，构成一组；`b.txt`、`e.txt` 的内容都是 `world`，构成另一组；`d.txt` 的内容 `xyz` 没有同伴，不输出。两组按各自最小的文件名 `a.txt` 与 `b.txt` 排序，得到上面的输出。\n",
+    "language": "python",
+    "reference_answer": "import hashlib\nimport sys\nfrom collections import defaultdict\n\ndef emit(text):\n    sys.stdout.buffer.write(text.encode(\"utf-8\"))\n\ndef main():\n    lines = [ln.strip() for ln in sys.stdin.read().split(\"\\n\")]\n    lines = [ln for ln in lines if ln]\n    if not lines:\n        return\n    pos = 0\n    n = int(lines[pos]); pos += 1\n    groups = defaultdict(list)\n    for _ in range(n):\n        name, content = lines[pos].split(); pos += 1\n        digest = hashlib.sha256(content.encode(\"utf-8\")).hexdigest()\n        groups[digest].append(name)\n    duplicates = []\n    for names in groups.values():\n        if len(names) >= 2:\n            duplicates.append(sorted(names))\n    duplicates.sort(key=lambda group: group[0])\n    if not duplicates:\n        emit(\"NO DUPLICATES\\n\")\n        return\n    for group in duplicates:\n        emit(\" \".join(group) + \"\\n\")\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "6\na.txt hello\nb.txt world\nc.txt hello\nd.txt xyz\ne.txt world\nf.txt hello\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：两个重复分组与一个独有文件",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "6\na.txt hello\nb.txt world\nc.txt hello\nd.txt xyz\ne.txt world\nf.txt hello\n",
+        "args": [],
+        "expected_stdout": "a.txt c.txt f.txt\nb.txt e.txt\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：没有重复内容",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2\na 1\nb 2\n",
+        "args": [],
+        "expected_stdout": "NO DUPLICATES\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：多个分组按最小文件名排序",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "5\nz1 abc\na1 zzz\nm1 abc\nb1 zzz\nc1 qqq\n",
+        "args": [],
+        "expected_stdout": "a1 b1\nm1 z1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：空文件列表",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "0\n",
+        "args": [],
+        "expected_stdout": "NO DUPLICATES\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "hash",
+      "dedupe"
+    ]
+  },
+  {
+    "title": "合并 K 个有序序列：输出整体非递减序列",
+    "stem_markdown": "## 题目\n\n输入 `K` 个**已经按非递减顺序排好**的整数序列（称为 run），把它们合并成一个非递减序列输出。输出只包含数值，因此相同数值之间的先后次序不影响结果。\n\n### 输入\n\n1. 第一行：一个整数 `K`（`0 <= K <= 50`），run 的个数。\n2. 接下来 `K` 行：每行描述一个 run。第一个整数 `L`（`0 <= L <= 200`）是该 run 的长度，紧接着是 `L` 个按**非递减**顺序排列的整数（`-10^9 <= 数值 <= 10^9`），全部用单个空格分隔。`L = 0` 时该行只有一个 `0`。\n\n### 输出\n\n一行：合并后的全部整数，按**非递减**顺序用单个空格分隔；若总元素个数为 `0`，输出一个空行。\n\n### 示例\n\n输入：\n\n```\n3\n3 1 4 9\n0\n4 -5 1 1 100\n```\n\n输出：\n\n```\n-5 1 1 1 4 9 100\n```\n\n过程：三个 run 分别是 `[1, 4, 9]`、空、`[-5, 1, 1, 100]`。合并后按非递减顺序排列，`1` 一共出现三次（一次来自第一个 run，两次来自第三个 run），得到上面的输出。\n",
+    "language": "python",
+    "reference_answer": "import heapq\nimport sys\n\ndef emit(text):\n    sys.stdout.buffer.write(text.encode(\"utf-8\"))\n\ndef main():\n    data = sys.stdin.read().split()\n    if not data:\n        return\n    pos = 0\n    k = int(data[pos]); pos += 1\n    runs = []\n    for _ in range(k):\n        length = int(data[pos]); pos += 1\n        runs.append([int(tok) for tok in data[pos:pos + length]])\n        pos += length\n    heap = []\n    for index, run in enumerate(runs):\n        if run:\n            heap.append((run[0], index, 0))\n    heapq.heapify(heap)\n    merged = []\n    while heap:\n        value, run_index, offset = heapq.heappop(heap)\n        merged.append(value)\n        if offset + 1 < len(runs[run_index]):\n            heapq.heappush(heap, (runs[run_index][offset + 1], run_index, offset + 1))\n    emit(\" \".join(str(v) for v in merged) + \"\\n\")\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "3\n3 1 4 9\n0\n4 -5 1 1 100\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：含空 run 的三路合并",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "3\n3 1 4 9\n0\n4 -5 1 1 100\n",
+        "args": [],
+        "expected_stdout": "-5 1 1 1 4 9 100\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：没有 run",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "0\n",
+        "args": [],
+        "expected_stdout": "\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：常数 run 与短 run 混合",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2\n5 5 5 5 5 5\n3 -3 -1 0\n",
+        "args": [],
+        "expected_stdout": "-3 -1 0 5 5 5 5 5\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：含重复负数的多路合并",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "3\n2 -10 -10\n3 -10 0 10\n1 10\n",
+        "args": [],
+        "expected_stdout": "-10 -10 -10 0 10 10\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "merge",
+      "sorting"
+    ]
+  },
+  {
+    "title": "闭区间合并：输出互不重叠的区间",
+    "stem_markdown": "## 题目\n\n给定 `N` 个**闭区间** `[a, b]`（满足 `a <= b`），把互相重叠或首尾相接的区间合并：\n\n- 两个闭区间 `[a, b]` 与 `[c, d]` 满足 `a <= c` 时，只要 `c <= b`，二者就视为重叠（**端点相接也算**），合并成 `[a, max(b, d)]`；\n- 合并结果按**左端点升序**输出；由于合并后互不重叠，左端点升序同时也是右端点升序。\n\n### 输入\n\n1. 第一行：一个整数 `N`（`0 <= N <= 200`），区间个数。\n2. 接下来 `N` 行：每行两个整数 `a b`，用单个空格分隔（`-10^9 <= a <= b <= 10^9`）。\n\n### 输出\n\n每行一个合并后的区间，格式为 `a b`（单个空格分隔），按左端点升序排列。若 `N = 0`，不输出任何内容（输出为空）。\n\n### 示例\n\n输入：\n\n```\n6\n1 3\n2 6\n8 10\n15 18\n17 17\n10 12\n```\n\n输出：\n\n```\n1 6\n8 12\n15 18\n```\n\n过程：排序后的区间依次是 `[1,3]`、`[2,6]`、`[10,12]`、`[8,10]`、`[15,18]`、`[17,17]`（按左端点排序后为 `[1,3]`、`[2,6]`、`[8,10]`、`[10,12]`、`[15,18]`、`[17,17]`）。`[1,3]` 与 `[2,6]` 重叠，合并为 `[1,6]`；`[8,10]` 与 `[10,12]` 端点相接，合并为 `[8,12]`；`[17,17]` 落在 `[15,18]` 内部，被吸收。得到上面的输出。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\ndef emit(text):\n    sys.stdout.buffer.write(text.encode(\"utf-8\"))\n\ndef main():\n    data = sys.stdin.read().split()\n    if not data:\n        return\n    pos = 0\n    n = int(data[pos]); pos += 1\n    intervals = []\n    for _ in range(n):\n        left = int(data[pos]); right = int(data[pos + 1]); pos += 2\n        intervals.append((left, right))\n    intervals.sort()\n    merged = []\n    for left, right in intervals:\n        if merged and left <= merged[-1][1]:\n            if right > merged[-1][1]:\n                merged[-1][1] = right\n        else:\n            merged.append([left, right])\n    out = [\"%d %d\" % (left, right) for left, right in merged]\n    if out:\n        emit(\"\\n\".join(out) + \"\\n\")\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "6\n1 3\n2 6\n8 10\n15 18\n17 17\n10 12\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：重叠、相接与包含",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "6\n1 3\n2 6\n8 10\n15 18\n17 17\n10 12\n",
+        "args": [],
+        "expected_stdout": "1 6\n8 12\n15 18\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：没有区间",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "0\n",
+        "args": [],
+        "expected_stdout": "",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：互不相接的单点区间",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "4\n5 5\n1 1\n3 3\n2 2\n",
+        "args": [],
+        "expected_stdout": "1 1\n2 2\n3 3\n5 5\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：一个大区间吞掉全部",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "3\n1 100\n20 30\n40 50\n",
+        "args": [],
+        "expected_stdout": "1 100\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "intervals",
+      "sorting"
+    ]
+  },
+  {
+    "title": "取最大的 K 个数：并列时按下标排前",
+    "stem_markdown": "## 题目\n\n从 `N` 个整数中选出**最大的 `K` 个**，按从大到小输出，并给出每个数在原序列中的位置，以便区分数值相同的元素。\n\n### 输入\n\n1. 第一行：一个整数 `N`（`0 <= N <= 1000`），整数个数。\n2. 第二行：一个整数 `K`（`0 <= K <= N`），要选出的个数。\n3. 第三行：`N` 个整数，以空格分隔（`-10^9 <= 数值 <= 10^9`）。`N = 0` 时该行为空行。\n\n### 输出\n\n`K` 行，每行两个整数 `值 下标`，用单个空格分隔；下标是从 `0` 开始的原始位置。排序规则：\n\n1. **数值大的排在前面**；\n2. 数值相同时，**下标小的排在前面**。\n\n### 示例\n\n输入：\n\n```\n6\n4\n5 9 5 1 9 7\n```\n\n输出：\n\n```\n9 1\n9 4\n7 5\n5 0\n```\n\n过程：序列是 `5 9 5 1 9 7`（下标 `0..5`）。最大的两个数是下标 `1` 和下标 `4` 上的 `9`，按下标从小到大先输出 `9 1` 再输出 `9 4`；接着是下标 `5` 上的 `7`；剩下 `5` 出现在下标 `0` 和 `2`，按下标取前面的 `5 0`。共输出 `4` 行。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\ndef emit(text):\n    sys.stdout.buffer.write(text.encode(\"utf-8\"))\n\ndef main():\n    data = sys.stdin.read().split()\n    if not data:\n        return\n    pos = 0\n    n = int(data[pos]); pos += 1\n    k = int(data[pos]); pos += 1\n    values = [int(tok) for tok in data[pos:pos + n]]\n    order = sorted(range(n), key=lambda i: (-values[i], i))\n    take = min(k, n)\n    out = [\"%d %d\" % (values[i], i) for i in order[:take]]\n    emit(\"\\n\".join(out) + \"\\n\")\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "6\n4\n5 9 5 1 9 7\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：并列值按下标排序",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "6\n4\n5 9 5 1 9 7\n",
+        "args": [],
+        "expected_stdout": "9 1\n9 4\n7 5\n5 0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：K 为 0",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "3\n0\n1 2 3\n",
+        "args": [],
+        "expected_stdout": "\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：全部数值相同",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "5\n5\n7 7 7 7 7\n",
+        "args": [],
+        "expected_stdout": "7 0\n7 1\n7 2\n7 3\n7 4\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：含负数且 K 小于 N",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "4\n2\n-1 -5 -3 -5\n",
+        "args": [],
+        "expected_stdout": "-1 0\n-3 2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "selection",
+      "sorting"
+    ]
+  },
+  {
+    "title": "字典树：统计去重单词构成的节点数",
+    "stem_markdown": "## 题目\n\n读入一段文本，把其中的**不同单词**插入一棵字典树（trie），输出字典树的**节点总数（不含根节点）**。\n\n- 单词的定义：由连续的 ASCII 字母（`A`-`Z`、`a`-`z`）组成的最大片段；任何其他字符都是分隔符；\n- 插入前把单词统一转换为**小写**，因此 `Cat` 与 `cat` 是同一个单词；\n- 相同的单词只算一次（不过重复插入也不会改变节点数量）。\n\n### 输入\n\n标准输入的全部内容就是文本：可能为空，可能有多行，总长度不超过 `100000` 字节，不含 NUL 字节。\n\n### 输出\n\n一行，一个整数：字典树的节点个数（**不包含根节点**）。\n\n### 示例\n\n输入：\n\n```\nCat dog\ncat Bird\n```\n\n输出：\n\n```\n10\n```\n\n过程：文本中的单词是 `Cat`、`dog`、`cat`、`Bird`；转为小写并去重后是 `cat`、`dog`、`bird`，共 `3` 个不同单词。`cat` 需要 `c`、`a`、`t` 三个节点，`dog` 需要 `d`、`o`、`g` 三个节点，`bird` 需要 `b`、`i`、`r`、`d` 四个节点，三者不共享前缀，合计 `3 + 3 + 4 = 10` 个节点。\n",
+    "language": "python",
+    "reference_answer": "import re\nimport sys\n\ndef emit(text):\n    sys.stdout.buffer.write(text.encode(\"utf-8\"))\n\ndef main():\n    text = sys.stdin.read().lower()\n    words = sorted(set(re.findall(r\"[a-z]+\", text)))\n    children = [{}]\n    for word in words:\n        node = 0\n        for ch in word:\n            nxt = children[node].get(ch)\n            if nxt is None:\n                nxt = len(children)\n                children.append({})\n                children[node][ch] = nxt\n            node = nxt\n    emit(str(len(children) - 1) + \"\\n\")\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "Cat dog\ncat Bird\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：大小写混合与重复单词",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "Cat dog\ncat Bird\n",
+        "args": [],
+        "expected_stdout": "10\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：空输入",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：共享前缀的单词",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "aa aaa\n",
+        "args": [],
+        "expected_stdout": "3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：标点分隔与大小写折叠",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "Hello, world! hello... WORLD?\nHELLO\n",
+        "args": [],
+        "expected_stdout": "10\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "trie",
+      "strings"
+    ]
+  },
+  {
+    "title": "线性探测哈希表：输出每个键的落槽位置",
+    "stem_markdown": "## 题目\n\n用一个大小为 `M` 的**开放定址哈希表**（冲突用线性探测解决）依次插入 `N` 个**互不相同**的非负整数键。插入键 `k` 的过程：\n\n1. 计算初始槽位 `h = k mod M`；\n2. 若该槽已被占用，依次尝试 `(h+1) mod M`、`(h+2) mod M`、…（下标超过 `M-1` 后回绕到 `0`），直到找到空槽；\n3. 把键放入这个空槽。\n\n输出每个键最终落入的槽位下标，按插入顺序。\n\n### 输入\n\n1. 第一行：一个整数 `M`（`1 <= M <= 200`），槽位个数。\n2. 第二行：一个整数 `N`（`0 <= N <= M`），键的个数。\n3. 第三行：`N` 个整数，以空格分隔，按**插入顺序**给出（`0 <= 键 <= 10^9`，互不相同）。`N = 0` 时该行为空行。\n\n输入保证 `N <= M`，因此每次插入都一定能成功。\n\n### 输出\n\n`N` 行，每行一个整数：对应键最终所在的槽位下标（`0 <= 下标 < M`），按插入顺序输出。\n\n### 示例\n\n输入：\n\n```\n7\n5\n10 3 17 24 31\n```\n\n输出：\n\n```\n3\n4\n5\n6\n0\n```\n\n过程：`10 mod 7 = 3`，槽 `3` 空，落在 `3`；`3 mod 7 = 3` 被占，探测 `4` 空，落在 `4`；`17 mod 7 = 3` 被占，`4`、`5` 依次被占，`5` 空，落在 `5`；`24 mod 7 = 3` 被占，`4`、`5`、`6` 依次被占，`6` 空，落在 `6`；`31 mod 7 = 3` 被占，`4`、`5`、`6` 都被占，回绕后槽 `0` 空，落在 `0`。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\ndef emit(text):\n    sys.stdout.buffer.write(text.encode(\"utf-8\"))\n\ndef main():\n    data = sys.stdin.read().split()\n    if not data:\n        return\n    pos = 0\n    m = int(data[pos]); pos += 1\n    n = int(data[pos]); pos += 1\n    keys = [int(tok) for tok in data[pos:pos + n]]\n    table = [None] * m\n    out = []\n    for key in keys:\n        slot = key % m\n        while table[slot] is not None:\n            slot = (slot + 1) % m\n        table[slot] = key\n        out.append(str(slot))\n    emit(\"\\n\".join(out) + \"\\n\")\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "7\n5\n10 3 17 24 31\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：连续冲突与回绕",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "7\n5\n10 3 17 24 31\n",
+        "args": [],
+        "expected_stdout": "3\n4\n5\n6\n0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：没有键",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "5\n0\n\n",
+        "args": [],
+        "expected_stdout": "\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：全部落在同一初始槽",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "5\n4\n5 10 15 20\n",
+        "args": [],
+        "expected_stdout": "0\n1\n2\n3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：探测跨过表尾回绕",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "6\n6\n10 11 12 13 14 15\n",
+        "args": [],
+        "expected_stdout": "4\n5\n0\n1\n2\n3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "hashing",
+      "probing"
+    ]
+  },
+  {
+    "title": "隐式有序数组上的二分查找：统计比较次数",
+    "stem_markdown": "## 题目\n\n有一个**隐式有序数组**：长度为 `N`，第 `i` 个元素（`0 <= i < N`）的值是 `A + i * D`，其中 `D > 0`、`A >= 0`，所以数组严格递增。数组不会显式给出，需要按公式计算（`N` 可能很大，不要真的构造数组）。\n\n对每个查询值 `x`，用下面这段二分查找统计**比较次数**并给出下标：\n\n```text\nlo = 0, hi = N - 1, count = 0, found = -1\nwhile lo <= hi:\n    mid = (lo + hi) // 2\n    count += 1\n    if A + mid * D == x:\n        found = mid\n        break\n    elif A + mid * D < x:\n        lo = mid + 1\n    else:\n        hi = mid - 1\n```\n\n每进入一次循环体算**一次比较**；`//` 表示向下取整的整除；区间是闭区间。找不到时 `found` 保持 `-1`。\n\n### 输入\n\n1. 第一行：一个整数 `N`（`1 <= N <= 10^9`），数组长度。\n2. 第二行：两个整数 `A` 和 `D`，用单个空格分隔（`0 <= A <= 10^9`，`1 <= D <= 10^9`）。\n3. 第三行：一个整数 `Q`（`0 <= Q <= 100`），查询个数。\n4. 第四行：`Q` 个整数，以空格分隔，依次是查询值（`0 <= x <= 10^12`）。`Q = 0` 时该行为空行。\n\n### 输出\n\n`Q` 行，每行两个整数 `比较次数 下标`，用单个空格分隔；未找到时下标为 `-1`。\n\n### 示例\n\n输入：\n\n```\n10\n5 3\n3\n17 20 18\n```\n\n输出：\n\n```\n1 4\n3 5\n3 -1\n```\n\n过程：数组是 `5, 8, 11, 14, 17, 20, 23, 26, 29, 32`。查 `17` 时第一次取 `mid = 4` 就命中，比较 `1` 次，下标 `4`；查 `20` 时依次比较 `mid = 4`（`17 < 20`）、`mid = 7`（`26 > 20`）、`mid = 5`（命中），共 `3` 次，下标 `5`；查 `18` 时依次比较 `mid = 4`、`mid = 7`、`mid = 5`（`20 > 18`）后区间为空，共 `3` 次，未找到，下标 `-1`。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\ndef emit(text):\n    sys.stdout.buffer.write(text.encode(\"utf-8\"))\n\ndef main():\n    data = sys.stdin.read().split()\n    if not data:\n        return\n    pos = 0\n    n = int(data[pos]); pos += 1\n    first = int(data[pos]); pos += 1\n    step = int(data[pos]); pos += 1\n    q = int(data[pos]); pos += 1\n    queries = [int(tok) for tok in data[pos:pos + q]]\n    out = []\n    for target in queries:\n        lo = 0\n        hi = n - 1\n        count = 0\n        found = -1\n        while lo <= hi:\n            mid = (lo + hi) // 2\n            count += 1\n            value = first + mid * step\n            if value == target:\n                found = mid\n                break\n            if value < target:\n                lo = mid + 1\n            else:\n                hi = mid - 1\n        out.append(\"%d %d\" % (count, found))\n    emit(\"\\n\".join(out) + \"\\n\")\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "10\n5 3\n3\n17 20 18\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：命中与未命中三种情况",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "10\n5 3\n3\n17 20 18\n",
+        "args": [],
+        "expected_stdout": "1 4\n3 5\n3 -1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：长度为 1 的数组",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1\n0 1\n3\n0 1 2\n",
+        "args": [],
+        "expected_stdout": "1 0\n1 -1\n1 -1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：大规模数组上的命中与未命中",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1000000000\n1000000000 1\n2\n1000000000 1\n",
+        "args": [],
+        "expected_stdout": "29 0\n29 -1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：未命中值落在数组中间",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "8\n2 4\n3\n14 16 21\n",
+        "args": [],
+        "expected_stdout": "1 3\n3 -1\n3 -1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "binary-search",
+      "complexity"
+    ]
+  },
+  {
+    "title": "最小堆上浮过程：逐次输出插入后的数组",
+    "stem_markdown": "## 题目\n\n按下面的方式**在线**构建一个最小堆：依次读入 `N` 个整数，每读入一个就把它放到数组末尾，然后不断与父节点比较并**上浮（sift-up）**——\n\n- 数组用 `0` 开始的下标；下标 `i` 的父节点下标是 `(i - 1) // 2`（`//` 为向下取整的整除）；\n- 只要当前节点比父节点**小**就与父节点交换，直到它不小于父节点，或它已经成为根节点为止。\n\n输出**每次插入完成后**的整个堆数组。\n\n### 输入\n\n1. 第一行：一个整数 `N`（`0 <= N <= 200`），整数个数。\n2. 第二行：`N` 个整数，以空格分隔（`-10^9 <= 数值 <= 10^9`）。`N = 0` 时该行为空行。\n\n### 输出\n\n`N` 行。第 `i` 行是插入第 `i` 个元素之后的堆数组（`i` 从 `1` 开始），按数组下标从小到大用单个空格分隔。若 `N = 0`，不输出任何内容（输出为空）。\n\n### 示例\n\n输入：\n\n```\n4\n5 3 8 1\n```\n\n输出：\n\n```\n5\n3 5\n3 5 8\n1 3 8 5\n```\n\n过程：插入 `5` 后堆为 `[5]`；插入 `3` 时 `3` 比父节点 `5` 小，交换后为 `[3, 5]`；插入 `8` 时 `8` 不小于父节点 `3`，仍为 `[3, 5, 8]`；插入 `1` 时先与父节点 `5` 交换得到 `[3, 1, 8, 5]`，再与父节点 `3` 交换得到 `[1, 3, 8, 5]`。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\ndef emit(text):\n    sys.stdout.buffer.write(text.encode(\"utf-8\"))\n\ndef main():\n    data = sys.stdin.read().split()\n    if not data:\n        return\n    pos = 0\n    n = int(data[pos]); pos += 1\n    values = [int(tok) for tok in data[pos:pos + n]]\n    heap = []\n    out = []\n    for value in values:\n        heap.append(value)\n        i = len(heap) - 1\n        while i > 0:\n            parent = (i - 1) // 2\n            if heap[parent] <= heap[i]:\n                break\n            heap[parent], heap[i] = heap[i], heap[parent]\n            i = parent\n        out.append(\" \".join(str(v) for v in heap))\n    emit(\"\\n\".join(out) + \"\\n\")\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "4\n5 3 8 1\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：四次插入的上浮轨迹",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "4\n5 3 8 1\n",
+        "args": [],
+        "expected_stdout": "5\n3 5\n3 5 8\n1 3 8 5\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：空序列",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "0\n",
+        "args": [],
+        "expected_stdout": "\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：已按升序给出",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "4\n1 2 3 4\n",
+        "args": [],
+        "expected_stdout": "1\n1 2\n1 2 3\n1 2 3 4\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：严格降序导致连续上浮",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "5\n9 7 5 3 1\n",
+        "args": [],
+        "expected_stdout": "9\n7 9\n5 9 7\n3 5 7 9\n1 3 7 9 5\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "heap",
+      "trace"
+    ]
+  }
+]

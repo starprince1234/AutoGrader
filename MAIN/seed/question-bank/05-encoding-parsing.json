@@ -1,0 +1,1222 @@
+[
+  {
+    "title": "带前缀的整数在二/八/十/十六进制之间互转",
+    "stem_markdown": "## 题目\n\n读入一个整数常量，把它同时用十进制、二进制、八进制和十六进制表示出来。\n\n### 输入\n\n一行，一个整数常量（行尾可有换行）。常量由可选的负号与进制前缀组成：\n\n- `0b` / `0B` 开头：二进制\n- `0o` / `0O` 开头：八进制\n- `0x` / `0X` 开头：十六进制\n- 没有前缀：十进制\n\n前缀之后的数字使用对应进制的合法字符，字母大小写都可以。除字面量 `0` 之外不会出现前导零，数字部分也不会为空。\n\n### 输出\n\n四行，顺序固定，每行形如 `名称=值`：\n\n| 行号 | 名称 | 值 |\n|---|---|---|\n| 1 | `dec` | 十进制 |\n| 2 | `bin` | 二进制，带前缀 `0b` |\n| 3 | `oct` | 八进制，带前缀 `0o` |\n| 4 | `hex` | 十六进制，带前缀 `0x` |\n\n约定：负数的负号写在进制前缀之前（例如 `-0x1f`）；前缀与字母一律小写；数值为零时分别输出 `0b0`、`0o0`、`0x0`。\n\n### 示例\n\n输入：\n\n```\n0x1F\n```\n\n输出：\n\n```\ndec=31\nbin=0b11111\noct=0o37\nhex=0x1f\n```\n\n另一个例子（不在评测用例中）：输入 `-0b1000`，输出应为 `dec=-8`、`bin=-0b1000`、`oct=-0o10`、`hex=-0x8`。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\n\ndef to_base(value, base):\n    digits = \"0123456789abcdef\"\n    if value == 0:\n        return \"0\"\n    out = []\n    while value:\n        value, remainder = divmod(value, base)\n        out.append(digits[remainder])\n    return \"\".join(reversed(out))\n\n\ndef main():\n    token = sys.stdin.read().strip()\n    sign = \"\"\n    body = token\n    if body[:1] in (\"+\", \"-\"):\n        sign = body[0]\n        body = body[1:]\n    lowered = body.lower()\n    if lowered[:2] == \"0b\":\n        value = int(body[2:], 2)\n    elif lowered[:2] == \"0o\":\n        value = int(body[2:], 8)\n    elif lowered[:2] == \"0x\":\n        value = int(body[2:], 16)\n    else:\n        value = int(body, 10)\n    if sign == \"-\":\n        value = -value\n    out_sign = \"-\" if value < 0 else \"\"\n    magnitude = abs(value)\n    print(\"dec=%d\" % value)\n    print(\"bin=%s0b%s\" % (out_sign, to_base(magnitude, 2)))\n    print(\"oct=%s0o%s\" % (out_sign, to_base(magnitude, 8)))\n    print(\"hex=%s0x%s\" % (out_sign, to_base(magnitude, 16)))\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "0x1F\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：十六进制 0x1F",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "0x1F\n",
+        "args": [],
+        "expected_stdout": "dec=31\nbin=0b11111\noct=0o37\nhex=0x1f\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：二进制 0b101101",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "0b101101\n",
+        "args": [],
+        "expected_stdout": "dec=45\nbin=0b101101\noct=0o55\nhex=0x2d\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：负八进制",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "-0o17\n",
+        "args": [],
+        "expected_stdout": "dec=-15\nbin=-0b1111\noct=-0o17\nhex=-0xf\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：十进制 1000",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1000\n",
+        "args": [],
+        "expected_stdout": "dec=1000\nbin=0b1111101000\noct=0o1750\nhex=0x3e8\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "encoding",
+      "numbers"
+    ]
+  },
+  {
+    "title": "校验十进制整数字符串并报告非法记号",
+    "stem_markdown": "## 题目\n\n把一行输入按空白切成若干记号，逐个判断它是不是合法的十进制整数，并给出规范化结果。\n\n### 输入\n\n一行文本（可能为空）。记号之间用一个或多个空格分隔，记号中只可能出现 ASCII 字符。\n\n### 输出\n\n对每个记号按从左到右的顺序输出一行：\n\n- 合法：`OK <规范化值>`\n- 非法：`ERR <原记号>`（原记号原样回显）\n\n### 判定与规范化规则\n\n合法记号 = 可选的 `+` 或 `-`，后面紧跟一个或多个 `0`–`9`。不允许多余字符、不允许空的数字部分、不允许多个连续符号。\n\n规范化：去掉数字部分的前导零；正数不带符号；数值为零时一律输出 `0`（无论输入是 `-0`、`+0` 还是 `000`）。数值不设上限。\n\n输入为空行时不输出任何内容。\n\n### 示例\n\n输入：\n\n```\n007 -12 +5 1a\n```\n\n输出：\n\n```\nOK 7\nOK -12\nOK 5\nERR 1a\n```\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\n\ndef canonical(token):\n    index = 0\n    negative = False\n    if token[:1] in (\"+\", \"-\"):\n        negative = token[0] == \"-\"\n        index = 1\n    digits = token[index:]\n    if not digits:\n        return None\n    for ch in digits:\n        if ch < \"0\" or ch > \"9\":\n            return None\n    value = int(digits)\n    if value == 0:\n        return \"0\"\n    return (\"-\" if negative else \"\") + str(value)\n\n\ndef main():\n    out = []\n    for token in sys.stdin.read().split():\n        result = canonical(token)\n        out.append(\"ERR \" + token if result is None else \"OK \" + result)\n    if out:\n        sys.stdout.write(\"\\n\".join(out) + \"\\n\")\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "007 -12 +5 1a\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：合法与非法混合",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "007 -12 +5 1a\n",
+        "args": [],
+        "expected_stdout": "OK 7\nOK -12\nOK 5\nERR 1a\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：各种零",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "0 -0 +0 00\n",
+        "args": [],
+        "expected_stdout": "OK 0\nOK 0\nOK 0\nOK 0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：双符号与数字混字母",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "--5 12x3\n",
+        "args": [],
+        "expected_stdout": "ERR --5\nERR 12x3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：超大数与前导零负数",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "9999999999999999999999 -0007\n",
+        "args": [],
+        "expected_stdout": "OK 9999999999999999999999\nOK -7\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "parsing",
+      "validation"
+    ]
+  },
+  {
+    "title": "权限位在八进制记法与 rwx 记法之间互转",
+    "stem_markdown": "## 题目\n\n把文件权限在八进制记法与符号记法之间互转。\n\n### 输入\n\n一行，只可能是下面两种形式之一：\n\n1. 恰好三个八进制数字（`0`–`7`），例如 `755`\n2. 恰好九个字符，每个字符是 `r`、`w`、`x`、`-` 之一，例如 `rwxr-xr-x`\n\n### 输出\n\n一行，是输入的另一种形式：\n\n- 输入是八进制时，输出九个字符的符号记法：每一位八进制数字对应一组 `rwx`（`r` 记 4 分、`w` 记 2 分、`x` 记 1 分），没有的权限写成 `-`。\n- 输入是符号记法时，输出三个八进制数字：每组三位按 `r`=4、`w`=2、`x`=1 求和。\n\n本题不涉及 setuid / setgid / sticky 位。\n\n### 示例\n\n输入：\n\n```\n755\n```\n\n输出：\n\n```\nrwxr-xr-x\n```\n\n反方向的例子（不在评测用例中）：输入 `rw-r--r--`，输出 `644`。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\n\ndef to_symbolic(digits):\n    flags = (\"r\", \"w\", \"x\")\n    out = []\n    for ch in digits:\n        bits = int(ch)\n        for index in range(3):\n            out.append(flags[index] if bits & (4 >> index) else \"-\")\n    return \"\".join(out)\n\n\ndef to_octal(symbolic):\n    out = []\n    for start in range(0, 9, 3):\n        bits = 0\n        for index in range(3):\n            if symbolic[start + index] != \"-\":\n                bits |= 4 >> index\n        out.append(str(bits))\n    return \"\".join(out)\n\n\ndef main():\n    text = sys.stdin.read().strip()\n    if len(text) == 3 and all(\"0\" <= ch <= \"7\" for ch in text):\n        print(to_symbolic(text))\n    else:\n        print(to_octal(text))\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "755\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：755 转符号记法",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "755\n",
+        "args": [],
+        "expected_stdout": "rwxr-xr-x\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：640 转符号记法",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "640\n",
+        "args": [],
+        "expected_stdout": "rw-r-----\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：符号记法转八进制",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "rwxr-x---\n",
+        "args": [],
+        "expected_stdout": "750\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：全无权限",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "---------\n",
+        "args": [],
+        "expected_stdout": "000\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "permissions",
+      "unix"
+    ]
+  },
+  {
+    "title": "把一行 UTF-8 文本按 16 字节一行做十六进制转储",
+    "stem_markdown": "## 题目\n\n把标准输入的一行文本当作 UTF-8 数据，输出它像 `hexdump -C` 那样的十六进制转储。\n\n### 输入\n\n一行 UTF-8 文本。行尾的换行符（以及可能的 `\\r`）不属于数据本身。\n\n### 输出\n\n每 16 个字节一行，行的结构是：\n\n```\n<偏移>  <十六进制区>  |<ASCII 区>|\n```\n\n- 偏移：从 0 开始，8 位小写十六进制数字。\n- 十六进制区：每个字节两位小写十六进制，字节之间用一个空格分隔。最后一行不足 16 字节时按实际字节数输出，**行尾不补空格**。\n- 偏移与十六进制区之间、十六进制区与 ASCII 区之间：各两个空格。\n- ASCII 区：字节值在 `0x20`–`0x7E` 之间时输出该字符本身（空格也算），否则输出一个 `.`。\n- 本题要求**逐字节一致**：每一行（包括最后一行）都以一个换行符结束（`\\n`），行尾不能有多余的空格或制表符，末尾也不要多输出空行。\n\n输入为空行时不输出任何内容。\n\n因为输入是 UTF-8，非 ASCII 字符会占据多个字节；请显式按 UTF-8 解码标准输入（例如 `sys.stdin.buffer.read().decode(\"utf-8\")`），不要依赖平台的默认编码。\n\n### 示例\n\n输入：\n\n```\nHello, OS!\n```\n\n输出：\n\n```\n00000000  48 65 6c 6c 6f 2c 20 4f 53 21  |Hello, OS!|\n```\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\n\ndef main():\n    text = sys.stdin.buffer.read().decode(\"utf-8\")\n    if text.endswith(\"\\n\"):\n        text = text[:-1]\n    if text.endswith(\"\\r\"):\n        text = text[:-1]\n    raw = text.encode(\"utf-8\")\n    for offset in range(0, len(raw), 16):\n        chunk = raw[offset:offset + 16]\n        hex_part = \" \".join(\"%02x\" % byte for byte in chunk)\n        ascii_part = \"\".join(chr(byte) if 0x20 <= byte <= 0x7E else \".\" for byte in chunk)\n        print(\"%08x  %s  |%s|\" % (offset, hex_part, ascii_part))\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "Hello, OS!\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "exact",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：10 字节",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "Hello, OS!\n",
+        "args": [],
+        "expected_stdout": "00000000  48 65 6c 6c 6f 2c 20 4f 53 21  |Hello, OS!|\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：跨两行的 20 字节",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "The quick brown fox!\n",
+        "args": [],
+        "expected_stdout": "00000000  54 68 65 20 71 75 69 63 6b 20 62 72 6f 77 6e 20  |The quick brown |\n00000010  66 6f 78 21  |fox!|\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：非 ASCII 的多字节 UTF-8",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "café ☕\n",
+        "args": [],
+        "expected_stdout": "00000000  63 61 66 c3 a9 20 e2 98 95  |caf.. ...|\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "hexdump",
+      "encoding"
+    ]
+  },
+  {
+    "title": "计算一行文本的 CRC-32 校验和",
+    "stem_markdown": "## 题目\n\n对标准输入第一行文本的 UTF-8 字节计算 CRC-32 校验和。\n\n### 输入\n\n一行 UTF-8 文本，可能是空行。行尾的换行符不属于数据本身。\n\n### 输出\n\n一行，8 位小写十六进制数字（不足 8 位时左侧补 `0`），不带 `0x` 前缀，末尾换行。\n\n### 约定\n\n使用标准 CRC-32（IEEE 802.3：反射多项式 `0xEDB88320`，初值与终值异或都是 `0xFFFFFFFF`）。Python 标准库里的 `zlib.crc32` 就是它，直接用即可。输入可能含非 ASCII 字符，请显式按 UTF-8 取字节，不要依赖平台默认编码。\n\n### 示例\n\n输入：\n\n```\n123456789\n```\n\n输出：\n\n```\ncbf43926\n```\n",
+    "language": "python",
+    "reference_answer": "import sys\nimport zlib\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\n\ndef main():\n    text = sys.stdin.buffer.read().decode(\"utf-8\")\n    if text.endswith(\"\\n\"):\n        text = text[:-1]\n    if text.endswith(\"\\r\"):\n        text = text[:-1]\n    print(\"%08x\" % (zlib.crc32(text.encode(\"utf-8\")) & 0xFFFFFFFF))\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "123456789\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：经典检查串",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "123456789\n",
+        "args": [],
+        "expected_stdout": "cbf43926\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：空行",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "",
+        "args": [],
+        "expected_stdout": "00000000\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：长英文句子",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "The quick brown fox jumps over the lazy dog\n",
+        "args": [],
+        "expected_stdout": "414fa339\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：中文字符",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "你好\n",
+        "args": [],
+        "expected_stdout": "50a2b841\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "checksum",
+      "crc32"
+    ]
+  },
+  {
+    "title": "计算一行文本的 Adler-32 校验和",
+    "stem_markdown": "## 题目\n\n对标准输入第一行文本的 UTF-8 字节计算 Adler-32 校验和。\n\n### 输入\n\n一行 UTF-8 文本，可能是空行。行尾的换行符不属于数据本身。\n\n### 输出\n\n一行，校验和的无符号十进制值（0 ≤ 值 < 2³²），末尾换行。\n\n### 约定\n\n使用标准 Adler-32（模数 65521，两个累加和 `a` 从 1 开始、`b` 从 0 开始，先累加 `a` 再累加 `b`，结果拼成 `b << 16 | a`）。Python 标准库里的 `zlib.adler32` 就是它，直接用即可。空输入的 Adler-32 是 1。输入可能含非 ASCII 字符，请显式按 UTF-8 取字节，不要依赖平台默认编码。\n\n### 示例\n\n输入：\n\n```\nWikipedia\n```\n\n输出：\n\n```\n300286872\n```\n",
+    "language": "python",
+    "reference_answer": "import sys\nimport zlib\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\n\ndef main():\n    text = sys.stdin.buffer.read().decode(\"utf-8\")\n    if text.endswith(\"\\n\"):\n        text = text[:-1]\n    if text.endswith(\"\\r\"):\n        text = text[:-1]\n    print(\"%d\" % (zlib.adler32(text.encode(\"utf-8\")) & 0xFFFFFFFF))\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "Wikipedia\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：经典检查串",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "Wikipedia\n",
+        "args": [],
+        "expected_stdout": "300286872\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：空行",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "",
+        "args": [],
+        "expected_stdout": "1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：长英文句子",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "The quick brown fox jumps over the lazy dog\n",
+        "args": [],
+        "expected_stdout": "1541148634\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：中文字符",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "你好\n",
+        "args": [],
+        "expected_stdout": "272958601\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "checksum",
+      "adler32"
+    ]
+  },
+  {
+    "title": "计算一行文本的逐字节模 256 加和校验",
+    "stem_markdown": "## 题目\n\n对标准输入第一行文本的 UTF-8 字节计算最简单的加和校验：把所有字节值相加，再对 256 取余。\n\n### 输入\n\n一行 UTF-8 文本，可能是空行。行尾的换行符不属于数据本身。\n\n### 输出\n\n一行，2 位小写十六进制数字（范围 `00`–`ff`，不足两位时左侧补 `0`），不带 `0x` 前缀，末尾换行。\n\n### 示例\n\n输入：\n\n```\nABC\n```\n\n输出：\n\n```\nc6\n```\n\n（`A`、`B`、`C` 的字节值是 65、66、67，和为 198，即 `0xc6`。）\n\n输入可能含非 ASCII 字符，此时要按 UTF-8 的每个字节分别累加；请显式按 UTF-8 取字节，不要依赖平台默认编码。\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\n\ndef main():\n    text = sys.stdin.buffer.read().decode(\"utf-8\")\n    if text.endswith(\"\\n\"):\n        text = text[:-1]\n    if text.endswith(\"\\r\"):\n        text = text[:-1]\n    total = sum(text.encode(\"utf-8\")) % 256\n    print(\"%02x\" % total)\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "ABC\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：三个大写字母",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "ABC\n",
+        "args": [],
+        "expected_stdout": "c6\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：溢出回绕的小写字母",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "abc\n",
+        "args": [],
+        "expected_stdout": "26\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：空行",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "",
+        "args": [],
+        "expected_stdout": "00\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：含多字节字符",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "café\n",
+        "args": [],
+        "expected_stdout": "96\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "checksum",
+      "bytes"
+    ]
+  },
+  {
+    "title": "按大端与小端两种字节序拆解定长二进制记录",
+    "stem_markdown": "## 题目\n\n一条 12 字节的二进制记录以十六进制字符串给出，请分别按大端序和小端序解释其中的多字节整数字段。\n\n### 输入\n\n一行，24 个十六进制数字（大小写不限），没有分隔符、没有 `0x` 前缀。它表示一条 12 字节的记录，字段布局（偏移以字节计）为：\n\n| 偏移 | 宽度 | 字段 | 含义 |\n|---|---|---|---|\n| 0–3 | 4 | `id` | 无符号整数 |\n| 4–5 | 2 | `flags` | 无符号整数 |\n| 6–9 | 4 | `size` | 无符号整数 |\n| 10–11 | 2 | `tag` | 两个 ASCII 字符 |\n\n### 输出\n\n两行，第一行按大端序解释，第二行按小端序解释：\n\n```\nBE id=<十进制> flags=<十进制> size=<十进制> tag=<两个字符>\nLE id=<十进制> flags=<十进制> size=<十进制> tag=<两个字符>\n```\n\n字段之间用一个空格分隔。多字节整数字段的字节顺序随端序翻转；`tag` 是字节数组，两种端序下都按内存顺序直接当作两个 ASCII 字符，因此两行的 `tag` 相同。\n\n### 示例\n\n输入：\n\n```\n0000002a00010000ffff4f4b\n```\n\n输出：\n\n```\nBE id=42 flags=1 size=65535 tag=OK\nLE id=704643072 flags=256 size=4294901760 tag=OK\n```\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\n\ndef main():\n    raw = bytes.fromhex(sys.stdin.read().strip())\n\n    def uint_be(start, width):\n        value = 0\n        for offset in range(width):\n            value = (value << 8) | raw[start + offset]\n        return value\n\n    def uint_le(start, width):\n        value = 0\n        for offset in range(width - 1, -1, -1):\n            value = (value << 8) | raw[start + offset]\n        return value\n\n    tag = raw[10:12].decode(\"ascii\")\n    print(\"BE id=%d flags=%d size=%d tag=%s\" % (uint_be(0, 4), uint_be(4, 2), uint_be(6, 4), tag))\n    print(\"LE id=%d flags=%d size=%d tag=%s\" % (uint_le(0, 4), uint_le(4, 2), uint_le(6, 4), tag))\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "0000002a00010000ffff4f4b\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：字段不对称的记录",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "0000002a00010000ffff4f4b\n",
+        "args": [],
+        "expected_stdout": "BE id=42 flags=1 size=65535 tag=OK\nLE id=704643072 flags=256 size=4294901760 tag=OK\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：全高位的字段",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "ffeeddcc123489abcdef4869\n",
+        "args": [],
+        "expected_stdout": "BE id=4293844428 flags=4660 size=2309737967 tag=Hi\nLE id=3437096703 flags=13330 size=4023233417 tag=Hi\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：tag 含空格",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "01000000ffffdeadbeef203a\n",
+        "args": [],
+        "expected_stdout": "BE id=16777216 flags=65535 size=3735928559 tag= :\nLE id=1 flags=65535 size=4022250974 tag= :\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "endianness",
+      "binary"
+    ]
+  },
+  {
+    "title": "字母串的行程长度编码与解码",
+    "stem_markdown": "## 题目\n\n实现字母串的行程长度编码（RLE）与它的逆运算。\n\n### 输入\n\n两行：\n\n1. 第一行是模式：`enc` 表示编码，`dec` 表示解码。\n2. 第二行是载荷。编码时载荷只含 ASCII 字母（`A`–`Z`、`a`–`z`）；解码时载荷由十进制数字与 ASCII 字母组成。第二行可能为空。\n\n### 输出\n\n一行，处理结果，末尾换行。空载荷编码和解码都得到空串，即输出一个空行。\n\n### 约定\n\n- 编码：把连续相同的字符合成一段，写成 `<重复次数><字符>`；重复次数为 1 时省略次数。例如 `aaabbc` 编码为 `3a2bc`。\n- 解码：从左到右扫描，一串十进制数字是紧随其后那个字符的重复次数；数字不出现时次数为 1。例如 `1a10b1c` 解码为 1 个 `a`、10 个 `b`、1 个 `c`。\n- 字母区分大小写。\n\n### 示例\n\n输入：\n\n```\nenc\naaabbc\n```\n\n输出：\n\n```\n3a2bc\n```\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\n\ndef encode(text):\n    out = []\n    index = 0\n    while index < len(text):\n        ch = text[index]\n        run = 1\n        while index + run < len(text) and text[index + run] == ch:\n            run += 1\n        out.append(ch if run == 1 else str(run) + ch)\n        index += run\n    return \"\".join(out)\n\n\ndef decode(text):\n    out = []\n    index = 0\n    while index < len(text):\n        count = 0\n        seen = False\n        while index < len(text) and \"0\" <= text[index] <= \"9\":\n            count = count * 10 + (ord(text[index]) - ord(\"0\"))\n            seen = True\n            index += 1\n        if not seen:\n            count = 1\n        out.append(text[index] * count)\n        index += 1\n    return \"\".join(out)\n\n\ndef main():\n    rows = sys.stdin.read().split(\"\\n\")\n    mode = rows[0].strip()\n    payload = rows[1] if len(rows) > 1 else \"\"\n    print(encode(payload) if mode == \"enc\" else decode(payload))\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "enc\naaabbc\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：编码 aaabbc",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "enc\naaabbc\n",
+        "args": [],
+        "expected_stdout": "3a2bc\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：解码 3a2bc",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "dec\n3a2bc\n",
+        "args": [],
+        "expected_stdout": "aaabbc\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：编码两位数的重复段",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "enc\nwwwwwwwwwwwwxyzz\n",
+        "args": [],
+        "expected_stdout": "12wxy2z\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：解码显式次数 1",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "dec\n1a10b1c\n",
+        "args": [],
+        "expected_stdout": "abbbbbbbbbbc\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "encoding",
+      "rle"
+    ]
+  },
+  {
+    "title": "解码 LEB128（varint）字节串为整数序列",
+    "stem_markdown": "## 题目\n\n一条十六进制字符串表示的字节串里按顺序存放着若干个无符号 LEB128 变长整数（varint），请把它们全部解码出来。\n\n### 输入\n\n一行，偶数个十六进制数字（大小写不限），没有分隔符、没有 `0x` 前缀。\n\n### 输出\n\n一行，按出现顺序输出解出的整数，整数之间用一个空格分隔，末尾换行。\n\n### 约定（无符号 LEB128）\n\n每个字节的低 7 位是数据，最高位是延续标志：\n\n- 最高位为 1：把低 7 位放进当前整数更高的一组，继续读下一个字节；\n- 最高位为 0：把低 7 位放进当前整数，这个整数到此结束。\n\n第一个字节的低 7 位是整数的第 0–6 位，第二个字节的低 7 位是第 7–13 位，依此类推。编码可能不是最短形式（例如用两个字节表示 0 也是合法的），解码时按上面的规则处理。\n\n### 示例\n\n输入：\n\n```\nac02\n```\n\n输出：\n\n```\n300\n```\n\n（`0xac` = `1010 1100`，最高位为 1，低 7 位是 `010 1100`，即 44；下一个字节 `0x02` 最高位为 0，低 7 位是 2，于是 44 + 2 × 128 = 300。）\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\n\ndef main():\n    data = bytes.fromhex(sys.stdin.read().strip())\n    values = []\n    current = 0\n    shift = 0\n    for byte in data:\n        current |= (byte & 0x7F) << shift\n        if byte & 0x80:\n            shift += 7\n        else:\n            values.append(current)\n            current = 0\n            shift = 0\n    print(\" \".join(str(value) for value in values))\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "ac02\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：两字节表示 300",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "ac02\n",
+        "args": [],
+        "expected_stdout": "300\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：单字节零",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "00\n",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：两个整数",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "ff0120\n",
+        "args": [],
+        "expected_stdout": "255 32\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：非最短形式",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "808001\n",
+        "args": [],
+        "expected_stdout": "16384\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "parsing",
+      "varint"
+    ]
+  },
+  {
+    "title": "按 CSV 规则切分一行记录（支持双引号字段）",
+    "stem_markdown": "## 题目\n\n把一行 CSV 记录切分成字段。输入保证格式良好：双引号只出现在字段的开头或结尾，不会在字段中间落单。\n\n### 输入\n\n一行文本（只含 ASCII），去掉行尾换行后即为记录内容。\n\n### 输出\n\n第一行是字段个数：`count=<个数>`。\n\n随后每个字段一行，形如 `<序号>=<字段内容>`，序号从 1 开始，按字段出现的顺序排列。\n\n### 约定\n\n- 字段之间用逗号分隔。\n- 整个字段被一对双引号包住时，这一对外层双引号不算内容；这种字段内部可以出现逗号。\n- 引号字段内部连续的两个双引号 `\"\"` 表示一个真正的双引号字符。\n- 空字段是合法的：例如 `a,,b` 有 3 个字段，中间那个是空串。\n- 请自己扫描字符串实现，不要用 `csv` 模块（题目考的是解析规则本身）。\n\n### 示例\n\n输入：\n\n```\na,\"b,c\",d\n```\n\n输出：\n\n```\ncount=3\n1=a\n2=b,c\n3=d\n```\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\n\ndef split_record(text):\n    fields = []\n    current = []\n    index = 0\n    in_quotes = False\n    while index < len(text):\n        ch = text[index]\n        if in_quotes:\n            if ch == '\"':\n                if index + 1 < len(text) and text[index + 1] == '\"':\n                    current.append('\"')\n                    index += 2\n                    continue\n                in_quotes = False\n                index += 1\n                continue\n            current.append(ch)\n            index += 1\n            continue\n        if ch == '\"':\n            in_quotes = True\n            index += 1\n            continue\n        if ch == \",\":\n            fields.append(\"\".join(current))\n            current = []\n            index += 1\n            continue\n        current.append(ch)\n        index += 1\n    fields.append(\"\".join(current))\n    return fields\n\n\ndef main():\n    record = sys.stdin.readline()\n    if record.endswith(\"\\n\"):\n        record = record[:-1]\n    if record.endswith(\"\\r\"):\n        record = record[:-1]\n    fields = split_record(record)\n    print(\"count=%d\" % len(fields))\n    for position, field in enumerate(fields, start=1):\n        print(\"%d=%s\" % (position, field))\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "a,\"b,c\",d\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：引号内逗号",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "a,\"b,c\",d\n",
+        "args": [],
+        "expected_stdout": "count=3\n1=a\n2=b,c\n3=d\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：转义的双引号",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\"he said \"\"hi\"\"\",x\n",
+        "args": [],
+        "expected_stdout": "count=2\n1=he said \"hi\"\n2=x\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：全空字段",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": ",,\n",
+        "args": [],
+        "expected_stdout": "count=3\n1=\n2=\n3=\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：单个空引号字段",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\"\"\n",
+        "args": [],
+        "expected_stdout": "count=1\n1=\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "parsing",
+      "csv"
+    ]
+  },
+  {
+    "title": "实现反斜杠转义序列的编码与解码",
+    "stem_markdown": "## 题目\n\n自己实现一套反斜杠转义规则，完成转义（编码）与还原（解码）。\n\n### 输入\n\n两行：\n\n1. 第一行是模式：`esc` 表示转义，`unesc` 表示还原。\n2. 第二行是载荷。转义时载荷只含可打印 ASCII（`0x20`–`0x7E`）与制表符（`0x09`）。\n\n### 输出\n\n一行，处理结果，末尾换行。\n\n### 转义（`esc`）规则\n\n逐字符转换：\n\n| 原字符 | 输出 |\n|---|---|\n| 反斜杠 | 两个反斜杠 |\n| 制表符 | `\\t`（反斜杠后跟字母 t） |\n| 其他控制字符（`0x00`–`0x1F`、`0x7F`） | `\\xHH`，两位小写十六进制 |\n| 其他可打印 ASCII | 原样输出 |\n\n### 还原（`unesc`）规则\n\n载荷是一行文本，从左到右扫描；遇到反斜杠时按下表处理：\n\n| 序列 | 结果 |\n|---|---|\n| 两个反斜杠 | 一个反斜杠 |\n| `\\t` | 制表符 |\n| `\\n` | 换行 |\n| `\\r` | 回车 |\n| `\\xHH` | 码位为十六进制 `HH` 的字符，两位十六进制，大小写都可以 |\n| 其他 | 反斜杠原样保留，继续处理后面的字符 |\n\n行尾单独的一个反斜杠也原样保留。\n\n### 示例\n\n输入：\n\n```\nesc\nC:\\tmp\n```\n\n输出：\n\n```\nC:\\\\tmp\n```\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\n\ndef is_hex_digit(ch):\n    return (\"0\" <= ch <= \"9\") or (\"a\" <= ch <= \"f\") or (\"A\" <= ch <= \"F\")\n\n\ndef escape(text):\n    out = []\n    for ch in text:\n        if ch == \"\\\\\":\n            out.append(\"\\\\\\\\\")\n        elif ch == \"\\t\":\n            out.append(\"\\\\t\")\n        elif ch == \"\\n\":\n            out.append(\"\\\\n\")\n        elif ch == \"\\r\":\n            out.append(\"\\\\r\")\n        elif \" \" <= ch <= \"~\":\n            out.append(ch)\n        else:\n            out.append(\"\\\\x%02x\" % ord(ch))\n    return \"\".join(out)\n\n\ndef unescape(text):\n    out = []\n    index = 0\n    while index < len(text):\n        ch = text[index]\n        if ch != \"\\\\\" or index + 1 >= len(text):\n            out.append(ch)\n            index += 1\n            continue\n        nxt = text[index + 1]\n        if nxt == \"\\\\\":\n            out.append(\"\\\\\")\n            index += 2\n        elif nxt == \"t\":\n            out.append(\"\\t\")\n            index += 2\n        elif nxt == \"n\":\n            out.append(\"\\n\")\n            index += 2\n        elif nxt == \"r\":\n            out.append(\"\\r\")\n            index += 2\n        elif nxt == \"x\" and index + 3 < len(text) and is_hex_digit(text[index + 2]) and is_hex_digit(text[index + 3]):\n            out.append(chr(int(text[index + 2:index + 4], 16)))\n            index += 4\n        else:\n            out.append(\"\\\\\")\n            index += 1\n    return \"\".join(out)\n\n\ndef main():\n    rows = sys.stdin.read().split(\"\\n\")\n    mode = rows[0].strip()\n    payload = rows[1] if len(rows) > 1 else \"\"\n    print(escape(payload) if mode == \"esc\" else unescape(payload))\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "esc\nC:\\tmp\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：转义 Windows 路径",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "esc\nC:\\tmp\n",
+        "args": [],
+        "expected_stdout": "C:\\\\tmp\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：转义制表符",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "esc\na\tb\n",
+        "args": [],
+        "expected_stdout": "a\\tb\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：还原混合序列",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "unesc\na\\tb\\\\c\\x41\n",
+        "args": [],
+        "expected_stdout": "a\tb\\cA\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：还原大写十六进制",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "unesc\n\\x7a\\x6A\n",
+        "args": [],
+        "expected_stdout": "zj\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "escaping",
+      "strings"
+    ]
+  },
+  {
+    "title": "统计一行文本的字符数与 UTF-8 字节数",
+    "stem_markdown": "## 题目\n\n分别统计一行文本的字符个数和它在 UTF-8 编码下的字节数。\n\n### 输入\n\n一行 UTF-8 文本，可能是空行。行尾的换行符不属于数据本身。\n\n### 输出\n\n一行，形如 `chars=<字符个数> bytes=<字节数>`，中间用一个空格分隔，末尾换行。\n\n### 约定\n\n- 字符个数按 Unicode 码位计（Python 中就是解码后字符串的长度）：一个超出基本多文种平面的字符（例如 emoji）也只算一个字符。\n- 字节数是该文本用 UTF-8 编码后的字节数：ASCII 字符占 1 字节，常见汉字占 3 字节。\n- 请显式按 UTF-8 解码标准输入（例如 `sys.stdin.buffer.read().decode(\"utf-8\")`），不要依赖平台的默认编码。\n\n### 示例\n\n输入：\n\n```\nhéllo\n```\n\n输出：\n\n```\nchars=5 bytes=6\n```\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\n\ndef main():\n    text = sys.stdin.buffer.read().decode(\"utf-8\")\n    if text.endswith(\"\\n\"):\n        text = text[:-1]\n    if text.endswith(\"\\r\"):\n        text = text[:-1]\n    print(\"chars=%d bytes=%d\" % (len(text), len(text.encode(\"utf-8\"))))\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "héllo\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：含两字节字符",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "héllo\n",
+        "args": [],
+        "expected_stdout": "chars=5 bytes=6\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：五个汉字",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "你好，世界\n",
+        "args": [],
+        "expected_stdout": "chars=5 bytes=15\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：空行",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "",
+        "args": [],
+        "expected_stdout": "chars=0 bytes=0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：含四字节字符",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a😀\n",
+        "args": [],
+        "expected_stdout": "chars=2 bytes=5\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "utf8",
+      "encoding"
+    ]
+  },
+  {
+    "title": "校验并规范化 IPv4 点分十进制地址",
+    "stem_markdown": "## 题目\n\n判断一个字符串是不是合法的 IPv4 点分十进制地址；合法时输出规范化结果，非法时输出一个原因代号。\n\n### 输入\n\n一行文本（只含 ASCII），可能带首尾空白。\n\n### 输出\n\n一行：\n\n- 合法：`OK <规范化地址>`\n- 非法：`INVALID <原因代号>`\n\n### 判定规则（按这个顺序检查）\n\n1. 用 `.` 切分，必须正好得到 4 段；否则原因代号是 `parts`。\n2. 从左到右检查每一段：段不能为空，且每个字符都必须是 `0`–`9`；否则原因代号是 `chars`。\n3. 每段的数值必须在 0–255 之间；否则原因代号是 `range`（同样从左到右，第一个越界的段决定结果）。\n\n### 规范化规则\n\n把每一段写成它的十进制数值形式（去掉前导零：`007` → `7`，`00` → `0`），再用 `.` 连接。\n\n### 示例\n\n输入：\n\n```\n192.168.001.001\n```\n\n输出：\n\n```\nOK 192.168.1.1\n```\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\n\ndef main():\n    text = sys.stdin.read().strip()\n    parts = text.split(\".\")\n    if len(parts) != 4:\n        print(\"INVALID parts\")\n        return\n    values = []\n    for part in parts:\n        if not part:\n            print(\"INVALID chars\")\n            return\n        for ch in part:\n            if ch < \"0\" or ch > \"9\":\n                print(\"INVALID chars\")\n                return\n        value = int(part)\n        if value > 255:\n            print(\"INVALID range\")\n            return\n        values.append(value)\n    print(\"OK \" + \".\".join(str(value) for value in values))\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "192.168.001.001\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：前导零规范化",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "192.168.001.001\n",
+        "args": [],
+        "expected_stdout": "OK 192.168.1.1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：段数不对",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1.2.3.4.5\n",
+        "args": [],
+        "expected_stdout": "INVALID parts\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：空段",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "10..7.1\n",
+        "args": [],
+        "expected_stdout": "INVALID chars\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：越界",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "192.168.1.256\n",
+        "args": [],
+        "expected_stdout": "INVALID range\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "networking",
+      "validation"
+    ]
+  },
+  {
+    "title": "计算 IPv4 CIDR 网段的地址总数与广播地址",
+    "stem_markdown": "## 题目\n\n给定一个 CIDR 记法的 IPv4 网段，算出它的地址总数、网络地址和广播地址。\n\n### 输入\n\n一行，形如 `a.b.c.d/n`：点分十进制 IPv4 地址、斜杠、前缀长度 `n`（0 ≤ n ≤ 32）。地址各段与 `n` 都是常规写法，没有前导零。\n\n### 输出\n\n三行，顺序固定，等号两边不加空格：\n\n```\nsize=<地址总数>\nnetwork=<网络地址>\nbroadcast=<广播地址>\n```\n\n- 地址总数是 2^(32-n)，写成十进制。\n- 网络地址是「网络号 + 全 0 主机位」，广播地址是「网络号 + 全 1 主机位」。\n- 两个地址都用点分十进制输出，每段是 0–255 的十进制数，不带前导零。\n\n### 示例\n\n输入：\n\n```\n192.168.1.10/24\n```\n\n输出：\n\n```\nsize=256\nnetwork=192.168.1.0\nbroadcast=192.168.1.255\n```\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\n\ndef parse_address(text):\n    value = 0\n    for part in text.split(\".\"):\n        value = (value << 8) | int(part)\n    return value\n\n\ndef format_address(value):\n    return \".\".join(str((value >> shift) & 0xFF) for shift in (24, 16, 8, 0))\n\n\ndef main():\n    address_text, prefix_text = sys.stdin.read().strip().split(\"/\")\n    prefix = int(prefix_text)\n    address = parse_address(address_text)\n    mask = 0 if prefix == 0 else ((1 << prefix) - 1) << (32 - prefix)\n    network = address & mask\n    broadcast = network | (~mask & 0xFFFFFFFF)\n    print(\"size=%d\" % (1 << (32 - prefix)))\n    print(\"network=%s\" % format_address(network))\n    print(\"broadcast=%s\" % format_address(broadcast))\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "192.168.1.10/24\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：/24 网段",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "192.168.1.10/24\n",
+        "args": [],
+        "expected_stdout": "size=256\nnetwork=192.168.1.0\nbroadcast=192.168.1.255\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：/30 小网段",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "10.0.0.5/30\n",
+        "args": [],
+        "expected_stdout": "size=4\nnetwork=10.0.0.4\nbroadcast=10.0.0.7\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：/16 大网段",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "172.20.3.4/16\n",
+        "args": [],
+        "expected_stdout": "size=65536\nnetwork=172.20.0.0\nbroadcast=172.20.255.255\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：/32 主机路由",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "8.8.8.8/32\n",
+        "args": [],
+        "expected_stdout": "size=1\nnetwork=8.8.8.8\nbroadcast=8.8.8.8\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "networking",
+      "cidr"
+    ]
+  },
+  {
+    "title": "实现只支持星号与问号的 glob 匹配器",
+    "stem_markdown": "## 题目\n\n实现一个只支持 `*` 和 `?` 两个通配符的 glob 匹配器，判断模式串能否匹配整个字符串。\n\n### 输入\n\n两行：\n\n1. 第一行是模式串，可能为空。\n2. 第二行是待匹配的字符串，可能为空。\n\n两行都只含 ASCII 可打印字符，且不含空格。\n\n### 输出\n\n一行：匹配输出 `MATCH`，不匹配输出 `NO MATCH`。\n\n### 约定\n\n- `*` 匹配任意长度的字符序列，包括空序列；一个模式里可以有多个 `*`。\n- `?` 恰好匹配一个字符。\n- 其他字符按字面比较，区分大小写。\n- 必须匹配整个字符串，而不是找子串。\n- 请自己实现匹配算法，不要用 `re` 或 `fnmatch`（题目考的就是这个）。\n\n### 示例\n\n输入：\n\n```\na*b?c\naXYbZc\n```\n\n输出：\n\n```\nMATCH\n```\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\n\ndef glob_match(pattern, text):\n    p = 0\n    t = 0\n    star = -1\n    mark = 0\n    while t < len(text):\n        if p < len(pattern) and (pattern[p] == \"?\" or pattern[p] == text[t]):\n            p += 1\n            t += 1\n        elif p < len(pattern) and pattern[p] == \"*\":\n            star = p\n            mark = t\n            p += 1\n        elif star >= 0:\n            p = star + 1\n            mark += 1\n            t = mark\n        else:\n            return False\n    while p < len(pattern) and pattern[p] == \"*\":\n        p += 1\n    return p == len(pattern)\n\n\ndef main():\n    rows = sys.stdin.read().split(\"\\n\")\n    pattern = rows[0]\n    text = rows[1] if len(rows) > 1 else \"\"\n    print(\"MATCH\" if glob_match(pattern, text) else \"NO MATCH\")\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "a*b?c\naXYbZc\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：星号与问号",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "a*b?c\naXYbZc\n",
+        "args": [],
+        "expected_stdout": "MATCH\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：后缀通配",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "*.log\nsystem.log\n",
+        "args": [],
+        "expected_stdout": "MATCH\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：问号不足一个字符",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a?c\nac\n",
+        "args": [],
+        "expected_stdout": "NO MATCH\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：星号匹配空串",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "*\n\n",
+        "args": [],
+        "expected_stdout": "MATCH\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "parsing",
+      "glob"
+    ]
+  },
+  {
+    "title": "按扩展名对路径分组输出",
+    "stem_markdown": "## 题目\n\n读入若干条路径，按它们的扩展名分组，然后分组打印。\n\n### 输入\n\n若干行，每行一个路径。路径中不含空格和制表符，空行忽略。\n\n### 输出\n\n按扩展名分组输出。每组先一行表头：\n\n```\next=<扩展名> count=<该组路径条数>\n```\n\n随后是该组的路径，每行一条，路径按 Unicode 码点升序排列。\n\n### 约定\n\n- 只看路径的最后一个 `/` 之后的部分（文件名部分）。\n- 文件名中最后一个 `.` 之后的部分就是扩展名，点本身不算在扩展名里。\n- 如果文件名里没有 `.`，或者 `.` 是文件名的第一个字符（如 `.bashrc`），或者 `.` 是文件名的最后一个字符（如 `data.`），都算作没有扩展名。\n- 没有扩展名的组，表头里的扩展名写成 `(none)`。\n- 扩展名区分大小写；分组按扩展名字符串升序排列，`(none)` 组排在最后。\n\n### 示例\n\n输入：\n\n```\nsrc/main.c\nREADME\nsrc/util.c\nMakefile\nnotes.txt\n```\n\n输出：\n\n```\next=c count=2\nsrc/main.c\nsrc/util.c\next=txt count=1\nnotes.txt\next=(none) count=2\nMakefile\nREADME\n```\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\n\ndef extension_of(path):\n    basename = path.rsplit(\"/\", 1)[-1]\n    dot = basename.rfind(\".\")\n    if dot <= 0 or dot == len(basename) - 1:\n        return \"\"\n    return basename[dot + 1:]\n\n\ndef main():\n    groups = {}\n    for line in sys.stdin.read().split(\"\\n\"):\n        if line == \"\":\n            continue\n        groups.setdefault(extension_of(line), []).append(line)\n    order = sorted(key for key in groups if key != \"\")\n    if \"\" in groups:\n        order.append(\"\")\n    for key in order:\n        members = sorted(groups[key])\n        print(\"ext=%s count=%d\" % (key if key else \"(none)\", len(members)))\n        for path in members:\n            print(path)\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "src/main.c\nREADME\nsrc/util.c\nMakefile\nnotes.txt\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：三种扩展名",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "src/main.c\nREADME\nsrc/util.c\nMakefile\nnotes.txt\n",
+        "args": [],
+        "expected_stdout": "ext=c count=2\nsrc/main.c\nsrc/util.c\next=txt count=1\nnotes.txt\next=(none) count=2\nMakefile\nREADME\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：点开头与多重后缀",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": ".gitignore\narchive.tar.gz\n.config/app.conf\n",
+        "args": [],
+        "expected_stdout": "ext=conf count=1\n.config/app.conf\next=gz count=1\narchive.tar.gz\next=(none) count=1\n.gitignore\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：结尾的点",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "data.\nx\n",
+        "args": [],
+        "expected_stdout": "ext=(none) count=2\ndata.\nx\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：大小写区分",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "b.TXT\na.txt\nc.txt\n",
+        "args": [],
+        "expected_stdout": "ext=TXT count=1\nb.TXT\next=txt count=2\na.txt\nc.txt\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "paths",
+      "grouping"
+    ]
+  },
+  {
+    "title": "解析时长字符串为总秒数",
+    "stem_markdown": "## 题目\n\n把 `1h30m`、`45s` 这样的时长字符串解析成总秒数。\n\n### 输入\n\n一行时长字符串，去掉行尾换行后形如若干个「十进制数字 + 单位字母」的拼接：\n\n- 单位 `h` = 3600 秒，`m` = 60 秒，`s` = 1 秒。\n- 每个单位最多出现一次，且按 `h`、`m`、`s` 的顺序出现。\n- 数字是非负十进制整数，可以带前导零，至少有一位数字。\n- 至少有一个「数字 + 单位」的组合。\n\n### 输出\n\n一行，总秒数的十进制表示，末尾换行。\n\n### 示例\n\n输入：\n\n```\n1h30m\n```\n\n输出：\n\n```\n5400\n```\n",
+    "language": "python",
+    "reference_answer": "import sys\n\nsys.stdout.reconfigure(newline=\"\\n\")\n\nSECONDS_PER_UNIT = {\"h\": 3600, \"m\": 60, \"s\": 1}\n\n\ndef main():\n    text = sys.stdin.read().strip()\n    total = 0\n    digits = \"\"\n    for ch in text:\n        if \"0\" <= ch <= \"9\":\n            digits += ch\n            continue\n        total += int(digits) * SECONDS_PER_UNIT[ch]\n        digits = \"\"\n    print(total)\n\n\nmain()\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "1h30m\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：小时与分钟",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "1h30m\n",
+        "args": [],
+        "expected_stdout": "5400\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：只有秒",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "45s\n",
+        "args": [],
+        "expected_stdout": "45\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：三段齐全",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2h5m9s\n",
+        "args": [],
+        "expected_stdout": "7509\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：分钟超过 60",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "100m\n",
+        "args": [],
+        "expected_stdout": "6000\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "parsing",
+      "time"
+    ]
+  }
+]

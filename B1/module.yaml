@@ -1,0 +1,13 @@
+schema_version: 1
+module: B1
+contract_version: 0.16.0
+entry_point: static:dist
+provides: [web-ui]
+requires: [host, b4-auth, b2-submissions, b3-questions]
+routes: []
+events:
+  publishes: []
+  subscribes: [autograder.v1.evaluation.progress, autograder.v1.evaluation.completed]
+database:
+  schema: none
+  migration_head: none

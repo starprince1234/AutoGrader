@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autograder.local/contracts/evaluation-package.schema.json",
+  "title": "Evaluation package",
+  "description": "Immutable, self-describing evaluation package compiled by B3 from a published question version and consumed by B2's runner core. This is the highest-risk coupling point in the system: B2 must be able to execute a package without understanding the question's semantics, and adding a question type must not require changing the runner core (RQ-B-3-40/50/60). The package carries reference answers, hidden test cases and expected outputs, so it is service-to-service only and must never be reachable from a student-facing surface.",
+  "type": "object",
+  "required": [
+    "question_version_id",
+    "package_digest",
+    "language",
+    "adapter",
+    "tests",
+    "security_policy",
+    "max_files",
+    "max_total_bytes",
+    "created_at"
+  ],
+  "properties": {
+    "question_version_id": {
+      "type": "string",
+      "format": "uuid",
+      "description": "The immutable question version this package was compiled from."
+    },
+    "package_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Canonical digest of the package content. Bound into every evaluation and reported in the result so a score can be traced to the exact package that produced it."
+    },
+    "language": {
+      "type": "string",
+      "enum": ["python", "bash"],
+      "description": "Graded language (RQ-B-0-10). B2 selects interpreter, static checker and sandbox policy from this value; a submission in a different language is rejected with 422."
+    },
+    "adapter": {
+      "type": "object",
+      "description": "How the submission is exercised. One shared structure for all three frameworks.",
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": ["stdin", "file", "callable"],
+          "description": "stdin = command line input (RQ-B-3-40); file = reads test data from files (RQ-B-3-50); callable = imported and invoked (RQ-B-3-60)."
+        },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Argument vector passed as an array. It is never interpolated into a shell string, so arguments containing shell metacharacters stay literal."
+        },
+        "stdin": { "type": ["string", "null"] },
+        "expect_exit_code": { "type": ["integer", "null"] },
+        "comparison": {
+          "type": "object",
+          "description": "Comparison policy declared by the question author. Student code must not be able to influence it: the runner takes it from the package, never from anything the submission provides.",
+          "required": ["stdout"],
+          "properties": {
+            "stdout": { "type": "string", "enum": ["exact", "ignore_trailing_whitespace", "numeric_tolerance", "ignored"] },
+            "stderr": { "type": "string", "enum": ["exact", "ignore_trailing_whitespace", "ignored"] },
+            "numeric_tolerance": { "type": ["number", "null"], "minimum": 0 }
+          },
+          "additionalProperties": false
+        },
+        "files": {
+          "type": "array",
+          "description": "Fixtures copied into the sandbox workspace before execution (relevant for kind=file). Paths are workspace-relative; absolute paths and '..' are rejected.",
+          "items": {
+            "type": "object",
+            "required": ["path", "content_sha256", "mount"],
+            "properties": {
+              "path": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$", "maxLength": 200 },
+              "content_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+              "mount": { "type": "string", "enum": ["input", "expected_output"] }
+            },
+            "additionalProperties": false
+          }
+        },
+        "callable": {
+          "type": "object",
+          "description": "Entry point resolved inside the workspace (relevant for kind=callable). Loading from arbitrary absolute paths or over the network is forbidden.",
+          "required": ["module", "attribute"],
+          "properties": {
+            "module": { "type": "string", "maxLength": 200 },
+            "attribute": { "type": "string", "maxLength": 200 },
+            "arguments_json": { "type": ["string", "null"], "maxLength": 8192 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "tests": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Hidden test cases. Never present in a public DTO, an event, a log line or a student-visible export.",
+      "items": {
+        "type": "object",
+        "required": ["case_id", "name", "ordinal"],
+        "properties": {
+          "case_id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "ordinal": { "type": "integer", "minimum": 0, "description": "Stable execution order; results are reported per ordinal so evidence can be compared across runs." },
+          "weight": { "type": "number", "exclusiveMinimum": 0, "default": 1 },
+          "visible_to_student": { "type": "boolean", "default": false, "description": "Whether the student may see this case's input and expected output. Defaults to false; hidden cases must stay hidden." },
+          "stdin": { "type": ["string", "null"] },
+          "args": { "type": "array", "items": { "type": "string" } },
+          "expected_stdout": { "type": ["string", "null"] },
+          "expected_stderr": { "type": ["string", "null"] },
+          "expected_exit_code": { "type": ["integer", "null"] }
+        },
+        "additionalProperties": false
+      }
+    },
+    "security_policy": {
+      "type": "object",
+      "description": "Sandbox policy applied to every case in this package. The constants encode non-negotiable guarantees from ADR-0004: no network, read-only root, non-root user. Numeric limits are enforced by cgroup v2 and seccomp.",
+      "required": ["network", "read_only_root", "allow_root", "max_memory_bytes", "max_cpu_seconds", "max_wall_seconds", "max_output_bytes", "max_processes"],
+      "properties": {
+        "network": { "const": false, "description": "Network access is always denied. A package cannot opt out." },
+        "read_only_root": { "const": true, "description": "The root filesystem is always read-only. A package cannot opt out." },
+        "allow_root": { "const": false, "description": "Graded code never runs as root. A package cannot opt out." },
+        "max_memory_bytes": { "type": "integer", "minimum": 16777216, "maximum": 100663296, "description": "Bounded by the resource ledger: a single concurrent sandbox job is capped at 96 MB." },
+        "max_cpu_seconds": { "type": "number", "exclusiveMinimum": 0, "maximum": 30 },
+        "max_wall_seconds": { "type": "number", "exclusiveMinimum": 0, "maximum": 60 },
+        "max_output_bytes": { "type": "integer", "minimum": 1024, "maximum": 1048576 },
+        "max_processes": { "type": "integer", "minimum": 1, "maximum": 64 },
+        "max_files_created": { "type": ["integer", "null"], "minimum": 0, "maximum": 10000 }
+      },
+      "additionalProperties": false
+    },
+    "max_files": { "type": "integer", "minimum": 1, "maximum": 100, "description": "Submission file count limit declared per question (RQ-B-2-10)." },
+    "max_total_bytes": { "type": "integer", "minimum": 1, "description": "Submission total size limit declared per question." },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "When this package's content was fixed. For a published version it equals `published_at` (the package is an immutable artifact); for a draft (CHG-0028) it is the draft content's own timestamp, because a draft has no `published_at` and its package is a snapshot of current content rather than a frozen one. Excluded from `package_digest`, so it never affects the digest."
+    }
+  },
+  "additionalProperties": false
+}

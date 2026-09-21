@@ -1,0 +1,68 @@
+[project]
+name = "autograder-b5"
+version = "0.1.0"
+description = "AutoGrader platform conformance auditor plugin"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+# B5 is read-only: no database driver, no message client, no schema of its own. What it needs
+# is exactly two abilities the other modules already depend on -- parsing the contract files
+# MAIN owns, and verifying a B4-issued bearer token locally (ADR-0013, MAIN/docs/api/governance.md
+# §2.4: every module verifies locally and never calls B4 back per request).
+dependencies = [
+  "autograder-platform==0.1.0",
+  "cryptography>=44,<47",
+  "fastapi>=0.115,<1",
+  "pydantic>=2.10,<3",
+  "pyjwt>=2.10,<3",
+  "pyyaml>=6,<7",
+]
+
+[dependency-groups]
+# The conformance suite answers a question about a *composition*, so its test environment is
+# the composition: the host's own loader plus every module it is expected to load. Keeping
+# them here (and out of `dependencies`) is what makes the production install of B5 minimal
+# while still letting `uv run pytest` prove the five-module load.
+dev = [
+  "autograder-b2",
+  "autograder-b3",
+  "autograder-b4",
+  "autograder-host",
+  "httpx>=0.28,<1",
+  "jsonschema>=4.23,<5",
+  "pytest>=8.3,<9",
+  "ruff>=0.9,<1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project.entry-points."autograder.modules"]
+b5 = "autograder_b5.plugin:create_module"
+
+[tool.uv.sources]
+# Editable on purpose. The conformance suite asserts properties of the *composition*, so it
+# must load the modules the reviewer is reading -- not a snapshot copied into this virtualenv
+# when it was created. A copied install goes stale the moment a sibling is edited, and a
+# conformance suite that verifies yesterday's bytes is worse than no suite: MAIN's
+# `check_module_installations()` exists because exactly that hazard was found in a gate.
+autograder-platform = { path = "../MAIN/sdk" }
+autograder-host = { path = "../MAIN/host", editable = true }
+autograder-b2 = { path = "../B2", editable = true }
+autograder-b3 = { path = "../B3", editable = true }
+autograder-b4 = { path = "../B4", editable = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/autograder_b5"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+ignore = ["B008", "E501", "I001"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

@@ -1,0 +1,1317 @@
+[
+  {
+    "title": "Shell：统计行数、单词数与字节数",
+    "stem_markdown": "## 题目\n\n用 bash 写一个过滤器：读入标准输入的全部文本，输出它的行数、单词数与字节数。\n\n### 输入\n\n标准输入中的任意文本，可能为空，也可能不以换行结尾。\n\n### 输出\n\n一行，三个用单个空格分隔的整数，依次为：\n\n1. 行数：输入中换行符的个数（结尾没有换行符的那一小段文本不计为一行）；\n2. 单词数：被空白字符（空格、制表符、换行）分隔出的非空片段个数；\n3. 字节数：输入的总字节数。\n\n输出末尾有一个换行。\n\n### 示例\n\n输入：\n\n```\nthe quick brown fox\njumps over the lazy dog\n```\n\n输出：\n\n```\n2 9 44\n```\n\n（两个换行符；9 个空白分隔的单词；两行文字加换行共 44 字节。）\n",
+    "language": "bash",
+    "reference_answer": "#!/usr/bin/env bash\nset -euo pipefail\n\nread -r lines words bytes < <(LC_ALL=C wc -l -w -c)\nprintf '%s %s %s\\n' \"$lines\" \"$words\" \"$bytes\"\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "the quick brown fox\njumps over the lazy dog\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：两行文本",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "the quick brown fox\njumps over the lazy dog\n",
+        "args": [],
+        "expected_stdout": "2 9 44\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：空输入",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "",
+        "args": [],
+        "expected_stdout": "0 0 0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：单行",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "one\n",
+        "args": [],
+        "expected_stdout": "1 1 4\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：含空行",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a b\n\nc\n",
+        "args": [],
+        "expected_stdout": "3 3 7\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "shell",
+      "text"
+    ]
+  },
+  {
+    "title": "Shell：输出最后 N 行",
+    "stem_markdown": "## 题目\n\n第一个命令行参数是整数 N。读取标准输入，按原顺序输出最后 N 行。\n\n### 输入\n\n- `$1`：整数 N，可能为 0，也可能大于输入的总行数。\n- 标准输入：若干行文本。\n\n### 输出\n\n最后 N 行，逐行输出，每行末尾换行。若 N 为 0 或输入为空，则不输出任何内容。\n\n### 示例\n\n命令行参数为 `2`，输入：\n\n```\nalpha\nbeta\ngamma\ndelta\n```\n\n输出：\n\n```\ngamma\ndelta\n```\n",
+    "language": "bash",
+    "reference_answer": "#!/usr/bin/env bash\nset -euo pipefail\n\ntail -n \"$1\"\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "alpha\nbeta\ngamma\ndelta\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：最后两行",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "alpha\nbeta\ngamma\ndelta\n",
+        "args": [
+          "2"
+        ],
+        "expected_stdout": "gamma\ndelta\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：N 大于总行数",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "one\ntwo\n",
+        "args": [
+          "10"
+        ],
+        "expected_stdout": "one\ntwo\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：N 为 0",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "x\ny\nz\n",
+        "args": [
+          "0"
+        ],
+        "expected_stdout": "",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：空输入",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "",
+        "args": [
+          "1"
+        ],
+        "expected_stdout": "",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "shell",
+      "text"
+    ]
+  },
+  {
+    "title": "Shell：按字面量筛选行",
+    "stem_markdown": "## 题目\n\n第一个命令行参数是一段**字面量**文本（不是正则表达式）。读取标准输入，输出所有把该字面量作为子串包含的行。\n\n### 输入\n\n- `$1`：待查找的字面量；它可能以 `-` 开头，也可能含有 `.`、`*` 这类正则元字符。\n- 标准输入：若干行文本。\n\n### 输出\n\n按原顺序输出所有匹配的行，每行末尾换行。没有任何行匹配时不输出任何内容，并且仍然以退出码 0 结束。\n\n### 示例\n\n参数为 `an`，输入：\n\n```\nbanana\ncherry\ncandy\nband\n```\n\n输出：\n\n```\nbanana\ncandy\nband\n```\n",
+    "language": "bash",
+    "reference_answer": "#!/usr/bin/env bash\nset -euo pipefail\n\nLC_ALL=C grep -F -- \"$1\" || true\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "banana\ncherry\ncandy\nband\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：匹配三条",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "banana\ncherry\ncandy\nband\n",
+        "args": [
+          "an"
+        ],
+        "expected_stdout": "banana\ncandy\nband\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：点号按字面量处理",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "xa.by\nxaxb\nab\n",
+        "args": [
+          "a.b"
+        ],
+        "expected_stdout": "xa.by\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：没有匹配",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "aaa\nbbb\n",
+        "args": [
+          "zzz"
+        ],
+        "expected_stdout": "",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：以短横线开头",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a-xb\n-x start\nplain\n",
+        "args": [
+          "-x"
+        ],
+        "expected_stdout": "a-xb\n-x start\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "shell",
+      "grep"
+    ]
+  },
+  {
+    "title": "Shell：统计不同行的个数",
+    "stem_markdown": "## 题目\n\n读取标准输入，统计其中**不同行**的个数：相同的行只算一次，空行也算一行。\n\n### 输入\n\n若干行文本，可能为空。\n\n### 输出\n\n一个整数，末尾换行。输入为空时输出 `0`。\n\n### 示例\n\n输入：\n\n```\nred\ngreen\nred\nblue\ngreen\nred\n```\n\n输出：\n\n```\n3\n```\n\n（不同的行是 `red`、`green`、`blue`。）\n",
+    "language": "bash",
+    "reference_answer": "#!/usr/bin/env bash\nset -euo pipefail\n\nLC_ALL=C sort -u | LC_ALL=C wc -l\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "red\ngreen\nred\nblue\ngreen\nred\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：三种不同的行",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "red\ngreen\nred\nblue\ngreen\nred\n",
+        "args": [],
+        "expected_stdout": "3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：空输入",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：全部相同",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "x\nx\nx\nx\n",
+        "args": [],
+        "expected_stdout": "1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：四种不同的行",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "b\na\nb\nc\na\nd\n",
+        "args": [],
+        "expected_stdout": "4\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "shell",
+      "sort"
+    ]
+  },
+  {
+    "title": "Shell：出现次数最多的行",
+    "stem_markdown": "## 题目\n\n读取标准输入，找出出现次数最多的那一行，只输出该行的内容。\n\n### 输入\n\n每行是一个非空且不含空白的单词；输入至少有 1 行。\n\n### 输出\n\n出现次数最多的那一行本身（不带次数），末尾换行。若有多行并列最多，输出按字节序（`LC_ALL=C` 的字典序）最小的那一行。\n\n### 示例\n\n输入：\n\n```\napple\nbanana\napple\ncherry\napple\nbanana\n```\n\n输出：\n\n```\napple\n```\n",
+    "language": "bash",
+    "reference_answer": "#!/usr/bin/env bash\nset -euo pipefail\n\nLC_ALL=C sort \\\n  | LC_ALL=C uniq -c \\\n  | LC_ALL=C sort -k1,1nr -k2,2 \\\n  | LC_ALL=C awk 'NR == 1 { top = $0 } END { sub(/^ *[0-9]+ /, \"\", top); print top }'\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "apple\nbanana\napple\ncherry\napple\nbanana\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：apple 出现三次",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "apple\nbanana\napple\ncherry\napple\nbanana\n",
+        "args": [],
+        "expected_stdout": "apple\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：并列时取字典序最小",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "beta\nalpha\nbeta\nalpha\n",
+        "args": [],
+        "expected_stdout": "alpha\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：只有一行",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "solo\n",
+        "args": [],
+        "expected_stdout": "solo\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：并列但字典序不是输入顺序",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "z\nz\ny\ny\nx\n",
+        "args": [],
+        "expected_stdout": "y\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "shell",
+      "sort"
+    ]
+  },
+  {
+    "title": "Shell：对指定列求和",
+    "stem_markdown": "## 题目\n\n第一个命令行参数是列号 K（从 1 开始）。输入的每一行都有至少 K 个以空白分隔的整数，求所有行中第 K 列数字之和。\n\n### 输入\n\n- `$1`：列号 K，K ≥ 1。\n- 标准输入：若干行，每行至少 K 个以空白分隔的整数（可以是负数）；也可能是空输入。\n\n### 输出\n\n一个整数：第 K 列所有数字之和。输入为空时输出 `0`。末尾换行。\n\n### 示例\n\n参数为 `2`，输入：\n\n```\n3 10\n4 20\n5 30\n```\n\n输出：\n\n```\n60\n```\n",
+    "language": "bash",
+    "reference_answer": "#!/usr/bin/env bash\nset -euo pipefail\n\nLC_ALL=C awk -v k=\"$1\" '{ total += $k } END { print total + 0 }'\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "3 10\n4 20\n5 30\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：第二列求和",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "3 10\n4 20\n5 30\n",
+        "args": [
+          "2"
+        ],
+        "expected_stdout": "60\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：第一列含负数",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "7\n-3\n12\n",
+        "args": [
+          "1"
+        ],
+        "expected_stdout": "16\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：第三列",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1 2 5\n3 4 6\n",
+        "args": [
+          "3"
+        ],
+        "expected_stdout": "11\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：空输入",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "",
+        "args": [
+          "1"
+        ],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "shell",
+      "awk"
+    ]
+  },
+  {
+    "title": "Shell：整数列表的最大值",
+    "stem_markdown": "## 题目\n\n输入是每行一个整数，输出其中的最大值。\n\n### 输入\n\n若干行，每行一个整数（可以是负数）；也可能完全没有输入。\n\n### 输出\n\n一个整数：所有输入整数中的最大值。输入为空时不输出任何内容（0 行）。有输出时末尾换行。\n\n### 示例\n\n输入：\n\n```\n4\n-2\n11\n7\n```\n\n输出：\n\n```\n11\n```\n",
+    "language": "bash",
+    "reference_answer": "#!/usr/bin/env bash\nset -euo pipefail\n\nLC_ALL=C awk '\n  NR == 1 { best = $1 + 0 }\n  NR > 0 && ($1 + 0) > best { best = $1 + 0 }\n  END { if (NR > 0) print best }\n'\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "4\n-2\n11\n7\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：最大值为 11",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "4\n-2\n11\n7\n",
+        "args": [],
+        "expected_stdout": "11\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：全是负数",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "-5\n-1\n-9\n",
+        "args": [],
+        "expected_stdout": "-1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：空输入",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "",
+        "args": [],
+        "expected_stdout": "",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：只有一个数",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "42\n",
+        "args": [],
+        "expected_stdout": "42\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "shell",
+      "awk"
+    ]
+  },
+  {
+    "title": "Shell：反转每行的字段顺序",
+    "stem_markdown": "## 题目\n\n把每一行的字段顺序颠倒后输出。\n\n### 输入\n\n若干行，每行由至少 1 个字段组成，字段之间用单个空格分隔，行首与行尾没有多余空白。\n\n### 输出\n\n行数不变；每行的字段逆序后用单个空格连接，末尾换行。若某行是空行（0 个字段），原样输出一个空行。\n\n### 示例\n\n输入：\n\n```\none two three\nred green\n```\n\n输出：\n\n```\nthree two one\ngreen red\n```\n",
+    "language": "bash",
+    "reference_answer": "#!/usr/bin/env bash\nset -euo pipefail\n\nLC_ALL=C awk '\n  NF == 0 { print \"\"; next }\n  {\n    for (i = NF; i >= 1; i--) {\n      printf \"%s%s\", $i, (i == 1 ? \"\\n\" : \" \")\n    }\n  }\n'\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "one two three\nred green\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：两行逆序",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "one two three\nred green\n",
+        "args": [],
+        "expected_stdout": "three two one\ngreen red\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：四个字段",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a b c d\n",
+        "args": [],
+        "expected_stdout": "d c b a\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：单字段",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "solo\n",
+        "args": [],
+        "expected_stdout": "solo\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：数字字段",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "10 20 30\n1 2 3\n",
+        "args": [],
+        "expected_stdout": "30 20 10\n3 2 1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "shell",
+      "awk"
+    ]
+  },
+  {
+    "title": "Shell：筛选数值字段大于阈值的行",
+    "stem_markdown": "## 题目\n\n第一个参数是列号 K，第二个参数是阈值 T。输出那些第 K 列数值严格大于 T 的行。\n\n### 输入\n\n- `$1`：列号 K（从 1 开始）。\n- `$2`：阈值 T，可以是负数。\n- 标准输入：若干行，每行至少 K 个以空白分隔的字段，其中第 K 个字段是整数（可以是负数）。\n\n### 输出\n\n按原顺序、原样输出满足「第 K 列数值 > T」的行，每行末尾换行；字段数不足 K 的行不输出。没有满足条件的行时不输出任何内容。\n\n### 示例\n\n参数为 `2` 和 `50`，输入：\n\n```\nalice 72\nbob 45\ncarol 91\ndave 50\n```\n\n输出：\n\n```\nalice 72\ncarol 91\n```\n",
+    "language": "bash",
+    "reference_answer": "#!/usr/bin/env bash\nset -euo pipefail\n\nLC_ALL=C awk -v k=\"$1\" -v t=\"$2\" 'NF >= k && ($k + 0) > (t + 0)'\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "alice 72\nbob 45\ncarol 91\ndave 50\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：第二列大于 50",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "alice 72\nbob 45\ncarol 91\ndave 50\n",
+        "args": [
+          "2",
+          "50"
+        ],
+        "expected_stdout": "alice 72\ncarol 91\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：负阈值",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "-1\n-5\n2\n",
+        "args": [
+          "1",
+          "-3"
+        ],
+        "expected_stdout": "-1\n2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：第三列大于 0",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a b -1\nc d 5\n",
+        "args": [
+          "3",
+          "0"
+        ],
+        "expected_stdout": "c d 5\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：无人满足",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "x 1\ny 2\n",
+        "args": [
+          "2",
+          "100"
+        ],
+        "expected_stdout": "",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "shell",
+      "awk"
+    ]
+  },
+  {
+    "title": "Shell：把 name,score 改写成降序排行榜",
+    "stem_markdown": "## 题目\n\n输入每行形如 `name,score`，把它改写成排行榜：每行输出 `score name`，并按 score 从大到小排列。\n\n### 输入\n\n若干行，每行恰好含一个英文逗号，形如 `name,score`：name 不含逗号与空白，score 是整数（可以是负数）。\n\n### 输出\n\n每行 `score name`（一个空格分隔），按 score 数值降序；score 相同时按 name 的字节序（`LC_ALL=C`）升序。末尾换行。\n\n### 示例\n\n输入：\n\n```\nalice,72\nbob,45\ncarol,91\n```\n\n输出：\n\n```\n91 carol\n72 alice\n45 bob\n```\n",
+    "language": "bash",
+    "reference_answer": "#!/usr/bin/env bash\nset -euo pipefail\n\nLC_ALL=C awk -F, '{ printf \"%s %s\\n\", $2, $1 }' | LC_ALL=C sort -k1,1nr -k2,2\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "alice,72\nbob,45\ncarol,91\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：三人按分数降序",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "alice,72\nbob,45\ncarol,91\n",
+        "args": [],
+        "expected_stdout": "91 carol\n72 alice\n45 bob\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：同分按名字升序",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "zoe,50\namy,50\nbob,80\n",
+        "args": [],
+        "expected_stdout": "80 bob\n50 amy\n50 zoe\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：负数不能被当成字符串比较",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "p,-3\nq,-10\nr,0\n",
+        "args": [],
+        "expected_stdout": "0 r\n-3 p\n-10 q\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：只有一行",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "solo,7\n",
+        "args": [],
+        "expected_stdout": "7 solo\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "shell",
+      "sort"
+    ]
+  },
+  {
+    "title": "Shell：去掉每行首尾的空白",
+    "stem_markdown": "## 题目\n\n去掉每一行行首和行尾的空格与制表符；行中间的空白保持原样。\n\n### 输入\n\n若干行文本，行首或行尾可能有多余的空格、制表符。\n\n### 输出\n\n行数不变，每行去掉首尾空白后输出，末尾换行。整行只有空白时输出一个空行。\n\n### 示例\n\n输入（第一行首尾各有两个空格，第二行首尾各有一个制表符）：\n\n```\n  hello  \n\tworld\t\n```\n\n输出：\n\n```\nhello\nworld\n```\n",
+    "language": "bash",
+    "reference_answer": "#!/usr/bin/env bash\nset -euo pipefail\n\nLC_ALL=C sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "  hello  \n\tworld\t\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：空格与制表符",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "  hello  \n\tworld\t\n",
+        "args": [],
+        "expected_stdout": "hello\nworld\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：中间空格保留",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a b\n",
+        "args": [],
+        "expected_stdout": "a b\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：整行空白变成空行",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "   \nx\n",
+        "args": [],
+        "expected_stdout": "\nx\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：只有一侧有空白",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "no-space\n  leading\n",
+        "args": [],
+        "expected_stdout": "no-space\nleading\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "shell",
+      "sed"
+    ]
+  },
+  {
+    "title": "Shell：统计包含指定文本的行数（忽略大小写）",
+    "stem_markdown": "## 题目\n\n第一个命令行参数是一段字面量。统计标准输入中有多少行包含它，忽略大小写（只考虑 ASCII 字母的大小写）。\n\n### 输入\n\n- `$1`：待查找的字面量。\n- 标准输入：若干行文本。\n\n### 输出\n\n一个整数：包含该字面量的行数；同一行里出现多次只算一行。没有匹配时输出 `0`，退出码仍为 0。末尾换行。\n\n### 示例\n\n参数为 `cat`，输入：\n\n```\nThe Cat sat\nconcatenate\nDog\nCAT scan\n```\n\n输出：\n\n```\n3\n```\n\n（`concatenate` 里也含有 `cat` 这个子串。）\n",
+    "language": "bash",
+    "reference_answer": "#!/usr/bin/env bash\nset -euo pipefail\n\nLC_ALL=C grep -i -c -F -- \"$1\" || true\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "The Cat sat\nconcatenate\nDog\nCAT scan\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：三行命中",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "The Cat sat\nconcatenate\nDog\nCAT scan\n",
+        "args": [
+          "cat"
+        ],
+        "expected_stdout": "3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：三种大小写都被命中",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "cat\nCAT\ncAt\nnull\n",
+        "args": [
+          "Cat"
+        ],
+        "expected_stdout": "3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：一行都没有命中",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "cat\nmouse\n",
+        "args": [
+          "dog"
+        ],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：单字符模式",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "abc\nxyz\naaa\n",
+        "args": [
+          "a"
+        ],
+        "expected_stdout": "2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "shell",
+      "grep"
+    ]
+  },
+  {
+    "title": "Shell：每行只替换第一次出现的子串",
+    "stem_markdown": "## 题目\n\n对每一行，只替换**第一次**出现的子串：把 `$1` 换成 `$2`，该行后面再出现的 `$1` 保持原样。\n\n### 输入\n\n- `$1`：被替换的字面量（按字面量匹配，不当作正则表达式）。\n- `$2`：替换成的文本，可能为空串。\n- 标准输入：若干行文本。\n\n### 输出\n\n行数不变；每行只改掉第一处出现后输出，末尾换行。不含 `$1` 的行原样输出。\n\n### 示例\n\n参数为 `cat` 和 `dog`，输入：\n\n```\ncat cat\ncatalog\ndog\n```\n\n输出：\n\n```\ndog cat\ndogalog\ndog\n```\n",
+    "language": "bash",
+    "reference_answer": "#!/usr/bin/env bash\nset -euo pipefail\n\nLC_ALL=C awk -v pat=\"$1\" -v repl=\"$2\" '\n  {\n    at = index($0, pat)\n    if (at > 0) {\n      $0 = substr($0, 1, at - 1) repl substr($0, at + length(pat))\n    }\n    print\n  }\n'\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "cat cat\ncatalog\ndog\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：只换第一处",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "cat cat\ncatalog\ndog\n",
+        "args": [
+          "cat",
+          "dog"
+        ],
+        "expected_stdout": "dog cat\ndogalog\ndog\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：重复出现的模式",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "aaaa\n",
+        "args": [
+          "aa",
+          "b"
+        ],
+        "expected_stdout": "baa\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：没有出现则原样输出",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "abc\ndef\n",
+        "args": [
+          "x",
+          "y"
+        ],
+        "expected_stdout": "abc\ndef\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：替换成数字",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "book\ncool\n",
+        "args": [
+          "o",
+          "0"
+        ],
+        "expected_stdout": "b0ok\nc0ol\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "shell",
+      "awk"
+    ]
+  },
+  {
+    "title": "Shell：输出每行的长度",
+    "stem_markdown": "## 题目\n\n输出每一行的长度：该行去掉行尾换行符之后的字节数。\n\n### 输入\n\n若干行文本，可能为空；某些行可能是空行。\n\n### 输出\n\n每行一个整数，与输入行一一对应，末尾换行。输入为空时不输出任何内容。\n\n### 示例\n\n输入：\n\n```\nhello\nhi\n```\n\n输出：\n\n```\n5\n2\n```\n",
+    "language": "bash",
+    "reference_answer": "#!/usr/bin/env bash\nset -euo pipefail\n\nLC_ALL=C awk '{ print length($0) }'\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "hello\nhi\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：5 和 2",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "hello\nhi\n",
+        "args": [],
+        "expected_stdout": "5\n2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：空行的长度是 0",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\nabc\n",
+        "args": [],
+        "expected_stdout": "0\n3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：空输入",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "",
+        "args": [],
+        "expected_stdout": "",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：含空格的行",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a b c\n",
+        "args": [],
+        "expected_stdout": "5\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "shell",
+      "awk"
+    ]
+  },
+  {
+    "title": "Shell：用指定的分隔符连接所有行",
+    "stem_markdown": "## 题目\n\n第一个命令行参数是分隔符，把所有输入行用它连接成**一行**输出。\n\n### 输入\n\n- `$1`：分隔符，可以是任意不含换行的短字符串（例如 `, ` 或 `-`）。\n- 标准输入：若干行文本，可能为空。\n\n### 输出\n\n把所有行去掉各自的换行后，用 `$1` 依次连接，最后补一个换行。输入为空时不输出任何内容。\n\n### 示例\n\n参数为 `, `（逗号加空格），输入：\n\n```\na\nb\nc\n```\n\n输出：\n\n```\na, b, c\n```\n",
+    "language": "bash",
+    "reference_answer": "#!/usr/bin/env bash\nset -euo pipefail\n\nLC_ALL=C awk -v sep=\"$1\" '\n  NR > 1 { printf \"%s\", sep }\n  { printf \"%s\", $0 }\n  END { if (NR > 0) printf \"\\n\" }\n'\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "a\nb\nc\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：逗号加空格",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "a\nb\nc\n",
+        "args": [
+          ", "
+        ],
+        "expected_stdout": "a, b, c\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：短横线连接",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "x\ny\n",
+        "args": [
+          "-"
+        ],
+        "expected_stdout": "x-y\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：只有一行",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "solo\n",
+        "args": [
+          ":"
+        ],
+        "expected_stdout": "solo\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：空输入",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "",
+        "args": [
+          "+"
+        ],
+        "expected_stdout": "",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "shell",
+      "awk"
+    ]
+  },
+  {
+    "title": "Shell：求 `---` 分割的两段文本的交集",
+    "stem_markdown": "## 题目\n\n输入被一个内容恰好是 `---` 的行分成前后两段，输出同时出现在两段中的行。\n\n### 输入\n\n若干行文本。其中**第一处**内容恰好是 `---` 的行是分界：它前面的行属于前段，它后面的行属于后段；它本身不属于任何一段。若输入中没有 `---`，则后段为空。\n\n### 输出\n\n按前段中首次出现的顺序，输出每一个在两段中都出现过的行（同一行只输出一次），每行末尾换行。没有公共行时不输出任何内容。\n\n### 示例\n\n输入：\n\n```\nred\ngreen\nblue\n---\ngreen\nblue\nwhite\n```\n\n输出：\n\n```\ngreen\nblue\n```\n",
+    "language": "bash",
+    "reference_answer": "#!/usr/bin/env bash\nset -euo pipefail\n\nLC_ALL=C awk '\n  !split_done && $0 == \"---\" { split_done = 1; next }\n  !split_done {\n    if (!($0 in seen)) { seen[$0] = 1; order[++n] = $0 }\n    next\n  }\n  { if ($0 in seen) keep[$0] = 1 }\n  END { for (i = 1; i <= n; i++) if (order[i] in keep) print order[i] }\n'\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "red\ngreen\nblue\n---\ngreen\nblue\nwhite\n",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：green 与 blue",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "red\ngreen\nblue\n---\ngreen\nblue\nwhite\n",
+        "args": [],
+        "expected_stdout": "green\nblue\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：顺序按前段",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "one\ntwo\nthree\n---\nthree\ntwo\none\n",
+        "args": [],
+        "expected_stdout": "one\ntwo\nthree\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：没有公共行",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a\nb\n---\nc\nd\n",
+        "args": [],
+        "expected_stdout": "",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：没有分隔行",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a\nb\n",
+        "args": [],
+        "expected_stdout": "",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "shell",
+      "awk"
+    ]
+  },
+  {
+    "title": "Shell：空输入时报错并返回非零退出码",
+    "stem_markdown": "## 题目\n\n把标准输入原样转发到标准输出；但如果标准输入是**空的**（0 字节），就不要输出任何内容，改为在标准错误输出写一行 `error: empty input`，并以退出码 1 结束。\n\n### 输入\n\n标准输入，可以是任意文本，也可以完全没有内容。\n\n### 输出\n\n- 输入非空：把输入原样写到标准输出（结尾有没有换行都照原样保留），退出码 0。只含空白字符（例如只有一个换行符）也算非空。\n- 输入为空：标准输出为空，标准错误输出为一行 `error: empty input`，退出码 1。\n\n### 示例\n\n输入为空（0 字节）时：\n\n- 标准输出：空\n- 标准错误输出：\n\n```\nerror: empty input\n```\n\n- 退出码：`1`\n",
+    "language": "bash",
+    "reference_answer": "#!/usr/bin/env bash\nset -euo pipefail\n\n# The sentinel keeps every byte of stdin, including trailing newlines that a bare\n# command substitution would strip.\npayload=$(cat; printf 'x')\npayload=${payload%x}\n\nif [[ -z $payload ]]; then\n  printf 'error: empty input\\n' >&2\n  exit 1\nfi\n\nprintf '%s' \"$payload\"\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "",
+      "expect_exit_code": 1,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：空输入报错",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "",
+        "args": [],
+        "expected_stdout": "",
+        "expected_stderr": null,
+        "expected_exit_code": 1
+      },
+      {
+        "name": "隐藏：普通文本原样转发",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "hello\nworld\n",
+        "args": [],
+        "expected_stdout": "hello\nworld\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：只有一个换行也算非空",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\n",
+        "args": [],
+        "expected_stdout": "\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：结尾没有换行也要保留",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "no trailing newline",
+        "args": [],
+        "expected_stdout": "no trailing newline",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "shell",
+      "stdin"
+    ]
+  },
+  {
+    "title": "Shell：把位置参数逐行编号输出",
+    "stem_markdown": "## 题目\n\n把命令行参数逐个编号打印：每个位置参数输出一行，行首是它的序号（从 1 开始），接着一个空格，然后是参数本身。\n\n### 输入\n\n命令行参数 `$@`，个数可以是 0 个或多个；单个参数本身也可以包含空格。本题不读标准输入。\n\n### 输出\n\n参数个数那么多行，第 i 行是 `<i> <参数>`，每行末尾换行。没有任何参数时不输出任何内容，退出码 0。\n\n### 示例\n\n命令行参数为 `alpha`、`beta`、`gamma` 三个时，输出：\n\n```\n1 alpha\n2 beta\n3 gamma\n```\n",
+    "language": "bash",
+    "reference_answer": "#!/usr/bin/env bash\nset -euo pipefail\n\nindex=0\nfor value in \"$@\"; do\n  index=$((index + 1))\n  printf '%d %s\\n' \"$index\" \"$value\"\ndone\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": "",
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "示例：三个参数",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "",
+        "args": [
+          "alpha",
+          "beta",
+          "gamma"
+        ],
+        "expected_stdout": "1 alpha\n2 beta\n3 gamma\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：没有参数",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "",
+        "args": [],
+        "expected_stdout": "",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：只有一个参数",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "",
+        "args": [
+          "solo"
+        ],
+        "expected_stdout": "1 solo\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏：参数里含空格",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "",
+        "args": [
+          "two words",
+          "x"
+        ],
+        "expected_stdout": "1 two words\n2 x\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "shell",
+      "arguments"
+    ]
+  }
+]

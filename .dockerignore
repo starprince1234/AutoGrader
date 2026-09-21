@@ -1,0 +1,38 @@
+# Build context for `MAIN/host/Dockerfile` (context = the repository root).
+#
+# The image builds the B1 SPA itself, so `**/dist` is excluded deliberately: the built
+# assets come from the `b1` build stage, never from a committed artifact. Nothing the
+# runtime needs may be added here without checking that the Dockerfile does not `COPY` it.
+
+# --- version control, virtualenvs, caches -------------------------------------------
+**/.git
+**/.venv
+**/node_modules
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/.mypy_cache
+**/*.tsbuildinfo
+**/*.pyc
+**/coverage
+**/.pytest-tmp
+
+# --- build output (rebuilt in the image) ---------------------------------------------
+**/dist
+**/build
+**/*.egg-info
+
+# --- local runtime state and secrets (must never enter an image layer) ---------------
+**/.env
+**/.env.integration
+**/.runtime
+**/secrets
+
+# --- not part of the runtime ----------------------------------------------------------
+B3/taskone
+B3/tools/reporting
+B3/prodction
+MAIN/references
+MAIN/课程开发项目-思维导图.pdf
+MAIN/课程项目需求列表.xlsx
+MAIN/项目初始化与项目文档管理.md

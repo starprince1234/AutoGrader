@@ -1,0 +1,1044 @@
+openapi: 3.1.0
+info:
+  title: AutoGrader B2 Evaluation API
+  version: 0.16.0
+  description: |
+    Submission intake (API and email), content-addressed storage, static legality,
+    security confirmation, sandboxed dynamic execution, explainable and replayable
+    evidence, scores, reports and grade export. Owned by B2
+    (RQ-B-2-10/20/30/40/50/60/70/80/99).
+
+    B2 is the single authority for scores and execution evidence. Every evaluation
+    is bound to five digests (submission, question version, package, runner policy,
+    environment); identical digests must yield an identical score and identical
+    per-item evidence. See MAIN/docs/adr/ADR-0005.
+
+    Every path below is declared in B2/module.yaml `routes`.
+  license:
+    name: Course project (internal)
+servers:
+  - url: /
+    description: Served by the MAIN composition host, same origin as the B1 client.
+
+# Document-level default: every B2 operation requires a bearer access token. Operations that
+# differ state it themselves. Before this existed, 42 of 43 operations across all three files
+# carried no `security` at all, so a contract consumer could not tell a protected endpoint
+# from a public one even though governance.md mandated bearer auth.
+security:
+  - bearerAuth: []
+
+paths:
+  /api/v1/submissions:
+    post:
+      operationId: createSubmission
+      summary: Accept a submission for evaluation (RQ-B-2-10)
+      description: |
+        Validates the submission envelope against MAIN/contracts/schemas/
+        submission-envelope.schema.json, re-computes each file digest, enforces file
+        count and size limits, checks the course scope from the verified token, and
+        stores content by digest. Repeating a request with the same idempotency key
+        returns the same submission_id and does not start a second evaluation.
+
+        On success emits `autograder.v1.submission.accepted`; the event never carries
+        source code.
+      tags: [submissions]
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Traceparent'
+        - $ref: './common.yaml#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: './../schemas/submission-envelope.schema.json'}
+      responses:
+        '202':
+          description: Submission accepted and queued for evaluation.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SubmissionAccepted'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '413': {$ref: './common.yaml#/components/responses/PayloadTooLarge'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+        '503': {$ref: './common.yaml#/components/responses/ServiceUnavailable'}
+
+  /api/v1/submissions/{submission_id}:
+    parameters:
+      - {name: submission_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    get:
+      operationId: getSubmission
+      summary: Read submission metadata and state
+      description: |
+        Returns state machine position and file metadata (path plus digest). Source
+        content is not inlined here; it is served through a separate authorized
+        endpoint so that authorization can be enforced per read.
+      tags: [submissions]
+      responses:
+        '200':
+          description: Submission view.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SubmissionView'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
+  /api/v1/evaluation-runs/{evaluation_run_id}:
+    parameters:
+      - {name: evaluation_run_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    get:
+      operationId: getEvaluationRun
+      summary: Read evaluation run state, stage and progress
+      tags: [evaluation]
+      responses:
+        '200':
+          description: Evaluation run view.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EvaluationRunView'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
+  /api/v1/evaluation-runs/{evaluation_run_id}/events:
+    parameters:
+      - {name: evaluation_run_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    get:
+      operationId: streamEvaluationEvents
+      summary: Stream evaluation progress as Server-Sent Events (RQ-B-1-50)
+      description: |
+        Session-scoped progress stream. Events carry a monotonically increasing
+        `sequence` so a reconnecting client can deduplicate and order without
+        replaying history. Progress events never carry hidden test inputs, expected
+        outputs or source code: they may be shown to the student.
+      tags: [evaluation]
+      responses:
+        '200':
+          description: |
+            SSE stream. Frame `event` names are exactly `progress`, `completed`,
+            `rejected` and `failed`; each frame's `data` is an EvaluationStreamFrame.
+            This stream — not a NATS subscription — is how the B1 client learns every
+            terminal state, including `rejected`, which has no domain event because a
+            refusal is only meaningful to the submitting session.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: "SSE frames whose data is an EvaluationStreamFrame."
+          headers:
+            Cache-Control:
+              schema: {type: string, const: 'no-store'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
+  /api/v1/evaluation-runs/{evaluation_run_id}/report:
+    parameters:
+      - {name: evaluation_run_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    get:
+      operationId: getEvaluationReport
+      summary: Read the explainable evaluation report (RQ-B-2-80)
+      description: |
+        Returns overall assessment plus per-item detail. Every awarded or deducted
+        point traces to a rule or a test case, and the sum of item scores must equal
+        the total; a mismatch is a defect, not a rounding artefact. The student view
+        never contains reference answers, hidden cases or another student's code.
+      tags: [evaluation]
+      parameters:
+        - name: view
+          in: query
+          required: false
+          schema: {type: string, enum: [student, teacher], default: student}
+          description: "The student view is redacted further; the server decides what a role may see."
+      responses:
+        '200':
+          description: Evaluation report.
+          content:
+            application/json:
+              schema: {$ref: './../schemas/evaluation-report.schema.json'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
+
+  /api/v1/evaluation-runs/{evaluation_run_id}/commentary:
+    parameters:
+      - {name: evaluation_run_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    get:
+      operationId: getEvaluationCommentary
+      summary: Read the teaching commentary for a run (RQ-T-20)
+      description: |
+        The **non-deterministic** track. `ADR-0009` replaced ADR-0005's blanket ban on model
+        output with a two-track design: the score track stays fully deterministic, and this
+        separate track may carry model-generated teaching commentary.
+
+        Four properties make that separation real rather than nominal, and all four are
+        normative here rather than advisory:
+
+        1. **The input is a whitelist.** Commentary may be generated only from structured
+           evidence already stored for the run -- per-case outcomes and failure categories,
+           static rule hits, the three-state security conclusion, the score breakdown, and the
+           question's *public* metadata. Reading student source, reference answers, hidden
+           cases or expected outputs to produce it is forbidden. The whitelist is what keeps
+           the model from ever seeing protected content, so it is a security boundary, not a
+           quality preference.
+        2. **It never enters the score track.** No commentary value appears in the score,
+           `evaluation_results`, `case_evidence`, `result_digest`, the five-part binding
+           summary or the grade export. Deleting this table must leave reproducibility intact.
+        3. **Provenance is returned, not implied.** Every response carries the provider, model
+           and prompt-template version that produced it.
+        4. **Unavailable is a normal answer.** The model service is **off by default**
+           (`ADR-0009` decision 4); with no provider configured this returns `status:
+           "unavailable"` rather than an error, because "this deployment does not generate
+           commentary" is a configuration, not a failure.
+      tags: [evaluation]
+      responses:
+        '200':
+          description: Commentary, or an explicit statement that none is configured/generated.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EvaluationCommentary'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+    post:
+      operationId: requestEvaluationCommentary
+      summary: Generate (or regenerate) the teaching commentary for a run (RQ-T-20)
+      description: |
+        Teacher/assistant only: generating commentary is an editorial act, and `ADR-0009`
+        decision 5 keeps student visibility a course-level policy that defaults to off -- so
+        the request is not the student's to make.
+
+        Regeneration is always allowed and never changes a score. When no provider is
+        configured the call returns `409` with a detail naming the missing configuration, so
+        the operator learns what to set instead of seeing a generic failure.
+      tags: [evaluation]
+      responses:
+        '202':
+          description: Generation accepted; read it back with `getEvaluationCommentary`.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EvaluationCommentary'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
+        '503': {$ref: './common.yaml#/components/responses/ServiceUnavailable'}
+
+  /api/v1/intake/quarantines:
+    get:
+      operationId: listIntakeQuarantines
+      summary: List mail that could not be matched to a submission (CHG-0014)
+      description: |
+        `b2.intake_quarantines` has been written since the email-intake path was built -- a
+        message whose assignment identifier cannot be resolved is recorded there rather than
+        silently dropped -- but there was **no way to read it**. The integration audit put it
+        plainly: unmatched mail was, from a teacher's point of view, disappearing without a
+        trace. This is the read path.
+
+        Authorization: teacher/assistant/admin within the course scope. Rows carry a
+        `reason_code` and an already-redacted `detail`; they never carry attachment contents,
+        student source or any part of a submission.
+
+        **Scoping is per token, not per row** (`CHG-0021` §2.2). `b2.intake_quarantines` has no
+        `course_id`, and when matching fails there is no course to record -- working out "which
+        course is this" is exactly what failed. So this endpoint requires the token to carry at
+        least one course scope and **cannot** filter rows by course. Stated here rather than left
+        to be discovered: a caller that assumed per-row scoping would read a superset.
+      tags: [intake]
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Cursor'
+        - $ref: './common.yaml#/components/parameters/Limit'
+        - {name: reason_code, in: query, required: false, schema: {type: string, maxLength: 64}}
+        - name: resolved
+          in: query
+          required: false
+          schema: {type: boolean}
+          description: |
+            `true` returns only attributed records, `false` only unattributed ones.
+
+            **Omitting it means no filter at all** -- both kinds, in one page. This is stated
+            explicitly because the previous wording ("the default view a teacher wants") read like
+            "omitting means unresolved", and `CHG-0021` §2.5 settled it the other way for a reason
+            of expressiveness rather than taste: the type is `boolean`, so it has no value meaning
+            "both". If omitting meant `false`, then *listing everything* would have no request form
+            at all and the capability would be permanently gone. "Only unattributed" is always
+            expressible as `?resolved=false`; "everything" is not expressible any other way.
+      responses:
+        '200':
+          description: Page of quarantined intake records, newest first.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: './common.yaml#/components/schemas/CursorPage'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: {$ref: '#/components/schemas/IntakeQuarantineView'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+
+  /api/v1/intake/quarantines/{intake_quarantine_id}/resolve:
+    parameters:
+      - {name: intake_quarantine_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    post:
+      operationId: resolveIntakeQuarantine
+      summary: Attribute a quarantined message to a student (CHG-0014)
+      description: |
+        A teacher who recognises the message attributes it manually. Three properties are
+        deliberately not negotiable:
+
+        1. **Only identity failures are attributable** (`CHG-0021` §2.1). Attribution supplies the
+           *identity* that automatic matching could not derive. It re-runs the checks that are
+           still runnable from the data on hand -- role and course scope -- plus one content gate:
+
+           > Only a record whose `reason_code` is `not_uniquely_matched` or `ambiguous_match` can be
+           > attributed. **Every other reason code is refused with `422`.**
+
+           The earlier wording was "the manual path re-runs the same validation as the automatic
+           one", which is not decidable here: `b2.intake_quarantines` stores mailbox, uidvalidity,
+           uid, message-id, `reason_code` and `detail` -- **no message bytes, no attachment bytes, no
+           digest of either** (a direct consequence of the platform not becoming a second mail
+           store). There is nothing left to recompute. Genuinely re-running the envelope checks
+           would mean re-fetching the message over IMAP, and this operation declares no `503` -- so
+           the contract never intended it to depend on the mailbox. Naming a student cannot repair
+           "the attachment exceeded the size limit": allowing that would turn attribution into a way
+           around the automatic envelope checks.
+        2. **Resolving does not silently re-evaluate** (`CHG-0021` §2.3). It records the attribution
+           and leaves evaluation to the normal submission path, so the audit trail shows a human
+           decision followed by the ordinary machine flow. It **does not build a submission**: doing
+           so would also need `section_id` and `question_version_id`, which the matching rules supply
+           and which do not exist when matching failed. Closing that loop is a separate design, not
+           a patch to this operation.
+        3. **Attribution is recorded once.** A second attempt returns `409`; the row is never
+           silently re-attributed.
+
+        `student_id` is the platform user id -- the same key `CHG-0007` added to the roster, so
+        both sides of "who is this" finally use one identifier.
+      tags: [intake]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [student_id]
+              properties:
+                student_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+                note: {type: [string, "null"], maxLength: 500, description: "Why this attribution, for the audit trail."}
+              additionalProperties: false
+      responses:
+        '200':
+          description: Attributed; the record is marked resolved and the attribution is audited.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/IntakeQuarantineView'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+
+  /api/v1/reference-verifications:
+    post:
+      operationId: verifyReferenceAnswer
+      summary: Run a version's own reference answer and report per-case outcomes (CHG-0019)
+      description: |
+        `publish` requires a reference-verification attestation bound to the version's
+        `content_digest`, and that gate is real: B3 cross-checks the digest and there is no skip
+        switch. Its design premise is **executor is not recorder** -- B3 executes nothing, so
+        something that *can* execute has to run the reference answer.
+
+        That premise left the authoring UI stuck: a teacher cannot honestly self-attest, and a
+        browser must not hold `serviceToken`. This endpoint is the resolution (ADR-0015): **B2
+        executes, B3 records, the teacher triggers it with an ordinary user token.** B2 uses the
+        B3 service channel it already has for fetching evaluation packages, so no new credential,
+        no new trust relationship and no new cross-module mechanism is introduced.
+
+        Two properties are deliberate:
+
+        * **Nothing is persisted here.** The call reports what it observed. The attestation is
+          written by B3, and only when the reference answer actually passed -- a failed
+          verification must not leave a record that could later be mistaken for one.
+        * **No protected content comes back.** The response is counts plus a per-case outcome and
+          failure category. Expected output, hidden-case input and the reference answer's source
+          are all absent: a teacher may see those through the authoring surface, but this endpoint
+          must not become a second route to them (same granularity as the report's `view=teacher`,
+          not more).
+
+        On a platform without the sandbox this returns `503` and records nothing. Reporting
+        success it did not achieve would defeat the entire gate, so it does not pretend.
+      tags: [evaluation]
+      security: [{bearerAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [question_version_id]
+              properties:
+                question_version_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+              additionalProperties: false
+      responses:
+        '200':
+          description: |
+            The reference answer was executed and compared. `cases_passed == cases_total` means
+            the version is publishable; `attestation_id` is present only if B3 recorded it.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ReferenceVerification'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+        '503': {$ref: './common.yaml#/components/responses/ServiceUnavailable'}
+
+  /api/v1/evaluation-runs/{evaluation_run_id}/appeal-pack:
+    parameters:
+      - {name: evaluation_run_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    get:
+      operationId: getAppealPack
+      summary: Export one run's evidence as a self-contained, movable bundle (CHG-0014)
+      description: |
+        A grade dispute is answered with evidence, and the evidence has to be *movable*: a
+        reviewer who is not logged into this deployment must be able to check the decision from
+        the file alone. The pack therefore embeds the report, the five binding digests, the
+        runner-policy summary and an explicit replay instruction, and is pinned by
+        `result_digest` so a reader can tell whether the pack was altered.
+
+        Two redactions are mandatory, and they are why this is a purpose-built document rather
+        than "the report endpoint with a download header":
+
+        * **host filesystem paths are removed** -- a pack leaves the machine, and absolute paths
+          describe internal layout;
+        * **the student view is never widened by exporting.** A pack carries what the caller may
+          already see; producing one must not become a way to obtain hidden cases or expected
+          outputs.
+
+        Authorization: teacher/assistant/admin, plus the student for their own run.
+      tags: [evaluation]
+      parameters:
+        - {name: view, in: query, required: false, schema: {type: string, enum: [student, teacher], default: teacher}, description: "Same discipline as the report endpoint: the server decides what a role may see."}
+      responses:
+        '200':
+          description: The bundle.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AppealPack'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
+
+  /api/v1/evaluation-runs/quality-summary:
+    get:
+      operationId: getEvaluationQualitySummary
+      summary: Per-case and per-rule quality aggregate for one question version (CHG-0015)
+      description: |
+        Answers "is this question actually discriminating?" from data only B2 holds. B3's
+        statistics are built from de-identified `evaluation.completed` events and therefore see
+        score buckets only -- the audit's phrasing was that B3 "cannot see per-case or per-rule
+        detail". This endpoint is where that detail lives, and it stays inside B2 because the
+        data is B2's.
+
+        De-identification is a requirement, not a nicety: the response contains **counts only**
+        -- no student id, no submission id, no source code, no expected output. It is an
+        aggregate a teacher reads to decide whether a question is worth keeping, not a way to
+        look up an individual.
+
+        Two fields deserve their own explanation, because both are easy to render dishonestly:
+
+        * `security_not_checked` is reported separately from `security_not_found`. A question
+          whose runs were never security-checked must not look like one that passed.
+        * `unmeasured_runs` counts runs where the sandbox could not report resource peaks.
+          Without it, "no resource data" would silently read as "used nothing".
+
+        Implementation note (a real constraint, not trivia): this path is a literal segment
+        under a collection that also has `{evaluation_run_id}` children, so the router must
+        declare it **before** the parameterised route, or the path parameter will swallow it.
+      tags: [evaluation]
+      parameters:
+        - name: question_version_id
+          in: query
+          required: true
+          schema: {$ref: './common.yaml#/components/schemas/Uuid'}
+        - name: from
+          in: query
+          required: false
+          schema: {$ref: './common.yaml#/components/schemas/Timestamp'}
+        - name: to
+          in: query
+          required: false
+          schema: {$ref: './common.yaml#/components/schemas/Timestamp'}
+      responses:
+        '200':
+          description: Aggregate. Counts only; never an individual's data.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EvaluationQualitySummary'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
+  /api/v1/grades:
+    get:
+      operationId: listGrades
+      summary: Query grades by course and section (RQ-B-1-30)
+      description: |
+        Teachers see their authorized scope; students see only their own records. An
+        attempt to widen `student_id` is rejected with 403 rather than silently
+        narrowed. Runs that have not finished are reported with their state instead
+        of a zero score, so an unfinished evaluation is never mistaken for a failing
+        grade.
+      tags: [grades]
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Cursor'
+        - $ref: './common.yaml#/components/parameters/Limit'
+        - {name: course_id, in: query, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+        - {name: section_id, in: query, required: false, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+        - {name: question_version_id, in: query, required: false, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+        - {name: student_id, in: query, required: false, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+      responses:
+        '200':
+          description: Page of grade rows.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: './common.yaml#/components/schemas/CursorPage'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: {$ref: '#/components/schemas/GradeRow'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+
+  /api/v1/grades/export:
+    get:
+      operationId: exportGrades
+      summary: Export grades as XLSX or CSV (RQ-B-1-60, RQ-B-2-60)
+      description: |
+        Applies exactly the same filter semantics as `listGrades`, so an export can
+        never disagree with what the teacher saw. Cell values beginning with =, +, -,
+        @, tab or carriage return are escaped to prevent formula injection. The export
+        never contains source code, reference answers or hidden test cases.
+      tags: [grades]
+      parameters:
+        - {name: course_id, in: query, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+        - {name: section_id, in: query, required: false, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+        - {name: question_version_id, in: query, required: false, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+        - {name: student_id, in: query, required: false, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+        - {name: format, in: query, required: false, schema: {type: string, enum: [xlsx, csv], default: xlsx}}
+      responses:
+        '200':
+          description: Generated export file.
+          content:
+            application/vnd.openxmlformats-officedocument.spreadsheetml.sheet:
+              schema: {type: string, format: binary}
+            text/csv:
+              schema: {type: string}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+
+components:
+  schemas:
+    SubmissionTransitions:
+      type: object
+      description: |
+        The complete, exhaustive set of allowed submission state transitions. Any
+        transition not listed here is a defect.
+
+        `rejected` is reachable from `received`, `validated` and `running`, and this
+        is deliberate: a submission whose envelope is malformed, whose language does
+        not match the question, or whose code trips a high-risk static rule must be
+        refused WITHOUT entering the sandbox. Static analysis therefore runs before
+        `queued`, and "we ran it and it failed" is never an acceptable substitute for
+        a refusal. `failed` is reachable only from `running`, because a technical
+        failure presupposes that execution was attempted.
+      required: [transitions]
+      properties:
+        transitions:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+              enum: [received, validated, queued, running, completed, rejected, failed]
+          example:
+            received: [validated, rejected]
+            validated: [queued, rejected]
+            queued: [running]
+            running: [completed, rejected, failed]
+            completed: []
+            rejected: []
+            failed: []
+      additionalProperties: false
+
+    EvaluationStreamFrame:
+      type: object
+      description: |
+        Data payload of one SSE frame on `/api/v1/evaluation-runs/{id}/events`.
+
+        This is the authoritative delivery channel for terminal states to the B1
+        client. `rejected` deliberately has no counterpart domain event: a refusal
+        matters to the submitting session, and broadcasting it system-wide would add
+        a payload with no system-level consumer. `failed` and `completed` do have
+        domain events, because other modules consume them.
+
+        `sequence` is monotonic per run so a reconnecting client can deduplicate and
+        order without replaying history. Frames may be shown to the student, so they
+        never carry hidden case inputs, expected outputs or source code.
+      required: [evaluation_run_id, event, state, stage, sequence]
+      properties:
+        evaluation_run_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        event:
+          type: string
+          enum: [progress, completed, rejected, failed]
+          description: "Terminal frames are completed, rejected and failed; every other update is progress."
+        state:
+          type: string
+          enum: [received, validated, queued, running, completed, rejected, failed]
+        stage:
+          type: string
+          enum: [queued, fetching_package, static_analysis, security_check, dynamic_execution, scoring, reporting, terminal]
+        sequence: {type: integer, minimum: 0, description: "Monotonic. Deduplicate and order by this value."}
+        cases_total: {type: [integer, "null"], minimum: 0}
+        cases_done: {type: [integer, "null"], minimum: 0}
+        score: {anyOf: [{type: number}, {type: "null"}], description: "Present on a completed frame; null otherwise. Never rendered as 0 for an unfinished run."}
+        is_pass: {anyOf: [{type: boolean}, {type: "null"}]}
+        terminal_reason:
+          type: [string, "null"]
+          enum: [null, "static_blocked", "security_blocked", "infrastructure_error", "internal_error"]
+          description: "Why the run ended. 'static_blocked' and 'security_blocked' accompany rejected; 'infrastructure_error' and 'internal_error' accompany failed."
+        message: {type: [string, "null"], maxLength: 1000, description: "Redacted, human-readable. No stack traces, internal paths or source code."}
+        occurred_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+      additionalProperties: false
+
+    SubmissionAccepted:
+      type: object
+      required: [submission_id, state, idempotent_replay]
+      properties:
+        submission_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        state:
+          type: string
+          enum: [received, validated, queued, running, completed, rejected, failed]
+        evaluation_run_id: {anyOf: [{$ref: './common.yaml#/components/schemas/Uuid'}, {type: "null"}]}
+        idempotent_replay:
+          type: boolean
+          description: "True when this response replays a previous submission with the same idempotency key."
+        accepted_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+      additionalProperties: false
+
+    SubmissionView:
+      type: object
+      required: [submission_id, state, intake, files, created_at]
+      properties:
+        submission_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        student_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        section_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        question_version_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        state:
+          type: string
+          enum: [received, validated, queued, running, completed, rejected, failed]
+        intake: {type: string, enum: [api, email]}
+        evaluation_run_id:
+          anyOf: [{$ref: './common.yaml#/components/schemas/Uuid'}, {type: "null"}]
+          description: |
+            The evaluation run once it exists, else null. Needed because the run row is
+            created *after* acceptance, so `POST /submissions` legitimately answers `202`
+            with a null run id while the progress stream is addressed by run id. Without
+            this field no client can get from a submission to its run, which makes the
+            real-time progress feature unreachable.
+        files:
+          type: array
+          description: "Paths and digests only; source content is served through a separately authorized read."
+          items:
+            type: object
+            required: [path, content_sha256, size_bytes]
+            properties:
+              path: {type: string}
+              content_sha256: {$ref: './common.yaml#/components/schemas/Sha256'}
+              size_bytes: {type: integer, minimum: 0}
+            additionalProperties: false
+        state_history:
+          type: array
+          items: {$ref: '#/components/schemas/StateTransition'}
+        created_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+      additionalProperties: false
+
+    StateTransition:
+      type: object
+      required: [from_state, to_state, occurred_at]
+      properties:
+        from_state: {type: [string, "null"]}
+        to_state: {type: string}
+        occurred_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+        reason: {type: [string, "null"], description: "Redacted, human-readable cause. Never contains a stack trace or source code."}
+      additionalProperties: false
+
+    IntakeQuarantineView:
+      type: object
+      description: |
+        One quarantined intake record (CHG-0014). Carries identification metadata and a
+        redacted reason, never message contents: the point is that a teacher can *find* the
+        message in their mailbox again, not that the platform becomes a second mail store.
+      required: [intake_quarantine_id, intake, reason_code, detail, mailbox, recorded_at, resolved]
+      properties:
+        intake_quarantine_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        intake: {type: string, enum: [email]}
+        reason_code:
+          type: string
+          maxLength: 64
+          enum:
+            - not_uniquely_matched
+            - ambiguous_match
+            - malformed_message
+            - missing_message_id
+            - no_attachments
+            - too_many_attachments
+            - message_too_large
+            - attachment_name_not_allowed
+            - duplicate_attachment_name
+            - unsupported_attachment_encoding
+            - malformed_attachment
+            - attachment_too_large
+            - attachment_total_too_large
+            - unsupported_attachment_type
+            - nested_message_attachment
+            - executable_attachment
+            - archive_bomb
+            - archive_attachment
+            - not_plain_text
+          description: |
+            Machine-readable cause. **The vocabulary is closed** (`CHG-0021` §2.1, made
+            machine-readable by `CHG-0027`); the previous description was an open "e.g." set, which
+            left a consumer unable to tell whether a code it saw was one it should handle.
+
+            The `enum` is the same 19 values the table below groups, and it is a fact rather than a
+            preference: B2's `EmailIntakeReason` is a `Literal` of exactly these, and the write path
+            produces no others. A consumer can therefore generate the type instead of copying the
+            list -- which the previous prose-only form forced, in violation of the rule that field
+            definitions live only in `contracts/**`.
+
+            | Group | Codes | Attributable |
+            |---|---|---|
+            | Identity not derived | `not_uniquely_matched`, `ambiguous_match` | **yes** |
+            | Message structure | `malformed_message`, `missing_message_id`, `no_attachments`, `too_many_attachments`, `message_too_large` | no |
+            | Attachment policy | `attachment_name_not_allowed`, `duplicate_attachment_name`, `unsupported_attachment_encoding`, `malformed_attachment`, `attachment_too_large`, `attachment_total_too_large`, `unsupported_attachment_type`, `nested_message_attachment` | no |
+            | Content gates | `executable_attachment`, `archive_bomb`, `archive_attachment`, `not_plain_text` | no |
+
+            Only the first two are attributable, because only they mean "the identity could not be
+            derived". `checkpoint_exists` is deliberately **not** in this table: it is an
+            `email_checkpoints` outcome, not an `intake_quarantines.reason_code`.
+        detail:
+          type: string
+          maxLength: 1000
+          description: |
+            Already redacted when recorded; bounded here as a backstop.
+            **`1000`, not `500`** (`CHG-0021` §2.4): the database CHECK is
+            `char_length(detail) BETWEEN 1 AND 1000` and the writer truncates at `1000`, so a
+            `500` bound was a claim the server itself could violate -- it would have rejected its
+            own valid output.
+        mailbox: {type: string, maxLength: 200, description: "Which mailbox, so the teacher can locate the original."}
+        message_id: {type: [string, "null"], maxLength: 300, description: "RFC 5322 Message-ID. An identifier, not content."}
+        uid: {type: ["integer", "null"], minimum: 0, description: "IMAP UID for locating the message again."}
+        recorded_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+        resolved: {type: boolean}
+        resolved_student_id: {anyOf: [{$ref: './common.yaml#/components/schemas/Uuid'}, {type: "null"}]}
+        resolution_note: {type: [string, "null"], maxLength: 500}
+      additionalProperties: false
+
+    AppealPack:
+      type: object
+      description: |
+        A movable evidence bundle for one evaluation run (CHG-0014). Self-contained on purpose:
+        a reviewer outside this deployment must be able to verify the decision from the file
+        alone, so the pack embeds the report and the bindings rather than referencing them by id.
+      required: [evaluation_run_id, result_digest, report, binding, replay, redactions]
+      properties:
+        evaluation_run_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        result_digest:
+          allOf: [{$ref: './common.yaml#/components/schemas/Sha256'}]
+          description: "Pins the pack. A reader recomputes it to detect alteration."
+        report:
+          allOf: [{$ref: './../schemas/evaluation-report.schema.json'}]
+          description: "The full report for this run, subject to the caller's `view`."
+        binding:
+          type: object
+          description: "The five digests, repeated here so the pack stands alone. Identical digests must reproduce an identical score (ADR-0005)."
+          required: [submission_digest, package_digest, runner_policy_digest, environment_digest]
+          properties:
+            submission_digest: {$ref: './common.yaml#/components/schemas/Sha256'}
+            question_version_binding: {anyOf: [{$ref: './common.yaml#/components/schemas/Sha256'}, {type: "null"}]}
+            package_digest: {$ref: './common.yaml#/components/schemas/Sha256'}
+            runner_policy_digest: {$ref: './common.yaml#/components/schemas/Sha256'}
+            environment_digest: {$ref: './common.yaml#/components/schemas/Sha256'}
+          additionalProperties: false
+        runner_policy_summary:
+          type: object
+          description: "Which isolation settings were in force, as a summary. Host paths are excluded by construction."
+          additionalProperties: true
+        replay:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: "Human-readable instruction for reproducing this result, so the pack does not depend on the reader knowing this project's runbooks."
+        redactions:
+          type: array
+          minItems: 1
+          description: |
+            What was removed and why, listed rather than implied. A pack that silently omitted
+            something would be indistinguishable from one that had nothing to omit -- and the
+            reader is being asked to trust this file.
+          items: {type: string, minLength: 1, maxLength: 200}
+        generated_at: {anyOf: [{$ref: './common.yaml#/components/schemas/Timestamp'}, {type: "null"}]}
+      additionalProperties: false
+
+    EvaluationQualitySummary:
+      type: object
+      description: |
+        Aggregate quality signal for one question version (CHG-0015). Every field is a count;
+        there is deliberately no field that could carry an identifier, because the value of an
+        aggregate is lost the moment it can be walked back to a person.
+      required: [question_version_id, attempt_count, failure_categories, static_rule_hits, case_failure_rates, unmeasured_runs, security_found, security_not_found, security_not_checked]
+      properties:
+        question_version_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        attempt_count: {type: integer, minimum: 0, description: "Evaluation runs in scope. A question with very few attempts has no signal yet -- say so rather than drawing conclusions from noise."}
+        failure_categories:
+          type: array
+          description: "Per-case failure categories with counts. 'infrastructure_error' is the system's fault and is listed separately so it does not read as difficulty."
+          items:
+            type: object
+            required: [category, count]
+            properties:
+              category: {type: string, maxLength: 64}
+              count: {type: integer, minimum: 0}
+            additionalProperties: false
+        static_rule_hits:
+          type: array
+          description: "Which static rules actually fired, and how often. A rule that never fires on any submission is either useless or mis-specified -- that is the point of surfacing it."
+          items:
+            type: object
+            required: [rule_id, severity, count]
+            properties:
+              rule_id: {type: string, maxLength: 100}
+              severity: {type: string, enum: [error, warning, info]}
+              count: {type: integer, minimum: 0}
+            additionalProperties: false
+        case_failure_rates:
+          type: array
+          description: "Per-ordinal failure counts. Ordinals are positions in the immutable version, so this stays comparable across attempts."
+          items:
+            type: object
+            required: [ordinal, attempts, failures]
+            properties:
+              ordinal: {type: integer, minimum: 0}
+              attempts: {type: integer, minimum: 0}
+              failures: {type: integer, minimum: 0}
+            additionalProperties: false
+        unmeasured_runs: {type: integer, minimum: 0, description: "Runs where resource peaks could not be measured. Reported so absence of data is visible as absence, not as zero."}
+        security_found: {type: integer, minimum: 0}
+        security_not_found: {type: integer, minimum: 0}
+        security_not_checked: {type: integer, minimum: 0, description: "Never merge into security_not_found: 'we did not look' is not 'we looked and found nothing'."}
+      additionalProperties: false
+
+    EvaluationCommentary:
+      type: object
+      description: |
+        The non-deterministic teaching commentary for one evaluation run (RQ-T-20, ADR-0009),
+        optionally carrying an advisory score (RQ-T-30, ADR-0014).
+
+        This shape still has **no** `score` field and no `evidence` field, and `CHG-0011`'s
+        reason for that has not gone away: a field named `score`, sitting beside the report,
+        will eventually be read as the score. What changed (CHG-0018) is that the advisory
+        score is now modelled *instead of being left to prose*. A commentary that says "this
+        would probably be full marks under a looser policy" already carries a score-shaped
+        claim; not modelling it only made the claim unauditable.
+
+        So the field exists, and is deliberately **not** a number on this object: it is the
+        sub-object `advisory_score`, which a consumer can only reach as
+        `commentary.advisory_score.score` -- a path that states in code what this paragraph
+        states in prose. The authoritative score lives in the report and in `/grades`; the
+        separation between the two is enumerated as executable assertions in ADR-0014
+        decision 3, not promised here.
+      required: [evaluation_run_id, status, disclaimers]
+      properties:
+        evaluation_run_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        status:
+          type: string
+          enum: [unavailable, pending, ready, failed]
+          description: |
+            `unavailable` = no model provider is configured (the default). `pending` =
+            generation accepted but not finished. `failed` = generation was attempted and did
+            not succeed; the score track is unaffected either way.
+        text:
+          type: [string, "null"]
+          maxLength: 8000
+          description: The commentary itself. Null unless `status` is `ready`.
+        advisory_score:
+          anyOf: [{$ref: '#/components/schemas/AdvisoryScore'}, {type: "null"}]
+          description: |
+            A model's *suggestion* about how this run might be graded, or null when none was
+            produced (`status` not `ready`, or the model returned none). Reaching it takes
+            `commentary.advisory_score.score`: the extra path segment is the point.
+
+            It is generated from the same structured evidence as `text`, under the same input
+            whitelist -- so the model never saw the student's source, and this is a
+            re-reading of the recorded evidence rather than an independent judgement about
+            the code. That limit is accepted rather than worked around (ADR-0014 decision 4).
+        provenance:
+          anyOf: [{$ref: '#/components/schemas/CommentaryProvenance'}, {type: "null"}]
+          description: Who produced this text. Null when nothing was generated.
+        disclaimers:
+          type: array
+          minItems: 1
+          description: |
+            Always present, never empty -- including when `advisory_score` is null. These are
+            the normative labels a client must display verbatim alongside the text and the
+            advisory score: "non-deterministic", "not part of the score", "not grounds for
+            appeal". A client that renders `advisory_score` without them is presenting a
+            model's suggestion as a grade.
+          items: {type: string, minLength: 1, maxLength: 200}
+      additionalProperties: false
+
+    AdvisoryScore:
+      type: object
+      description: |
+        A model's advisory estimate of a run's score (RQ-T-30, ADR-0014). It is **not** a score:
+        it never enters `evaluation_results`, `case_evidence`, `result_digest`, the five binding
+        digests, the evaluation report, the grades endpoints or any event.
+
+        `max_score` is filled by B2 from the structured evidence (the sum of the case weights),
+        **not** generated. Full marks are a recomputable fact; letting a model produce it would
+        add a number that can be wrong in a way nobody can see. The model supplies `score`,
+        `rationale` and `confidence` only.
+      required: [score, max_score, rationale, confidence]
+      properties:
+        score: {type: number, description: "The suggested score. A value below zero or above `max_score` makes the whole generation a failure rather than being clamped -- clamping would silently rewrite what the model said into what we allow it to say."}
+        max_score: {type: number, exclusiveMinimum: 0, description: "Sum of the case weights in the recorded evidence. Authoritative, system-filled."}
+        rationale:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: "Why this estimate, in terms of what the evidence shows. Required so the suggestion can be argued with."
+        confidence: {type: string, enum: [low, medium, high], description: "The model's own confidence. Advisory like the score itself."}
+      additionalProperties: false
+
+    ReferenceVerification:
+      type: object
+      description: |
+        The outcome of running a version's own reference answer (CHG-0019). Not persisted by this
+        endpoint; the attestation is B3's record.
+
+        `adapter_kind` repeats the vocabulary B3 declares for a version, and `failure_category`
+        repeats the evaluation report's -- both on purpose. A private word list here would let the
+        two sides drift and make a failure category mean one thing in a report and another in a
+        publish check. (`check_shared_vocabularies` in `MAIN/host/.../checks.py` enforces that the
+        copies agree.)
+      required:
+        [question_version_id, content_digest, language, adapter_kind,
+         cases_total, cases_passed, cases, verified_at, attestation_id]
+      properties:
+        question_version_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        content_digest:
+          allOf: [{$ref: './common.yaml#/components/schemas/Sha256'}]
+          description: "The version's digest at the moment of verification. The attestation binds to it, so editing the question invalidates the record."
+        language: {$ref: './common.yaml#/components/schemas/Language'}
+        adapter_kind:
+          type: string
+          enum: [stdin, file, callable]
+          description: "Taken from the version's own declaration, never inferred from the reference answer."
+        cases_total: {type: integer, minimum: 0}
+        cases_passed: {type: integer, minimum: 0}
+        cases:
+          type: array
+          description: "One entry per case, ordered by `ordinal`. Counts and an outcome only -- no expected output, no hidden-case input, no reference source."
+          items:
+            type: object
+            required: [ordinal, passed, failure_category]
+            properties:
+              ordinal: {type: integer, minimum: 0}
+              passed: {type: boolean, description: "Same per-case shape the evaluation report uses, rather than a second vocabulary for the same fact."}
+              failure_category:
+                anyOf:
+                  - type: string
+                    enum:
+                      [timeout, crash, output_mismatch, resource_limit,
+                       missing_output, import_error, security_blocked, infrastructure_error]
+                  - type: "null"
+                description: "The evaluation report's own failure-category vocabulary. Null exactly when `passed` is true."
+            additionalProperties: false
+        verified_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+        attestation_id:
+          anyOf: [{$ref: './common.yaml#/components/schemas/Uuid'}, {type: "null"}]
+          description: "The record B3 wrote. Null means recording failed -- the observed `cases` are still returned, because they are what actually happened."
+      additionalProperties: false
+
+    CommentaryProvenance:
+      type: object
+      description: |
+        Which model produced a piece of commentary, and under which prompt. Recorded so that a
+        later reader can tell whether two commentaries came from the same system, and so a
+        provider or prompt change is visible rather than invisible.
+      required: [provider, model, prompt_version, input_scope]
+      properties:
+        provider: {type: string, minLength: 1, maxLength: 100}
+        model: {type: string, minLength: 1, maxLength: 100}
+        prompt_version: {type: string, minLength: 1, maxLength: 100}
+        input_scope:
+          type: array
+          minItems: 1
+          description: |
+            The evidence fields the generation was allowed to read. Returned so the whitelist
+            is auditable from outside: a reader can see that student source and protected
+            content were not among the inputs, instead of having to trust that they were not.
+          items: {type: string, minLength: 1, maxLength: 100}
+      additionalProperties: false
+
+    EvaluationRunView:
+      type: object
+      required: [evaluation_run_id, submission_id, state, stage]
+      properties:
+        evaluation_run_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        submission_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        state: {type: string, enum: [queued, running, completed, rejected, failed]}
+        stage:
+          type: string
+          enum: [queued, fetching_package, static_analysis, security_check, dynamic_execution, scoring, reporting, terminal]
+        sequence: {type: integer, minimum: 0, description: "Monotonic progress counter used by the SSE stream for deduplication."}
+        cases_total: {type: [integer, "null"], minimum: 0}
+        cases_done: {type: [integer, "null"], minimum: 0}
+        started_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+        finished_at: {anyOf: [{$ref: './common.yaml#/components/schemas/Timestamp'}, {type: "null"}]}
+      additionalProperties: false
+
+    GradeRow:
+      type: object
+      description: |
+        One grade record. `score` is null while the run is unfinished; the row then
+        reports its `state` instead, so an incomplete evaluation is never displayed
+        as a zero.
+      required: [submission_id, student_id, question_version_id, state]
+      properties:
+        submission_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        student_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        student_number: {type: [string, "null"]}
+        display_name: {type: [string, "null"], description: "Shown only to callers authorized for the section."}
+        course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        section_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        question_version_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        state: {type: string, enum: [received, validated, queued, running, completed, rejected, failed]}
+        score: {anyOf: [{type: number}, {type: "null"}]}
+        max_score: {anyOf: [{type: number}, {type: "null"}]}
+        is_pass: {anyOf: [{type: boolean}, {type: "null"}]}
+        submitted_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+        evaluation_run_id: {anyOf: [{$ref: './common.yaml#/components/schemas/Uuid'}, {type: "null"}]}
+      additionalProperties: false

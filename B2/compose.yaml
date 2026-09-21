@@ -1,0 +1,46 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: autograder
+      POSTGRES_USER: autograder_platform
+      POSTGRES_PASSWORD: change-me-local-only
+    # Module-local database for B2-only work and for the test suite. It is deliberately
+    # NOT the platform port (55432 belongs to MAIN/compose.yaml): `tests/conftest.py`
+    # creates and drops a throwaway database per test module, so the DSN it is given must
+    # be a role with CREATEDB. Pointing it at the platform instance would work, but it
+    # would make a routine test run and the integration environment share one lifecycle
+    # for no benefit.
+    #
+    # The superuser role here is the *fixture* role, not the application role: B2's app
+    # DSN (`B2_DATABASE_URL`, least-privilege `autograder_b2`) is what `module.yaml`
+    # advertises. `.env.example` and `alembic.ini` point at the platform integration
+    # target and are checked against MAIN/compose.yaml by MAIN/host.
+    # See docs/runbooks/local-development.md.
+    ports:
+      - "55433:5432"
+    volumes:
+      - b2_postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+    mem_limit: 96m
+    cpus: 0.15
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U autograder_platform -d autograder"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js", "-sd", "/data", "-m", "58222"]
+    # Isolated broker: the event tests connect to a real JetStream server and their own
+    # suites must not run concurrently against one broker (they compete for consumers and
+    # read-back). Keeping them off the shared broker (54222) is what makes that safe.
+    ports: ["54223:4222"]
+    volumes: ["b2_nats_data:/data"]
+    mem_limit: 32m
+    cpus: 0.05
+
+volumes:
+  b2_postgres_data:
+  b2_nats_data:

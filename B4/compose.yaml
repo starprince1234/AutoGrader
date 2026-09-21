@@ -1,0 +1,40 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: autograder
+      POSTGRES_USER: autograder_platform
+      POSTGRES_PASSWORD: change-me-local-only
+    # Module-local database for B4-only work and for the test suite. It is deliberately
+    # NOT the platform port (55432 belongs to MAIN/compose.yaml): B4's tests TRUNCATE
+    # every `b4.*` table before each test and drop/re-migrate the schema for the
+    # "migrate from zero" gate, which must never touch the shared platform database.
+    # `.env` and `alembic.ini` point at the platform integration target and are checked
+    # against MAIN/compose.yaml by MAIN/host. See docs/runbooks/local-development.md.
+    ports:
+      - "55435:5432"
+    volumes:
+      - b4_postgres_data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+    mem_limit: 96m
+    cpus: 0.15
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U autograder_platform -d autograder"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  nats:
+    image: nats:2.10-alpine
+    command: ["-js", "-sd", "/data", "-m", "58224"]
+    # Isolated broker for the same reason as the database: B4's messaging tests purge
+    # JetStream streams by name, and purging them on the shared broker (54222) would
+    # silently drop events the running host still has to consume.
+    ports: ["54224:4222"]
+    volumes: ["b4_nats_data:/data"]
+    mem_limit: 32m
+    cpus: 0.05
+
+volumes:
+  b4_postgres_data:
+  b4_nats_data:

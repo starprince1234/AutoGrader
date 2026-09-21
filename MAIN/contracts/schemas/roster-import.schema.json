@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autograder.local/contracts/roster-import.schema.json",
+  "title": "Roster import artifact",
+  "description": "Descriptor of an uploaded roster file. The roster pipeline is parse -> column mapping -> row validation -> preview -> human confirmation -> atomic write (RQ-B-1-10). Parsing never guesses: an unmappable column stops the import for a human decision, and no roster row is persisted before confirmation.",
+  "type": "object",
+  "required": ["filename", "media_type", "content_sha256"],
+  "properties": {
+    "filename": {
+      "type": "string",
+      "maxLength": 200,
+      "description": "Original client filename. Used for display only; the server never derives a storage path from it."
+    },
+    "media_type": {
+      "type": "string",
+      "enum": [
+        "application/pdf",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      ],
+      "description": "Only PDF and XLSX rosters are accepted. Anything else is rejected with 422."
+    },
+    "content_sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Digest of the uploaded bytes; re-computed server-side and compared, so a tampered upload is rejected."
+    },
+    "size_bytes": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Upload size, bounded by the configured roster upload limit."
+    },
+    "uploaded_at": {
+      "type": ["string", "null"],
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false,
+  "$comment": "Target fields expected from the roster are 姓名 (display_name), 学号 (student_number), 课程编号 (course_code) and 课序号 (section_code); see MAIN/docs/requirements/rq-catalog.md RQ-B-1-10. Column headers are matched case- and whitespace-insensitively but never guessed when ambiguous."
+}

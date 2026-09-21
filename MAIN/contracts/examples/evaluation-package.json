@@ -1,0 +1,59 @@
+{
+  "question_version_id": "00000000-0000-4000-8000-000000000105",
+  "package_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "language": "python",
+  "adapter": {
+    "kind": "stdin",
+    "args": [
+      "--mode",
+      "count"
+    ],
+    "stdin": "a\nb\nc\n",
+    "expect_exit_code": 0,
+    "comparison": {
+      "stdout": "ignore_trailing_whitespace",
+      "stderr": "ignored",
+      "numeric_tolerance": null
+    }
+  },
+  "tests": [
+    {
+      "case_id": "00000000-0000-4000-8000-000000000201",
+      "name": "counts lines on a small input",
+      "ordinal": 0,
+      "weight": 1,
+      "visible_to_student": true,
+      "stdin": "a\nb\nc\n",
+      "args": [],
+      "expected_stdout": "3\n",
+      "expected_stderr": null,
+      "expected_exit_code": 0
+    },
+    {
+      "case_id": "00000000-0000-4000-8000-000000000202",
+      "name": "hidden edge case: empty input",
+      "ordinal": 1,
+      "weight": 2,
+      "visible_to_student": false,
+      "stdin": "",
+      "args": [],
+      "expected_stdout": "0\n",
+      "expected_stderr": null,
+      "expected_exit_code": 0
+    }
+  ],
+  "security_policy": {
+    "network": false,
+    "read_only_root": true,
+    "allow_root": false,
+    "max_memory_bytes": 100663296,
+    "max_cpu_seconds": 5,
+    "max_wall_seconds": 10,
+    "max_output_bytes": 65536,
+    "max_processes": 16,
+    "max_files_created": 64
+  },
+  "max_files": 20,
+  "max_total_bytes": 1048576,
+  "created_at": "2026-09-15T08:00:00.000Z"
+}

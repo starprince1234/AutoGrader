@@ -1,0 +1,221 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autograder.local/contracts/evaluation-report.schema.json",
+  "title": "Evaluation report",
+  "description": "Explainable, replayable evaluation report produced by B2 (RQ-B-2-80). A score is not a scalar here: it is a set of per-rule and per-case conclusions, each carrying evidence, so a third party can re-check it. The report is bound to five digests; identical digests must reproduce an identical score and identical per-item evidence (ADR-0005).",
+  "type": "object",
+  "required": [
+    "evaluation_run_id",
+    "submission_id",
+    "question_version_id",
+    "state",
+    "overall",
+    "static_findings",
+    "security_conclusion",
+    "case_evidence",
+    "binding",
+    "result_digest",
+    "total_check"
+  ],
+  "properties": {
+    "evaluation_run_id": { "type": "string", "format": "uuid" },
+    "submission_id": { "type": "string", "format": "uuid" },
+    "question_version_id": { "type": "string", "format": "uuid" },
+    "state": {
+      "type": "string",
+      "enum": ["completed", "rejected", "failed"],
+      "description": "Terminal state. 'rejected' means the submission broke a rule or a security policy; 'failed' means the system could not complete the evaluation. Neither may be presented as a low score."
+    },
+    "overall": {
+      "type": "object",
+      "description": "Overall assessment: score, full marks, pass flag and a conclusion summary.",
+      "required": ["score", "max_score", "is_pass"],
+      "properties": {
+        "score": { "type": "number", "minimum": 0 },
+        "max_score": { "type": "number", "exclusiveMinimum": 0 },
+        "is_pass": { "type": "boolean" },
+        "summary": { "type": ["string", "null"], "maxLength": 2000, "description": "Deterministic, rule-derived conclusion text. Not model-generated: scoring never depends on an LLM (ADR-0005)." }
+      },
+      "additionalProperties": false
+    },
+    "static_findings": {
+      "type": "array",
+      "description": "Static legality findings (RQ-B-2-40). A high-severity finding blocks dynamic execution and makes the outcome 'rejected'; in that case the report must not claim the code ran successfully.",
+      "items": {
+        "type": "object",
+        "required": ["rule_id", "severity", "file", "message"],
+        "properties": {
+          "rule_id": { "type": "string", "maxLength": 100 },
+          "severity": { "type": "string", "enum": ["error", "warning", "info"] },
+          "file": { "type": "string", "maxLength": 200 },
+          "line": { "type": ["integer", "null"], "minimum": 1 },
+          "column": { "type": ["integer", "null"], "minimum": 1 },
+          "message": { "type": "string", "maxLength": 1000 },
+          "blocking": { "type": "boolean", "default": false, "description": "Whether this finding blocked dynamic execution." }
+        },
+        "additionalProperties": false
+      }
+    },
+    "security_conclusion": {
+      "type": "object",
+      "description": "Three-state security conclusion. 'not_checked' is distinct from 'not_found': an unperformed check must never be reported as a clean result.",
+      "required": ["status", "findings"],
+      "properties": {
+        "status": { "type": "string", "enum": ["found", "not_found", "not_checked"] },
+        "findings": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["finding_id", "category", "severity"],
+            "properties": {
+              "finding_id": { "type": "string", "format": "uuid" },
+              "category": {
+                "type": "string",
+                "enum": [
+                  "destructive_command",
+                  "network_attempt",
+                  "privilege_escalation",
+                  "sensitive_path_read",
+                  "fork_bomb",
+                  "resource_limit",
+                  "archive_bomb",
+                  "sandbox_violation"
+                ]
+              },
+              "severity": { "type": "string", "enum": ["high", "medium", "low"] },
+              "detected_in": { "type": "string", "enum": ["static", "runtime"] },
+              "message": { "type": "string", "maxLength": 1000 }
+            },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "case_evidence": {
+      "type": "array",
+      "description": "Per-case evidence (RQ-B-2-50). Reports digests and truncated excerpts rather than whole outputs, and never leaks a hidden case's expected output to the student view.",
+      "items": {
+        "type": "object",
+        "required": ["case_id", "ordinal", "passed"],
+        "properties": {
+          "case_id": { "type": "string", "format": "uuid" },
+          "ordinal": { "type": "integer", "minimum": 0 },
+          "weight": { "type": "number", "exclusiveMinimum": 0, "default": 1 },
+          "awarded": { "type": "number", "minimum": 0 },
+          "passed": { "type": "boolean" },
+          "failure_category": {
+            "type": ["string", "null"],
+            "enum": [
+              "timeout",
+              "crash",
+              "output_mismatch",
+              "resource_limit",
+              "missing_output",
+              "import_error",
+              "security_blocked",
+              "infrastructure_error",
+              null
+            ]
+          },
+          "actual_output_digest": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+          "actual_output_excerpt": { "type": ["string", "null"], "maxLength": 2000, "description": "Truncated per the output limit. Omitted entirely for hidden cases in the student view." },
+          "expected_output_excerpt": { "type": ["string", "null"], "maxLength": 2000, "description": "PROTECTED. Omitted for hidden cases; only visible cases may expose it." },
+          "duration_ms": { "type": ["integer", "null"], "minimum": 0 },
+          "message": { "type": ["string", "null"], "maxLength": 1000 },
+          "resource": {
+            "description": "Measured resource use for this case (CHG-0012). Null when the host could not measure it -- e.g. no cgroup v2 -- which is honest ('not measured') rather than zero, because a zero reads as 'used nothing'. Before this field the resource ledger was a set of configured limits nobody ever compared against reality.",
+            "anyOf": [{ "$ref": "#/$defs/case_resource" }, { "type": "null" }]
+          },
+          "artifacts": {
+            "description": "What this case did to the workspace files (CHG-0012). Closes a gap the integration audit found: per-case file digests were computed, then used only to pick an excerpt and discarded, so 'the produced file matched' was unauditable and `RQ-B-0-30` acceptance 2 had no implementation anywhere.",
+            "anyOf": [{ "$ref": "#/$defs/case_artifacts" }, { "type": "null" }]
+          },
+          "explanation": {
+            "type": ["string", "null"],
+            "maxLength": 2000,
+            "description": "A deterministic, rule-derived explanation of this case's outcome (CHG-0012). It is NOT model output: fixed rules over the evidence in this same object, so it is reproducible and may be treated as part of the report. Model-generated teaching commentary lives in a separate track (ADR-0009, RQ-T-20) and must never appear here -- if it did, the report would stop being replayable."
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "binding": {
+      "type": "object",
+      "description": "The five digests that make replay meaningful. When all five match a previous run, the score and per-item evidence must match too; recording them separately also makes it possible to say exactly which input changed when a result legitimately differs.",
+      "required": ["submission_digest", "package_digest", "runner_policy_digest", "environment_digest"],
+      "properties": {
+        "submission_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "question_version_binding": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$", "description": "Content digest of the question version, so a later edit to the question cannot silently change the meaning of a past score." },
+        "package_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "runner_policy_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "environment_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "interpreter_version": { "type": ["string", "null"], "maxLength": 100 }
+      },
+      "additionalProperties": false
+    },
+    "total_check": {
+      "type": "object",
+      "description": "Arithmetic self-check. The sum of item awards must equal the overall score; a mismatch is a defect that must fail a test, not be rounded away.",
+      "required": ["sum_of_awards", "matches_total"],
+      "properties": {
+        "sum_of_awards": { "type": "number", "minimum": 0 },
+        "matches_total": { "type": "boolean", "const": true }
+      },
+      "additionalProperties": false
+    },
+    "result_digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "Digest over the report content, used as the replay equality check."
+    },
+    "generated_at": { "type": ["string", "null"], "format": "date-time" }
+  },
+  "$defs": {
+    "case_resource": {
+      "type": "object",
+      "description": "Peak resource use observed for one case. Every field is nullable because a sandbox may be able to enforce a limit without being able to report the peak; 'enforced but unmeasured' and 'measured as small' are different facts.",
+      "properties": {
+        "memory_peak_bytes": { "type": ["integer", "null"], "minimum": 0 },
+        "cpu_user_seconds": { "type": ["number", "null"], "minimum": 0 },
+        "cpu_system_seconds": { "type": ["number", "null"], "minimum": 0 },
+        "pids_peak": { "type": ["integer", "null"], "minimum": 0 },
+        "wall_seconds": { "type": ["number", "null"], "minimum": 0 },
+        "limit_hit": {
+          "type": ["string", "null"],
+          "enum": ["memory", "cpu", "pids", "wall", "output", null],
+          "description": "Which enforced limit ended the case, if any. Null means no limit was hit."
+        }
+      },
+      "additionalProperties": false
+    },
+    "case_artifacts": {
+      "type": "object",
+      "description": "File-level outcome of one case. Digests are recorded so the comparison is checkable after the fact; the change lists are recorded so `RQ-B-0-30` acceptance 2 ('which files the submission modified, with content digests') is answerable at all.",
+      "properties": {
+        "expected_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$", "description": "PROTECTED. Digest of the expected produced file. Omitted from the student view: a digest is not content, but it is a checkable oracle for a guessed file, and only visible cases may expose it." },
+        "actual_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+        "created": { "$ref": "#/$defs/file_change_list" },
+        "modified": { "$ref": "#/$defs/file_change_list" },
+        "deleted": { "$ref": "#/$defs/file_change_list" }
+      },
+      "additionalProperties": false
+    },
+    "file_change_list": {
+      "type": "array",
+      "description": "Workspace-relative paths, sorted, so the list is comparable between runs. Bounded because a runaway case must not produce an unbounded report.",
+      "maxItems": 200,
+      "items": {
+        "type": "object",
+        "required": ["path"],
+        "properties": {
+          "path": { "type": "string", "minLength": 1, "maxLength": 300 },
+          "content_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+          "size_bytes": { "type": ["integer", "null"], "minimum": 0 }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}
