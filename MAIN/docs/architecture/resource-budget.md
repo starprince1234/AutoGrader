@@ -10,12 +10,13 @@
 
 | 组成部分 | 预算 | 依据 | 配置位置 |
 |---|---|---|---|
-| composition host（含 B2/B3/B4 插件） | **≤160 MB** | 单 Python 进程 + FastAPI + 三个插件的 import 常驻 | `compose.yaml`: `mem_limit: 160m` |
+| composition host（含 B2/B3/B4 插件） | **≤160 MB** | 单 Python 进程 + FastAPI + 三个插件的 import 常驻 | `deploy/autograder.service`: `MemoryMax=256M` 与一个沙箱作业共用 |
 | PostgreSQL 17 | **≤96 MB** | 单实例；连接数受控；`shared_buffers` 调小 | `mem_limit: 96m` |
 | NATS JetStream | **≤32 MB** | 单二进制；JetStream 存储落盘 | `mem_limit: 32m` |
 | 单并发 nsjail 评测作业 | **≤96 MB** | 学生代码 + 解释器 + 沙箱开销 | runner policy（cgroup 限额） |
-| **保留余量** | **≥128 MB** | 应对峰值、内核页缓存压力、宿主其他进程 | — |
-| **合计** | **512 MB** | 160 + 96 + 32 + 96 + 128 = 512 | — |
+| Cloudflare Tunnel connector | **≤32 MB** | 持久化出站隧道；不接管 API 业务 | `deploy/cloudflared.service`: `MemoryMax=32M` |
+| **保留余量** | **≥96 MB** | 应对峰值、内核页缓存压力、宿主其他进程 | — |
+| **合计** | **512 MB** | 160 + 96 + 32 + 96 + 32 + 96 = 512 | — |
 
 ### 关键推论
 
@@ -31,10 +32,11 @@
 
 | 组成部分 | 预算 | 说明 |
 |---|---|---|
-| composition host | **0.35** | HTTP 处理、SSE、编排 |
+| composition host | **0.30** | HTTP 处理、SSE、编排 |
 | PostgreSQL | **0.15** | 查询与写入 |
 | NATS JetStream | **0.05** | 事件投递 |
 | 单并发 nsjail 评测作业 | **0.45** | 学生代码执行（CPU 时间限额） |
+| Cloudflare Tunnel connector | **0.05** | 维持 API 的出站连接 |
 | **合计** | **1.00** | 无余量——因此**并发必须为 1** |
 
 ### 关键推论
@@ -79,7 +81,7 @@
 | 思维导图 Alpha「目标运行环境」后端 | 操作系统：Linux，Debian x64 | 验收目标定为 Linux x64（Debian 系） |
 | 需求表 `RQ-B-0-20` | 符合课程文档 | 上述全部 |
 
-> **范围界定**：资源账本覆盖 **应用 + 数据库 + 消息中间件 + 一个活动沙箱**，**不包含**宿主操作系统内核与其自身开销。这一界定必须在最终验收报告中明确写出，避免"我的数字对不上"的争议。
+> **范围界定**：资源账本覆盖 **应用 + 数据库 + 消息中间件 + 一个活动沙箱 + Cloudflare Tunnel connector**，**不包含**宿主操作系统内核与其自身开销。这一界定必须在最终验收报告中明确写出，避免"我的数字对不上"的争议。
 
 ---
 
@@ -90,15 +92,21 @@
 ### 5.1 内存与 CPU
 
 ```bash
-# 容器级（Linux，Compose 启动后）
+# 容器级（Linux，Compose 启动后；仅 PostgreSQL 与 NATS）
 docker stats --no-stream --format "table {{.Name}}\t{{.MemUsage}}\t{{.CPUPerc}}"
 
-# 精确 RSS（容器内 PID）
+# API 与 Tunnel 的 systemd cgroup
+systemctl show autograder.service -p MemoryCurrent -p CPUUsageNSec
+systemctl show cloudflared.service -p MemoryCurrent -p CPUUsageNSec
+cat /sys/fs/cgroup/system.slice/autograder.service/memory.peak
+cat /sys/fs/cgroup/system.slice/autograder.service/cpu.stat
+
+# 容器内精确 cgroup 读数
 docker exec <container> cat /sys/fs/cgroup/memory.current
 docker exec <container> cat /sys/fs/cgroup/cpu.stat
 ```
 
-判据：各容器 `MemUsage` 不超过 §1 的预算；总和不超 512 MB 且保留 ≥128 MB。
+判据：各组件不超过 §1/§2 的预算；总和不超 512 MB 且保留 ≥96 MB。
 
 ### 5.2 单次沙箱作业
 
@@ -126,10 +134,11 @@ du -sh <pgdata> <jetstream-data> <b2-storage> <b3-resources>
 
 | 组件 | 预算 | 实测 | 时间 | 方法 | 结论 |
 |---|---|---|---|---|---|
-| host | ≤160 MB / 0.35 | 待测 | — | `docker stats` | 未执行 |
+| host + 单个沙箱作业 | ≤256 MB / 0.75 | 待测 | — | systemd/cgroup v2 | 未执行 |
 | PostgreSQL | ≤96 MB / 0.15 | 待测 | — | `docker stats` | 未执行 |
 | NATS | ≤32 MB / 0.05 | 待测 | — | `docker stats` | 未执行 |
-| nsjail 作业（单并发） | ≤96 MB / 0.45 | 待测 | — | cgroup `memory.peak` | 未执行 |
+| nsjail 作业（单并发） | ≤96 MB / 0.45 | 待测 | — | delegated cgroup `memory.peak` | 未执行 |
+| Cloudflare Tunnel connector | ≤32 MB / 0.05 | 待测 | — | systemd/cgroup v2 | 未执行 |
 | 磁盘总量 | ≤10 GB | 待测 | — | `df -h` + `du -sh` | 未执行 |
 
 **不得**在没有测量数据时填写估算值或"应该满足"。

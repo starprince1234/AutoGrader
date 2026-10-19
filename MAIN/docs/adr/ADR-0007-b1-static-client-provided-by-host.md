@@ -1,6 +1,6 @@
 # ADR 0007 B1 采用静态客户端形态，由 composition host 同源提供
 
-- **状态**：接受
+- **状态**：取代，见 [ADR-0017](ADR-0017-vercel-frontend-native-api-host.md)
 - **背景**：
 
   导图（PDF）为 Beta 明确列出"**前后端分离，BS 架构**"，并把 JavaScript/Nodejs 列为开发工具。因此 B1 必须是浏览器端应用，且技术上"前后端分离"。

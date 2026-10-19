@@ -51,7 +51,7 @@
 
   | 导图内容 | 采纳方式 |
   |---|---|
-  | 前后端分离、BS 架构 | B1 为静态客户端，由 MAIN host 同源提供（ADR-0001、ADR-0007） |
+  | 前后端分离、BS 架构 | B1 为静态客户端；生产交付拓扑见 ADR-0017（Vercel 前端、Linux API host） |
   | 开发语言：Python + JavaScript | Python 3.12 后端 + TypeScript/React 前端 |
   | Python 框架：FastAPI | 全部后端模块与 host 使用 FastAPI |
   | 数据来源：待测代码提交方式 = 电子邮件 + 网页提交 | 对应 `RQ-B-2-10`（API）与 `RQ-B-2-20`（IMAP）两条独立入口，归一化为同一信封 |

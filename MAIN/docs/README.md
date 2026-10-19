@@ -32,7 +32,7 @@
 | 阶段归档门禁与初始化验收结论 | [testing/acceptance.md](testing/acceptance.md) | 验收门禁 | 引用门禁号 |
 | 跨模块用例目录（集成/E2E/安全/资源/文档） | [testing/cases.md](testing/cases.md) | 79 条用例 | 引用用例 ID |
 | 跨模块不可逆决策 | [adr/](adr/README.md) | 架构决策记录 | 引用 ADR 编号 |
-| 启动、组装、容器交付、Linux 验收、排障 | [runbooks/](runbooks/local-development.md) | 五份运行手册 | 引用手册与小节 |
+| 启动、组装、本地容器集成、生产交付、Linux 验收、排障 | [runbooks/](runbooks/local-development.md) | 六份运行手册 | 引用手册与小节 |
 | 阶段进度与完成证据 | [phases/](phases/README.md) | 阶段记录与归档 | 引用阶段号 |
 | 同名根因的可复用结论 | [knowledge/](knowledge/README.md) | 知识笔记 | 引用日期与标题 |
 | 各模块的任务书（需求、边界、泳道、DoD） | [workstreams/](workstreams/B1.md) | 四份工作包说明 | 引用工作包 ID |
@@ -52,6 +52,7 @@ docs/
 ├── ../seed/question-bank/           ★ 100 道已验证题目（6 个主题分片 + 校验器自检题）
 ├── ../scripts/verify_question_bank.py   题库真实性门（真实执行参考答案）
 ├── ../scripts/import_question_bank.py   题库导入门（只走公开 HTTP API）
+├── ../scripts/install-mihomo-autograder.sh  安装 AutoGrader 独立的本机 Mihomo 出站代理
 ├── requirements/
 │   ├── prd.md                       产品需求（定位/用户/创新/非目标/成功判据）
 │   ├── srs.md                       软件需求规格（横切功能/非功能/状态机/接口/数据/约束/验收）
@@ -89,8 +90,9 @@ docs/
 │   └── ADR-0008…ADR-0014                模块设置视图、AI 两轨、沙箱分层、跨模块组合、职责提案、模块数开放、AI 评分参考
 ├── runbooks/
 │   ├── local-development.md         Windows 开发与最小验证路径
-│   ├── container-deployment.md      ★ 容器交付：`docker compose up` 的一条命令路径与首次启动序列
-│   ├── integration.md               模块组装、失败诊断矩阵、即插即用验证规程
+│   ├── container-deployment.md      本地容器集成：PostgreSQL、NATS 与 composition host
+│   ├── production-deployment.md     ★ Vercel、Cloudflare Tunnel 与 Linux systemd 生产交付
+│   ├── integration.md               后端模块组装、失败诊断矩阵、即插即用验证规程
 │   ├── linux-acceptance.md          Linux 安全与资源验收（仅此环境有效）
 │   └── troubleshooting.md           五层分诊与逐项处置
 ├── phases/
@@ -132,7 +134,7 @@ docs/
 | `database/ownership.md` | 已完成 | 与 `module.yaml` 的 schema 归属一致 |
 | `testing/*` | 已完成 | 文档门禁自动化；用例状态如实标注为"无" |
 | `adr/*` | 已完成 | 每条 ADR 均含备选方案与被否原因 |
-| `runbooks/*` | 已完成（含未验证声明） | 未执行项已逐条列出，未伪报；容器部署路径由 `runbooks/container-deployment.md` 记录并有真实读数 |
+| `runbooks/*` | 已完成（含未验证声明） | 本地容器路径有真实读数；生产部署手册记录外部 DNS、Vercel 与 Tunnel 验收项 |
 | `phases/active/phase-00-initialization.md` | **active** | 完成条件 11（资源实测）未达成；6/9/10 已在 Phase 01 达成 |
 | `phases/active/phase-01-integration-runtime.md` | **active** | 见该文件第 6 节"未执行"（Linux 沙箱与资源门禁） |
 | `knowledge/*` | 已完成 | 预防措施已落地为 `checks.py` 中的检查 |
@@ -151,8 +153,8 @@ docs/
 | 迁移 head 与本地端口一致性门禁 | **已完成** | 已发现并修复 head 与端口不一致 |
 | Platform SDK 协议 | 骨架 | 代码存在；`events` 字段不分发布/订阅（ADR-0003 遗留） |
 | composition host 装载 | 骨架 | 逻辑存在；**未在真实环境验证装载** |
-| 容器部署路径（`docker compose up`） | 已完成 | 空卷首次启动实测：三插件 readiness、`/app` SPA（含浏览器）、容器内签发令牌并读写真实数据；见 `runbooks/container-deployment.md` 与 `phases/active/phase-01-integration-runtime.md` §13 |
-| B1 静态站点由 host 提供 | 待实现 | 需构建并启动后验证 |
+| 本地容器集成路径（`docker compose up`） | 已完成 | 空卷首次启动实测：三插件 readiness、令牌签发与真实 API 数据读写；见 `runbooks/container-deployment.md` 与 `phases/active/phase-01-integration-runtime.md` §13 |
+| 生产部署（Vercel + Cloudflare Tunnel + systemd） | 待实现 | DNS 与 Vercel 前端域名由用户确认完成；服务器、Tunnel、API readiness 与真实业务流程尚未验收 |
 | B2 评测引擎 | 待实现 | 插件骨架 |
 | B3 题库 | 待实现 | 插件骨架 |
 | B4 平台底座 | 待实现 | 插件骨架 |
@@ -174,7 +176,7 @@ docs/
 | 要改接口 | `contracts/change-protocol.md` → `api/governance.md` → `api/identifiers.md` |
 | 要动数据库 | `database/ownership.md` → `adr/ADR-0001` → 本模块 `docs/database/migrations.md` |
 | 要评审安全 | `architecture/security.md` → `testing/cases.md` §3 → `runbooks/linux-acceptance.md` |
-| 要跑起来 | `runbooks/container-deployment.md`（交付）或 `runbooks/local-development.md`（开发）→ `runbooks/integration.md` → `runbooks/troubleshooting.md` |
+| 要跑起来 | `runbooks/production-deployment.md`（生产）或 `runbooks/local-development.md`（开发）→ `runbooks/integration.md` → `runbooks/troubleshooting.md` |
 | 要做课设汇报 | `requirements/prd.md` §6（创新点）→ `knowledge-matrix.md`（课程知识映射）→ `testing/acceptance.md`（证据） |
 
 ---

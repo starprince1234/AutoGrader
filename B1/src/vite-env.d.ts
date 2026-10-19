@@ -6,7 +6,7 @@
  * 理由见 `docs/api/contract.md` 的"消费规则"。
  */
 interface ImportMetaEnv {
-  /** API 源。缺省 = 同源（MAIN host 同时提供 `/app` 与 `/api`）。 */
+  /** API 源。生产指向 api.91idc.me；本地开发连接 127.0.0.1:18000。 */
   readonly VITE_API_BASE_URL?: string;
   /** 可选的前端日志上报端点。未配置时日志只落本地控制台。 */
   readonly VITE_LOG_ENDPOINT?: string;

@@ -33,7 +33,7 @@
 
 ## 我提供的端点
 
-B1 是静态客户端，`module.yaml` 声明 `routes: []`，**不提供任何服务端端点**。`provides: [web-ui]` 表示它提供的是浏览器 UI 资产（由 MAIN host 在 `/app` 静态托管），不是 API。
+B1 是静态客户端，`module.yaml` 声明 `routes: []`，**不提供任何服务端端点**。`provides: [web-ui]` 表示它提供浏览器 UI 资产，由 Vercel 发布到 `www.91idc.me/app/`；API 则由 `api.91idc.me` 提供。
 
 ## 我消费的端点（按提供方）
 
@@ -124,9 +124,9 @@ B1 的**全部终态**（`completed` / `rejected` / `failed`）经 **SSE 流**�
 
 - **路径取自契约原文**：`MAIN/contracts/openapi/*.yaml` 中的路径已含 `/api/v1` 前缀，B1 原样使用，
   不做二次拼接（否则会得到 `/api/api/v1/...`）。
-- **`VITE_API_BASE_URL` 是"源"，不是"前缀"**：缺省为空串 = 同源（MAIN host 同时提供 `/app` 与 `/api`）；
-  仅当 host 位于另一个源时填写协议+主机。这与 ADR-0007 的举例（`/api`）不同，属于**需 MAIN 判定的文档不一致**，
-  已记录在 `../collaboration/interfaces.md`；B1 未修改 MAIN 任何文件。
+- **`VITE_API_BASE_URL` 是"源"，不是"前缀"**：生产构建读取 `https://api.91idc.me`；本地开发连接 `http://127.0.0.1:18000`。
+  契约路径原样带 `/api/v1`，不会再拼接路径前缀。
+- 浏览器请求设置 `credentials: include`，以便访问 API 子域下的 HttpOnly 刷新 cookie；后端 CORS 只允许 `https://www.91idc.me`。
 - **每个请求带 `X-Request-ID`**（与前端结构化日志同源）；`401` 刷新一次后重放，`403/404/409/422` 不重试（确定性结论）。
 - **重复同名查询参数**：`QueryParams` 的值可以是数组，序列化为 `?tags=a&tags=b`（契约里 `tags` 是
   `style: form, explode: true`，逗号拼接会得到一个服务端读不到的值）。空数组等于不加该条件。

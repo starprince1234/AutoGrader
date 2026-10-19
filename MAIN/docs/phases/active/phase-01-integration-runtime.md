@@ -1113,3 +1113,44 @@ RegistryError: B1: contract digest drift -- contracts.lock records 4ad48fbb… b
 ```
 
 退出。**这是注册表做对了事**：它比对的是镜像内的两份快照，而当时的构建恰好跨在"契约已改、锁还没跟上"的窗口上，不一致就不许启动。等锁与实时摘要重新一致后重建镜像，启动即通过。记录在此以免后人把这类失败误读成容器路径的缺陷——**正确的处置是重跑 `scripts/relock_contracts.py` 并重建镜像，绝不是想办法绕过这个校验**。注意这一条与 §12.10 的 CHG-0016 是同一现象的两个面：契约版本这次又前进到了 **0.11.0**，因此**任何在此之前构建的镜像都必须重建**。
+
+## 14. 生产部署准备（2026-10-18）
+
+用户交接确认 Cloudflare 已 Active、根域跳转有效；本轮未修改 DNS 或 Vercel 外部设置。2026-10-18 公开只读检查得到 `https://www.91idc.me/` HTTP 200，但 `https://www.91idc.me/app/` HTTP 404；Cloudflare DNS-over-HTTPS 对 `api.91idc.me` 的 CNAME 查询返回无记录，`https://api.91idc.me/health/ready` 无法连接 443。仓库生产入口和 CORS 已按 `www.91idc.me` 校准，Vercel build-ignore 现在把 B1 构建输入与 `MAIN/contracts/**` 作为依赖。
+
+生产后端**尚未部署**。Doppler 字段名检查没有输出任何密钥值：现有 PostgreSQL DSN 密码及 B2↔B3 token 与仓库本地集成默认值一致，因此已在 `autograder/prd` 新增六个独立的随机 32-byte hex 生产密钥，未覆盖原字段。已创建仅限该 config、只读的 Doppler Service Token，并保存为 GitHub Actions secret `DOPPLER_TOKEN`。`DEPLOY_SSH_HOSTKEY` 已通过 Doppler CLI 修正为纯 SHA256 指纹格式，未输出值；工作流会在任何 SSH 连接前校验该字段。Doppler 的 `VITE_API_BASE_URL` 已确认与公开 API origin 相同并设为 `unmasked`，但用户截图中的 Vercel Config Sync Disabled 状态尚未重新核实。Cloudflare Tunnel token 尚未安装。
+
+Agent 未直接建立生产 SSH 连接；此前连接尝试被工具策略拦截，不通过其他通道绕过。用户于 2026-10-18 从服务器 root SSH 终端提供只读检查：OpenCloudOS 9.6 x86_64、DNF、cgroup2（含 cpu/memory/pids 控制器）、Docker Compose 5.4.0、Docker 29.7.2、3.6 GiB RAM（1.7 GiB available）、40 GiB 磁盘（17 GiB free），目标端口空闲，AutoGrader 服务及目录不存在。完整预检仍未运行；Compose 项目/卷冲突、全部依赖命令和 Tunnel token 文件尚待核实。当前工作站 `docker info` 不可用，因此 B2–B5 的数据库测试证据尚未重新生成，MAIN 四项门禁和生产部署也尚未验收。Vercel 设置页访问超时；Root Directory、外部源码构建选项、实际 Production 环境变量、Config Sync 恢复状态和 Git 自动部署设置仍待核实。
+
+2026-10-19 用户选择仅配置 AutoGrader 本机 Mihomo 代理，不改 Docker daemon。附件 YAML 已解析，含 172 个 AnyTLS 节点及凭据；服务安装器与 systemd 单元已加入工作区，未上传到服务器。用户提供的只读检查确认代理端口 7890–7893/9090 空闲、同名 systemd 单元不存在；服务器尚未安装 Mihomo。`postgres:17-alpine` 和 `nats:2.10-alpine` 均未缓存，因此在仅本机代理范围下生产预检会停止，避免 dockerd 直接联网拉取。
+
+| 验收项 | 状态 | 证据/阻塞 |
+|---|---|---|
+| Cloudflare 域名迁移与前端 DNS | 已完成 | 用户交接确认 Active、Vercel DNS-only 记录有效 |
+| `www.91idc.me/app/` 前端入口 | 阻塞 | 2026-10-18 公开 HTTP 检查返回 404；Vercel 设置页读取超时 |
+| API Tunnel、服务 readiness 与真实业务流程 | 阻塞 | `api.91idc.me` 无 CNAME 记录，健康检查无法连接；尚无服务器运行读数 |
+| Vercel 项目构建设置与自动触发 | 阻塞 | 项目设置页未能读取 |
+| 后端 GitHub Actions 自动部署 | 阻塞 | Workflow 和只读 Doppler secret 已准备在本地；未推送，Tunnel token 尚未安装，完整服务器只读预检尚未运行 |
+| AutoGrader Mihomo 本机代理 | 待实现 | YAML 已解析且本机端口空闲；安装器与 unit 在工作区，尚未传到服务器 |
+| Linux nsjail、安全门禁、资源与备份恢复 | 待实现 | 用户提供的主机资源与 cgroup 初检通过；nsjail、安全限制、Compose 冲突和备份恢复尚未实测 |
+
+## 15. 生产 Tunnel 与服务器准备（2026-10-19）
+
+用户随后授权继续生产上线，并通过 Xshell 将本机 `id_ed25519.pub` 加入服务器 root 的 `authorized_keys`。Agent 使用 OpenSSH 并按 Doppler 中记录的 SHA256 主机指纹校验目标，随后通过 SSH 操作服务器；Tunnel token 与 Mihomo 配置均未写入仓库或输出到日志。
+
+服务器生产预检通过：OpenCloudOS 9.6 x86_64、4 CPU、3655 MiB RAM、`/var/lib` 所在磁盘 39 GiB 总量/15 GiB 可用、cgroup v2、Docker Compose 5.4.0；首部署无 AutoGrader 服务、目录、Compose 项目或命名卷冲突，18000/25432/25222 端口空闲。
+
+Mihomo v1.19.32 官方 amd64-compatible 包 SHA256 与固定摘要一致。安装器验证用户提供的配置后创建 `mihomo-autograder.service`；服务 active/enabled，HTTP 代理仅监听 `127.0.0.1:7893`，经 `https://www.gstatic.com/generate_204` 检查返回 HTTP 204。`postgres:17-alpine` 与 `nats:2.10-alpine` 已从 Docker Hub 拉取。Docker daemon 未修改。
+
+cloudflared RPM 2026.10.1-1 已安装，`cloudflared.service` active/enabled。初次录入的 36 字节 Tunnel UUID 被 cloudflared 拒绝；用户随后在 Xshell 隐藏输入完整 Connector Token。服务器 token 文件权限为 `root:cloudflared 0640`；日志确认 Tunnel connection 已通过 QUIC 注册。TCP/7844 有一个区域不可达，cloudflared 以 QUIC 继续运行。Cloudflare Routes 页面已有 `api.91idc.me` → `http://127.0.0.1:18000` Published application；权威 DNS 当前 CNAME 指向 `a4ba1fda-f0d6-4eb5-9d7a-0dac1d86e85d.cfargotunnel.com`。
+
+**当前阻塞**：`127.0.0.1:18000` 尚无 API listener，生产后端未部署。当前工作区源码尚未提交；本机 Docker Desktop daemon 不可用，因此完整 B1–B5/MAIN 验证需由推送后 GitHub Actions 执行。Vercel 项目的 Root Directory、外部源码构建权限和 Config Sync 状态仍未通过设置页复核。
+
+| 验收项 | 当前状态 | 证据/下一步 |
+|---|---|---|
+| `api.91idc.me` Tunnel DNS 与 connector | 已完成 | 权威 DNS CNAME 正确；cloudflared active/enabled，QUIC 已注册 |
+| Mihomo 出站代理与数据库镜像 | 已完成 | 本机代理返回 HTTP 204；两个生产镜像已缓存 |
+| 生产环境只读预检 | 已完成 | `production-preflight.sh` 首部署模式通过 |
+| AutoGrader API 与 readiness | 待部署 | 18000 无 listener；需推送已验证源码触发 workflow |
+| Vercel 前端生产部署 | 待确认 | Git Integration 与外部源码设置仍需复核；推送后检查 `/app/` |
+| Linux nsjail、安全与业务验收 | 未完成 | 部署后按 `linux-acceptance.md` 完成安全、资源及业务流程验收 |

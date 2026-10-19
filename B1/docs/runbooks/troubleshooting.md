@@ -6,8 +6,8 @@
 
 ### 1. 页面空白或只有加载/错误状态
 
-- 可能原因：未登录（受保护路由显示登录提示）；或 MAIN host 未运行导致所有 API 请求失败。
-- 处置：确认 host 是否提供 `/api`；页面上的错误横幅会给出可读原因与 `request_id`，用它去后端日志核对。
+- 可能原因：未登录（受保护路由显示登录提示）；或 API 服务/Tunnel 未运行导致请求失败。
+- 处置：确认 `VITE_API_BASE_URL` 与 API origin 正确，并检查 `autograder`、`cloudflared` systemd 服务；页面错误横幅会给出原因与 `request_id`。
 - 确认恢复：登录后能看到按角色过滤的导航；Network 面板中 `/api/v1/...` 返回 2xx。
 
 ### 2. `pnpm install` 报 `ERR_PNPM_EPERM`（写 pnpm store 被拒）
@@ -34,11 +34,11 @@
 - 处置：组件已支持依赖注入——测试传 `editorLoader` / `chartLoader` 桩件（同时覆盖加载失败时的降级分支）。生产路径仍使用真实 Monaco/ECharts。
 - 确认恢复：`pnpm test` 全绿，且**未跳过**任何断言。
 
-### 6. 集成时 `/app` 404 或 `/api` 请求 404/502
+### 6. `/app` 404 或 API 请求 404/502
 
-- 可能原因：`pnpm build` 未执行、`dist/` 缺失（ADR-0007：`dist` 不存在时 host 不挂载 `/app`），或 MAIN host 未装配 B4/B3/B2 插件导致 `/api` 无路由。
-- 处置：先 `pnpm build` 确认 `dist/index.html` 存在；再确认 host 已装配对应插件。
-- 确认恢复：`/app` 返回页面；`/api/v1/...` 返回 Problem Details 而非网关错误。
+- 可能原因：Vercel 项目未将 Root Directory 设为 `B1`、`dist/` 缺失、Cloudflare Tunnel route 指错，或 MAIN host 未装配对应插件。
+- 处置：确认 Vercel 部署状态与 `/app/` rewrite；确认 Tunnel public hostname 指向 `http://127.0.0.1:18000`，并检查两个 systemd 服务。
+- 确认恢复：`https://www.91idc.me/app/` 返回页面；`https://api.91idc.me/health/ready` 返回 JSON。
 
 ### 7. 契约摘要漂移（集成门禁失败）
 
@@ -71,4 +71,3 @@
 - **自动翻页有上限**：判定类视图（谁还没交 / 提交情况 / 我的作业）会把分页取完，但上限 40 页
   （8000 行，`src/api/pagination.ts`）。到上限时页面按"未加载完"处理（只显示加载提示、不显示判定），
   这是**刻意的**：游标异常时不允许把浏览器拖进无限请求。看到这种状态先查服务端的 `next_cursor`。
-- **ADR-0007 与 `.env.example` 的取值差异**：ADR-0007 举例 `VITE_API_BASE_URL=/api`，而契约路径已含 `/api/v1`；B1 把该变量定义为"源"，详见 `../api/contract.md`。

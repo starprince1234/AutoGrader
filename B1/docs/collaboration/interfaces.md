@@ -2,7 +2,7 @@
 
 ## 与 MAIN
 
-- 我提供：`web-ui`（静态资产，MAIN host 在 `/app` 托管）。
+- 我提供：`web-ui`（静态资产，Vercel 在 `www.91idc.me/app/` 托管；部署拓扑见 MAIN ADR-0017）。
 - 我消费：`../../../MAIN/contracts/openapi/*.yaml` 中 B4/B3/B2 的端点（关系见 `../api/contract.md`）。
 - 锁定：`../../contracts.lock`（版本 `0.16.0`，摘要 sha256，见该文件）。
 - `module.yaml` 的 `contract_version` 同为 `0.16.0`（由 MAIN 同步）。

@@ -1,0 +1,44 @@
+[Unit]
+Description=AutoGrader composition API
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=autograder
+Group=autograder
+WorkingDirectory=/opt/autograder/current/MAIN
+EnvironmentFile=/etc/autograder/runtime.env
+Environment=PYTHONUNBUFFERED=1
+Environment=HTTP_PROXY=http://127.0.0.1:7893
+Environment=HTTPS_PROXY=http://127.0.0.1:7893
+Environment=http_proxy=http://127.0.0.1:7893
+Environment=https_proxy=http://127.0.0.1:7893
+Environment=NO_PROXY=localhost,127.0.0.1,::1
+Environment=no_proxy=localhost,127.0.0.1,::1
+ExecStart=/opt/autograder/current/MAIN/.venv/bin/uvicorn autograder_host.main:app --host 127.0.0.1 --port 18000 --workers 1
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=300s
+TimeoutStopSec=30s
+LimitNOFILE=4096
+UMask=0077
+
+# Give the unprivileged host process a writable cgroup v2 subtree for nsjail.
+Delegate=cpu memory pids
+BindPaths=/sys/fs/cgroup/system.slice/autograder.service:/sys/fs/cgroup
+ReadWritePaths=/var/lib/autograder /sys/fs/cgroup
+
+# The application is non-root; only persistent runtime data and its delegated cgroup
+# subtree are writable.
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+MemoryMax=256M
+CPUQuota=75%
+TasksMax=256
+
+[Install]
+WantedBy=multi-user.target

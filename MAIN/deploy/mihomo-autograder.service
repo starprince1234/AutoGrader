@@ -1,0 +1,36 @@
+[Unit]
+Description=AutoGrader local Mihomo proxy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=mihomo-autograder
+Group=mihomo-autograder
+StateDirectory=mihomo-autograder
+StateDirectoryMode=0750
+WorkingDirectory=/var/lib/mihomo-autograder
+ExecStartPre=/usr/bin/test -x /usr/local/bin/mihomo-autograder
+ExecStartPre=/usr/bin/test -s /etc/mihomo-autograder/config.yaml
+ExecStart=/usr/local/bin/mihomo-autograder -d /var/lib/mihomo-autograder -f /etc/mihomo-autograder/config.yaml
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=90s
+TimeoutStopSec=30s
+LimitNOFILE=65536
+TasksMax=256
+MemoryMax=512M
+CPUQuota=50%
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/mihomo-autograder
+
+[Install]
+WantedBy=multi-user.target

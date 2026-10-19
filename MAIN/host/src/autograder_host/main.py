@@ -1,4 +1,4 @@
-"""The AutoGrader composition host: discovery, capability ordering, wiring, static B1.
+"""The AutoGrader composition host: discovery, capability ordering, and API wiring.
 
 ## Why module settings are namespaced
 
@@ -20,21 +20,45 @@ edge case are recorded in `MAIN/docs/adr/ADR-0008-module-settings-view.md`.
 from __future__ import annotations
 
 import importlib.metadata
-import logging
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from autograder_platform import HealthReport, ModuleContext, ModuleDescriptor, PlatformModule
 
-#: MAIN's own root, used to anchor relative paths this module resolves. Deriving it from
-#: `__file__` instead of the working directory is what makes `B1_DIST_DIR` mean the same thing
-#: no matter where the process was started from.
-MAIN_ROOT = Path(__file__).resolve().parents[3]
+_CORS_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"]
+_CORS_HEADERS = [
+    "accept",
+    "authorization",
+    "content-type",
+    "idempotency-key",
+    "last-event-id",
+    "traceparent",
+    "x-request-id",
+]
+_CORS_EXPOSE_HEADERS = ["content-disposition", "x-request-id"]
 
-logger = logging.getLogger("autograder_host")
+
+def _cors_origins(environ: Mapping[str, str]) -> list[str]:
+    raw = environ.get("AUTOGRADER_CORS_ORIGINS", "")
+    origins = list(dict.fromkeys(origin.strip() for origin in raw.split(",") if origin.strip()))
+    if not origins and environ.get("B4_ENV", "").strip().lower() == "production":
+        raise ValueError("AUTOGRADER_CORS_ORIGINS is required in production")
+    for origin in origins:
+        parsed = urlsplit(origin)
+        if (
+            origin == "*"
+            or parsed.scheme not in {"http", "https"}
+            or not parsed.netloc
+            or parsed.path
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError(f"invalid CORS origin: {origin!r}")
+    return origins
 
 
 def module_settings(environ: Mapping[str, str], module: str) -> dict[str, str]:
@@ -137,6 +161,14 @@ def _load_modules() -> list[PlatformModule]:
 def create_app() -> FastAPI:
     environ = dict(os.environ)
     app = FastAPI(title="AutoGrader MAIN Composition Host", version="0.1.0")
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_cors_origins(environ),
+        allow_credentials=True,
+        allow_methods=_CORS_METHODS,
+        allow_headers=_CORS_HEADERS,
+        expose_headers=_CORS_EXPOSE_HEADERS,
+    )
     modules = _load_modules()
     contexts: dict[str, HostContext] = {
         module.descriptor.module: HostContext(
@@ -170,63 +202,7 @@ def create_app() -> FastAPI:
             "modules": [report.__dict__ for report in reports],
         }
 
-    # `B1_DIST_DIR` was resolved against the process working directory, so the default
-    # `../B1/dist` meant `<cwd>/../B1/dist`: started from the repository root it pointed at
-    # `D:\VScodeProjects\B1\dist` -- a directory that does not exist -- and the mount was
-    # skipped *without a word*. The SPA then 404'd at `/app` while the API looked healthy, which
-    # is the worst possible failure mode for a demo. A relative value is now anchored to MAIN's
-    # own root (where the default was always meant to point), and a miss is announced.
-    configured = os.getenv("B1_DIST_DIR")
-    if configured:
-        dist_dir = Path(configured)
-        if not dist_dir.is_absolute():
-            dist_dir = MAIN_ROOT / dist_dir
-    else:
-        dist_dir = MAIN_ROOT.parent / "B1" / "dist"
-    index = dist_dir / "index.html"
-    if index.exists():
-        app.mount("/app", _static_app(dist_dir), name="b1")
-    else:
-        # ADR-0007 records that B1 may legitimately be absent (it is a static client outside
-        # the capability DAG, and its absence is the one non-fatal removal). What was wrong was
-        # doing it *silently*: say exactly what is missing and how to provide it.
-        logger.warning(
-            "b1.dist_not_mounted: %s has no index.html, so /app will return 404. "
-            "Build the client (B1: node node_modules/vite/bin/vite.js build) or set "
-            "B1_DIST_DIR to its dist directory.",
-            dist_dir,
-        )
-
     return app
-
-
-def _static_app(directory: Path):
-    """Serve the B1 SPA, including client-side routes.
-
-    `StaticFiles(html=True)` only falls back to `index.html` for *directory* requests, so
-    a deep link such as `/app/login` returns 404 -- meaning a page refresh (or a shared
-    link) breaks on every route except the root. A single-page app has to answer unknown
-    paths under its mount with the shell and let the router resolve them.
-    """
-    from fastapi.staticfiles import StaticFiles
-    from starlette.exceptions import HTTPException as StarletteHTTPException
-    from starlette.responses import Response
-
-    class SpaStaticFiles(StaticFiles):
-        async def get_response(self, path: str, scope) -> Response:
-            # Starlette *raises* HTTPException(404) for a miss rather than returning a
-            # 404 response, so both paths have to be handled or the fallback never runs.
-            try:
-                response = await super().get_response(path, scope)
-            except StarletteHTTPException as error:
-                if error.status_code == 404:
-                    return await super().get_response("index.html", scope)
-                raise
-            if response.status_code == 404:
-                return await super().get_response("index.html", scope)
-            return response
-
-    return SpaStaticFiles(directory=directory, html=True)
 
 
 app = create_app()

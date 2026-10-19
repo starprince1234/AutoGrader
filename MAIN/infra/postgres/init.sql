@@ -17,14 +17,14 @@
 --   * table-level grants: the owning module's migration, so the privilege set stays
 --     reviewable next to the DDL it applies to (B3 does exactly this);
 --   * post-migration table grants for modules whose migrations do not issue them:
---     `python -m autograder_b4.ops.provision` for b4, and the platform grant block at
---     the bottom of this file for b2.
+--     `python -m autograder_b4.ops.provision` for b4; B2 uses the default privileges
+--     declared below.
 --
 -- The application must never connect as `autograder_platform` (superuser) or as a
 -- schema owner; those DSNs are for migrations and operations only.
 --
--- Local-only credentials. Production supplies passwords through the secret store and
--- must not reuse these values.
+-- Passwords are supplied by initialize-db.sh through psql variables. They never live in
+-- this SQL file, and each runtime role receives its own secret in production.
 
 CREATE SCHEMA IF NOT EXISTS b2;
 CREATE SCHEMA IF NOT EXISTS b3;
@@ -39,17 +39,26 @@ CREATE SCHEMA IF NOT EXISTS b4;
 -- B4: one role for identity, courses, roster import and the registry.
 -- All of them: NOSUPERUSER, no creation rights beyond their own schema, and a
 -- connection limit so a runaway client cannot exhaust the instance's slots.
+-- Keep psql's interpolation outside the PL/pgSQL block, and suppress the returned values.
+\o /dev/null
+SELECT set_config('autograder.b2_password', :'b2_password', false);
+SELECT set_config('autograder.b3_app_password', :'b3_app_password', false);
+SELECT set_config('autograder.b3_internal_password', :'b3_internal_password', false);
+SELECT set_config('autograder.b4_password', :'b4_password', false);
+\o
+
 DO $$
 DECLARE
     spec RECORD;
 BEGIN
     FOR spec IN
-        SELECT * FROM (VALUES
-            ('autograder_b2',          'change-me'),
-            ('autograder_b3_app',      'change-me-app-local-only'),
-            ('autograder_b3_internal', 'change-me-internal-local-only'),
-            ('autograder_b4',          'change-me')
-        ) AS t(role_name, role_password)
+        SELECT role_name, current_setting(setting_name) AS role_password
+        FROM (VALUES
+            ('autograder_b2',          'autograder.b2_password'),
+            ('autograder_b3_app',      'autograder.b3_app_password'),
+            ('autograder_b3_internal', 'autograder.b3_internal_password'),
+            ('autograder_b4',          'autograder.b4_password')
+        ) AS t(role_name, setting_name)
     LOOP
         IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = spec.role_name) THEN
             EXECUTE format(
@@ -58,12 +67,10 @@ BEGIN
                 spec.role_name, spec.role_password
             );
         ELSE
-            -- Re-running the bootstrap must converge the attributes, not skip them:
-            -- a role created by hand earlier may still be over-privileged.
             EXECUTE format(
-                'ALTER ROLE %I NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION '
-                'NOBYPASSRLS CONNECTION LIMIT 10',
-                spec.role_name
+                'ALTER ROLE %I PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE '
+                'NOREPLICATION NOBYPASSRLS CONNECTION LIMIT 10',
+                spec.role_name, spec.role_password
             );
         END IF;
     END LOOP;
@@ -95,18 +102,3 @@ GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA b4 TO autograder_b4;
 ALTER DEFAULT PRIVILEGES IN SCHEMA b4
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO autograder_b4;
 ALTER DEFAULT PRIVILEGES IN SCHEMA b4 GRANT USAGE, SELECT ON SEQUENCES TO autograder_b4;
-
--- Idempotent re-grant, so this file can be replayed against an already-migrated
--- instance (docker-entrypoint-initdb.d only runs on an empty data directory).
-DO $$
-BEGIN
-    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'b2') THEN
-        GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA b2 TO autograder_b2;
-        GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA b2 TO autograder_b2;
-    END IF;
-    IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = 'b4') THEN
-        GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA b4 TO autograder_b4;
-        GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA b4 TO autograder_b4;
-    END IF;
-END
-$$;

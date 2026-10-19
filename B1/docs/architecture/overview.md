@@ -2,20 +2,20 @@
 
 ## 在整体架构中的位置（上下文级）
 
-B1 是**纯前端静态客户端**，不参与服务端进程。它由 MAIN composition host 在 `/app` 静态提供 `dist/` 构建产物，并通过同源 HTTP / SSE 调用 MAIN host 代理的 `/api/v1/*` 接口（这些接口实际由 B4/B3/B2 插件实现）。
+B1 是纯前端静态客户端，由 Vercel 从 B1 目录构建，并在 www.91idc.me 的 /app/ 路径提供。
+浏览器通过 HTTPS 直接调用 api.91idc.me；Cloudflare Tunnel 将 API 请求送到 Linux systemd host 的 loopback。
 
-```text
+~~~text
 浏览器 (B1 static UI, React 19)
-   │ 同源 HTTP + SSE（fetch / EventSource，前缀 VITE_API_BASE_URL=/api）
+   │ HTTPS fetch + SSE (credentials include, API origin: https://api.91idc.me)
    ▼
-MAIN composition host（微内核 + 插件装配）
-   ├── B4 身份/课程/名单插件（auth/session、courses、roster-imports）
-   ├── B3 题库插件（questions、question-versions、assignments、题干资源）
-   └── B2 评测插件（submissions、evaluation-runs、SSE、成绩、导出）
-```
+Cloudflare edge → encrypted Tunnel → cloudflared → MAIN composition host (127.0.0.1:18000)
+   ├── B4 身份/课程/名单插件
+   ├── B3 题库插件
+   └── B2 评测插件与 SSE
+~~~
 
-B1 **从不导入** B2/B3/B4 的代码、ORM 或 schema；交互只经版本化 HTTP/SSE 契约（`../../../MAIN/contracts/**`）。
-
+B1 从不导入 B2/B3/B4 的代码、ORM 或 schema；交互只经版本化 HTTP/SSE 契约。
 ## 内部层次与依赖方向
 
 依赖方向自上而下，上层可依赖下层，下层不得反向依赖：
@@ -52,9 +52,9 @@ generated types（由 MAIN OpenAPI 生成，见 ADR-0002）
 
 | 邻居 | 交互方式 | 说明 |
 |---|---|---|
-| MAIN host | HTTP（静态托管 `/app` + `/api` 代理） | B1 构建产物由 MAIN 提供 |
-| B4 | HTTP（同源） | 身份/课程/名单，**无事件** |
-| B3 | HTTP（同源） | 题目/版本/资源，**无事件** |
-| B2 | HTTP + SSE | 提交/评测/成绩/导出；进度经 SSE |
+| MAIN host | HTTPS API（经 Cloudflare Tunnel） | 提供 B2/B3/B4 契约 API；origin 只监听 loopback |
+| B4 | HTTPS（API origin） | 身份/课程/名单，**无事件** |
+| B3 | HTTPS（API origin） | 题目/版本/资源，**无事件** |
+| B2 | HTTPS + SSE（API origin） | 提交/评测/成绩/导出；进度经 SSE |
 
 **关键立场**：B1 从不导入它们的代码；一切交互都经契约。前端隐藏按钮/路由守卫**不是**安全边界（见 `boundaries.md`）。

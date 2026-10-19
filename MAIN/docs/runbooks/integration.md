@@ -1,6 +1,6 @@
 # 运行手册：模块组装与集成运行
 
-本手册说明**如何把四个独立开发的模块组装成一个可运行系统**，以及组装失败时怎么定位。
+本手册说明**如何把 B2/B3/B4 三个后端模块组装成一个可运行系统**，以及组装失败时怎么定位；B1 由 Vercel 独立发布。
 
 这是本项目的核心目标所在：**各模块遵守规范即可即插即用**。因此本手册同时是"即插即用"是否成立的检验规程。
 
@@ -9,19 +9,10 @@
 ## 1. 组装模型
 
 ```text
-     B1（静态产物）                B2/B3/B4（Python 发行包）
-          │                              │
-          │ dist/                        │ entry point: autograder.modules
-          ▼                              ▼
-   ┌──────────────────────────────────────────────────┐
-   │  MAIN composition host（单个 FastAPI 进程）        │
-   │  ① 发现 entry point                              │
-   │  ② 解析 capability DAG 决定装载顺序                │
-   │  ③ 校验：重复路由 / 重复 schema / 摘要漂移 / 循环   │
-   │  ④ include_router                                 │
-   │  ⑤ 挂载 B1 静态产物到 /app                        │
-   │  ⑥ 暴露 /health/live 与 /health/ready             │
-   └──────────────────────────────────────────────────┘
+B1（Vercel 静态客户端） ── HTTPS API ── Cloudflare Tunnel ── MAIN composition host
+                                                           ├── B2
+                                                           ├── B3
+                                                           └── B4
 ```
 
 **关键性质**：模块之间**没有代码依赖**。host 通过 Python entry point 发现它们，通过 capability 声明排序，通过契约通信。
@@ -36,7 +27,7 @@
 | 各模块 `contracts.lock` 与 MAIN 实时摘要一致 | 版本 + SHA-256 |
 | 各模块提供 entry point | 组 `autograder.modules`，值为 `<module>:<factory>` |
 | 各模块的 `requires` 能被满足 | 例如 B2 需要 `host`、`b4-auth`、`b3-questions` |
-| B1 已构建 | `B1/dist/index.html` 存在（否则 `/app` 不挂载）。**容器路径不需要这一步**：`MAIN/host/Dockerfile` 的 `b1` 阶段自己构建 SPA，镜像不依赖任何已提交的构建产物 |
+| B1 部署 | 与后端组装独立；Vercel 从 `B1/` 构建静态资源，MAIN host 不挂载 `/app` |
 
 **验证前置条件（无需启动 host）**：
 
@@ -51,7 +42,7 @@ cd D:\VScodeProjects\AutoGrader\MAIN
 
 ## 3. 组装步骤
 
-### 3.1 一次性：构建 B1
+### 3.1 B1 独立构建
 
 ```powershell
 cd D:\VScodeProjects\AutoGrader\B1
@@ -90,7 +81,6 @@ docker compose logs -f host
 ```powershell
 curl http://localhost:18000/health/live       # {"status":"ok"}
 curl http://localhost:18000/health/ready      # ready + modules 列表
-curl http://localhost:18000/app               # B1 页面
 ```
 
 **成功标志**：`/health/ready` 的 `modules` 中出现 **B2、B3、B4** 三项，且各自 `healthy: true`。
@@ -278,7 +268,7 @@ host 的设计意图是**快速失败并指明原因**。以下按失败信息�
 | `/health/ready` 中 `modules` 为空 | 没有 entry point 被安装 | 执行 §3.2；或临时用 `AUTOGRADER_MODULES` |
 | `ready=false` 且指明 `postgres` | 数据库不可达 | 检查容器状态与 `DATABASE_URL` |
 | `ready=false` 且指明 `nats` | JetStream 不可达 | 检查容器与 `NATS_URL` |
-| `/app` 404 但后端正常 | `B1_DIST_DIR` 指向的目录不存在 `index.html` | 执行 §3.1；确认 `B1_DIST_DIR` 路径 |
+| Vercel `/app/` 404 但后端正常 | 前端项目根目录或 Vercel rewrite 配置不匹配 | 检查 Vercel Root Directory=`B1` 与 `B1/vercel.json` |
 
 ---
 

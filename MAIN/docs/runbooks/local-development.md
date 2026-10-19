@@ -105,10 +105,11 @@ pnpm build
 本地开发时用 Vite dev server：
 
 ```powershell
+$env:VITE_API_BASE_URL = "http://127.0.0.1:18000"
 pnpm dev
 ```
 
-需要把 API 请求代理到 host（`VITE_API_BASE_URL` 默认 `/api`）。代理配置在 `vite.config.ts` 中。
+Vite 浏览器请求直接连接 MAIN API origin；`AUTOGRADER_CORS_ORIGINS` 默认允许本地 Vite 来源。生产 API origin 由 `B1/.env.production` 配置。
 
 ### 2.4 启动基础设施
 
@@ -158,10 +159,10 @@ curl http://localhost:18000/health/ready    # ready=true，modules 列出已装�
 2. `docker compose ps` 中 `postgres` 为 healthy。
 3. `/health/live` 返回 `ok`。
 4. `/health/ready` 返回 `ready=true` 并列出 **B2、B3、B4**。
-5. `pnpm build` 生成 `dist/`，且 host 的 `B1_DIST_DIR` 指向它。
-6. 访问 `http://localhost:18000/app` 能看到 B1 页面。
+5. 设置 B1 `VITE_API_BASE_URL=http://127.0.0.1:18000`，通过 Vite 在 `http://127.0.0.1:5173` 运行前端，保持本地 API cookie 的 same-site 语义。
+6. 浏览器访问 Vite 页面，确认 API 请求通过本地 host 且 CORS 放行开发来源。
 
-> 第 4 与第 6 项**当前尚未验证**（见 `../testing/acceptance.md` §2.3）。若 `/health/ready` 的 `modules` 为空，说明没有模块被装载 —— 见 `troubleshooting.md`。
+> 第 4 项**当前尚未验证**（见 `../testing/acceptance.md` §2.3）。若 `/health/ready` 的 `modules` 为空，说明没有模块被装载 —— 见 `troubleshooting.md`。
 
 ---
 
@@ -188,9 +189,9 @@ curl -s localhost:18000/health/ready
 |---|---|---|
 | MAIN | `DATABASE_URL` | host 连接 PostgreSQL |
 | MAIN | `NATS_URL` | host 连接 JetStream |
-| MAIN | `B1_DIST_DIR` | B1 静态产物目录（容器内 `/app/B1/dist`） |
 | MAIN | `AUTOGRADER_MODULES` | 以 `module:factory` 形式补充插件（逗号分隔），用于未安装为 entry point 的开发场景 |
-| B1 | `VITE_API_BASE_URL` | API 基址（默认 `/api`） |
+| MAIN | `AUTOGRADER_CORS_ORIGINS` | 可访问本地 API 的前端来源 |
+| B1 | `VITE_API_BASE_URL` | API origin（本地 `http://127.0.0.1:18000`；生产 `https://api.91idc.me`） |
 | B2/B3/B4 | 见各自 `.env.example` | 数据库连接、NATS、服务凭据等 |
 
 **硬规则**：密钥只来自环境或密钥文件；`.env` 必须被 gitignore；启动时若检测到弱默认口令用于生产模式应**拒绝启动**；任何凭据不得进入日志、事件、导出或仓库。

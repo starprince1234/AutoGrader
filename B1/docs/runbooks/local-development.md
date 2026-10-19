@@ -6,12 +6,11 @@
 
 | 变量 | 值 | 说明 |
 |---|---|---|
-| `VITE_API_BASE_URL` | 缺省（空） | **API 源**（协议+主机），不是路径前缀：契约路径本身已含 `/api/v1`。缺省=同源（MAIN host 同时提供 `/app` 与 `/api`，见 ADR-0007）。仅当 host 在另一个源时才填，如 `http://127.0.0.1:8000` |
+| `VITE_API_BASE_URL` | 本地设置为 `http://127.0.0.1:18000` | **API 源**（协议+主机），不是路径前缀：契约路径本身已含 `/api/v1`。生产构建值为 `https://api.91idc.me`。 |
 | `VITE_LOG_ENDPOINT` | 缺省（空） | 可选的前端日志上报端点。未配置时日志只落本地控制台（契约没有日志端点，B1 **不发明**一个） |
 
-> **与 ADR-0007 的差异（需 MAIN 判定）**：ADR-0007 举例 `VITE_API_BASE_URL=/api`，而契约路径本身以
-> `/api/v1` 开头——把 `/api` 当前缀会得到 `/api/api/v1/...`。B1 因此把该变量定义为"源"而非"前缀"，
-> 并在 `docs/collaboration/interfaces.md` 记录了这处文档不一致。**未修改** MAIN 的任何文件。
+> 生产前端与 API 使用不同 origin；本地 Vite 也通过 API 源直接连接 MAIN host。请求会携带
+> `credentials: include`，本地浏览器使用 `127.0.0.1:5173` 访问 Vite，与 `127.0.0.1:18000` API 保持 same-site。
 
 > 若 MAIN host 尚未在本机运行，页面会显示鉴权/加载失败或空列表状态（**不吞错误**）；这是预期行为，不是故障。
 
@@ -31,10 +30,11 @@ pnpm install
 ## 启动开发服务器
 
 ```powershell
+$env:VITE_API_BASE_URL = "http://127.0.0.1:18000"
 pnpm dev
 ```
 
-默认地址 `http://localhost:5173`（以 `pnpm dev` 实际输出为准）。**本阶段未实跑**（无浏览器会话可观测）。
+使用 `http://127.0.0.1:5173`。**本阶段未实跑**（无浏览器会话可观测）。
 
 ## 门禁命令（可复制，全部已实跑）
 
@@ -53,13 +53,13 @@ pnpm verify        # 依次跑上面五步
 pnpm api:generate  # 重新生成 src/api/generated/*.ts（禁止手改生成物）
 ```
 
-`pnpm build` 产出 `dist/`，由 MAIN host 在 `/app` 静态提供。
+`pnpm build` 产出 `dist/`；生产由 Vercel 发布到 `https://www.91idc.me/app/`。
 
 ## 验证 readiness（集成时）
 
-1. `pnpm build` 成功且 `dist/index.html` 存在。
-2. 启动 MAIN host 后访问 `/app`，看到业务页面。
-3. 打开浏览器 Network 面板，确认 `/api/...` 请求同源、每个请求带 `X-Request-ID`。
+1. 启动本地 MAIN integration stack（默认 API `http://127.0.0.1:18000`）。
+2. 以 `VITE_API_BASE_URL=http://127.0.0.1:18000` 运行 Vite，看到业务页面。
+3. 打开浏览器 Network 面板，确认 `/api/...` 请求到 API origin、每个请求带 `X-Request-ID`。
 4. 控制台应能看到结构化 JSON 日志行（含 `timestamp`/`level`/`event`/`request_id`），且**不含** token/答案。
 
 ## 常见端口/路径
@@ -67,6 +67,6 @@ pnpm api:generate  # 重新生成 src/api/generated/*.ts（禁止手改生成物
 | 项 | 值 |
 |---|---|
 | Vite dev 端口 | `5173`（默认） |
-| 生产入口 | `dist/index.html`，MAIN host `/app` |
+| 生产入口 | `https://www.91idc.me/app/`（Vercel） |
 | API 路径 | 契约原文，如 `/api/v1/grades`（`VITE_API_BASE_URL` 只提供源） |
 | 契约权威 | `../../../MAIN/contracts/**`（本地集成时） |

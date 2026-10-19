@@ -1,0 +1,307 @@
+name: Deploy AutoGrader backend
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "B1/contracts.lock"
+      - "B1/module.yaml"
+      - "B2/alembic/**"
+      - "B2/contracts.lock"
+      - "B2/module.yaml"
+      - "B2/pyproject.toml"
+      - "B2/src/**"
+      - "B3/alembic/**"
+      - "B3/contracts.lock"
+      - "B3/module.yaml"
+      - "B3/pyproject.toml"
+      - "B3/src/**"
+      - "B4/alembic/**"
+      - "B4/contracts.lock"
+      - "B4/module.yaml"
+      - "B4/pyproject.toml"
+      - "B4/src/**"
+      - "MAIN/contracts/**"
+      - "MAIN/deploy/**"
+      - "MAIN/host/**"
+      - "MAIN/infra/postgres/**"
+      - "MAIN/compose.production.yaml"
+      - "MAIN/pyproject.toml"
+      - "MAIN/sdk/**"
+      - "MAIN/scripts/production-prepare.sh"
+      - "MAIN/scripts/production-preflight.sh"
+      - "MAIN/scripts/bootstrap-nsjail.sh"
+      - "MAIN/scripts/bootstrap-cloudflared.sh"
+      - "MAIN/scripts/install-mihomo-autograder.sh"
+      - "MAIN/uv.lock"
+      - ".github/workflows/deploy-backend.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: autograder-production
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out the pushed revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
+        with:
+          version: 10.29.3
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: B1/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        working-directory: B1
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify frontend
+        working-directory: B1
+        run: pnpm verify
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
+        with:
+          version: 0.13.1
+          enable-cache: true
+          cache-dependency-glob: |
+            MAIN/uv.lock
+            B2/uv.lock
+            B3/uv.lock
+            B4/uv.lock
+            B5/uv.lock
+
+      - name: Install Python workspace
+        run: uv sync --project MAIN --all-groups --extra modules --locked
+
+      - name: Lint Python modules
+        run: |
+          for project in MAIN B2 B3 B4 B5; do
+            (cd "$project" && uv run --locked ruff check .)
+          done
+
+      - name: Prepare non-secret conformance test environment
+        run: cp MAIN/.env.example MAIN/.env.integration
+
+      - name: Start isolated module test services
+        run: |
+          docker compose --project-name autograder-b2-ci --file B2/compose.yaml up --detach --wait --wait-timeout 120 postgres
+          docker compose --project-name autograder-b3-ci --file B3/compose.yaml up --detach --wait --wait-timeout 120 postgres
+          docker compose --project-name autograder-b4-ci --file B4/compose.yaml up --detach --wait --wait-timeout 120 postgres nats
+
+      - name: Run every module test suite and record evidence
+        run: uv run --project MAIN python MAIN/scripts/test_evidence.py --all
+
+      - name: Check project contracts and documentation
+        run: uv run --project MAIN python -m autograder_host.checks
+
+      - name: Stop isolated module test services
+        if: always()
+        run: |
+          docker compose --project-name autograder-b2-ci --file B2/compose.yaml down --volumes --remove-orphans
+          docker compose --project-name autograder-b3-ci --file B3/compose.yaml down --volumes --remove-orphans
+          docker compose --project-name autograder-b4-ci --file B4/compose.yaml down --volumes --remove-orphans
+          rm -f MAIN/.env.integration
+
+  deploy:
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out the pushed revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Fetch deployment secrets from Doppler
+        uses: DopplerHQ/secrets-fetch-action@cf794d40f721280fa2c068fa4f9e8afbc966e41d
+        id: doppler
+        with:
+          doppler-token: ${{ secrets.DOPPLER_TOKEN }}
+          doppler-project: autograder
+          doppler-config: prd
+          inject-env-vars: false
+
+      - name: Validate deployment credentials and SSH host fingerprint
+        env:
+          DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
+          DEPLOY_SSH_USER: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
+          DEPLOY_SSH_PASSWORD: ${{ steps.doppler.outputs.DEPLOY_SSH_PASSWORD }}
+          DEPLOY_SSH_PORT: ${{ steps.doppler.outputs.DEPLOY_SSH_PORT }}
+          DEPLOY_SSH_HOSTKEY: ${{ steps.doppler.outputs.DEPLOY_SSH_HOSTKEY }}
+        run: |
+          set -euo pipefail
+          for name in DEPLOY_SSH_HOST DEPLOY_SSH_USER DEPLOY_SSH_PASSWORD DEPLOY_SSH_PORT DEPLOY_SSH_HOSTKEY; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Required Doppler secret $name is missing."
+              exit 1
+            fi
+          done
+          [[ "$DEPLOY_SSH_PORT" =~ ^[0-9]{1,5}$ ]] || {
+            echo "::error::DEPLOY_SSH_PORT must be a valid TCP port."
+            exit 1
+          }
+          port=$((10#$DEPLOY_SSH_PORT))
+          (( port >= 1 && port <= 65535 )) || {
+            echo "::error::DEPLOY_SSH_PORT must be a valid TCP port."
+            exit 1
+          }
+          [[ "$DEPLOY_SSH_HOSTKEY" =~ ^SHA256:[A-Za-z0-9+/]{43}=?$ ]] || {
+            echo "::error::DEPLOY_SSH_HOSTKEY must be a verified SHA256 fingerprint."
+            exit 1
+          }
+
+      - name: Upload read-only server preflight
+        uses: appleboy/scp-action@7e85c2e09aa21988492acd66466b5d68bda49e2b
+        with:
+          host: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
+          username: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
+          password: ${{ steps.doppler.outputs.DEPLOY_SSH_PASSWORD }}
+          port: ${{ steps.doppler.outputs.DEPLOY_SSH_PORT }}
+          fingerprint: ${{ steps.doppler.outputs.DEPLOY_SSH_HOSTKEY }}
+          source: "MAIN/scripts/production-preflight.sh"
+          target: "/tmp/autograder-preflight-${{ github.run_id }}-${{ github.run_attempt }}"
+          strip_components: "2"
+          overwrite: true
+          timeout: "60s"
+          command_timeout: "5m"
+
+      - name: Run read-only server preflight
+        uses: appleboy/ssh-action@c4f70287fc37c43b14b30b407224bbbc8e8c6327
+        env:
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+        with:
+          host: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
+          username: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
+          password: ${{ steps.doppler.outputs.DEPLOY_SSH_PASSWORD }}
+          port: ${{ steps.doppler.outputs.DEPLOY_SSH_PORT }}
+          fingerprint: ${{ steps.doppler.outputs.DEPLOY_SSH_HOSTKEY }}
+          envs: GITHUB_RUN_ID,GITHUB_RUN_ATTEMPT
+          timeout: "60s"
+          command_timeout: "5m"
+          script: |
+            set -euo pipefail
+            [[ "$GITHUB_RUN_ID" =~ ^[0-9]+$ ]]
+            [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+            preflight_dir="/tmp/autograder-preflight-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            trap 'rm -rf -- "$preflight_dir"' EXIT
+            bash "$preflight_dir/production-preflight.sh"
+
+      - name: Prepare private incoming directory
+        id: prepare
+        uses: appleboy/ssh-action@c4f70287fc37c43b14b30b407224bbbc8e8c6327
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+        with:
+          host: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
+          username: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
+          password: ${{ steps.doppler.outputs.DEPLOY_SSH_PASSWORD }}
+          port: ${{ steps.doppler.outputs.DEPLOY_SSH_PORT }}
+          fingerprint: ${{ steps.doppler.outputs.DEPLOY_SSH_HOSTKEY }}
+          envs: GITHUB_SHA
+          timeout: "60s"
+          command_timeout: "5m"
+          script: |
+            set -euo pipefail
+            [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]]
+            install -d -o root -g root -m 0755 /opt/autograder /opt/autograder/incoming /opt/autograder/staging
+            install -d -o root -g root -m 0700 "/opt/autograder/incoming/$GITHUB_SHA"
+
+      - name: Create source archive
+        run: git archive --format=tar.gz --output=autograder.tar.gz "$GITHUB_SHA"
+
+      - name: Render server runtime environment
+        env:
+          POSTGRES_PASSWORD: ${{ steps.doppler.outputs.POSTGRES_PASSWORD }}
+          B2_DB_PASSWORD: ${{ steps.doppler.outputs.B2_DB_PASSWORD }}
+          B3_APP_DB_PASSWORD: ${{ steps.doppler.outputs.B3_APP_DB_PASSWORD }}
+          B3_INTERNAL_DB_PASSWORD: ${{ steps.doppler.outputs.B3_INTERNAL_DB_PASSWORD }}
+          B4_DB_PASSWORD: ${{ steps.doppler.outputs.B4_DB_PASSWORD }}
+          B2_B3_SERVICE_TOKEN: ${{ steps.doppler.outputs.B2_B3_SERVICE_TOKEN }}
+        run: node MAIN/deploy/write-runtime-env.mjs runtime.env setup.env "$GITHUB_SHA"
+
+      - name: Upload release and runtime environment
+        uses: appleboy/scp-action@7e85c2e09aa21988492acd66466b5d68bda49e2b
+        with:
+          host: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
+          username: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
+          password: ${{ steps.doppler.outputs.DEPLOY_SSH_PASSWORD }}
+          port: ${{ steps.doppler.outputs.DEPLOY_SSH_PORT }}
+          fingerprint: ${{ steps.doppler.outputs.DEPLOY_SSH_HOSTKEY }}
+          source: "autograder.tar.gz,runtime.env,setup.env"
+          target: "/opt/autograder/incoming/${{ github.sha }}"
+          timeout: "60s"
+          command_timeout: "5m"
+          overwrite: true
+
+      - name: Remove local secret files
+        if: always()
+        run: rm -f runtime.env setup.env autograder.tar.gz
+
+      - name: Deploy native API service
+        uses: appleboy/ssh-action@c4f70287fc37c43b14b30b407224bbbc8e8c6327
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+        with:
+          host: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
+          username: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
+          password: ${{ steps.doppler.outputs.DEPLOY_SSH_PASSWORD }}
+          port: ${{ steps.doppler.outputs.DEPLOY_SSH_PORT }}
+          fingerprint: ${{ steps.doppler.outputs.DEPLOY_SSH_HOSTKEY }}
+          envs: GITHUB_SHA,GITHUB_RUN_ATTEMPT
+          timeout: "60s"
+          command_timeout: "25m"
+          script: |
+            set -euo pipefail
+            [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]]
+            [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+            stage="/opt/autograder/staging/$GITHUB_SHA-$GITHUB_RUN_ATTEMPT"
+            install -d -o root -g root -m 0750 "$stage"
+            tar -xzf "/opt/autograder/incoming/$GITHUB_SHA/autograder.tar.gz" -C "$stage"
+            bash "$stage/MAIN/deploy/deploy-release.sh" "$GITHUB_SHA" "$stage"
+
+      - name: Remove failed or incomplete remote upload
+        if: always() && steps.prepare.outcome == 'success'
+        uses: appleboy/ssh-action@c4f70287fc37c43b14b30b407224bbbc8e8c6327
+        env:
+          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+        with:
+          host: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
+          username: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
+          password: ${{ steps.doppler.outputs.DEPLOY_SSH_PASSWORD }}
+          port: ${{ steps.doppler.outputs.DEPLOY_SSH_PORT }}
+          fingerprint: ${{ steps.doppler.outputs.DEPLOY_SSH_HOSTKEY }}
+          envs: GITHUB_SHA,GITHUB_RUN_ATTEMPT
+          timeout: "60s"
+          command_timeout: "5m"
+          script: |
+            set -euo pipefail
+            [[ "$GITHUB_SHA" =~ ^[a-f0-9]{40}$ ]]
+            [[ "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]
+            incoming="/opt/autograder/incoming/$GITHUB_SHA"
+            stage="/opt/autograder/staging/$GITHUB_SHA-$GITHUB_RUN_ATTEMPT"
+            if [[ -d "$incoming" && "$incoming" == /opt/autograder/incoming/* ]]; then
+              rm -rf -- "$incoming"
+            fi
+            if [[ -d "$stage" && "$stage" == /opt/autograder/staging/* ]]; then
+              rm -rf -- "$stage"
+            fi

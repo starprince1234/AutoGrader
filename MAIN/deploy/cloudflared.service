@@ -1,0 +1,33 @@
+[Unit]
+Description=Cloudflare Tunnel connector for AutoGrader API
+After=network-online.target autograder.service
+Wants=network-online.target
+
+[Service]
+Type=notify
+User=cloudflared
+Group=cloudflared
+StateDirectory=cloudflared
+StateDirectoryMode=0750
+ExecStartPre=/usr/bin/test -s /etc/autograder/cloudflared.token
+ExecStart=/usr/bin/cloudflared tunnel --no-autoupdate run --token-file /etc/autograder/cloudflared.token
+Restart=on-failure
+RestartSec=5s
+TimeoutStartSec=90s
+TimeoutStopSec=30s
+UMask=0077
+MemoryMax=32M
+CPUQuota=5%
+TasksMax=64
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectControlGroups=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+NoNewPrivileges=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target

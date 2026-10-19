@@ -1,9 +1,7 @@
-# AutoGrader platform: PostgreSQL + NATS JetStream + the composition host.
+# Local integration stack: PostgreSQL + NATS JetStream + the composition host.
 #
-# `docker compose up -d --build` from `MAIN/` is the documented deployment route
-# (`docs/runbooks/container-deployment.md`). It needs no local Python, no local Node and no
-# gitignored env file: the host image builds the B1 SPA itself and generates its own
-# signing key on first start.
+# This is the local integration stack. Production runs the API as a native systemd service
+# so nsjail can use the host's delegated cgroup v2 subtree; see the production runbook.
 #
 # ## Why every module gets its own DSN
 #
@@ -46,10 +44,15 @@ services:
       POSTGRES_DB: autograder
       POSTGRES_USER: autograder_platform
       POSTGRES_PASSWORD: change-me-local-only
+      AUTOGRADER_B2_DB_PASSWORD: change-me
+      AUTOGRADER_B3_APP_DB_PASSWORD: change-me-app-local-only
+      AUTOGRADER_B3_INTERNAL_DB_PASSWORD: change-me-internal-local-only
+      AUTOGRADER_B4_DB_PASSWORD: change-me
     ports: ["${POSTGRES_PORT:-55432}:5432"]
     volumes:
       - autograder_main_postgres:/var/lib/postgresql/data
-      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/001-init.sql:ro
+      - ./infra/postgres/initialize-db.sh:/docker-entrypoint-initdb.d/001-autograder-bootstrap.sh:ro
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/.autograder-init.sql:ro
     mem_limit: 96m
     cpus: 0.15
     healthcheck:
@@ -81,7 +84,7 @@ services:
       # The image root IS the module root: it holds MAIN/contracts and the four B*/ roots
       # the runtime registry validates against.
       B4_MODULE_ROOT: /app
-      B1_DIST_DIR: /app/B1/dist
+      AUTOGRADER_CORS_ORIGINS: http://localhost:5173,http://127.0.0.1:5173
 
       # --- B2: submissions, evaluation, grades -------------------------------------
       B2_DATABASE_URL: postgresql+psycopg://autograder_b2:change-me@postgres:5432/autograder

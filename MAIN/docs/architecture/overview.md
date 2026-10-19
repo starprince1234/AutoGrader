@@ -9,9 +9,9 @@
 ```text
                   ┌──────────────────────────────────────────────┐
    ┌──────────┐   │            AutoGrader Beta                   │
-   │  学生     │   │  （本系统：MAIN 组装的单一 Web 应用）          │
+   │  学生     │   │  （B1 在 Vercel，API 在 Linux host）          │
    │  浏览器   │◀─▶│                                              │
-   └──────────┘   │  同源 HTTP + SSE                             │
+   └──────────┘   │  HTTPS /app + HTTPS /api/v1                             │
    ┌──────────┐   │                                              │
    │  教师/助教│◀─▶│                                              │
    │  浏览器   │   │                                              │
@@ -32,7 +32,8 @@
 
 | 边界 | 方向 | 说明 |
 |---|---|---|
-| 浏览器 → 系统 | 入 | 同源 HTTP + SSE。**无 CORS**（ADR-0007）。刷新凭据走 HttpOnly cookie |
+| 浏览器 → 系统 | 入 | Vercel 的 www.91idc.me 跨源访问 api.91idc.me；API 精确允许生产 origin，刷新凭据走 HttpOnly cookie |
+| Cloudflare → API | 入 | Cloudflare Tunnel 把 `api.91idc.me` 转发到服务器 loopback 的 API；无需开放公网 API 端口 |
 | IMAP 邮箱 → 系统 | 入 | B2 主动拉取；无法唯一匹配的邮件进入**隔离**，不自动评分 |
 | 系统 → 宿主内核 | 出 | 仅 B2 使用 nsjail/cgroup v2/seccomp 执行沙箱。**无沙箱能力则拒绝执行动态评测**（ADR-0004） |
 | 系统 → 外部网络 | **无** | 运行期不调用任何外部服务；**沙箱内禁网**。这也是评分不用 LLM 的副作用（ADR-0005） |
@@ -41,38 +42,34 @@
 
 ---
 
-## 2. 容器视图（运行期进程/组件）
+## 2. 生产部署视图（运行期进程/组件）
 
-```text
-┌─────────────────────────────────────────────────────────────────────┐
-│  Docker Compose（MAIN/compose.yaml）                                 │
-│                                                                     │
-│  ┌───────────────────────┐   ┌──────────────────────────────┐       │
-│  │  host  (mem 160m)     │   │  postgres:17-alpine (96m)    │       │
-│  │  MAIN composition     │──▶│  单实例                       │       │
-│  │  host :8000 → 18000   │   │   schema: b2 / b3 / b4        │       │
-│  │                       │   │   各 schema 独立 role          │       │
-│  │  ├ 插件装载 (entry     │   └──────────────────────────────┘       │
-│  │  │  point DAG)        │                                          │
-│  │  ├ B2 plugin ─────────┼──▶ 子进程 ──▶ nsjail ──▶ 学生代码（沙箱）   │
-│  │  ├ B3 plugin          │                                          │
-│  │  ├ B4 plugin          │   ┌──────────────────────────────┐       │
-│  │  └ /app ← B1 静态产物  │──▶│  nats:2.10-alpine (32m)      │       │
-│  └───────────────────────┘   │  JetStream（事件）             │       │
-│                              └──────────────────────────────┘       │
-└─────────────────────────────────────────────────────────────────────┘
-```
+~~~text
+Vercel: www.91idc.me/app
+        │ HTTPS fetch + SSE, credentials include
+        ▼
+Cloudflare edge: HTTPS api.91idc.me
+        │ encrypted Cloudflare Tunnel
+        ▼
+cloudflared connector → http://127.0.0.1:18000
+        ▼
+systemd native API service (non-root, 127.0.0.1:18000)
+        ├── B2 / B3 / B4 plugins
+        ├── B2 child process → nsjail → student code
+        ├── PostgreSQL 17 (Docker, loopback only)
+        └── NATS JetStream (Docker, loopback only)
+~~~
 
 | 组件 | 形态 | 资源预算 | 说明 |
 |---|---|---|---|
-| **composition host** | 单个 FastAPI 进程 | ≤160 MB / 0.35 vCPU | 装载 B2/B3/B4 插件；同源提供 B1 静态产物；聚合健康 |
-| **PostgreSQL 17** | 单实例容器 | ≤96 MB / 0.15 vCPU | 三个 schema、三个独立 role、三套 Alembic 版本表 |
-| **NATS JetStream** | 单实例容器 | ≤32 MB / 0.05 vCPU | 事件总线；持久 ≤0.25 GB |
-| **nsjail 作业** | 按需子进程 | ≤96 MB / 0.45 vCPU | **单并发**（初始） |
+| B1 | Vercel static deployment | CDN | Vite output stays under /app/; builds only when B1 files change |
+| composition host | Native systemd service | ≤160 MB / 0.30 vCPU | Loads B2/B3/B4 plugins; localhost HTTP behind Cloudflare Tunnel |
+| PostgreSQL 17 | Docker container | ≤96 MB / 0.15 vCPU | One instance, three schemas, least-privilege roles |
+| NATS JetStream | Docker container | ≤32 MB / 0.05 vCPU | Event bus; persistent data ≤0.25 GB |
+| nsjail case | Child process in delegated cgroup v2 | ≤96 MB / 0.45 vCPU | One concurrent evaluation; fail closed if unavailable |
+| cloudflared | Native systemd service | ≤32 MB / 0.05 vCPU | Outbound-only tunnel connector; API origin remains loopback-only |
 
-> **关键点**：B2/B3/B4 **不是独立服务**，而是装载进同一 host 进程的插件包（ADR-0001）。因此它们之间**不可能**通过网络互相调用，只能通过契约与事件解耦——解耦是**结构性**的，不是纪律性的。
-
----
+The API systemd service delegates cpu, memory, and pids controllers to nsjail. The delegated cgroup subtree is exposed inside the service mount namespace at /sys/fs/cgroup, so the application stays non-root and does not need a privileged container. Cloudflared opens only outbound connections to Cloudflare; the server does not expose the API, PostgreSQL, or NATS ports publicly.
 
 ## 3. 组件视图（模块职责与依赖方向）
 
@@ -205,8 +202,7 @@ B1 ◀──SSE /events── 进度与终态        B3 ◀──订阅──▶
 4. 解析 capability DAG  ——（缺能力/循环 → **启动失败**，报出缺失项）
 5. 校验：重复路由、重复 schema 归属、契约摘要漂移  ——（任一 → **启动失败**）
 6. 按序 include_router
-7. 挂载 B1 静态产物（若 dist 存在）
-8. 暴露 /health/live 与 /health/ready
+7. 暴露 /health/live 与 /health/ready
 ```
 
 **失败即失败**：不降级、不跳过、不用默认值掩盖。启动失败的信息必须指明**具体模块与原因**。
@@ -215,13 +211,13 @@ B1 ◀──SSE /events── 进度与终态        B3 ◀──订阅──▶
 
 | 故障 | 影响面 | 系统行为 | 明确不做 |
 |---|---|---|---|
-| PostgreSQL 不可用 | 除静态资源外全部 | readiness 失败并指明 `postgres`；写操作返回错误 | 不用内存/文件替代；不返回假成功 |
+| PostgreSQL 不可用 | 所有 API 操作 | readiness 失败并指明 `postgres`；写操作返回错误 | 不用内存/文件替代；不返回假成功 |
 | NATS 不可用 | 事件与统计 | readiness 失败并指明 `nats`；同步提交路径**仍可用**；事件滞留 outbox | 不回退为同步跨模块调用；不丢事件 |
 | nsjail/cgroup 不可用 | 动态评测 | 拒绝执行动态评测并报告阻塞（`failed` 并说明原因） | **绝不**退化为无沙箱执行 |
 | B3 package 不可用 | 评测 | 结算为 `failed`（技术原因），不是学生低分 | 不伪造用例通过 |
 | 单用例超时 | 该用例 | 清理整个进程树；该用例判失败；其余用例继续 | 不跳过、不伪造通过 |
 | 插件导入期抛异常 | host 稳定 | 捕获并反映为 readiness 失败 | 不让 host 进程退出 |
-| B1 `dist` 缺失 | 前端 | `/app` 不挂载，后端其余功能正常 | 不报错掩盖（需在 runbook 记录该现象） |
+| Cloudflare Tunnel 未连接 | 外部 API | `api.91idc.me` 不可达；本机 API 与 readiness 可独立检查 | 不将 API 绑定到公网接口 |
 
 ### 5.3 关闭
 
@@ -271,7 +267,7 @@ MAIN/contracts/**  ──sha256（含路径+字节）──▶  digest
 | 数据库 | PostgreSQL 17 | schema 级权限隔离、`timestamptz`、部分唯一索引 | SQLite（无 schema 隔离与真并发）、MySQL（权限模型较弱） |
 | 消息 | NATS JetStream | 常驻内存小、原生持久化与 durable consumer | Kafka/RabbitMQ（内存远超预算，见 ADR-0006） |
 | 沙箱 | nsjail + cgroup v2 + seccomp | 无 daemon、声明式、原生资源限制 | Docker（需常驻 daemon）、Firejail（cgroup 集成较弱），见 ADR-0004 |
-| 前端 | React 19 + TS + Vite | 静态产物、无自有服务端（ADR-0007） | Next.js SSR（额外常驻进程） |
+| 前端 | React 19 + TS + Vite | Vercel static deployment、无自有服务端（ADR-0017） | Next.js SSR（额外常驻进程） |
 | 编辑器 | Monaco | 与 VS Code 同源，Python/Bash 高亮成熟 | CodeMirror（可选，但 Monaco 更贴近教学场景） |
 | 图表 | ECharts | 成绩统计与分布展示 | 自绘 SVG（成本高） |
 | 包管理 | uv / pnpm | 锁文件可复现、速度快 | pip-tools/npm（较慢且锁不严） |
@@ -282,7 +278,7 @@ MAIN/contracts/**  ──sha256（含路径+字节）──▶  digest
 
 | 缺口 | 影响 | 记录位置 | 计划 |
 |---|---|---|---|
-| `B1/module.yaml` 的 `entry_point: static:dist` 不被 host 消费；B1 不在 capability DAG 中 | B1 缺失时 host 不会失败 | ADR-0007 | 功能阶段决定是否把静态客户端纳入插件机制 |
+| `B1/module.yaml` 的 `entry_point: static:dist` 不被 host 消费；B1 不在 capability DAG 中 | B1 缺失时 host 不会失败 | ADR-0017 | Vercel 独立发布静态客户端，不纳入后端插件装载 |
 | `ModuleDescriptor.events` 是扁平元组，不区分 publishes/subscribes | 无法校验事件方向声明 | ADR-0003 | 需 P3 级 SDK 变更 |
 | capability 名称无集中登记表 | 拼写漂移风险（靠装载失败兜底） | ADR-0001 | 功能阶段 |
 | 单进程插件无隔离，插件崩溃可能影响 host | 可用性风险 | ADR-0001 | 插件导入期禁止重 I/O；异常捕获并转为 readiness 失败 |

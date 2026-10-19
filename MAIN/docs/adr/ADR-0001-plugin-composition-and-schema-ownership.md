@@ -27,7 +27,7 @@
      - 按 **capability DAG** 解析装载顺序（`requires` 必须已被 `provides` 满足）；
      - 在启动时**拒绝**：重复路由、重复 schema 归属、缺失 capability、循环依赖、契约摘要漂移；
      - 聚合各模块的健康检查，并提供 live / readiness 端点；
-     - 同源提供 B1 的静态构建产物（`/app`）。
+     - 提供 B2/B3/B4 API。B1 的生产静态部署已由 ADR-0017 改为 Vercel。
   3. **单 PostgreSQL 实例，三 schema**：`b2`、`b3`、`b4`。
      - 每个模块拥有**独立的 login role**（最小权限）、独立的 `search_path`、独立的 Alembic 版本表。
      - **禁止**跨 schema 外键、跨 schema SQL、跨 schema ORM 关系、`public` 共享 ORM。

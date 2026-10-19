@@ -50,10 +50,8 @@ for raw in (MAIN_ROOT / ".env.integration").read_text(encoding="utf-8").splitlin
 sys.path.insert(0, str(MAIN_ROOT / "host" / "src"))
 
 #: Routes the host serves that are deliberately **not** in the contract: liveness/readiness are
-#: platform plumbing (ADR-0007 keeps the static client and the probes out of the module
-#: capability DAG), `/app` is a static mount rather than an operation, and `/docs`, `/redoc` and
-#: `/openapi.json` are FastAPI's own.
-HOST_OWNED_PREFIXES = ("/health", "/app", "/docs", "/redoc")
+#: platform plumbing, and `/docs`, `/redoc` and `/openapi.json` are FastAPI's own.
+HOST_OWNED_PREFIXES = ("/health", "/docs", "/redoc")
 HOST_OWNED_EXACT = ("/openapi.json",)
 
 

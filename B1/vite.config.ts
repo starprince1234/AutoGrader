@@ -22,14 +22,16 @@ function contractVersion(): string {
  * 生成的 API 类型不进 bundle：`src/api/generated/**` 只有类型，编译期被擦除。
  */
 export default defineConfig({
-  // Served by the MAIN composition host under `/app` (ADR-0007). Without this the
-  // built index.html requests `/assets/...`, which the host does not serve, so the SPA
-  // loads an empty shell and every asset 404s. The router basepath must match.
+  // Vercel serves the SPA under `/app/`; the rewrite config maps those asset URLs back
+  // into the Vite output directory while preserving browser routes.
   base: "/app/",
   define: {
     __CONTRACT_VERSION__: JSON.stringify(contractVersion()),
   },
   plugins: [react()],
+  server: {
+    host: "127.0.0.1",
+  },
   build: {
     outDir: "dist",
     sourcemap: false,

@@ -1,8 +1,7 @@
 # Build context for `MAIN/host/Dockerfile` (context = the repository root).
 #
-# The image builds the B1 SPA itself, so `**/dist` is excluded deliberately: the built
-# assets come from the `b1` build stage, never from a committed artifact. Nothing the
-# runtime needs may be added here without checking that the Dockerfile does not `COPY` it.
+# B1 is deployed separately by Vercel. The local integration image needs Python modules,
+# contracts, and module manifests only; built frontend assets are not part of that image.
 
 # --- version control, virtualenvs, caches -------------------------------------------
 **/.git
@@ -17,7 +16,7 @@
 **/coverage
 **/.pytest-tmp
 
-# --- build output (rebuilt in the image) ---------------------------------------------
+# --- build output (produced by Vercel or local tooling) ------------------------------
 **/dist
 **/build
 **/*.egg-info

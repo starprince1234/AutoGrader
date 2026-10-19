@@ -57,10 +57,15 @@ export function configureApiAuth(options: {
   }
 }
 
-/** API 源。缺省为空串 = 同源（MAIN host 同源提供 `/app` 与 `/api`）。 */
+/** API 源。生产构建必须显式配置；空值只用于同源测试。 */
 export function apiBaseUrl(): string {
   const raw = (import.meta.env?.VITE_API_BASE_URL ?? "").trim();
-  if (raw === "" || raw === "/") return "";
+  if (raw === "" || raw === "/") {
+    if (import.meta.env?.PROD) {
+      throw new Error("VITE_API_BASE_URL is required for production builds");
+    }
+    return "";
+  }
   return raw.replace(/\/+$/, "");
 }
 
@@ -133,7 +138,9 @@ async function send(
     method: options.method ?? "GET",
     headers: buildHeaders(options, requestId, hasJsonBody),
     signal: options.signal,
-    credentials: "same-origin",
+    // The refresh cookie belongs to the API subdomain while the SPA is on its sibling
+    // subdomain. They are same-site but cross-origin, so same-origin would omit the cookie.
+    credentials: "include",
   };
   if (options.formData) init.body = options.formData;
   else if (hasJsonBody) init.body = JSON.stringify(options.body);

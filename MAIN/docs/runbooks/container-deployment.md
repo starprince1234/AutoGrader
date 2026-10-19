@@ -1,6 +1,6 @@
-# 运行手册：容器部署
+# 运行手册：本地容器集成
 
-本手册描述**唯一对外的交付路径**：在一台只有 Docker 的机器上，从空库把 AutoGrader 平台起起来。它不需要本机 Python、不需要本机 Node、不需要任何未跟踪的 env 文件。
+本手册启动本地集成用的 PostgreSQL、NATS 与 composition host。生产交付路径见 [`production-deployment.md`](production-deployment.md)：B1 由 Vercel 提供，API 以 systemd 运行并经 Cloudflare Tunnel 暴露。
 
 配套：`local-development.md`（Windows 开发）、`integration.md`（组装模型与即插即用验证）、`troubleshooting.md`（故障分诊）。
 
@@ -17,7 +17,7 @@ curl -s http://localhost:18000/health/ready
 
 **成功标志**：`/health/ready` 返回 `{"ready": true, ...}`，且 `modules` 中同时出现 **B2、B3、B4**，三者 `healthy` 均为 `true`。
 
-第一次启动比后续慢：镜像要构建 B1（`npm install` + `vite build`），容器要生成签名密钥、跑三个模块的迁移并做 B4 的角色供给。`host` 的 healthcheck `start_period` 为 60 s，是为这段一次性工作留的。
+第一次启动比后续慢：容器要生成签名密钥、跑三个模块的迁移并做 B4 的角色供给。`host` 的 healthcheck `start_period` 为 60 s，是为这段一次性工作留的。前端在本地另用 Vite 启动。
 
 停止：
 
@@ -53,7 +53,7 @@ b2 与 b4 的迁移都用**平台超级用户** DSN 运行，并且必须在同�
 | `B4_DB_PASSWORD` | `autograder_b4` 角色的口令 | `ops.provision` |
 | `JWT_PRIVATE_KEY_FILE` | Ed25519 私钥路径（卷内） | B4 |
 | `B4_MODULE_ROOT` | 持有 `MAIN/contracts` 与四个 `B*/` 根目录的目录（镜像内 `/app`） | B4 的注册表与迁移 head 探针 |
-| `B1_DIST_DIR` | 构建后的 SPA 目录（镜像内 `/app/B1/dist`） | host 静态挂载 |
+| `AUTOGRADER_CORS_ORIGINS` | 允许调用 API 的本地 Vite 来源 | composition host |
 | `B2_DATABASE_URL` / `B2_ARTIFACT_ROOT` / `B2_WORKSPACE_ROOT` / `B2_JWKS_PATH` / `B2_NATS_URL` / `B2_B3_BASE_URL` / `B2_B3_AUTHORIZATION` | B2 的库、内容寻址存储、沙箱工作区、公钥集、消息与取包端点 | B2 |
 | `B3_DATABASE_URL` / `B3_DATABASE_PROTECTED_URL` / `B3_SERVICE_TOKEN` / `B3_NATS_URL` | B3 的普通角色与受保护角色、服务令牌 | B3 |
 | `B4_JWKS_URL` | B4 公钥集的地址（B3 消费） | B3 |
@@ -119,15 +119,15 @@ python MAIN/scripts/seed_integration.py --base-url http://127.0.0.1:18000
 | `/health/ready` 中 `B4` 详情含 `refusing to start: database role … is over-privileged` | 应用被给了超级用户 DSN | **不要**放宽这个守卫。检查模块是否读到了 `B4_DATABASE_URL`（前缀变量），而不是全局 `DATABASE_URL` |
 | `/health/ready` 中 `B2` 为 `healthy: false`，详情含 `B2_ARTIFACT_ROOT is required` 或 `no JWKS configured` | B2 的必需项没配 | 见 §3 的 B2 行；`B2_JWKS_PATH` 指向卷内 `jwks.json`，由 entrypoint 生成 |
 | `/health/ready` 中 `B3` 为 `healthy: false`，详情含 `database unavailable` | B3 的库角色连不上 | 两个 DSN 都要给：普通角色与受保护角色 |
-| `/app` 返回 404 但 `/health/live` 正常 | `B1_DIST_DIR` 指向的目录没有 `index.html` | 镜像内应为 `/app/B1/dist`；若是自建镜像，确认 B1 阶段构建成功（`docker compose build host` 的输出） |
+| Vite 页面能打开但 API 请求失败 | `VITE_API_BASE_URL` 或 CORS 来源不匹配 | 设置 `VITE_API_BASE_URL=http://127.0.0.1:18000`，并保持 `AUTOGRADER_CORS_ORIGINS` 包含 Vite 的本地来源 |
 | `docker compose up` 报端口被占用 | 宿主端口已被别的服务占用 | 用 §4 的 `POSTGRES_PORT` / `NATS_PORT` / `HOST_PORT` 改宿主侧端口 |
 
 ---
 
 ## 7. 本手册的验证记录
 
-本手册的每一条启动路径都在真实环境执行过：空卷首次启动、三插件 readiness、`/app` SPA（含浏览器实测）、
-容器内签发令牌并读写真实数据、`docker compose ps` 的 `healthy` 状态。逐条命令与读数记在
+本地容器路径的既有验证记录包括：空卷首次启动、三插件 readiness、容器内签发令牌并读写真实数据、
+`docker compose ps` 的 `healthy` 状态。逐条命令与读数记在
 `../phases/active/phase-01-integration-runtime.md` §13，不在本手册内重复。
 
 **未覆盖**：

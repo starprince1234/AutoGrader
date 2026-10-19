@@ -155,7 +155,7 @@ const routeTree = rootRoute.addChildren([
 
 export const router = createRouter({
   routeTree,
-  // Must match `base` in vite.config.ts: the host serves the SPA under `/app`, so
+  // Must match `base` in vite.config.ts: Vercel serves the SPA under `/app`, so
   // routes and every generated link have to live under the same prefix.
   basepath: "/app",
   defaultPreload: false,

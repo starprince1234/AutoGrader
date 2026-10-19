@@ -28,8 +28,8 @@ export function parseAssetUrl(src: string): AssetLocation | null {
 
   if (isAbsolute) {
     // 绝对地址必须先证明"同源"，否则下面那次带令牌的 fetch 会把 Bearer 令牌发给另一个源。
-    // `apiBaseUrl()` 为空表示同源部署（Vite dev 与 MAIN host 都是这种情况），此时基线就是
-    // 当前页面的 origin；早期版本在基址为空时跳过了这项检查，等于放过了跨源地址。
+    // `apiBaseUrl()` 为空时基线就是当前页面的 origin；本地与生产配置都显式设置 API 源，
+    // 这样含 Bearer token 的请求不会因错误地址而发往非预期 origin。
     const base = apiBaseUrl();
     const expectedOrigin = base === "" ? window.location.origin : new URL(base).origin;
     let url: URL;

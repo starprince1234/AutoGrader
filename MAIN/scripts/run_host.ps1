@@ -38,5 +38,5 @@ if (-not (Test-Path $python)) { throw "missing $python (run: uv sync --all-group
 $uvicornArgs = @("-m", "uvicorn", "autograder_host.main:app", "--host", "127.0.0.1", "--port", "$Port")
 if ($Reload) { $uvicornArgs += @("--reload") }
 
-Write-Host "starting composition host on http://127.0.0.1:$Port (B1 at /app)" -ForegroundColor Cyan
+Write-Host "starting composition API on http://127.0.0.1:$Port (start B1 separately with Vite)" -ForegroundColor Cyan
 & $python @uvicornArgs

@@ -2,7 +2,7 @@
 
 逐条 RQ 的实现级验收，比 `../../../MAIN/docs/requirements/rq-catalog.md` 更贴近 B1 交互实现。每条采用 Given/When/Then 风格，**必须可执行**；"可观测结果"指操作者能在页面或网络面板看到的现象，或对后端接口断言的结果。
 
-前置通用条件：已以合法身份登录；`VITE_API_BASE_URL=/api`；后端为契约测试夹具或真实 B4/B3/B2（接口冻结后）。
+前置通用条件：已以合法身份登录；`VITE_API_BASE_URL` 指向可达的 API origin（生产为 `https://api.91idc.me`，本地为 `http://127.0.0.1:18000`）；后端为契约测试夹具或真实 B4/B3/B2（接口冻结后）。
 
 ## RQ-B-1-10 名单导入
 

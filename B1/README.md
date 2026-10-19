@@ -1,6 +1,6 @@
 # AutoGrader B1 —— Web 前端客户端
 
-B1 是 AutoGrader 的**静态 Web 客户端**（TypeScript + React 19 + Vite 7），面向学生 / 教师 / 助教 / 管理员，提供名单导入与编辑、富文本题目展示、代码提交与实时评测进度、成绩查询与导出的**交互界面**。B1 **没有后端、没有权威数据库**，所有权威数据都来自 B4（身份/课程/名单）、B3（题目）、B2（提交/评测/成绩）。
+B1 是 AutoGrader 的**静态 Web 客户端**（TypeScript + React 19 + Vite 7），生产拓扑由 Vercel 从 `B1/` 构建并托管在 `https://www.91idc.me/app/`。面向学生 / 教师 / 助教 / 管理员，提供名单导入与编辑、富文本题目展示、代码提交与实时评测进度、成绩查询与导出的**交互界面**。B1 **没有后端、没有权威数据库**，所有权威数据都来自 B4（身份/课程/名单）、B3（题目）、B2（提交/评测/成绩），API origin 为 `https://api.91idc.me`。
 
 > 当前状态：业务界面与端到端 `已完成`；上一轮新增题库标签覆盖度视图（`CHG-0020`）；
 > **本轮（`0.15.0` → `0.16.0`）打通了出题的最后一段：出题页的「验证并发布」入口**——
@@ -56,18 +56,18 @@ B1 是 AutoGrader 的**静态 Web 客户端**（TypeScript + React 19 + Vite 7�
 
 ```text
 浏览器 (B1 static UI)
-   │  同源 HTTP / SSE（经 MAIN composition host 代理到 /api）
+   │  HTTPS fetch + SSE（credentials include）
    ▼
-MAIN composition host ── B4 身份/课程 ── B3 题目 ── B2 提交/评测/成绩
+Cloudflare Tunnel ── MAIN composition host ── B4 身份/课程 ── B3 题目 ── B2 提交/评测/成绩
 ```
 
-B1 构建产物 `dist/` 由 MAIN host 在 `/app` 静态提供。
+B1 构建产物 `dist/` 由 Vercel 在 `/app/` 路径提供；MAIN host 只提供 API。
 
 ## 前置条件
 
 - Node.js 24（pnpm 的运行时）
 - pnpm（通过 `corepack enable` 启用）
-- 环境变量：复制 `.env.example` 为 `.env`。`VITE_API_BASE_URL` 是 **API 源**（缺省=同源），不是路径前缀——契约路径本身已含 `/api/v1`，详见 [`docs/api/contract.md`](docs/api/contract.md)。
+- 本地 API 地址：`VITE_API_BASE_URL=http://127.0.0.1:18000`。生产构建值由 `.env.production` 指向 `https://api.91idc.me`。该变量是 **API 源**，不是路径前缀——契约路径本身已含 `/api/v1`，详见 [`docs/api/contract.md`](docs/api/contract.md)。
 
 ## 安装 / 启动 / 验证
 
@@ -75,6 +75,7 @@ B1 构建产物 `dist/` 由 MAIN host 在 `/app` 静态提供。
 corepack enable
 pnpm install
 
+$env:VITE_API_BASE_URL = "http://127.0.0.1:18000"
 pnpm dev          # 开发服务器（HMR，默认 5173）
 pnpm lint         # 真实 ESLint，0 warning 门槛
 pnpm typecheck    # tsc -b（含生成的契约类型）
@@ -88,8 +89,8 @@ pnpm verify       # 一键串联上面五步
 
 ## 用户入口
 
-- 本地开发：`http://localhost:5173`（Vite 默认，以 `pnpm dev` 输出为准）
-- 集成部署：由 MAIN host 在 `/app` 提供 `dist/` 构建产物（本轮已在 `http://127.0.0.1:18000/app` 实跑）
+- 本地开发：`http://127.0.0.1:5173`（需与本地 API 使用同一 host，保持 cookie same-site）
+- 生产部署：`https://www.91idc.me/app/`（Vercel）
 
 ## 文档入口
 
@@ -101,7 +102,7 @@ pnpm verify       # 一键串联上面五步
 2. **带分数的成绩证据未走通**：本环境是 Windows，B2 的沙箱阶段如实返回 `infrastructure_error`（ADR-0004 / SEC-20 禁止降级为裸进程），因此端到端只验证到"技术失败"终态与"未完成不显示 0 分"这条路径；真实 `completed` + 分数需要 Linux 特权容器。**CHG-0012 的逐用例证据字段（`resource`/`artifacts`/`explanation`）B2 尚未下发**，界面按"未测量 / 无数据"渲染，真实读数需 B2 落地后复核。
 3. **成绩行没有姓名/学号**：B2 的 `student_number` / `display_name` 恒为 `null`（B2 只拥有 `b2`，不读 `b4`，并明确拒绝伪造占位值）。页面因此显示"学生 ID"，表头也相应改为"学生"而不是"学号"。
 4. **构建体积警告**：Monaco 的 `editor.main` 约 3.77 MB，未做按语言裁剪（原因见 phase-01 记录）。
-5. **ADR-0007 的 `VITE_API_BASE_URL=/api` 与本模块取值不同**（契约路径已含 `/api/v1`），已在文档中记录待 MAIN 判定。
+5. **生产部署拓扑**：B1 在 Vercel，API 在 Cloudflare Tunnel 后的 Linux host；详情见 MAIN ADR-0017 与 `docs/api/contract.md`。
 6. **发布路径已打通（本批推翻旧结论）**：`CHG-0008` 的存证门禁要求"执行者 ≠ 记录者"，B1 既不能自证、
    也不能持有 `serviceToken`；`ADR-0015` 把它裁决为 **B2 执行、B3 记录、教师一键触发**，契约是
    `CHG-0019` 的 `POST /api/v1/reference-verifications`（`CHG-0023` 补上 B2 取参考解答的内部通道）。

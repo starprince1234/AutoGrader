@@ -68,7 +68,7 @@ cd D:\VScodeProjects\AutoGrader\MAIN
 | B1 的 `pnpm lint` / `pnpm test` | **不存在** | 无 ESLint 与 vitest；`lint` 脚本目前仅 `tsc -b` | 本阶段补齐工具链，或明确记录为遗留项 |
 | PostgreSQL / NATS 启动与 readiness | **未执行** | 未启动容器；依赖 Docker 环境 | `docker compose up -d` 后请求 `/health/ready` |
 | host 插件装载与 live/ready | **未执行** | 同上（需运行 host 且安装三个模块） | 装好各模块后启动 host |
-| B1 静态站点由 host 提供 | **未执行** | 需先构建 B1 并启动 host | `pnpm build` 后访问 `/app` |
+| Vercel + Cloudflare Tunnel 生产入口 | **未执行** | 前端入口由用户确认可访问；API Tunnel 路由、外部 readiness 与业务流程尚未验证 | 访问 `https://www.91idc.me/app/` 与 `https://api.91idc.me/health/ready` |
 | Linux 安全门禁（SEC-01…20） | **未执行** | 需 cgroup v2 + nsjail | `../runbooks/linux-acceptance.md` |
 | 资源门禁（RES-01…05） | **未执行** | 同上 | 同上 |
 | 集成/端到端用例（INT-*、E2E-*） | **未实现** | 业务能力为骨架 | 功能阶段逐步实现 |

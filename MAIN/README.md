@@ -5,10 +5,10 @@
 MAIN 不实现任何业务功能，也不拥有任何业务数据。它的职责是三件事：
 
 1. **定义接口**：`contracts/` 下的 OpenAPI / AsyncAPI / JSON Schema 是四个模块之间唯一的机器可读权威。
-2. **组装系统**：一个 composition host 按 capability DAG 装载 B2/B3/B4 插件，同源提供 B1 的静态产物。
+2. **组装系统**：一个 composition host 按 capability DAG 装载 B2/B3/B4 插件；B1 独立部署到 Vercel，见 [ADR-0017](docs/adr/ADR-0017-vercel-frontend-native-api-host.md)。
 3. **守住边界**：用可执行门禁强制契约一致、需求覆盖、文档完整、数据所有权不被跨越。
 
-> 一句话：**MAIN 是微内核，不是业务服务。** 删除任一模块，host 会因缺失 capability 而明确失败——这正是"即插即用"的可验证形态（[ADR-0001](docs/adr/ADR-0001-plugin-composition-and-schema-ownership.md)）。
+> 一句话：**MAIN 是微内核，不是业务服务。** 删除任一后端模块，host 会因缺失 capability 而明确失败——这正是"即插即用"的可验证形态（[ADR-0001](docs/adr/ADR-0001-plugin-composition-and-schema-ownership.md)）。
 
 ---
 
@@ -19,8 +19,9 @@ MAIN 不实现任何业务功能，也不拥有任何业务数据。它的职责
 | 契约版本 | `0.1.0` |
 | 契约摘要 | `1568a98746c8363e692091dd7a21b4a9bc8b6d5e243a0820c907930bf00d4c22`（由 `checks.py` 计算；四份 `contracts.lock` 与之一致） |
 | 运行时 | Python 3.12、FastAPI、PostgreSQL 17、NATS JetStream 2.10 |
-| 集成形态 | 单个 composition host + 独立打包的 B2/B3/B4 插件 + B1 静态站点（由 host 镜像自行构建） |
-| 交付路径 | `docker compose up -d --build`（单个 host 容器 + PostgreSQL + NATS） |
+| 集成形态 | composition host + B2/B3/B4 插件；B1 在 Vercel，API 经 Cloudflare Tunnel 到 Linux systemd host |
+| 本地后端集成 | `docker compose up -d --build`（composition host + PostgreSQL + NATS） |
+| 生产交付路径 | [production-deployment.md](docs/runbooks/production-deployment.md) |
 | 阶段状态 | **Phase 01 = active**（未归档，见下方"未验证项"） |
 | 已实现的业务能力 | B2/B3/B4 各自实现（状态见各模块文档）；MAIN 侧不实现业务能力 |
 
@@ -62,20 +63,19 @@ migration heads and local ports agree with compose: ok
 
 > 正常环境应使用 `uv run python -m autograder_host.checks`。若 `uv` 报缓存目录无法访问（`D:\dev\caches\uv` 在工作区之外，操作系统错误 5 = 权限被拒），改用上方仓库内虚拟环境的写法。**这是环境限制，不是代码缺陷。**
 
-### 交付路径：启动系统（容器）
+### 本地后端集成（容器）
 
 ```powershell
 cd D:\VScodeProjects\AutoGrader\MAIN
 docker compose up -d --build
 ```
 
-一条命令即可，不需要本机 Python、本机 Node 或任何未跟踪的 env 文件：host 镜像自己构建 B1 的静态产物，并在首次启动时生成签名密钥、跑三个模块的迁移、执行 B4 的角色供给。启动序列与逐条排查见 [docs/runbooks/container-deployment.md](docs/runbooks/container-deployment.md)。
+该命令启动本地 API、PostgreSQL 与 NATS；首次启动会生成签名密钥、跑三个模块的迁移并执行 B4 角色供给。B1 另由 Vite 启动并通过 `VITE_API_BASE_URL=http://127.0.0.1:18000` 连接本地 API。生产交付见 [docs/runbooks/production-deployment.md](docs/runbooks/production-deployment.md)，本地集成细节见 [docs/runbooks/container-deployment.md](docs/runbooks/container-deployment.md)。
 
 ```powershell
 # 验证
 curl http://localhost:18000/health/live       # {"status":"ok"}
 curl http://localhost:18000/health/ready      # ready=true，modules 列出 B2/B3/B4
-curl http://localhost:18000/app/              # B1 页面（HTML 引用已构建资源）
 ```
 
 **宿主端口约定**：PostgreSQL `55432`、NATS `54222`、host `18000`。选这些端口是为了避开本机常见服务；三个端口都可用 `POSTGRES_PORT` / `NATS_PORT` / `HOST_PORT` 覆盖（同一台机器上跑第二套时必需）。
@@ -91,8 +91,8 @@ docker compose exec host python -m autograder_b4.ops.bootstrap_admin --username 
 ### 开发路径：本机跑（改代码时）
 
 ```powershell
-# 1) 构建前端
-cd ..\B1 ; corepack enable ; pnpm install ; pnpm build
+# 1) 安装前端依赖
+cd ..\B1 ; corepack enable ; pnpm install
 
 # 2) 安装三个后端模块（使其 entry point 可见）
 cd ..\B2 ; uv sync --all-groups
@@ -102,6 +102,14 @@ cd ..\B4 ; uv sync --all-groups
 # 3) 基础设施（容器）＋ 本机 host
 cd ..\MAIN ; docker compose up -d postgres nats
 MAIN\scripts\run_host.ps1 -Port 18000          # 需要 gitignored 的 .env.integration
+```
+
+在单独的终端启动 B1：
+
+```powershell
+cd D:\VScodeProjects\AutoGrader\B1
+$env:VITE_API_BASE_URL = "http://127.0.0.1:18000"
+pnpm dev
 ```
 
 详见 [docs/runbooks/local-development.md](docs/runbooks/local-development.md)（开发）与 [docs/runbooks/integration.md](docs/runbooks/integration.md)（组装与即插即用验证）。
@@ -195,7 +203,7 @@ MAIN/contracts/**  ──sha256（相对路径 + 字节）──▶  digest
 |---|---|
 | `uv sync` / `uv run` 全流程 | 已实测可用（`uv 0.10.2`）；MAIN 侧需带 `--extra modules`，否则 host 装载不到任何模块 |
 | 各模块 `ruff` / `pytest` / `alembic upgrade head` | 同上；且需要可用的 PostgreSQL |
-| host 装载 B2/B3/B4、`/health/ready`、`/app` | 需启动容器与安装模块 |
+| host 装载 B2/B3/B4、`/health/ready` | 需启动容器与安装模块 |
 | B1 `pnpm install` / `build`（本轮） | 未重新执行构建 |
 | B1 `pnpm lint` / `pnpm test` | **工具链不存在**：`lint` 仅为 `tsc -b`；无 ESLint 与 vitest |
 | Linux 安全门禁（16 项）与资源实测 | **必须在 Linux + cgroup v2 + nsjail 环境** |
