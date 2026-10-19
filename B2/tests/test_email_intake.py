@@ -1766,13 +1766,12 @@ def test_printable_pax_sparse_bomb_is_rejected_as_a_bomb() -> None:
         "the PAX bomb fixture must remain printable text"
     )
     try:
-        archive = tarfile.open(fileobj=io.BytesIO(payload), mode="r:")
+        with tarfile.open(fileobj=io.BytesIO(payload), mode="r:") as archive:
+            member = archive.next()
+            assert member is not None, "tarfile must expose the PAX member"
+            assert member.size == 1099511627776, f"tarfile declared size: {member.size}"
     except tarfile.TarError as error:
         pytest.fail(f"tarfile rejected the sparse PAX archive: {type(error).__name__}: {error}")
-    with archive:
-        member = archive.next()
-        assert member is not None, "tarfile must expose the PAX member"
-        assert member.size == 1099511627776, f"tarfile declared size: {member.size}"
 
     verdict = sniff_content(payload, declared_size_limit=LIMITS.max_total_bytes)
     assert verdict.kind == "archive", verdict

@@ -106,6 +106,18 @@ jobs:
       - name: Build privileged nsjail test image
         run: docker build --file B2/verify/linux-nsjail/Dockerfile --tag autograder-b2-nsjail:ci .
 
+      - name: Check sparse PAX parsing in the locked B2 image
+        run: |
+          docker run --rm --network none \
+            --volume "$GITHUB_WORKSPACE:/work" \
+            --workdir /work/B2 \
+            --tmpfs /work/B2/.pytest-tmp \
+            --tmpfs /work/B2/.pytest_cache \
+            --env PYTHONPATH=/work/B2/src:/work/MAIN/sdk/src \
+            autograder-b2-nsjail:ci \
+            /opt/autograder/B2/.venv/bin/python -m pytest -q \
+            tests/test_email_intake.py::test_printable_pax_sparse_bomb_is_rejected_as_a_bomb
+
       - name: Prepare non-secret conformance test environment
         run: cp MAIN/.env.example MAIN/.env.integration
 
