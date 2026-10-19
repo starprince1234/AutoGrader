@@ -18,6 +18,7 @@ on:
       - "B3/pyproject.toml"
       - "B3/src/**"
       - "B4/alembic/**"
+      - "B4/compose.ci.yaml"
       - "B4/contracts.lock"
       - "B4/module.yaml"
       - "B4/pyproject.toml"
@@ -107,7 +108,7 @@ jobs:
         run: |
           docker compose --project-name autograder-b2-ci --file B2/compose.yaml up --detach --wait --wait-timeout 120 postgres nats
           docker compose --project-name autograder-b3-ci --file B3/compose.yaml up --detach --wait --wait-timeout 120 postgres
-          docker compose --project-name autograder-b4-ci --file B4/compose.yaml up --detach --wait --wait-timeout 120 postgres nats
+          docker compose --project-name autograder-b4-ci --file B4/compose.yaml --file B4/compose.ci.yaml up --detach --wait --wait-timeout 120 postgres nats
 
       - name: Prepare B4 test database
         working-directory: B4
@@ -115,6 +116,7 @@ jobs:
           DATABASE_URL: postgresql+psycopg://autograder_platform:change-me-local-only@127.0.0.1:55435/autograder
           B4_ADMIN_DATABASE_URL: postgresql+psycopg://autograder_platform:change-me-local-only@127.0.0.1:55435/autograder
           B4_DB_PASSWORD: change-me
+          B4_TEST_POSTGRES_CONTAINER: autograder-b4-ci-postgres-1
         run: |
           uv run --locked alembic upgrade head
           uv run --locked python -m autograder_b4.ops.provision
@@ -131,17 +133,25 @@ jobs:
         env:
           JWT_PRIVATE_KEY_FILE: ${{ github.workspace }}/MAIN/.runtime/ci-test-jwt.pem
           AUTOGRADER_B2_NSJAIL_IMAGE: autograder-b2-nsjail:ci
+          B4_TEST_POSTGRES_CONTAINER: autograder-b4-ci-postgres-1
         run: uv run --project MAIN python MAIN/scripts/test_evidence.py --all
 
       - name: Check project contracts and documentation
         run: uv run --project MAIN python -m autograder_host.checks
+
+      - name: Capture isolated service logs on failure
+        if: failure()
+        run: |
+          docker compose --project-name autograder-b2-ci --file B2/compose.yaml logs --no-color postgres nats
+          docker compose --project-name autograder-b3-ci --file B3/compose.yaml logs --no-color postgres
+          docker compose --project-name autograder-b4-ci --file B4/compose.yaml --file B4/compose.ci.yaml logs --no-color postgres nats
 
       - name: Stop isolated module test services
         if: always()
         run: |
           docker compose --project-name autograder-b2-ci --file B2/compose.yaml down --volumes --remove-orphans
           docker compose --project-name autograder-b3-ci --file B3/compose.yaml down --volumes --remove-orphans
-          docker compose --project-name autograder-b4-ci --file B4/compose.yaml down --volumes --remove-orphans
+          docker compose --project-name autograder-b4-ci --file B4/compose.yaml --file B4/compose.ci.yaml down --volumes --remove-orphans
           rm -f MAIN/.env.integration MAIN/.runtime/ci-test-jwt.pem
 
   deploy:
