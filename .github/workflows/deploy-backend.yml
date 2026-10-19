@@ -268,6 +268,7 @@ jobs:
             [[ -n "$changed_path" ]] || continue
             case "$changed_path" in
               .github/workflows/deploy-backend.yml|\
+              .gitattributes|\
               MAIN/deploy/*|MAIN/scripts/production-preflight.sh|\
               MAIN/scripts/bootstrap-nsjail.sh|MAIN/scripts/bootstrap-cloudflared.sh|\
               MAIN/scripts/install-mihomo-autograder.sh|\
@@ -280,9 +281,15 @@ jobs:
                 ;;
             esac
           done < <(git diff --name-only "$VERIFIED_COMMIT_SHA" "$CURRENT_SHA")
-          for script in MAIN/scripts/production-preflight.sh MAIN/deploy/*.sh .github/scripts/deploy-ssh.sh; do
+          for script in MAIN/scripts/production-preflight.sh MAIN/scripts/bootstrap-nsjail.sh MAIN/deploy/*.sh .github/scripts/deploy-ssh.sh; do
             bash -n "$script"
           done
+          python3 - <<'PY'
+          import ast
+          from pathlib import Path
+
+          ast.parse(Path("MAIN/deploy/patch-nsjail-protobuf4-compat.py").read_text(encoding="utf-8"))
+          PY
 
       - name: Fetch deployment secrets from Doppler
         uses: DopplerHQ/secrets-fetch-action@cf794d40f721280fa2c068fa4f9e8afbc966e41d

@@ -1179,3 +1179,11 @@ metadata 为 `root:cloudflared 0640`。Cloudflare connector 查询为 inactive�
 修复首次部署恢复逻辑：只有在没有 current release、运行中的 AutoGrader 进程、Compose 项目和数据库/NATS 卷，且上述目录为空、所有者/权限准确时才允许续跑。清理步骤只移除空的 incoming/staging/releases 目录；专用 Python runtime 与 uv cache 目录必须为空并保留，token 保持原样，root-only 环境文件会在发布时覆盖。未知条目或非空应用数据仍会让预检失败。
 
 针对“纯运维变更不必重复跑五个模块”的要求，工作流新增显式 `preflight` / `deploy` 手动入口。它要求输入一个 verify job 已成功的 run ID 和对应 commit SHA，并确认当前与已验证 commit 之间只改了部署运维文件；业务代码或契约变化仍要求 push 工作流完整验证。该机制以本轮 `39247432392` 的成功 verify job 为当前运维修改的验证基点。
+
+### 15.3 首次发布阻塞：上传包夹带课件，nsjail 与系统 Protobuf API 不兼容（2026-10-19）
+
+部署 run `39252318026` 复用了成功的 verify job，服务器预检和 SSH 上传均成功。Actions 日志显示源码归档约 41.5 MB，SCP 花费 **20 分 35 秒**；该归档包含 `MAIN/references/` 下 30 个课程 PPTX，Git blob 合计 **45,321,234 bytes**。生产运行不读取课件，慢速传输的直接放大因素是把这些无关二进制随完整源码归档上传。`.gitattributes` 为该目录设置 `export-ignore`，保留仓库文件但从 `git archive` 发布包中排除。
+
+上传之后部署失败在 nsjail 构建：OpenCloudOS 9 仓库安装的是 `protobuf-compiler` / `protobuf-devel 24.2-9.oc9`，其 `GOOGLE_PROTOBUF_VERSION` 属 protobuf 4 API；nsjail 3.4 仍无条件引用已移除的 `google::protobuf::LogLevel` 和 `SetLogHandler`。部署脚本现在在固定的 nsjail 3.4 源码上应用与上游 3.5 相同的版本条件：仅在旧 Protobuf 日志处理器 API 不存在时禁用该回调，沙箱版本与其余实现保持一致。编译后要求 `nsjail --help` 成功并包含 `Usage:`，避免仅凭可执行文件存在就继续部署。
+
+本次改动的最终验证与部署结果待记录；全模块验证复用 `39247432392` 已通过的 verify job，仅执行部署脚本语法、归档体积/内容及生产部署与 readiness 检查。

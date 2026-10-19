@@ -13,6 +13,8 @@ if command -v nsjail >/dev/null 2>&1; then
     exit 0
 fi
 
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+
 dnf install -y \
     bison \
     flex \
@@ -30,7 +32,11 @@ trap 'rm -rf "$source_dir"' EXIT
 
 git -c advice.detachedHead=false clone --depth 1 --branch 3.4 \
     https://github.com/google/nsjail.git "$source_dir"
+python3 "$script_dir/../deploy/patch-nsjail-protobuf4-compat.py" \
+    "$source_dir/config.cc"
 make -C "$source_dir" -j"$(nproc)"
 install -o root -g root -m 0755 "$source_dir/nsjail" /usr/local/bin/nsjail
 
 command -v nsjail >/dev/null 2>&1 || fail "nsjail installation did not produce an executable"
+nsjail_help="$(nsjail --help 2>&1)" || fail "nsjail failed its startup check"
+grep -q '^Usage:' <<<"$nsjail_help" || fail "nsjail startup output is invalid"
