@@ -1190,4 +1190,6 @@ run `39263657374` 证明 nsjail 检查已通过、`uv sync` 已在 release 下�
 
 失败后只读预检 `39265103938` / `39265562437` 检查到 `/opt/autograder/python` 已非空，于是停止部署。受限元数据清单显示内容为 uv 的 `.gitignore`、`.lock`、空 `.temp`、CPython 3.12 稳定别名 symlink 与单一版本目录（含 BUILD、bin/include/lib/share；解释器为私有 `0700`）；没有读取文件内容。owner/group 字段在 Actions 日志中被屏蔽。预检现在仅接受这一结构，核对 runtime root、版本别名、文件属主及权限，并允许前次递归改属主触及的解释器文件归 root；部署开始前会修复为 `autograder` 所有。未知条目或其他 owner 仍阻断。上述新预检规则与发布脚本修正尚待下一轮执行验证。
 
+预检 run `39266840611` 的只读元数据进一步确认：唯一的 `autograder` Compose 项目显示 `running(2)`，其配置路径对应失败 stage `de84c79...-1`；项目仅有 PostgreSQL（healthy）与 NATS 容器、两个带该项目标签的数据卷，以及一个路径匹配的 root-only pre-migration dump。`autograder.service` 的必需字段与仓库单元一致且未启动，uv cache 位于专用目录。预检现按这些可核验关系识别并保留该部分首部署状态，不删除数据。下一次只读预检和部署将验证恢复规则及无跟随符号链接的 runtime 权限修复。
+
 本次改动的最终验证与部署结果待记录；全模块验证复用 `39247432392` 已通过的 verify job，仅执行部署脚本语法、归档体积/内容及生产部署与 readiness 检查。

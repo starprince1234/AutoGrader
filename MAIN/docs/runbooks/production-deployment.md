@@ -72,7 +72,7 @@ Docker 镜像拉取由 dockerd 发起，本机 Mihomo 环境变量不会代理�
 6. 每次迁移前在 `/var/lib/autograder/backups` 保存权限为 `0600` 的 PostgreSQL custom dump。迁移或 readiness 失败时，部署脚本停止新服务、恢复数据库快照、切回上一版代码并恢复原本运行的 API/Tunnel。API 会在迁移期间短暂停止；成功后保留近五份数据库备份和近三版代码。
 7. 发布只有在本机 `/health/ready` 与经 Cloudflare 的 `https://api.91idc.me/health/ready` 都返回 `ready: true` 后才报告成功。首次部署失败时没有旧版本可切回，服务会保持停止且数据保留，需先查明失败原因再重试。
 
-首次部署若在创建 AutoGrader 用户、运行目录和 root-only 环境文件后中断，重试会识别这一组受限的部分状态：必须没有当前 release、AutoGrader systemd 服务和正在运行的应用进程，数据库/NATS 状态必须符合专用 Compose 项目；`/var/lib/autograder` 的预建子目录和 uv cache 目录必须为空。专用 Python runtime 可以为空，或只含一个结构完整的 uv-managed CPython 3.12 安装；预检核对版本别名、文件类型、属主和私有目录权限，部署前会把它的所有权归一到 `autograder`。发现额外条目、链接、非预期文件、活动进程或业务数据时，预检停止且不清理。
+首次部署若在准备数据库迁移时中断，重试会识别这一组受限的部分状态：无 current release、API unit inactive、一个健康 PostgreSQL 与一个运行中的 NATS 容器、匹配的两个 AutoGrader Compose volumes，以及与上次 Compose 配置路径匹配的 root-only pre-migration dump。数据库/NATS 容器、volumes 和备份会被保留并复用；额外容器、卷或备份、配置不匹配、活动 API 进程时预检停止。`/var/lib/autograder` 的预建数据子目录必须为空。专用 Python runtime 可以为空，或只含一个结构完整的 uv-managed CPython 3.12 安装；预检核对版本别名、文件类型、属主和私有目录权限，部署前会把它的所有权归一到 `autograder`。uv cache 必须保持 AutoGrader 专用属主与目录权限；不清理已有缓存。
 
 纯运维脚本或本工作流变更不再自动触发五模块全量测试。此类变更在本地完成 `bash -n` 后，可手动执行只读预检或部署；必须引用一个 verify job 成功的工作流 run ID 和它验证的 commit SHA。手动入口会确认该 SHA 是当前部署的祖先、verify job 确实成功，且两者之间只有部署运维文件变化。示例：
 

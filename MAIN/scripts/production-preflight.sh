@@ -73,6 +73,130 @@ validate_managed_python_runtime() {
     printf '[autograder-preflight] recognized uv-managed CPython 3.12 runtime; deployment will normalize ownership\n'
 }
 
+validate_interrupted_compose_deployment() {
+    local root="$1"
+    local unit_file=/etc/systemd/system/autograder.service
+    local backup_dir=/var/lib/autograder/backups
+    local autograder_uid unit_path required_setting
+    local compose_json compose_config failed_stage backup_path backup_name
+    local record service status config_file postgres_found=false nats_found=false
+    local volume volume_source volume_labels unexpected
+    local -a backup_files=() backup_entries=() container_records=() project_volumes=()
+
+    [[ -f "$unit_file" && ! -L "$unit_file" ]] || \
+        fail "the interrupted API unit is missing or is not a regular file"
+    [[ "$(stat -c %U:%G "$unit_file")" == root:root && \
+        "$(stat -c %a "$unit_file")" == 644 ]] || \
+        fail "the interrupted API unit has unexpected ownership or permissions"
+    unit_path="$(systemctl show -p FragmentPath --value autograder.service)"
+    [[ "$unit_path" == "$unit_file" ]] || \
+        fail "the interrupted API unit is loaded from an unexpected path"
+    if systemctl is-active --quiet autograder.service; then
+        fail "the interrupted API service is unexpectedly active"
+    fi
+    for required_setting in \
+        'Description=AutoGrader composition API' \
+        'User=autograder' \
+        'Group=autograder' \
+        'WorkingDirectory=/opt/autograder/current/MAIN' \
+        'EnvironmentFile=/etc/autograder/runtime.env' \
+        'ExecStart=/opt/autograder/current/MAIN/.venv/bin/uvicorn autograder_host.main:app --host 127.0.0.1 --port 18000 --workers 1' \
+        'ProtectSystem=strict' \
+        'ProtectHome=true' \
+        'NoNewPrivileges=true'; do
+        grep -Fqx "$required_setting" "$unit_file" || \
+            fail "the interrupted API unit is missing its managed setting"
+    done
+
+    require_directory "$backup_dir" root root 700
+    mapfile -t backup_files < <(find "$backup_dir" -mindepth 1 -maxdepth 1 \
+        -type f -name 'pre-migration-*.dump' -print | LC_ALL=C sort)
+    [[ "${#backup_files[@]}" -ge 1 ]] || \
+        fail "$backup_dir has no backup for the interrupted Compose deployment"
+    mapfile -t backup_entries < <(find "$backup_dir" -mindepth 1 -maxdepth 1 \
+        -print | LC_ALL=C sort)
+    [[ "${#backup_entries[@]}" == "${#backup_files[@]}" ]] || \
+        fail "$backup_dir contains an unrecognized entry"
+    for backup_path in "${backup_files[@]}"; do
+        backup_name="${backup_path##*/}"
+        [[ "$backup_name" =~ ^pre-migration-([a-f0-9]{40}-[1-9][0-9]*)\.dump$ ]] || \
+            fail "$backup_path has an unexpected backup name"
+        [[ -s "$backup_path" && "$(stat -c %U:%G "$backup_path")" == root:root && \
+            "$(stat -c %a "$backup_path")" == 600 ]] || \
+            fail "$backup_path has unexpected ownership, permissions, or size"
+    done
+
+    compose_json="$(docker compose ls --all --format json)" || \
+        fail "could not inspect the interrupted Compose project"
+    compose_config="$(python3 -c 'import json,sys; p=[item for item in json.load(sys.stdin) if item.get("Name")=="autograder"]; sys.exit(1) if len(p)!=1 or p[0].get("Status")!="running(2)" else print(p[0].get("ConfigFiles",""))' <<<"$compose_json")" || \
+        fail "the interrupted Compose project is missing, duplicated, or not running exactly two services"
+    [[ "$compose_config" =~ ^${root}/releases/([a-f0-9]{40}-[1-9][0-9]*)/MAIN/compose\.production\.yaml$ ]] || \
+        fail "the interrupted Compose project uses an unexpected configuration path"
+    failed_stage="${BASH_REMATCH[1]}"
+    [[ ! -e "$root/releases/$failed_stage" && ! -L "$root/releases/$failed_stage" ]] || \
+        fail "the failed release directory unexpectedly remains present"
+    backup_path="$backup_dir/pre-migration-${failed_stage}.dump"
+    [[ -s "$backup_path" ]] || \
+        fail "the interrupted Compose project has no matching pre-migration backup"
+
+    mapfile -t container_records < <(docker ps -a \
+        --filter label=com.docker.compose.project=autograder \
+        --format '{{.Label "com.docker.compose.service"}}|{{.Status}}|{{.Label "com.docker.compose.project.config_files"}}' | LC_ALL=C sort)
+    [[ "${#container_records[@]}" == 2 ]] || \
+        fail "the interrupted Compose project must contain exactly two service containers"
+    for record in "${container_records[@]}"; do
+        IFS='|' read -r service status config_file <<<"$record"
+        [[ "$config_file" == "$compose_config" && "$status" == Up* ]] || \
+            fail "an interrupted Compose service is not running from the expected configuration"
+        case "$service" in
+            postgres)
+                [[ "$status" == *'(healthy)'* && "$postgres_found" == false ]] || \
+                    fail "the interrupted PostgreSQL service is unhealthy or duplicated"
+                postgres_found=true
+                ;;
+            nats)
+                [[ "$nats_found" == false ]] || fail "the interrupted NATS service is duplicated"
+                nats_found=true
+                ;;
+            *)
+                fail "the interrupted Compose project has an unexpected service: $service"
+                ;;
+        esac
+    done
+    [[ "$postgres_found" == true && "$nats_found" == true ]] || \
+        fail "the interrupted Compose project is missing PostgreSQL or NATS"
+
+    mapfile -t project_volumes < <(docker volume ls \
+        --filter label=com.docker.compose.project=autograder \
+        --format '{{.Name}}' | LC_ALL=C sort)
+    [[ "${#project_volumes[@]}" == 2 && \
+        "${project_volumes[0]}" == autograder_production_nats && \
+        "${project_volumes[1]}" == autograder_production_postgres ]] || \
+        fail "the interrupted Compose project has unexpected data volumes"
+    for volume_source in \
+        autograder_production_nats:autograder_production_nats \
+        autograder_production_postgres:autograder_production_postgres; do
+        volume="${volume_source%%:*}"
+        volume_labels="$(docker volume inspect --format \
+            '{{index .Labels "com.docker.compose.project"}}|{{index .Labels "com.docker.compose.volume"}}' \
+            "$volume")" || fail "could not inspect Compose volume $volume"
+        [[ "$volume_labels" == "autograder|${volume_source#*:}" ]] || \
+            fail "Compose volume $volume has unexpected project labels"
+    done
+
+    require_directory /var/cache/autograder/uv autograder autograder 750
+    autograder_uid="$(id -u autograder)"
+    unexpected="$(find /var/cache/autograder/uv -mindepth 1 \
+        ! -uid "$autograder_uid" -print -quit)"
+    [[ -z "$unexpected" ]] || \
+        fail "/var/cache/autograder/uv contains entries outside the AutoGrader-owned cache"
+    [[ "$(stat -c %u:%g "$backup_dir")" == "0:0" && \
+        "$(stat -c %u:%g "$unit_file")" == "0:0" ]] || \
+        fail "the interrupted deployment's backup or service metadata has unexpected ownership"
+
+    printf '[autograder-preflight] recognized inactive API unit, healthy PostgreSQL/NATS, and the matching preserved backup; no existing data will be removed\n'
+}
+
 sha="${1:-}"
 run_attempt="${2:-}"
 if [[ -n "$sha" || -n "$run_attempt" ]]; then
@@ -158,6 +282,8 @@ current="$root/current"
 [[ ! -L "$root" ]] || fail "$root must not be a symbolic link"
 first_deployment=false
 partial_first_deployment=false
+partial_python_runtime=false
+partial_compose_recovery=false
 if [[ -L "$current" ]]; then
     current_release="$(readlink -f "$current")"
     [[ -n "$current_release" && -d "$current_release" ]] || fail "the existing current link is broken"
@@ -194,8 +320,16 @@ else
         [[ -e "$root/python" || -L "$root/python" ]] || \
             fail "$root exists without the interrupted deployment's Python runtime directory"
         require_directory "$root/python" autograder autograder 750
-        [[ -z "$(find "$root/python" -mindepth 1 -print -quit)" ]] || \
+        if [[ -n "$(find "$root/python" -mindepth 1 -print -quit)" ]]; then
             validate_managed_python_runtime "$root/python"
+            partial_python_runtime=true
+        fi
+        if systemctl cat autograder.service >/dev/null 2>&1; then
+            [[ "$partial_python_runtime" == true ]] || \
+                fail "autograder.service exists without a recognized interrupted Python runtime"
+            validate_interrupted_compose_deployment "$root"
+            partial_compose_recovery=true
+        fi
         unexpected="$(find "$root" -mindepth 1 -maxdepth 1 \
             ! -name python ! -name incoming ! -name staging ! -name releases -print -quit)"
         [[ -z "$unexpected" ]] || fail "$root contains an unrecognized first-deployment entry"
@@ -233,7 +367,8 @@ else
     fi
 
     if systemctl cat autograder.service >/dev/null 2>&1; then
-        fail "autograder.service already exists without an AutoGrader current release"
+        [[ "$partial_compose_recovery" == true ]] || \
+            fail "autograder.service already exists without an AutoGrader current release"
     fi
     cloudflared_unit_managed=false
     cloudflared_unit=/etc/systemd/system/cloudflared.service
@@ -287,13 +422,15 @@ else
     done
     for volume in autograder_production_postgres autograder_production_nats; do
         if docker volume inspect "$volume" >/dev/null 2>&1; then
-            fail "Docker volume $volume already exists without an AutoGrader current release"
+            [[ "$partial_compose_recovery" == true ]] || \
+                fail "Docker volume $volume already exists without an AutoGrader current release"
         fi
     done
     compose_projects="$(docker compose ls --all --format json)" || fail "could not inspect existing Compose projects"
     compose_conflict="$(python3 -c 'import json,sys; projects=json.load(sys.stdin); print(str(any(item.get("Name") == "autograder" for item in projects)).lower())' <<< "$compose_projects")" || \
         fail "could not parse the existing Compose project list"
-    [[ "$compose_conflict" != true ]] || fail "a Compose project named autograder already exists"
+    [[ "$compose_conflict" != true || "$partial_compose_recovery" == true ]] || \
+        fail "a Compose project named autograder already exists"
     for path in /etc/autograder/runtime.env /etc/autograder/setup.env; do
         if [[ -e "$path" || -L "$path" ]]; then
             [[ "$partial_first_deployment" == true ]] || \
@@ -323,7 +460,8 @@ else
         done
         if [[ -e /var/lib/autograder/backups || -L /var/lib/autograder/backups ]]; then
             require_directory /var/lib/autograder/backups root root 700
-            [[ -z "$(find /var/lib/autograder/backups -mindepth 1 -print -quit)" ]] || \
+            [[ "$partial_compose_recovery" == true || \
+                -z "$(find /var/lib/autograder/backups -mindepth 1 -print -quit)" ]] || \
                 fail "/var/lib/autograder/backups contains data without a current release"
         fi
     fi
@@ -331,7 +469,8 @@ else
         [[ "$partial_first_deployment" == true ]] || \
             fail "/var/cache/autograder/uv exists without an AutoGrader current release"
         require_directory /var/cache/autograder/uv autograder autograder 750
-        [[ -z "$(find /var/cache/autograder/uv -mindepth 1 -print -quit)" ]] || \
+        [[ "$partial_compose_recovery" == true || \
+            -z "$(find /var/cache/autograder/uv -mindepth 1 -print -quit)" ]] || \
             fail "/var/cache/autograder/uv contains cache data without a current release"
     fi
     if [[ -e /var/lib/cloudflared || -L /var/lib/cloudflared ]]; then
