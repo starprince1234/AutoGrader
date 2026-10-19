@@ -110,6 +110,9 @@ RUN set -eux; \
         util-linux \
         tini; \
     rm -rf /var/lib/apt/lists/*; \
+    ln -sfn /usr/local/bin/python3 /usr/bin/python3; \
+    /usr/bin/python3 --version; \
+    test -x /usr/bin/python3; \
     nsjail --help 2>&1 | head -5; \
     nsjail --help 2>&1 | grep -q "Examples:"; \
     test -x /usr/local/bin/nsjail

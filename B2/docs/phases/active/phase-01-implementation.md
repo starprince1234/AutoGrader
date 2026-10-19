@@ -594,3 +594,26 @@ Windows 上真 `run_case` 抛 `SandboxUnavailableError` 且审计钩子记录**�
 - 迁移 head 从 `20260915_0008` 升到 `20260915_0009`（新增 `outbox_events.insert_seq` 与两条配对 CHECK），
   `module.yaml: migration_head`、`db/schema.py: EXPECTED_SCHEMA_REVISION`、本文件与 [../../README.md](../../README.md)
   已同步；离线全链与真实升级结果见"验证记录"。
+
+## 2026-10-19 CI Linux runner 验收镜像路径修正
+
+GitHub Actions 的最新发布验证在 B2 真实 nsjail 用例中 5 项失败、1309 项通过；合法程序、禁网/超时样本和
+红队日志样本均没有得到预期输出。用同一 Dockerfile 在本机重建 CI 验收镜像后，根因已确认：B2 runner 的固定
+解释器路径是 `/usr/bin/python3`，而 `python:3.12-slim-bookworm` 镜像仅提供 `/usr/local/bin/python3`；该镜像
+没有 `/usr/bin/python3`，nsjail 因此无法 exec 学生程序，runner 把空输出照实判为不匹配。
+
+修正是在 Linux 验收镜像内把 `/usr/bin/python3` 链接到基础镜像自带的 Python 3.12，并在构建时检查该路径可执行。
+生产 runner 的固定接口与策略未改。验证读数：
+
+```text
+修复前当前镜像：/usr/bin/python3 missing；/usr/local/bin/python3 Python 3.12.15
+修复后镜像：/usr/bin/python3 -> /usr/local/bin/python3；Python 3.12.14
+test_i2_legal_submission_passes_inside_the_real_sandbox          PASS
+test_i3_limit_and_hostile_samples_are_classified                PASS
+test_i4_timeout_leaves_no_process_tree_residue                  PASS
+test_i8_student_cannot_forge_a_sandbox_limit_attribution        PASS
+4 passed in 11.81s
+```
+
+**未执行**：I5 真实数据库编排用例与 B2 完整套件；由本次推送触发的 GitHub Actions 使用真实 PostgreSQL/NATS 执行，
+未通过时部署 job 不会运行。最终结果以该工作流记录为准。

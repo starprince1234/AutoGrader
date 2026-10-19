@@ -70,6 +70,8 @@ libcap-dev libseccomp-dev g++ make pkg-config git`。
 构建层 2 对「clone + 编译」整体重试 5 次：本机容器内直连 `github.com` 不稳定
 （`GnuTLS recv error (-110)`），单次失败不应让整次构建作废。层 3 末尾有**构建期自检**
 （`nsjail --help` 必须真的能跑），避免产出「构建成功但 nsjail 起不来」的镜像。
+验收镜像把 `/usr/bin/python3` 固定链接到基础镜像的 Python 3.12：B2 生产 runner 使用此固定路径，
+不能依赖 PATH，也不能让 Debian 额外依赖偶然带入系统 Python 3.11。
 
 ---
 

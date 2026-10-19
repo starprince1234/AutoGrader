@@ -1154,3 +1154,14 @@ cloudflared RPM 2026.10.1-1 已安装，`cloudflared.service` active/enabled。�
 | AutoGrader API 与 readiness | 待部署 | 18000 无 listener；需推送已验证源码触发 workflow |
 | Vercel 前端生产部署 | 待确认 | Git Integration 与外部源码设置仍需复核；推送后检查 `/app/` |
 | Linux nsjail、安全与业务验收 | 未完成 | 部署后按 `linux-acceptance.md` 完成安全、资源及业务流程验收 |
+
+### 15.1 首次发布验证阻塞：CI 验收镜像缺少 runner 的固定 Python 路径
+
+2026-10-19 最新 `deploy-backend.yml` run `39236200859` 在验证 job 的 B2 套件失败（5 failed、1309 passed、7 skipped、
+3 xfailed）；deploy job 被依赖关系跳过。失败用例都是 Linux/nsjail 真实 runner 的执行路径。按日志中的空输出与退出分类
+复现后，使用工作区 Dockerfile 重建的干净 CI 镜像确认 `/usr/bin/python3` 不存在；B2 runner 固定调用该路径，基础镜像
+实际只提供 `/usr/local/bin/python3`。因此 nsjail 没有启动待测 Python 程序，产生空 stdout 并被正确判为输出不匹配。
+
+修复仅调整 B2 Linux 验收镜像：在镜像内将 `/usr/bin/python3` 指向基础镜像的 Python 3.12，并加入构建期可执行检查。
+本机按更新 Dockerfile 构建后，4 个无需数据库的失败用例全部通过（11.81 秒）；I5 与完整 B2/模块交付扫描尚未在本机执行。
+推送后由生产部署工作流先跑完整 B1–B5、MAIN 门禁，再部署；这些门禁若失败，生产 deploy job 会保持跳过。
