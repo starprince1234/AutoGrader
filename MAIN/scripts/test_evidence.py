@@ -183,6 +183,8 @@ def suite_command(module: str, environment: dict[str, str]) -> list[str]:
         "run",
         "--locked",
         "--all-groups",
+        "--with",
+        "httpx==0.28.1",
         "pytest",
         "-q",
     ]
