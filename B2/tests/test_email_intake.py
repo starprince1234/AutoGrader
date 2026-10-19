@@ -1764,10 +1764,15 @@ def test_printable_pax_sparse_bomb_is_rejected_as_a_bomb() -> None:
     assert plain_text_problem(pax_data + sparse_data) is None, (
         "the PAX metadata and sparse data must remain printable"
     )
-    try:
-        tarfile.TarInfo.frombuf(payload[:_TAR_BLOCK], "utf-8", "surrogateescape")
-    except tarfile.HeaderError as error:
-        pytest.fail(f"tarfile rejected the first USTAR header: {type(error).__name__}: {error}")
+    for offset in (0, 2 * _TAR_BLOCK):
+        try:
+            tarfile.TarInfo.frombuf(
+                payload[offset : offset + _TAR_BLOCK], "utf-8", "surrogateescape"
+            )
+        except tarfile.HeaderError as error:
+            pytest.fail(
+                f"tarfile rejected USTAR header at byte {offset}: {type(error).__name__}: {error}"
+            )
     try:
         with tarfile.open(fileobj=io.BytesIO(payload), mode="r|") as archive:
             member = archive.next()
