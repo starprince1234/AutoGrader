@@ -11,6 +11,7 @@ on:
       - "B2/contracts.lock"
       - "B2/module.yaml"
       - "B2/pyproject.toml"
+      - "B2/uv.lock"
       - "B2/src/**"
       - "B3/alembic/**"
       - "B3/contracts.lock"
@@ -91,6 +92,9 @@ jobs:
 
       - name: Install Python workspace
         run: uv sync --project MAIN --all-groups --extra modules --locked
+
+      - name: Check B2 dependency lock
+        run: uv lock --check --project B2
 
       - name: Lint Python modules
         run: |

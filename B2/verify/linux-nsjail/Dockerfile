@@ -131,7 +131,7 @@ ENV UV_INDEX_URL=${PIP_INDEX}
 ENV UV_INSECURE_HOST=${PIP_TRUSTED_HOST}
 ENV PATH=/opt/autograder/B2/.venv/bin:${PATH}
 RUN set -eux; \
-    uv sync --project /opt/autograder/B2 --locked --all-groups --no-install-project; \
+    uv sync --project /opt/autograder/B2 --frozen --all-groups --no-install-project; \
     /opt/autograder/B2/.venv/bin/python -c "import sys, pytest, sqlalchemy, psycopg, fastapi, jsonschema, jwt, cryptography, openpyxl, pydantic, httpx; \
 print('python', sys.version.split()[0]); \
 print('pytest', pytest.__version__); \
