@@ -141,21 +141,28 @@ validate_interrupted_compose_deployment() {
 
     mapfile -t container_records < <(docker ps -a \
         --filter label=com.docker.compose.project=autograder \
-        --format '{{.Label "com.docker.compose.service"}}|{{.Status}}|{{.Label "com.docker.compose.project.config_files"}}' | LC_ALL=C sort)
+        --format '{{.Names}}|{{.Label "com.docker.compose.service"}}|{{.Status}}|{{.Label "com.docker.compose.project.config_files"}}' | LC_ALL=C sort)
     [[ "${#container_records[@]}" == 2 ]] || \
         fail "the interrupted Compose project must contain exactly two service containers"
     for record in "${container_records[@]}"; do
-        IFS='|' read -r service status config_file <<<"$record"
+        IFS='|' read -r container_name service status config_file <<<"$record"
         [[ "$config_file" == "$compose_config" && "$status" == Up* ]] || \
             fail "an interrupted Compose service is not running from the expected configuration"
         case "$service" in
             postgres)
                 [[ "$status" == *'(healthy)'* && "$postgres_found" == false ]] || \
                     fail "the interrupted PostgreSQL service is unhealthy or duplicated"
+                [[ "$(docker port "$container_name" 5432/tcp)" == 127.0.0.1:25432 ]] || \
+                    fail "the interrupted PostgreSQL container is not bound only to 127.0.0.1:25432"
                 postgres_found=true
                 ;;
             nats)
                 [[ "$nats_found" == false ]] || fail "the interrupted NATS service is duplicated"
+                [[ "$(docker port "$container_name" 4222/tcp)" == 127.0.0.1:25222 ]] || \
+                    fail "the interrupted NATS container is not bound only to 127.0.0.1:25222"
+                if docker port "$container_name" 8222/tcp >/dev/null 2>&1; then
+                    fail "the interrupted NATS monitoring port is unexpectedly published"
+                fi
                 nats_found=true
                 ;;
             *)
@@ -483,6 +490,10 @@ fi
 
 if [[ "$first_deployment" == true ]]; then
     for port in 18000 25432 25222; do
+        if [[ "$partial_compose_recovery" == true && \
+            ( "$port" == 25432 || "$port" == 25222 ) ]]; then
+            continue
+        fi
         if ss -H -ltn "sport = :$port" | grep -q .; then
             fail "TCP port $port is already in use"
         fi
