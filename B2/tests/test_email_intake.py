@@ -1779,7 +1779,25 @@ def test_printable_pax_sparse_bomb_is_rejected_as_a_bomb() -> None:
             assert member is not None, "tarfile must expose the PAX member"
             assert member.size == 1099511627776, f"tarfile declared size: {member.size}"
     except tarfile.TarError as error:
-        pytest.fail(f"tarfile rejected the sparse PAX archive: {type(error).__name__}: {error}")
+        from types import SimpleNamespace
+
+        reader = SimpleNamespace(
+            fileobj=io.BytesIO(payload),
+            encoding=tarfile.ENCODING,
+            errors="surrogateescape",
+            pax_headers={},
+            offset=0,
+        )
+        try:
+            tarfile.TarInfo.fromtarfile(reader)
+        except Exception as detail:
+            parser_detail = f"{type(detail).__name__}: {detail}"
+        else:
+            parser_detail = "low-level header parser accepted the first member"
+        pytest.fail(
+            f"tarfile rejected the sparse PAX archive: {type(error).__name__}: {error}; "
+            f"direct parser: {parser_detail}"
+        )
 
     verdict = sniff_content(payload, declared_size_limit=LIMITS.max_total_bytes)
     assert verdict.kind == "archive", verdict
