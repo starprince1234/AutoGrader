@@ -1706,7 +1706,7 @@ def pax_sparse_bomb(*, declared: int = 1099511627776) -> bytes:
         + pax_record("GNU.sparse.map", "0,512")
         + pax_record("GNU.sparse.name", "main.py")
     )
-    pax_block = records + b" " * (-len(records) % _TAR_BLOCK)
+    pax_block = records + b"\x00" * (-len(records) % _TAR_BLOCK)
     sparse_data = b" " * _TAR_BLOCK
     return (
         tar_member_header(name="PaxHeaders/main.py", size=len(records), type_flag=b"x")
@@ -1758,7 +1758,8 @@ def test_printable_tar_is_rejected_as_a_container(
 def test_printable_pax_sparse_bomb_is_rejected_as_a_bomb() -> None:
     """P1 复核最小复现之二：可打印 PAX sparse 数据声明 1 TiB，归档约 2 KB。"""
     payload = pax_sparse_bomb()
-    pax_data = payload[_TAR_BLOCK : 2 * _TAR_BLOCK]
+    pax_block = payload[_TAR_BLOCK : 2 * _TAR_BLOCK]
+    pax_data = pax_block.split(b"\x00", maxsplit=1)[0]
     sparse_data = payload[3 * _TAR_BLOCK :]
     assert b"\x00" not in pax_data + sparse_data
     assert plain_text_problem(pax_data + sparse_data) is None, (
