@@ -205,10 +205,16 @@ export function RosterPage() {
                       >
                         {t("roster.edit")}
                       </button>
-                      <button
+                                            <button
                         type="button"
                         className="button button--danger"
-                        onClick={() => deleteEnrollment.mutate(enrollmentId)}
+                        disabled={deleteEnrollment.isPending}
+                        onClick={() => {
+                          const ok = window.confirm(
+                            `${t("roster.remove")} ${row.student_number} ${row.display_name}？`,
+                          );
+                          if (ok) deleteEnrollment.mutate(enrollmentId);
+                        }}
                       >
                         {t("roster.remove")}
                       </button>
