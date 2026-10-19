@@ -65,7 +65,7 @@ Docker 镜像拉取由 dockerd 发起，本机 Mihomo 环境变量不会代理�
 `DEPLOY_SSH_USER` 当前为 root。2026-10-19 首次只读预检已通过，确认 DNF、systemd、cgroup v2、Compose v2、资源余量、端口空闲且没有同名 AutoGrader 服务、卷或 Compose 项目。GitHub Actions 通过 `.github/workflows/deploy-backend.yml` 执行发布前验证与部署：
 
 1. 推送后端源码、迁移、模块清单、契约、生产 Compose 或测试相关变更时，GitHub Actions 运行 B1 验证、B1–B5 测试和 MAIN 契约/文档门禁；通过后才读取部署字段。SSH 预检脚本放入本次运行独有的 `/tmp/autograder-preflight-<run-id>-<attempt>` 目录，避免与其他项目的临时文件冲突。连接后先执行只读预检，要求 DNF、systemd、cgroup v2、Docker Compose v2、足够资源、无端口或同名项目冲突。首次部署不支持的环境会在改动服务前停止。
-2. 通过固定版本的 `uv` 安装锁定的 Python 依赖；首次部署从固定的 nsjail 3.4 源码构建并运行 `MAIN/deploy/patch-nsjail-protobuf4-compat.py`，兼容 OpenCloudOS 9 的 Protobuf 24.x（protobuf 4 API）。构建后执行 `nsjail --help` 启动检查，再安装 Cloudflare `cloudflared`。
+2. 通过固定版本的 `uv` 安装锁定的 Python 依赖；首次部署从固定的 nsjail 3.4 源码构建并运行 `MAIN/deploy/patch-nsjail-protobuf4-compat.py`，兼容 OpenCloudOS 9 的 Protobuf 24.x（protobuf 4 API）。构建后执行 `nsjail --help` 启动检查，再安装 Cloudflare `cloudflared`。专用 Python runtime 由 `autograder` 所有；锁定 release 权限时不跟随 `.venv/bin/python` 符号链接修改 runtime 文件。
 3. 先将包含凭据的临时上传目录设为 root-only，再把发布代码放入 `/opt/autograder/releases/<sha>-<run>`，安装只读 runtime env 到 `/etc/autograder/runtime.env`。
 4. 以 Compose 项目 `autograder` 启动 PostgreSQL/NATS；卷名固定，后端发布不会删除业务卷。生产端口为 loopback `25432`（PostgreSQL）和 `25222`（NATS），与当前 Doppler 中的本地端口不同。
 5. root-only `setup.env` 仅供 Compose 初始化与一次性迁移/角色供给；API 的常驻 systemd 服务只读取 `runtime.env`，不继承平台 superuser DSN。systemd 以 `autograder` 用户在 cgroup v2 委派子树运行 API；`cloudflared` 用户运行 Tunnel connector。

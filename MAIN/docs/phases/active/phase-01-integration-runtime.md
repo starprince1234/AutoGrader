@@ -1186,4 +1186,6 @@ metadata 为 `root:cloudflared 0640`。Cloudflare connector 查询为 inactive�
 
 上传之后部署曾在 nsjail 构建和启动检查遇到两项阻塞：OpenCloudOS 9 仓库安装的是 `protobuf-compiler` / `protobuf-devel 24.2-9.oc9`，其 `GOOGLE_PROTOBUF_VERSION` 属 protobuf 4 API；nsjail 3.4 仍无条件引用已移除的 `google::protobuf::LogLevel` 和 `SetLogHandler`。固定的 nsjail 3.4 源码现在应用与上游 3.5 相同的版本条件：仅在旧 Protobuf 日志处理器 API 不存在时禁用该回调，沙箱版本与其余实现保持一致。run `39262632097` 已证明该兼容改写后 nsjail 编译和链接成功；部署随后因启动检查误把 `Usage:` 当成输出标记而停止。现改用 B2 Linux 验收镜像已有的 `Examples:` 标记，并对新构建和已安装的 nsjail 都运行同一启动检查。
 
+run `39263657374` 证明 nsjail 检查已通过、`uv sync` 已在 release 下创建 Python 3.12 虚拟环境并安装 50 个包，PostgreSQL/NATS 容器也达到 healthy；但以 `autograder` 执行迁移准备时，`[ -x "$release/MAIN/.venv/bin/python" ]` 检查失败。该检查发生在 `chown -R root:root "$release"` 之后；uv 的 venv 解释器链接到 release 外的专用 Python runtime，因此递归改属主可能穿过链接破坏目标可执行性。部署现在先把 `/opt/autograder/python` 归属恢复为 `autograder`，再用 `chown --no-dereference --recursive` 锁定 release，避免改动链接目标。下一轮验证该修复与 readiness。
+
 本次改动的最终验证与部署结果待记录；全模块验证复用 `39247432392` 已通过的 verify job，仅执行部署脚本语法、归档体积/内容及生产部署与 readiness 检查。

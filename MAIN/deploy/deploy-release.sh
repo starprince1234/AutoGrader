@@ -120,6 +120,8 @@ install -d -o autograder -g autograder -m 0750 /opt/autograder/python /var/cache
 install -d -o root -g root -m 0700 "$backup_dir"
 install -d -o root -g cloudflared -m 0750 /etc/autograder
 
+chown --no-dereference --recursive autograder:autograder /opt/autograder/python
+
 mv "$stage" "$release"
 chown -R autograder:autograder "$release"
 install -o root -g root -m 0600 "$incoming/runtime.env" "$runtime_env"
@@ -137,7 +139,7 @@ fi
 
 runuser -u autograder -- env UV_PYTHON_INSTALL_DIR=/opt/autograder/python UV_CACHE_DIR=/var/cache/autograder/uv UV_PYTHON_DOWNLOADS=automatic /usr/local/bin/uv sync --project "$release/MAIN" --extra modules --no-dev --locked
 
-chown -R root:root "$release"
+chown --no-dereference --recursive root:root "$release"
 chmod 0755 "$release"
 install -o root -g root -m 0644 "$release/MAIN/deploy/autograder.service" /etc/systemd/system/autograder.service
 install -o root -g root -m 0644 "$release/MAIN/deploy/cloudflared.service" /etc/systemd/system/cloudflared.service
