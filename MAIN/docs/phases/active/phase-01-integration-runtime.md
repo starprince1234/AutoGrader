@@ -1184,6 +1184,6 @@ metadata 为 `root:cloudflared 0640`。Cloudflare connector 查询为 inactive�
 
 部署 run `39252318026` 复用了成功的 verify job，服务器预检和 SSH 上传均成功。Actions 日志显示源码归档约 41.5 MB，SCP 花费 **20 分 35 秒**；该归档包含 `MAIN/references/` 下 30 个课程 PPTX，Git blob 合计 **45,321,234 bytes**。生产运行不读取课件，慢速传输的直接放大因素是把这些无关二进制随完整源码归档上传。`.gitattributes` 为该目录设置 `export-ignore`，保留仓库文件但从 `git archive` 发布包中排除。
 
-上传之后部署失败在 nsjail 构建：OpenCloudOS 9 仓库安装的是 `protobuf-compiler` / `protobuf-devel 24.2-9.oc9`，其 `GOOGLE_PROTOBUF_VERSION` 属 protobuf 4 API；nsjail 3.4 仍无条件引用已移除的 `google::protobuf::LogLevel` 和 `SetLogHandler`。部署脚本现在在固定的 nsjail 3.4 源码上应用与上游 3.5 相同的版本条件：仅在旧 Protobuf 日志处理器 API 不存在时禁用该回调，沙箱版本与其余实现保持一致。编译后要求 `nsjail --help` 成功并包含 `Usage:`，避免仅凭可执行文件存在就继续部署。
+上传之后部署曾在 nsjail 构建和启动检查遇到两项阻塞：OpenCloudOS 9 仓库安装的是 `protobuf-compiler` / `protobuf-devel 24.2-9.oc9`，其 `GOOGLE_PROTOBUF_VERSION` 属 protobuf 4 API；nsjail 3.4 仍无条件引用已移除的 `google::protobuf::LogLevel` 和 `SetLogHandler`。固定的 nsjail 3.4 源码现在应用与上游 3.5 相同的版本条件：仅在旧 Protobuf 日志处理器 API 不存在时禁用该回调，沙箱版本与其余实现保持一致。run `39262632097` 已证明该兼容改写后 nsjail 编译和链接成功；部署随后因启动检查误把 `Usage:` 当成输出标记而停止。现改用 B2 Linux 验收镜像已有的 `Examples:` 标记，并对新构建和已安装的 nsjail 都运行同一启动检查。
 
 本次改动的最终验证与部署结果待记录；全模块验证复用 `39247432392` 已通过的 verify job，仅执行部署脚本语法、归档体积/内容及生产部署与 readiness 检查。
