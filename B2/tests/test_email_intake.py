@@ -1706,9 +1706,7 @@ def pax_sparse_bomb(*, declared: int = 1099511627776) -> bytes:
     """PAX sparse 炸弹：文件约 2 KB，却**声明**展开 1 TiB（复核给出的形态）。"""
     records = (
         pax_record("GNU.sparse.size", str(declared))
-        + pax_record("GNU.sparse.numblocks", "1")
-        + pax_record("GNU.sparse.offset", "0")
-        + pax_record("GNU.sparse.numbytes", "512")
+        + pax_record("GNU.sparse.map", "0,512")
         + pax_record("GNU.sparse.name", "main.py")
     )
     pax_block = records + b" " * (-len(records) % _TAR_BLOCK)

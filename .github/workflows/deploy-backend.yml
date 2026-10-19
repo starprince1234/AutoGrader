@@ -49,7 +49,7 @@ concurrency:
 
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     timeout-minutes: 45
     steps:
       - name: Check out the pushed revision
@@ -124,6 +124,12 @@ jobs:
         run: |
           uv run --locked alembic upgrade head
           uv run --locked python -m autograder_b4.ops.provision
+
+      - name: Prepare B2 integration database
+        working-directory: B2
+        env:
+          DATABASE_URL: postgresql+psycopg://autograder_platform:change-me-local-only@127.0.0.1:55433/autograder
+        run: uv run --locked alembic upgrade head
 
       - name: Prepare ephemeral signing key for composition tests
         run: |
