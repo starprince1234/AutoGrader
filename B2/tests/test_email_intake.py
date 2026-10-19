@@ -1716,7 +1716,7 @@ def pax_sparse_bomb(*, declared: int = 1099511627776) -> bytes:
         tar_member_header(name="PaxHeaders/main.py", size=len(records), type_flag=b"x")
         + pax_block
         + tar_member_header(
-            name="GNUSparseFile.0/main.py", size=len(sparse_data), type_flag=b"0"
+            name="0/GNUSparseFile.0/main.py", size=len(sparse_data), type_flag=b"0"
         )
         + sparse_data
     )
@@ -1765,8 +1765,11 @@ def test_printable_pax_sparse_bomb_is_rejected_as_a_bomb() -> None:
     assert b"\x00" not in payload and plain_text_problem(payload) is None, (
         "the PAX bomb fixture must remain printable text"
     )
-    assert tarfile.is_tarfile(io.BytesIO(payload)), "tarfile must recognize the sparse PAX archive"
-    with tarfile.open(fileobj=io.BytesIO(payload), mode="r:") as archive:
+    try:
+        archive = tarfile.open(fileobj=io.BytesIO(payload), mode="r:")
+    except tarfile.TarError as error:
+        pytest.fail(f"tarfile rejected the sparse PAX archive: {type(error).__name__}: {error}")
+    with archive:
         member = archive.next()
         assert member is not None, "tarfile must expose the PAX member"
         assert member.size == 1099511627776, f"tarfile declared size: {member.size}"
