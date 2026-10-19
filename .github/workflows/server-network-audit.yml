@@ -1,0 +1,130 @@
+name: Audit server-side GitHub fetch paths
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: autograder-server-fetch-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Check out the audit revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate audit revision pair
+        id: revisions
+        env:
+          GITHUB_REF: ${{ github.ref }}
+          TARGET_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main ]] || {
+            echo "::error::Network audit must run from main."
+            exit 1
+          }
+          [[ "$TARGET_SHA" =~ ^[a-f0-9]{40}$ ]] || {
+            echo "::error::The audit target must be a full commit SHA."
+            exit 1
+          }
+          BASE_SHA="$(git rev-parse "${TARGET_SHA}^")"
+          [[ "$BASE_SHA" =~ ^[a-f0-9]{40}$ ]] || {
+            echo "::error::Could not resolve the preceding commit."
+            exit 1
+          }
+          git merge-base --is-ancestor "$BASE_SHA" "$TARGET_SHA"
+          printf 'base_sha=%s\n' "$BASE_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Validate benchmark script syntax
+        run: bash -n .github/scripts/network-fetch-audit.sh .github/scripts/network-fetch-audit-runner.sh .github/scripts/run-network-audit.sh
+
+      - name: Fetch read-only server connection details from Doppler
+        uses: DopplerHQ/secrets-fetch-action@cf794d40f721280fa2c068fa4f9e8afbc966e41d
+        id: doppler
+        with:
+          doppler-token: ${{ secrets.DOPPLER_TOKEN }}
+          doppler-project: autograder
+          doppler-config: prd
+          inject-env-vars: false
+
+      - name: Validate SSH credentials and pinned host key
+        env:
+          DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
+          DEPLOY_SSH_USER: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
+          DEPLOY_SSH_PASSWORD: ${{ steps.doppler.outputs.DEPLOY_SSH_PASSWORD }}
+          DEPLOY_SSH_PORT: ${{ steps.doppler.outputs.DEPLOY_SSH_PORT }}
+          DEPLOY_SSH_HOSTKEY: ${{ steps.doppler.outputs.DEPLOY_SSH_HOSTKEY }}
+        run: |
+          set -euo pipefail
+          for name in DEPLOY_SSH_HOST DEPLOY_SSH_USER DEPLOY_SSH_PASSWORD DEPLOY_SSH_PORT DEPLOY_SSH_HOSTKEY; do
+            [[ -n "${!name}" ]] || {
+              echo "::error::Required Doppler secret $name is missing."
+              exit 1
+            }
+          done
+          [[ "$DEPLOY_SSH_PORT" =~ ^[0-9]{1,5}$ ]] || {
+            echo "::error::DEPLOY_SSH_PORT must be a valid TCP port."
+            exit 1
+          }
+          port=$((10#$DEPLOY_SSH_PORT))
+          (( port >= 1 && port <= 65535 )) || {
+            echo "::error::DEPLOY_SSH_PORT must be a valid TCP port."
+            exit 1
+          }
+          [[ "$DEPLOY_SSH_HOSTKEY" =~ ^SHA256:[A-Za-z0-9+/]{43}=?$ ]] || {
+            echo "::error::DEPLOY_SSH_HOSTKEY must be a SHA256 fingerprint."
+            exit 1
+          }
+
+      - name: Install OpenSSH password transport
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq sshpass
+
+      - name: Pin the stored ED25519 host key
+        env:
+          DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
+          DEPLOY_SSH_PORT: ${{ steps.doppler.outputs.DEPLOY_SSH_PORT }}
+          DEPLOY_SSH_HOSTKEY: ${{ steps.doppler.outputs.DEPLOY_SSH_HOSTKEY }}
+        run: |
+          set -euo pipefail
+          scan_file="$RUNNER_TEMP/autograder-network-audit-hostkey-scan"
+          known_hosts_file="$RUNNER_TEMP/autograder-network-audit-known-hosts"
+          ssh-keyscan -T 10 -p "$DEPLOY_SSH_PORT" -t ed25519 "$DEPLOY_SSH_HOST" \
+            > "$scan_file" 2>/dev/null
+          : > "$known_hosts_file"
+          while IFS= read -r key_line; do
+            read -r scanned_host key_type key_data _ <<<"$key_line"
+            fingerprint="$(printf '%s %s\n' "$key_type" "$key_data" \
+              | ssh-keygen -lf - -E sha256 | awk 'NR == 1 { print $2 }')"
+            if [[ "$fingerprint" == "$DEPLOY_SSH_HOSTKEY" ]]; then
+              printf '%s %s %s\n' "$scanned_host" "$key_type" "$key_data" \
+                >> "$known_hosts_file"
+            fi
+          done < "$scan_file"
+          [[ -s "$known_hosts_file" ]] || {
+            echo "::error::The live ED25519 host key does not match the stored fingerprint."
+            exit 1
+          }
+          chmod 0600 "$known_hosts_file"
+          printf 'AUTOGRADER_SSH_KNOWN_HOSTS=%s\n' "$known_hosts_file" >> "$GITHUB_ENV"
+
+      - name: Measure GitHub fetch from the server without deploying
+        env:
+          DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
+          DEPLOY_SSH_USER: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
+          DEPLOY_SSH_PASSWORD: ${{ steps.doppler.outputs.DEPLOY_SSH_PASSWORD }}
+          DEPLOY_SSH_PORT: ${{ steps.doppler.outputs.DEPLOY_SSH_PORT }}
+          GITHUB_TOKEN: ${{ github.token }}
+          TARGET_SHA: ${{ github.sha }}
+          BASE_SHA: ${{ steps.revisions.outputs.base_sha }}
+          AUTOGRADER_REPO_URL: https://github.com/${{ github.repository }}.git
+        run: bash .github/scripts/run-network-audit.sh
