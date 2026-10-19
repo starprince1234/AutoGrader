@@ -1790,7 +1790,7 @@ def test_printable_pax_sparse_bomb_is_rejected_as_a_bomb() -> None:
         )
         try:
             tarfile.TarInfo.fromtarfile(reader)
-        except Exception as detail:
+        except (tarfile.TarError, ValueError, OSError) as detail:
             parser_detail = f"{type(detail).__name__}: {detail}"
         else:
             parser_detail = "low-level header parser accepted the first member"
