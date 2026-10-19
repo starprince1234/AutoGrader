@@ -421,6 +421,14 @@ export function RosterImportPage() {
             <MappingForm preview={preview} />
           ) : isPreviewable(preview.status) || isCommitted(preview.status) ? (
             <PreviewAndConfirm preview={preview} />
+          ) : preview.status === "rejected" ? (
+            <Banner tone="error" testId="import-rejected">
+              {t("import.status.rejected")}
+            </Banner>
+          ) : preview.status === "uploaded" ? (
+            <Banner tone="info" testId="import-uploaded">
+              {t("import.status.uploaded")}
+            </Banner>
           ) : (
             <Banner tone="warn">{t("import.status.validating")}</Banner>
           )}
