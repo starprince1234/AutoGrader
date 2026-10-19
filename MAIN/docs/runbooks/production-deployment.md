@@ -35,7 +35,7 @@ chmod 0600 /etc/autograder/cloudflared.token
 `https://github.com/MetaCubeX/mihomo/releases/download/v1.19.32/mihomo-linux-amd64-compatible-v1.19.32.gz`
 SHA-256：`ba3ce607747a07f948fc35780e108a4a7c7f552a38b9bd4d115f313ebcb89c20`。
 
-使用 Xftp 将二进制压缩包、用户提供的配置（保存名 `autograder-mihomo.yaml`）、[`install-mihomo-autograder.sh`](../scripts/install-mihomo-autograder.sh) 和 [`mihomo-autograder.service`](../deploy/mihomo-autograder.service) 上传到服务器 `/root/`。在服务器 root shell 执行：
+使用 Xftp 将二进制压缩包、用户提供的配置（保存名 `autograder-mihomo.yaml`）、[`install-mihomo-autograder.sh`](../../scripts/install-mihomo-autograder.sh) 和 [`mihomo-autograder.service`](../../deploy/mihomo-autograder.service) 上传到服务器 `/root/`。在服务器 root shell 执行：
 
 ```bash
 bash /root/install-mihomo-autograder.sh \

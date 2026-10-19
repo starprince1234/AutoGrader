@@ -28,6 +28,7 @@ on:
       - "B4/src/**"
       - "MAIN/contracts/**"
       - "MAIN/deploy/**"
+      - "MAIN/docs/runbooks/production-deployment.md"
       - "MAIN/host/**"
       - "MAIN/infra/postgres/**"
       - "MAIN/compose.production.yaml"
