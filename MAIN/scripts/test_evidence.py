@@ -57,15 +57,15 @@ _COUNT = re.compile(r"(\d+)\s+(passed|failed|error|errors|skipped|xfailed|xpasse
 _DURATION = re.compile(r"in\s+([\d.]+)s")
 
 
-#: How each module's suite is actually run. B1 is a Node project, so `uv run pytest` is not
-#: merely wrong there -- it would fail and get recorded as a failing suite. Kept as data rather
-#: than an if-chain so adding a module is one line.
+#: Each Python suite uses the locked workspace environment prepared by CI. B1 is a Node project,
+#: so `uv run pytest` is not merely wrong there -- it would fail and get recorded as a failing
+#: suite. Kept as data rather than an if-chain so adding a module is one line.
 COMMANDS: dict[str, list[str]] = {
     "B1": ["node", "node_modules/vitest/vitest.mjs", "run"],
-    "B2": ["uv", "run", "pytest", "-q"],
-    "B3": ["uv", "run", "pytest", "-q"],
-    "B4": ["uv", "run", "pytest", "-q"],
-    "B5": ["uv", "run", "pytest", "-q"],
+    "B2": ["uv", "run", "--project", str(MAIN_ROOT), "--locked", "pytest", "-q"],
+    "B3": ["uv", "run", "--project", str(MAIN_ROOT), "--locked", "pytest", "-q"],
+    "B4": ["uv", "run", "--project", str(MAIN_ROOT), "--locked", "pytest", "-q"],
+    "B5": ["uv", "run", "--project", str(MAIN_ROOT), "--locked", "pytest", "-q"],
 }
 
 #: vitest's summary lines differ from pytest's; both are parsed so the ledger covers all five
@@ -189,12 +189,27 @@ def run_suite(module: str) -> tuple[int, str, str | None]:
     return result.returncode, (result.stdout or "") + (result.stderr or ""), dsn
 
 
+def failure_diagnostics(output: str) -> list[str]:
+    """Return pytest's concise failed-test identifiers without dumping captured output."""
+    return [
+        line.strip()
+        for line in output.splitlines()
+        if line.lstrip().startswith(("FAILED ", "ERROR "))
+    ]
+
+
 def record(module: str) -> int:
     digest = contract_digest(MAIN_ROOT / "contracts")
     version = declared_contract_version(MAIN_ROOT / "contracts")
     print(f"{module}: running the suite at contract {version} ({digest[:12]}…)")
     exit_code, output, dsn = run_suite(module)
-    counts = parse_summary(output)
+    try:
+        counts = parse_summary(output)
+    except SystemExit:
+        diagnostics = failure_diagnostics(output)
+        for line in diagnostics[:20]:
+            print(f"  diagnostic: {line[:240]}")
+        raise
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
     document = {
         "module": module,
@@ -210,6 +225,8 @@ def record(module: str) -> int:
     path.write_text(json.dumps(document, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"  recorded {path.relative_to(REPO_ROOT)}")
     print(f"  exit={exit_code}  {counts}")
+    for line in failure_diagnostics(output)[:20]:
+        print(f"  failed test: {line[:240]}")
     tail = [line for line in output.splitlines() if line.strip()][-3:]
     for line in tail:
         print(f"    | {line[:160]}")

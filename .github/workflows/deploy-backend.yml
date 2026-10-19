@@ -30,6 +30,7 @@ on:
       - "MAIN/pyproject.toml"
       - "MAIN/sdk/**"
       - "MAIN/scripts/production-prepare.sh"
+      - "MAIN/scripts/test_evidence.py"
       - "MAIN/scripts/production-preflight.sh"
       - "MAIN/scripts/bootstrap-nsjail.sh"
       - "MAIN/scripts/bootstrap-cloudflared.sh"
