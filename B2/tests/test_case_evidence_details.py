@@ -10,7 +10,7 @@
    不含期望输出内容。
 4. **受保护值在学生视图里被裁掉**：`artifacts.expected_sha256` 对未声明可见的用例必须置空，
    而 `actual_sha256` 与文件清单保留。
-5. **沙箱自证的三态**：Windows（无 nsjail）上每一项都是 `not_checked` 且**不创建任何进程**；
+5. **沙箱自证的三态**：注入沙箱不可用探测时每一项都是 `not_checked` 且**不创建任何进程**；
    逃逸成功记 `found`、被挡住记 `not_found`、无法归因记 `not_checked`。
 
 纯逻辑部分（cgroup 解析、解释规则、金丝雀判定）不依赖数据库，因此不挂 `requires_postgres`。
@@ -70,7 +70,7 @@ from autograder_b2.runner.cgroup import (
     read_cgroup_v2_peaks,
 )
 from autograder_b2.runner.comparator import first_differing_line
-from autograder_b2.runner.policy import RunnerPolicy
+from autograder_b2.runner.policy import RunnerPolicy, SandboxAvailability, SandboxCheck
 from autograder_b2.runner.run_case import RunFacts, evidence_digest_of
 
 BASE = datetime(2026, 9, 18, 10, 0, 0, tzinfo=UTC)
@@ -383,9 +383,15 @@ def test_first_differing_line_is_one_based_and_handles_length_differences() -> N
 
 
 def test_canary_on_a_host_without_nsjail_reports_not_checked_and_runs_nothing(
-    tmp_path: pathlib.Path,
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Windows/无 nsjail 宿主：每一项都是 `not_checked`，且**没有任何进程被创建**。"""
+    """不可用探测：每一项都是 `not_checked`，且**没有任何进程被创建**。"""
+    unavailable = SandboxAvailability(
+        available=False,
+        checks=(SandboxCheck(name="nsjail", ok=False, detail="nsjail is not executable"),),
+        reason="nsjail is not executable",
+    )
+    monkeypatch.setattr("autograder_b2.canary.probe_sandbox", lambda _policy: unavailable)
     launched: list[object] = []
 
     class _Launcher:
