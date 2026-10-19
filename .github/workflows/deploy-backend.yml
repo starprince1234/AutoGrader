@@ -109,7 +109,7 @@ jobs:
       - name: Prepare B4 test database
         working-directory: B4
         env:
-          DATABASE_URL: postgresql+psycopg://autograder_b4:change-me@127.0.0.1:55435/autograder
+          DATABASE_URL: postgresql+psycopg://autograder_platform:change-me-local-only@127.0.0.1:55435/autograder
           B4_ADMIN_DATABASE_URL: postgresql+psycopg://autograder_platform:change-me-local-only@127.0.0.1:55435/autograder
           B4_DB_PASSWORD: change-me
         run: |
