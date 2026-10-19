@@ -1676,7 +1676,7 @@ def printable_tar(*, member: str = "main.py", payload: bytes = b"print(1)\n") ->
 
 
 def tar_member_header(*, name: str, size: int, type_flag: bytes) -> bytes:
-    """同样的"可打印"头，用于拼 PAX 扩展头与成员头。"""
+    """PAX 与成员头：数值字段可打印，USTAR magic 按格式带终止 NUL。"""
     header = bytearray(b" " * _TAR_BLOCK)
     encoded = name.encode("ascii")
     header[0 : len(encoded)] = encoded
@@ -1687,6 +1687,8 @@ def tar_member_header(*, name: str, size: int, type_flag: bytes) -> bytes:
     header[136:148] = b"00000000000 "
     header[148:156] = b" " * 8
     header[156:157] = type_flag
+    header[257:263] = b"ustar\x00"
+    header[263:265] = b"00"
     header[148:156] = f"{sum(header):07o} ".encode()
     return bytes(header)
 
@@ -1760,10 +1762,15 @@ def test_printable_tar_is_rejected_as_a_container(
 
 
 def test_printable_pax_sparse_bomb_is_rejected_as_a_bomb() -> None:
-    """P1 复核最小复现之二：可打印的 PAX sparse 炸弹（声明 1 TiB，归档约 2 KB）。"""
+    """P1 复核最小复现之二：可打印 PAX sparse 数据声明 1 TiB，归档约 2 KB。"""
     payload = pax_sparse_bomb()
-    assert b"\x00" not in payload and plain_text_problem(payload) is None, (
-        "the PAX bomb fixture must remain printable text"
+    header_size = _TAR_BLOCK + _TAR_BLOCK
+    nul_positions = [index for index, byte in enumerate(payload) if byte == 0]
+    assert nul_positions == [262, header_size + 262], (
+        "the only NUL bytes should be the two USTAR magic terminators"
+    )
+    assert plain_text_problem(payload.replace(b"\x00", b" ")) is None, (
+        "the PAX metadata and sparse data must remain printable"
     )
     try:
         with tarfile.open(fileobj=io.BytesIO(payload), mode="r|") as archive:
