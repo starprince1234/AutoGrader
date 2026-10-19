@@ -58,8 +58,8 @@ docker build -f verify/linux-nsjail/Dockerfile -t autograder-b2-nsjail:local .
 
    也可以用 `--build-arg BASE_IMAGE=<可访问镜像源>` 覆盖。
 
-2. **pip 索引**：默认走清华镜像（与宿主 `pip.ini` 一致），可用
-   `--build-arg PIP_INDEX=https://pypi.org/simple` 覆盖。
+2. **Python 依赖索引**：镜像按 `B2/uv.lock` 使用官方 PyPI；需要指定其他索引时传入
+   `--build-arg UV_INDEX_URL=<index-url>`。
 
 **nsjail 不是 apt 包**：`apt-cache search nsjail` 在 Debian bookworm 官方源里返回**空**
 （只有 `firejail` / `jailkit`）。因此镜像**从源码构建 nsjail 3.4**（tag 钉死），

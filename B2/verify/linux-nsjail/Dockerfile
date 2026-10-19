@@ -30,12 +30,9 @@
 ARG BASE_IMAGE=python:3.12-slim-bookworm
 FROM ${BASE_IMAGE}
 
+ARG UV_INDEX_URL=https://pypi.org/simple
 # nsjail 上游发布标签（钉死版本；升级需同步 README 的实测矩阵）
 ARG NSJAIL_VERSION=3.4
-# pip 索引：本机 PyPI 直连不可用，默认走清华镜像（宿主 pip.ini 同样配置）。
-# 在可直连 PyPI 的环境用 --build-arg PIP_INDEX=https://pypi.org/simple 覆盖。
-ARG PIP_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple
-ARG PIP_TRUSTED_HOST=pypi.tuna.tsinghua.edu.cn
 
 COPY --from=ghcr.io/astral-sh/uv:0.13.1 /uv /uvx /usr/local/bin/
 
@@ -127,8 +124,7 @@ RUN set -eux; \
 COPY B2/pyproject.toml B2/uv.lock /opt/autograder/B2/
 COPY MAIN/sdk /opt/autograder/MAIN/sdk
 ENV UV_PROJECT_ENVIRONMENT=/opt/autograder/B2/.venv
-ENV UV_INDEX_URL=${PIP_INDEX}
-ENV UV_INSECURE_HOST=${PIP_TRUSTED_HOST}
+ENV UV_INDEX_URL=${UV_INDEX_URL}
 ENV PATH=/opt/autograder/B2/.venv/bin:${PATH}
 RUN set -eux; \
     uv sync --project /opt/autograder/B2 --frozen --all-groups --no-install-project; \
