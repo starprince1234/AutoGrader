@@ -40,6 +40,7 @@ from autograder_b2.evaluation.ports import CaseDescriptor, ComparisonPolicy, Pac
 from autograder_b2.integration.adapters import StaticSecurityDecider
 from autograder_b2.security import allows_dynamic_execution, decide_static, terminal_reason
 from autograder_b2.static import analyze_static
+from autograder_b2.static import checker as static_checker
 from tests.conftest import requires_postgres
 
 pytestmark = requires_postgres
@@ -516,7 +517,7 @@ def test_probe_std3_not_found_completes_while_not_checked_fails(
 
 
 def test_probe_std3_partial_static_coverage_gap_is_visible_end_to_end(
-    engine: Engine, probe_root: pathlib.Path
+    engine: Engine, probe_root: pathlib.Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """**修复后的探针**：静态层"部分未检查"必须让运行 fail-closed，且在端到端**可见**。
 
@@ -530,6 +531,7 @@ def test_probe_std3_partial_static_coverage_gap_is_visible_end_to_end(
     派生，schema 里没有承载检查状态的字段 ⇒ **报告本身**仍表达不了覆盖状态；"未检查"这一事实由
     SSE 帧消息（落 `progress_events`）与运行终态 `failed + infrastructure_error` 表达。
     """
+    monkeypatch.setattr(static_checker.bash_checker, "probe_bash", lambda: None)
     workspace = _materialize(probe_root, {"main.sh": CLEAN_BASH})
     result = analyze_static(workspace=workspace, files=["main.sh"], language="bash")
     syntax = next(item for item in result.checks if item.checker == "bash_syntax")

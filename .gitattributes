@@ -1,2 +1,4 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+# Contract digests hash file bytes; keep these bytes identical on Windows and Linux.
+MAIN/contracts/** text eol=lf

@@ -97,6 +97,20 @@ jobs:
             (cd "$project" && uv run --locked ruff check .)
           done
 
+      - name: Build nsjail for Linux sandbox tests
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            bison flex g++ git kconfig-frontends libcap-dev libnl-3-dev \
+            libnl-route-3-dev libprotobuf-dev libseccomp-dev make protobuf-compiler pkg-config
+          build_dir="$(mktemp -d)"
+          trap 'rm -rf -- "$build_dir"' EXIT
+          git -c http.version=HTTP/1.1 clone --depth 1 --branch 3.4 \
+            https://github.com/google/nsjail.git "$build_dir/nsjail"
+          make -C "$build_dir/nsjail" -j"$(nproc)"
+          sudo install -o root -g root -m 0755 "$build_dir/nsjail/nsjail" /usr/bin/nsjail
+          /usr/bin/nsjail --help >/dev/null
+
       - name: Prepare non-secret conformance test environment
         run: cp MAIN/.env.example MAIN/.env.integration
 

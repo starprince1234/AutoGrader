@@ -1760,16 +1760,18 @@ def test_printable_tar_is_rejected_as_a_container(
 def test_printable_pax_sparse_bomb_is_rejected_as_a_bomb() -> None:
     """P1 复核最小复现之二：可打印的 PAX sparse 炸弹（声明 1 TiB，线上约 2 KB）。"""
     payload = pax_sparse_bomb()
-    assert b"\x00" not in payload and plain_text_problem(payload) is None
-    assert tarfile.is_tarfile(io.BytesIO(payload))
+    assert b"\x00" not in payload and plain_text_problem(payload) is None, (
+        "the PAX bomb fixture must remain printable text"
+    )
+    assert tarfile.is_tarfile(io.BytesIO(payload)), "tarfile must recognize the sparse PAX archive"
     with tarfile.open(fileobj=io.BytesIO(payload), mode="r:") as archive:
         member = archive.next()
-        assert member is not None
-        assert member.size == 1099511627776, "tarfile 自己读到的声明展开量"
+        assert member is not None, "tarfile must expose the PAX member"
+        assert member.size == 1099511627776, f"tarfile declared size: {member.size}"
 
     verdict = sniff_content(payload, declared_size_limit=LIMITS.max_total_bytes)
     assert verdict.kind == "archive", verdict
-    assert verdict.bomb is True, verdict
+    assert verdict.bomb is True, f"sparse PAX archive should be classified as a bomb: {verdict}"
     assert verdict.declared_size == 1099511627776
 
 
