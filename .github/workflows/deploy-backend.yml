@@ -265,6 +265,56 @@ jobs:
           chmod 0600 "$known_hosts_file"
           printf 'AUTOGRADER_SSH_KNOWN_HOSTS=%s\n' "$known_hosts_file" >> "$GITHUB_ENV"
 
+      - name: Clear only empty directories from the interrupted first attempt
+        env:
+          DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
+          DEPLOY_SSH_USER: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
+          DEPLOY_SSH_PASSWORD: ${{ steps.doppler.outputs.DEPLOY_SSH_PASSWORD }}
+          DEPLOY_SSH_PORT: ${{ steps.doppler.outputs.DEPLOY_SSH_PORT }}
+        run: |
+          set -euo pipefail
+          bash .github/scripts/deploy-ssh.sh ssh "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
+            bash -s <<'REMOTE'
+          set -euo pipefail
+          root=/opt/autograder
+          if [[ ! -e "$root" && ! -L "$root" ]]; then
+            exit 0
+          fi
+          [[ -d "$root" && ! -L "$root" ]] || {
+            echo "::error::/opt/autograder is not a real directory."
+            exit 1
+          }
+          if [[ -e "$root/current" || -L "$root/current" ]]; then
+            exit 0
+          fi
+          unexpected="$(find "$root" -mindepth 1 -maxdepth 1 \
+            ! -name incoming ! -name staging ! -name releases -print -quit)"
+          [[ -z "$unexpected" ]] || {
+            echo "::error::/opt/autograder contains data from another state; refusing cleanup."
+            exit 1
+          }
+          for directory in incoming staging releases; do
+            path="$root/$directory"
+            if [[ -e "$path" || -L "$path" ]]; then
+              [[ -d "$path" && ! -L "$path" ]] || {
+                echo "::error::$path is not a real directory."
+                exit 1
+              }
+              [[ -z "$(find "$path" -mindepth 1 -print -quit)" ]] || {
+                echo "::error::$path is not empty; refusing cleanup."
+                exit 1
+              }
+            fi
+          done
+          for directory in incoming staging releases; do
+            path="$root/$directory"
+            if [[ -d "$path" ]]; then
+              rmdir -- "$path"
+            fi
+          done
+          rmdir -- "$root"
+          REMOTE
+
       - name: Upload read-only server preflight
         env:
           DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
@@ -393,4 +443,11 @@ jobs:
           if [[ -d "$stage" && "$stage" == /opt/autograder/staging/* ]]; then
             rm -rf -- "$stage"
           fi
+          for directory in /opt/autograder/incoming /opt/autograder/staging \
+              /opt/autograder/releases /opt/autograder; do
+            if [[ -d "$directory" && ! -L "$directory" ]] && \
+                [[ -z "$(find "$directory" -mindepth 1 -print -quit)" ]]; then
+              rmdir -- "$directory"
+            fi
+          done
           REMOTE

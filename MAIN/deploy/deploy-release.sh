@@ -80,6 +80,12 @@ rollback() {
             fi
         fi
 
+        current_after_rollback="$(readlink -f "$root/current" 2>/dev/null || true)"
+        if [[ -d "$release" && "$release" == "$root/releases/"* && \
+            "$release" != "$old_release" && "$current_after_rollback" != "$release" ]]; then
+            rm -rf -- "$release"
+        fi
+
         if [[ "$restore_ok" == true && "$api_was_active" == true && -n "$old_release" ]]; then
             systemctl restart autograder.service >/dev/null 2>&1
         fi
