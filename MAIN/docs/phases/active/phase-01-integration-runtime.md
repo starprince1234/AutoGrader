@@ -1188,4 +1188,6 @@ metadata 为 `root:cloudflared 0640`。Cloudflare connector 查询为 inactive�
 
 run `39263657374` 证明 nsjail 检查已通过、`uv sync` 已在 release 下创建 Python 3.12 虚拟环境并安装 50 个包，PostgreSQL/NATS 容器也达到 healthy；但以 `autograder` 执行迁移准备时，`[ -x "$release/MAIN/.venv/bin/python" ]` 检查失败。该检查发生在 `chown -R root:root "$release"` 之后；uv 的 venv 解释器链接到 release 外的专用 Python runtime，因此递归改属主可能穿过链接破坏目标可执行性。部署现在先把 `/opt/autograder/python` 归属恢复为 `autograder`，再用 `chown --no-dereference --recursive` 锁定 release，避免改动链接目标。下一轮验证该修复与 readiness。
 
+失败后只读预检 `39265103938` / `39265562437` 检查到 `/opt/autograder/python` 已非空，于是停止部署。受限元数据清单显示内容为 uv 的 `.gitignore`、`.lock`、空 `.temp`、CPython 3.12 稳定别名 symlink 与单一版本目录（含 BUILD、bin/include/lib/share；解释器为私有 `0700`）；没有读取文件内容。owner/group 字段在 Actions 日志中被屏蔽。预检现在仅接受这一结构，核对 runtime root、版本别名、文件属主及权限，并允许前次递归改属主触及的解释器文件归 root；部署开始前会修复为 `autograder` 所有。未知条目或其他 owner 仍阻断。上述新预检规则与发布脚本修正尚待下一轮执行验证。
+
 本次改动的最终验证与部署结果待记录；全模块验证复用 `39247432392` 已通过的 verify job，仅执行部署脚本语法、归档体积/内容及生产部署与 readiness 检查。

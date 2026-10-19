@@ -14,6 +14,65 @@ require_directory() {
     [[ "$(stat -c %a "$path")" == "$mode" ]] || fail "$path must have mode $mode"
 }
 
+validate_managed_python_runtime() {
+    local runtime_root="$1"
+    local autograder_uid autograder_gid file alias_target version_dir python_executable unexpected
+    local -a aliases=() versions=()
+
+    autograder_uid="$(id -u autograder)"
+    autograder_gid="$(id -g autograder)"
+    for file in .gitignore .lock; do
+        file="$runtime_root/$file"
+        [[ -f "$file" && ! -L "$file" ]] || fail "$file is not a managed Python runtime file"
+        [[ "$(stat -c %u:%g "$file")" == "$autograder_uid:$autograder_gid" ]] || \
+            fail "$file is not owned by the AutoGrader user"
+    done
+
+    require_directory "$runtime_root/.temp" autograder autograder 700
+    [[ -z "$(find "$runtime_root/.temp" -mindepth 1 -print -quit)" ]] || \
+        fail "$runtime_root/.temp contains an incomplete Python download"
+
+    mapfile -t aliases < <(find "$runtime_root" -mindepth 1 -maxdepth 1 \
+        -type l -name 'cpython-3.12-linux-*-gnu' -print | LC_ALL=C sort)
+    mapfile -t versions < <(find "$runtime_root" -mindepth 1 -maxdepth 1 \
+        -type d -name 'cpython-3.12.*-linux-*-gnu' -print | LC_ALL=C sort)
+    [[ "${#aliases[@]}" == 1 && "${#versions[@]}" == 1 ]] || \
+        fail "$runtime_root does not contain one managed CPython 3.12 installation"
+
+    version_dir="${versions[0]}"
+    alias_target="$(readlink -f "${aliases[0]}")"
+    [[ "$alias_target" == "$version_dir" ]] || \
+        fail "$runtime_root CPython alias does not target its managed installation"
+    [[ "$(stat -c %u:%g "${aliases[0]}")" == "$autograder_uid:$autograder_gid" ]] || \
+        fail "$runtime_root CPython alias is not owned by the AutoGrader user"
+    require_directory "$version_dir" autograder autograder 700
+
+    unexpected="$(find "$runtime_root" -mindepth 1 -maxdepth 1 \
+        ! -name .gitignore ! -name .lock ! -name .temp \
+        ! -name 'cpython-3.12-linux-*-gnu' \
+        ! -name 'cpython-3.12.*-linux-*-gnu' -print -quit)"
+    [[ -z "$unexpected" ]] || fail "$runtime_root contains an unrecognized runtime entry"
+
+    for directory in bin include lib share; do
+        require_directory "$version_dir/$directory" autograder autograder 700
+    done
+    [[ -f "$version_dir/BUILD" && ! -L "$version_dir/BUILD" ]] || \
+        fail "$version_dir is missing the uv-managed Python build marker"
+    python_executable="$version_dir/bin/python3.12"
+    [[ -f "$python_executable" && -x "$python_executable" && \
+        "$(stat -c %a "$python_executable")" == 700 ]] || \
+        fail "$python_executable is not a private executable"
+    [[ "$(stat -c %u "$python_executable")" == "$autograder_uid" || \
+        "$(stat -c %u "$python_executable")" == 0 ]] || \
+        fail "$python_executable has an unexpected owner"
+    unexpected="$(find "$version_dir" -mindepth 1 \
+        ! -uid "$autograder_uid" ! -path "$python_executable" -print -quit)"
+    [[ -z "$unexpected" ]] || \
+        fail "$version_dir contains files outside the AutoGrader-owned runtime"
+
+    printf '[autograder-preflight] recognized uv-managed CPython 3.12 runtime; deployment will normalize ownership\n'
+}
+
 sha="${1:-}"
 run_attempt="${2:-}"
 if [[ -n "$sha" || -n "$run_attempt" ]]; then
@@ -111,18 +170,32 @@ else
     if [[ -e "$root" ]]; then
         require_directory "$root" root root 755
         partial_first_deployment=true
+        if [[ -n "$(find "$root/python" -mindepth 1 -print -quit 2>/dev/null)" ]]; then
+            printf '[autograder-preflight] interrupted first-deployment service metadata:\n'
+            docker compose ls --all --format json | python3 -c \
+                'import json,sys; [print("  compose {} {} {}".format(p.get("Name"),p.get("Status"),p.get("ConfigFiles"))) for p in json.load(sys.stdin) if p.get("Name") == "autograder"]' || true
+            docker ps -a --filter label=com.docker.compose.project=autograder \
+                --format '  container {{.Names}} {{.Status}} {{.Label "com.docker.compose.service"}} {{.Label "com.docker.compose.project.config_files"}}' || true
+            for volume in autograder_production_postgres autograder_production_nats; do
+                docker volume inspect --format '  volume {{.Name}} {{json .Labels}}' "$volume" 2>/dev/null || true
+            done
+            for path in /etc/systemd/system/autograder.service \
+                /var/lib/autograder/backups /var/cache/autograder/uv; do
+                if [[ -e "$path" && -d "$path" ]]; then
+                    find "$path" -mindepth 1 -maxdepth 2 \
+                        -printf '  %p %y %m %u:%g %s bytes\n' | LC_ALL=C sort
+                elif [[ -e "$path" ]]; then
+                    stat -c '  %n %F %a %U:%G %s bytes' "$path"
+                    grep -E '^(Description|User|Group|WorkingDirectory|EnvironmentFile|ExecStart)=' \
+                        "$path" || true
+                fi
+            done
+        fi
         [[ -e "$root/python" || -L "$root/python" ]] || \
             fail "$root exists without the interrupted deployment's Python runtime directory"
         require_directory "$root/python" autograder autograder 750
-        if [[ -n "$(find "$root/python" -mindepth 1 -print -quit)" ]]; then
-            printf '[autograder-preflight] existing Python runtime metadata (path type mode owner:group):\n'
-            find "$root/python" -mindepth 1 -maxdepth 2 \
-                -printf '  %P %y %m %u:%g\n' | LC_ALL=C sort
-            find "$root/python" -mindepth 1 -maxdepth 6 -type f \
-                \( -name python -o -name 'python3*' \) \
-                -printf '  executable %P %m %u:%g\n' | LC_ALL=C sort
-            fail "$root contains a populated Python runtime without a current release"
-        fi
+        [[ -z "$(find "$root/python" -mindepth 1 -print -quit)" ]] || \
+            validate_managed_python_runtime "$root/python"
         unexpected="$(find "$root" -mindepth 1 -maxdepth 1 \
             ! -name python ! -name incoming ! -name staging ! -name releases -print -quit)"
         [[ -z "$unexpected" ]] || fail "$root contains an unrecognized first-deployment entry"
