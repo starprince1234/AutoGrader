@@ -108,11 +108,14 @@ jobs:
 
       - name: Check sparse PAX parsing in the locked B2 image
         run: |
-          docker run --rm --network none \
+          docker run --rm --network host \
             --volume "$GITHUB_WORKSPACE:/work" \
             --workdir /work/B2 \
             --tmpfs /work/B2/.pytest-tmp \
             --tmpfs /work/B2/.pytest_cache \
+            --env DATABASE_URL=postgresql+psycopg://autograder_platform:change-me-local-only@127.0.0.1:55433/autograder \
+            --env B2_TEST_DATABASE_URL=postgresql+psycopg://autograder_platform:change-me-local-only@127.0.0.1:55433/autograder \
+            --env B2_TEST_NATS_URL=nats://127.0.0.1:54223 \
             --env PYTHONPATH=/work/B2/src:/work/MAIN/sdk/src \
             autograder-b2-nsjail:ci \
             /opt/autograder/B2/.venv/bin/python -m pytest -q \
