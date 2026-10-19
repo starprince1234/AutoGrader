@@ -119,28 +119,23 @@ RUN set -eux; \
     test -x /usr/local/bin/nsjail
 
 # -----------------------------------------------------------------------------
-# 层 4：验收所需的 Python 依赖。
+# 层 4：按 B2 锁文件安装完整验收环境。
 #
-# pytest 驱动 `tests/linux/**`；其余是**项目运行期依赖**（与 `pyproject.toml` 的 dependencies 对齐），
-# 因为 `tests/linux/test_nsjail_runner_acceptance.py` 要在容器内**导入真实的 `src/autograder_b2/**`**：
-# 把真实 runner（`run_case` + `PosixNsjailLauncher`）与真实编排层接进真 nsjail 跑验收，
-# 而不是只在容器外读配置（此前那句"本镜像不导入 src/**"的假设已作废）。
-# 构建期自检只导入第三方依赖；`src/**` 由 `PYTHONPATH` 在运行时提供（镜像不 COPY 源码）。
-# 若本环境访问不到 PyPI 镜像（本机实测过 Tsinghua 镜像 TLS EOF），构建会在本层失败——此时改用
-# `verify/linux-nsjail/README.md` 第 3.3 节的**离线交叉安装**：在宿主执行
-#   uv pip install --target .pytest-tmp/linux-site --python-platform x86_64-unknown-linux-gnu ...
-# 再用 `-e PYTHONPATH=/work/B2/src:/work/B2/.pytest-tmp/linux-site` 跑容器（依赖不进仓库）。
+# `tests/linux/**` 与完整 B2 套件共用同一个锁定环境；B2 的源码由运行时挂载的工作区提供，
+# 避免镜像源码与当前测试版本分叉。SDK 源码在构建时复制，用于按 B2 锁文件解析本地依赖。
 # -----------------------------------------------------------------------------
+COPY B2/pyproject.toml B2/uv.lock /opt/autograder/B2/
+COPY MAIN/sdk /opt/autograder/MAIN/sdk
+ENV UV_PROJECT_ENVIRONMENT=/opt/autograder/B2/.venv
+ENV UV_INDEX_URL=${PIP_INDEX}
+ENV UV_INSECURE_HOST=${PIP_TRUSTED_HOST}
+ENV PATH=/opt/autograder/B2/.venv/bin:${PATH}
 RUN set -eux; \
-    pip install --no-cache-dir \
-        --index-url "${PIP_INDEX}" \
-        --trusted-host "${PIP_TRUSTED_HOST}" \
-        pytest sqlalchemy "psycopg[binary]" \
-        "fastapi>=0.115,<1" "jsonschema>=4.23,<5" "pyjwt>=2.10,<3" \
-        "cryptography>=44,<47" "openpyxl>=3.1,<4" "pydantic>=2.10,<3"; \
-    python3 -c "import sys, pytest, sqlalchemy, psycopg, fastapi, jsonschema, jwt, cryptography, openpyxl, pydantic; \
+    uv sync --project /opt/autograder/B2 --locked --all-groups --no-install-project; \
+    /opt/autograder/B2/.venv/bin/python -c "import sys, pytest, sqlalchemy, psycopg, fastapi, jsonschema, jwt, cryptography, openpyxl, pydantic, httpx; \
 print('python', sys.version.split()[0]); \
 print('pytest', pytest.__version__); \
+print('httpx', httpx.__version__); \
 print('sqlalchemy', sqlalchemy.__version__); \
 print('psycopg', psycopg.__version__); \
 print('fastapi', fastapi.__version__); \

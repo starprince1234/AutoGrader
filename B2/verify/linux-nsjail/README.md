@@ -30,7 +30,7 @@ Linux 命名空间与 cgroup v2 都不存在（`docs/adr/ADR-0002-sandbox-execut
 | cgroup 控制器 | `cat /sys/fs/cgroup/cgroup.controllers` → `cpuset cpu io memory hugetlb pids rdma` |
 | 自身 cgroup | `0::/docker/<容器 id>`（`--cgroupns=host` 使容器看到宿主层级） |
 | 资源 | `nproc`=32，`MemTotal`≈16 GB（宿主 WSL2 VM 规模） |
-| Python | 3.12.14；pytest 9.1.1；sqlalchemy 2.0.54；psycopg 3.3.5 |
+| Python | 3.12；依赖由 `B2/uv.lock` 锁定（pytest 8.4.2、SQLAlchemy 2.0.53、psycopg 3.3.5） |
 | nsjail | 3.4（源码构建，见 §2）。`nsjail --help` 首行见下方代码块 |
 
 ```text
