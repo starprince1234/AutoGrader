@@ -1676,21 +1676,15 @@ def printable_tar(*, member: str = "main.py", payload: bytes = b"print(1)\n") ->
 
 
 def tar_member_header(*, name: str, size: int, type_flag: bytes) -> bytes:
-    """PAX 与成员头：数值字段可打印，USTAR magic 按格式带终止 NUL。"""
-    header = bytearray(b" " * _TAR_BLOCK)
-    encoded = name.encode("ascii")
-    header[0 : len(encoded)] = encoded
-    header[100:108] = b"0000644 "
-    header[108:116] = b"0000000 "
-    header[116:124] = b"0000000 "
-    header[124:136] = f"{size:011o} ".encode()
-    header[136:148] = b"00000000000 "
-    header[148:156] = b" " * 8
-    header[156:157] = type_flag
-    header[257:263] = b"ustar\x00"
-    header[263:265] = b"00"
-    header[148:156] = f"{sum(header):07o} ".encode()
-    return bytes(header)
+    """用标准库生成校验和与 USTAR 字段都规范的头。"""
+    header = tarfile.TarInfo(name)
+    header.mode = 0o644
+    header.uid = 0
+    header.gid = 0
+    header.size = size
+    header.mtime = 0
+    header.type = type_flag
+    return header.tobuf(format=tarfile.PAX_FORMAT)
 
 
 def pax_record(keyword: str, value: str) -> bytes:
@@ -1764,12 +1758,10 @@ def test_printable_tar_is_rejected_as_a_container(
 def test_printable_pax_sparse_bomb_is_rejected_as_a_bomb() -> None:
     """P1 复核最小复现之二：可打印 PAX sparse 数据声明 1 TiB，归档约 2 KB。"""
     payload = pax_sparse_bomb()
-    header_size = _TAR_BLOCK + _TAR_BLOCK
-    nul_positions = [index for index, byte in enumerate(payload) if byte == 0]
-    assert nul_positions == [262, header_size + 262], (
-        "the only NUL bytes should be the two USTAR magic terminators"
-    )
-    assert plain_text_problem(payload.replace(b"\x00", b" ")) is None, (
+    pax_data = payload[_TAR_BLOCK : 2 * _TAR_BLOCK]
+    sparse_data = payload[3 * _TAR_BLOCK :]
+    assert b"\x00" not in pax_data + sparse_data
+    assert plain_text_problem(pax_data + sparse_data) is None, (
         "the PAX metadata and sparse data must remain printable"
     )
     try:
