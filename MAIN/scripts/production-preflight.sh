@@ -73,6 +73,10 @@ unexpected_config="$(find /etc/autograder -mindepth 1 -maxdepth 1 \
 
 [[ -s /etc/autograder/cloudflared.token ]] || \
     fail "install the Cloudflare Tunnel token at /etc/autograder/cloudflared.token first"
+token_size="$(stat -c %s /etc/autograder/cloudflared.token)"
+[[ "$token_size" =~ ^[0-9]+$ ]] || fail "could not determine the Tunnel token size"
+(( token_size >= 100 )) || \
+    fail "the Tunnel token is too short; use the Connector Token, not the Tunnel ID"
 token_owner="$(stat -c %u /etc/autograder/cloudflared.token)"
 token_mode="$(stat -c %a /etc/autograder/cloudflared.token)"
 [[ "$token_owner" == "0" ]] || fail "the Tunnel token must be owned by root"
@@ -103,13 +107,37 @@ else
         fail "$root already exists without an AutoGrader current release"
     fi
 
-    for unit in autograder.service cloudflared.service; do
-        if systemctl cat "$unit" >/dev/null 2>&1; then
-            fail "$unit already exists without an AutoGrader current release"
-        fi
-    done
+    if systemctl cat autograder.service >/dev/null 2>&1; then
+        fail "autograder.service already exists without an AutoGrader current release"
+    fi
+    cloudflared_unit_managed=false
+    cloudflared_unit=/etc/systemd/system/cloudflared.service
+    if systemctl cat cloudflared.service >/dev/null 2>&1; then
+        unit_path="$(systemctl show -p FragmentPath --value cloudflared.service)"
+        [[ "$unit_path" == "$cloudflared_unit" && -f "$cloudflared_unit" && ! -L "$cloudflared_unit" ]] || \
+            fail "cloudflared.service is not the dedicated AutoGrader Tunnel unit"
+        for required_setting in \
+            "Description=Cloudflare Tunnel connector for AutoGrader API" \
+            "User=cloudflared" \
+            "Group=cloudflared" \
+            "StateDirectory=cloudflared" \
+            "ExecStartPre=/usr/bin/test -s /etc/autograder/cloudflared.token" \
+            "ExecStart=/usr/bin/cloudflared tunnel --no-autoupdate run --token-file /etc/autograder/cloudflared.token" \
+            "ProtectSystem=strict" \
+            "ProtectHome=true" \
+            "NoNewPrivileges=true"; do
+            grep -Fqx "$required_setting" "$cloudflared_unit" || \
+                fail "cloudflared.service is missing its dedicated AutoGrader setting"
+        done
+        cloudflared_unit_managed=true
+    elif [[ -e "$cloudflared_unit" || -L "$cloudflared_unit" ]]; then
+        fail "$cloudflared_unit exists but is not loaded by systemd"
+    fi
     for user in autograder cloudflared; do
         if id "$user" >/dev/null 2>&1; then
+            if [[ "$user" == cloudflared && "$cloudflared_unit_managed" == true ]]; then
+                continue
+            fi
             fail "system user $user already exists without an AutoGrader current release"
         fi
     done
@@ -125,11 +153,15 @@ else
     if [[ -e /etc/autograder/runtime.env || -e /etc/autograder/setup.env ]]; then
         fail "/etc/autograder already contains an environment file without an AutoGrader current release"
     fi
-    for path in /var/lib/autograder /var/lib/cloudflared; do
-        if [[ -e "$path" || -L "$path" ]]; then
-            fail "$path already exists without an AutoGrader current release"
-        fi
-    done
+    if [[ -e /var/lib/autograder || -L /var/lib/autograder ]]; then
+        fail "/var/lib/autograder already exists without an AutoGrader current release"
+    fi
+    if [[ -e /var/lib/cloudflared || -L /var/lib/cloudflared ]]; then
+        [[ "$cloudflared_unit_managed" == true && -d /var/lib/cloudflared && ! -L /var/lib/cloudflared ]] || \
+            fail "/var/lib/cloudflared exists without the dedicated AutoGrader Tunnel unit"
+        [[ "$(stat -c %U /var/lib/cloudflared)" == cloudflared ]] || \
+            fail "/var/lib/cloudflared is not owned by the cloudflared service user"
+    fi
 fi
 
 if [[ "$first_deployment" == true ]]; then
