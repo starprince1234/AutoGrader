@@ -243,6 +243,11 @@ def failure_diagnostics(output: str) -> list[str]:
     ]
 
 
+def failure_details(output: str) -> list[str]:
+    """Return pytest assertion lines without printing the captured test logs."""
+    return [line.strip() for line in output.splitlines() if line.lstrip().startswith("E ")]
+
+
 def record(module: str) -> int:
     digest = contract_digest(MAIN_ROOT / "contracts")
     version = declared_contract_version(MAIN_ROOT / "contracts")
@@ -272,6 +277,9 @@ def record(module: str) -> int:
     print(f"  exit={exit_code}  {counts}")
     for line in failure_diagnostics(output)[:20]:
         print(f"  failed test: {line[:240]}")
+    if exit_code != 0:
+        for line in failure_details(output)[:40]:
+            print(f"  failure detail: {line[:400]}")
     tail = [line for line in output.splitlines() if line.strip()][-3:]
     for line in tail:
         print(f"    | {line[:160]}")
