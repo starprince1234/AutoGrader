@@ -45,11 +45,14 @@ deployment_succeeded=false
 [[ ! -e "$release" ]] || fail "release already exists: $stage_id"
 
 bash "$stage/MAIN/scripts/production-preflight.sh" "$sha" "$run_attempt"
-old_release="$(readlink -f "$root/current" 2>/dev/null || true)"
-if [[ -n "$old_release" ]]; then
+if [[ -L "$root/current" ]]; then
+    old_release="$(readlink -f "$root/current" 2>/dev/null || true)"
+    [[ -n "$old_release" && -d "$old_release" ]] || fail "the current release link is broken"
     [[ "$old_release" == "$root/releases/"* ]] || fail "the current release is outside the release directory"
     systemctl is-active --quiet autograder.service && api_was_active=true
     systemctl is-active --quiet cloudflared.service && tunnel_was_active=true
+elif [[ -e "$root/current" ]]; then
+    fail "$root/current exists but is not a symlink"
 fi
 
 rollback() {
