@@ -18,7 +18,6 @@ dnf install -y \
     flex \
     gcc-c++ \
     git \
-    kconfig-frontends \
     libcap-devel \
     libnl3-devel \
     libseccomp-devel \

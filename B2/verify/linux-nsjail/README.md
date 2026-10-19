@@ -64,7 +64,7 @@ docker build -f verify/linux-nsjail/Dockerfile -t autograder-b2-nsjail:local .
 **nsjail 不是 apt 包**：`apt-cache search nsjail` 在 Debian bookworm 官方源里返回**空**
 （只有 `firejail` / `jailkit`）。因此镜像**从源码构建 nsjail 3.4**（tag 钉死），
 构建依赖：`bison flex libprotobuf-dev protobuf-compiler libnl-3-dev **libnl-route-3-dev**
-libcap-dev libseccomp-dev kconfig-frontends g++ make pkg-config git`。
+libcap-dev libseccomp-dev g++ make pkg-config git`。
 注意 `libnl-route-3-dev` 必需：缺它 `net.cc` 会因 `<netlink/route/link.h>` 编译失败。
 
 构建层 2 对「clone + 编译」整体重试 5 次：本机容器内直连 `github.com` 不稳定

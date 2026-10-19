@@ -40,7 +40,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 
 # -----------------------------------------------------------------------------
-# 层 1：nsjail 构建依赖（bison/flex/protobuf/libnl/libcap/kconfig-frontends）。
+# 层 1：nsjail 构建依赖（bison/flex/protobuf/libnl/libcap）。
 # libnl-route-3-dev 是必需的：缺它 net.cc 会因 <netlink/route/link.h> 编译失败
 # （本机实测报错，已记录在 README）。
 # -----------------------------------------------------------------------------
@@ -55,7 +55,6 @@ RUN set -eux; \
         libnl-route-3-dev \
         libcap-dev \
         libseccomp-dev \
-        kconfig-frontends \
         g++ \
         make \
         pkg-config \
