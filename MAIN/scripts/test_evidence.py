@@ -165,8 +165,6 @@ def suite_command(module: str, environment: dict[str, str]) -> list[str]:
         "--workdir",
         "/work/B2",
         "--tmpfs",
-        "/work/B2/.venv",
-        "--tmpfs",
         "/work/B2/.pytest-tmp",
         "--tmpfs",
         "/work/B2/.pytest_cache",
@@ -181,7 +179,9 @@ def suite_command(module: str, environment: dict[str, str]) -> list[str]:
         image,
         "uv",
         "run",
+        "--system",
         "--locked",
+        "--all-groups",
         "pytest",
         "-q",
     ]
