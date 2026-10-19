@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import sys
 from pathlib import Path
 
 MAIN_ROOT = Path(__file__).resolve().parents[1]
@@ -102,12 +101,12 @@ def backlog_rows() -> list[tuple[str, str, str, str, str, str, str]]:
         for schema, table, columns in outbox_and_inbox_tables():
             target = f'"{schema}"."{table}"'
 
-            def count(where: str = "") -> str:
+            def count(where: str = "", target: str = target) -> str:
                 clause = f" where {where}" if where else ""
                 value = connection.execute(f"select count(*) from {target}{clause}").fetchone()[0]
                 return str(value)
 
-            def maximum(column: str) -> str:
+            def maximum(column: str, target: str = target) -> str:
                 value = connection.execute(
                     f'select coalesce(max("{column}"), 0) from {target}'
                 ).fetchone()[0]
