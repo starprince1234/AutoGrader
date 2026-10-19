@@ -277,6 +277,28 @@ jobs:
             bash -s <<'REMOTE'
           set -euo pipefail
           root=/opt/autograder
+          printf '%s\n' 'First-deploy state inventory (names and metadata only):'
+          for path in \
+            /opt/autograder \
+            /etc/autograder \
+            /var/lib/autograder \
+            /var/lib/cloudflared \
+            /var/cache/autograder/uv; do
+            if [[ -e "$path" || -L "$path" ]]; then
+              stat -c '%n %F %a %U:%G' "$path"
+              if [[ -d "$path" && ! -L "$path" ]]; then
+                find "$path" -mindepth 1 -maxdepth 2 \
+                  -printf '  %P %y %m %u:%g\n' | LC_ALL=C sort
+              fi
+            fi
+          done
+          for user in autograder cloudflared; do
+            if getent passwd "$user" >/dev/null; then
+              getent passwd "$user" | cut -d: -f1,3,4,6,7
+            fi
+          done
+          systemctl is-active autograder.service cloudflared.service 2>/dev/null || true
+          docker volume ls --format '{{.Name}}' | LC_ALL=C sort | grep autograder || true
           if [[ ! -e "$root" && ! -L "$root" ]]; then
             exit 0
           fi
