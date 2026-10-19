@@ -145,7 +145,49 @@ def database_label(dsn: str | None) -> str | None:
     return tail or None
 
 
-def run_suite(module: str) -> tuple[int, str, str | None]:
+def suite_command(module: str, environment: dict[str, str]) -> list[str]:
+    """Use the privileged Linux test image for B2's real nsjail suite in CI."""
+    image = environment.get("AUTOGRADER_B2_NSJAIL_IMAGE")
+    if module != "B2" or not image:
+        return COMMANDS[module]
+    if not re.fullmatch(r"[A-Za-z0-9._/-]+:[A-Za-z0-9._-]+", image):
+        raise ValueError("AUTOGRADER_B2_NSJAIL_IMAGE must be an image name with a tag")
+    return [
+        "docker",
+        "run",
+        "--rm",
+        "--privileged",
+        "--cgroupns=host",
+        "--init",
+        "--network=host",
+        "--volume",
+        f"{REPO_ROOT}:/work",
+        "--workdir",
+        "/work/B2",
+        "--tmpfs",
+        "/work/B2/.venv",
+        "--tmpfs",
+        "/work/B2/.pytest-tmp",
+        "--tmpfs",
+        "/work/B2/.pytest_cache",
+        "--env",
+        "DATABASE_URL",
+        "--env",
+        "B2_TEST_DATABASE_URL",
+        "--env",
+        "B2_TEST_NATS_URL",
+        "--env",
+        "PYTHONDONTWRITEBYTECODE=1",
+        image,
+        "uv",
+        "run",
+        "--locked",
+        "pytest",
+        "-q",
+    ]
+
+
+def run_suite(module: str) -> tuple[int, str, str | None, list[str]]:
     """Run the module's suite the way its own runbook does, and return (exit, output, dsn).
 
     Two deliberate deviations from a bare `subprocess.run`, both forced by measured defects:
@@ -177,8 +219,12 @@ def run_suite(module: str) -> tuple[int, str, str | None]:
         # declared test instance is what makes this run *the module's run* instead of a DB-free
         # subset that still exits 0.
         environment["DATABASE_URL"] = dsn
+    if module == "B2" and dsn is not None:
+        environment["B2_TEST_DATABASE_URL"] = dsn
+        environment["B2_TEST_NATS_URL"] = "nats://127.0.0.1:54223"
+    command = suite_command(module, environment)
     result = subprocess.run(
-        COMMANDS[module],
+        command,
         cwd=REPO_ROOT / module,
         capture_output=True,
         text=True,
@@ -186,7 +232,7 @@ def run_suite(module: str) -> tuple[int, str, str | None]:
         errors="replace",
         env=environment,
     )
-    return result.returncode, (result.stdout or "") + (result.stderr or ""), dsn
+    return result.returncode, (result.stdout or "") + (result.stderr or ""), dsn, command
 
 
 def failure_diagnostics(output: str) -> list[str]:
@@ -202,7 +248,7 @@ def record(module: str) -> int:
     digest = contract_digest(MAIN_ROOT / "contracts")
     version = declared_contract_version(MAIN_ROOT / "contracts")
     print(f"{module}: running the suite at contract {version} ({digest[:12]}…)")
-    exit_code, output, dsn = run_suite(module)
+    exit_code, output, dsn, command = run_suite(module)
     try:
         counts = parse_summary(output)
     except SystemExit:
@@ -213,7 +259,7 @@ def record(module: str) -> int:
     EVIDENCE_DIR.mkdir(parents=True, exist_ok=True)
     document = {
         "module": module,
-        "command": " ".join(COMMANDS[module]),
+        "command": " ".join(command),
         "exit_code": exit_code,
         "contract_version": version,
         "contract_digest": digest,
