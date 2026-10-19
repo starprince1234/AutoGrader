@@ -102,11 +102,31 @@ jobs:
 
       - name: Start isolated module test services
         run: |
-          docker compose --project-name autograder-b2-ci --file B2/compose.yaml up --detach --wait --wait-timeout 120 postgres
+          docker compose --project-name autograder-b2-ci --file B2/compose.yaml up --detach --wait --wait-timeout 120 postgres nats
           docker compose --project-name autograder-b3-ci --file B3/compose.yaml up --detach --wait --wait-timeout 120 postgres
           docker compose --project-name autograder-b4-ci --file B4/compose.yaml up --detach --wait --wait-timeout 120 postgres nats
 
+      - name: Prepare B4 test database
+        working-directory: B4
+        env:
+          DATABASE_URL: postgresql+psycopg://autograder_b4:change-me@127.0.0.1:55435/autograder
+          B4_ADMIN_DATABASE_URL: postgresql+psycopg://autograder_platform:change-me-local-only@127.0.0.1:55435/autograder
+          B4_DB_PASSWORD: change-me
+        run: |
+          uv run --locked alembic upgrade head
+          uv run --locked python -m autograder_b4.ops.provision
+
+      - name: Prepare ephemeral signing key for composition tests
+        run: |
+          mkdir -p MAIN/.runtime
+          uv run --project MAIN --locked python -m autograder_b4.ops.generate_key \
+            --path "$GITHUB_WORKSPACE/MAIN/.runtime/ci-test-jwt.pem"
+          sed -i "s|^JWT_PRIVATE_KEY_FILE=.*$|JWT_PRIVATE_KEY_FILE=$GITHUB_WORKSPACE/MAIN/.runtime/ci-test-jwt.pem|" \
+            MAIN/.env.integration
+
       - name: Run every module test suite and record evidence
+        env:
+          JWT_PRIVATE_KEY_FILE: ${{ github.workspace }}/MAIN/.runtime/ci-test-jwt.pem
         run: uv run --project MAIN python MAIN/scripts/test_evidence.py --all
 
       - name: Check project contracts and documentation
@@ -118,7 +138,7 @@ jobs:
           docker compose --project-name autograder-b2-ci --file B2/compose.yaml down --volumes --remove-orphans
           docker compose --project-name autograder-b3-ci --file B3/compose.yaml down --volumes --remove-orphans
           docker compose --project-name autograder-b4-ci --file B4/compose.yaml down --volumes --remove-orphans
-          rm -f MAIN/.env.integration
+          rm -f MAIN/.env.integration MAIN/.runtime/ci-test-jwt.pem
 
   deploy:
     needs: verify

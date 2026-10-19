@@ -57,15 +57,15 @@ _COUNT = re.compile(r"(\d+)\s+(passed|failed|error|errors|skipped|xfailed|xpasse
 _DURATION = re.compile(r"in\s+([\d.]+)s")
 
 
-#: Each Python suite uses the locked workspace environment prepared by CI. B1 is a Node project,
-#: so `uv run pytest` is not merely wrong there -- it would fail and get recorded as a failing
+#: Each Python suite uses its own locked module environment. B1 is a Node project, so
+#: `uv run pytest` is not merely wrong there -- it would fail and get recorded as a failing
 #: suite. Kept as data rather than an if-chain so adding a module is one line.
 COMMANDS: dict[str, list[str]] = {
     "B1": ["node", "node_modules/vitest/vitest.mjs", "run"],
-    "B2": ["uv", "run", "--project", str(MAIN_ROOT), "--locked", "pytest", "-q"],
-    "B3": ["uv", "run", "--project", str(MAIN_ROOT), "--locked", "pytest", "-q"],
-    "B4": ["uv", "run", "--project", str(MAIN_ROOT), "--locked", "pytest", "-q"],
-    "B5": ["uv", "run", "--project", str(MAIN_ROOT), "--locked", "pytest", "-q"],
+    "B2": ["uv", "run", "--locked", "pytest", "-q"],
+    "B3": ["uv", "run", "--locked", "pytest", "-q"],
+    "B4": ["uv", "run", "--locked", "pytest", "-q"],
+    "B5": ["uv", "run", "--locked", "pytest", "-q"],
 }
 
 #: vitest's summary lines differ from pytest's; both are parsed so the ledger covers all five
@@ -194,7 +194,7 @@ def failure_diagnostics(output: str) -> list[str]:
     return [
         line.strip()
         for line in output.splitlines()
-        if line.lstrip().startswith(("FAILED ", "ERROR "))
+        if line.lstrip().startswith(("FAILED tests/", "ERROR tests/"))
     ]
 
 
