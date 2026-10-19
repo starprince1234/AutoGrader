@@ -114,8 +114,15 @@ else
         [[ -e "$root/python" || -L "$root/python" ]] || \
             fail "$root exists without the interrupted deployment's Python runtime directory"
         require_directory "$root/python" autograder autograder 750
-        [[ -z "$(find "$root/python" -mindepth 1 -print -quit)" ]] || \
-            fail "$root/python contains runtime data without a current release"
+        if [[ -n "$(find "$root/python" -mindepth 1 -print -quit)" ]]; then
+            printf '[autograder-preflight] existing Python runtime metadata (path type mode owner:group):\n'
+            find "$root/python" -mindepth 1 -maxdepth 2 \
+                -printf '  %P %y %m %u:%g\n' | LC_ALL=C sort
+            find "$root/python" -mindepth 1 -maxdepth 6 -type f \
+                \( -name python -o -name 'python3*' \) \
+                -printf '  executable %P %m %u:%g\n' | LC_ALL=C sort
+            fail "$root contains a populated Python runtime without a current release"
+        fi
         unexpected="$(find "$root" -mindepth 1 -maxdepth 1 \
             ! -name python ! -name incoming ! -name staging ! -name releases -print -quit)"
         [[ -z "$unexpected" ]] || fail "$root contains an unrecognized first-deployment entry"
