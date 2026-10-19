@@ -27,8 +27,6 @@ on:
       - "B4/pyproject.toml"
       - "B4/src/**"
       - "MAIN/contracts/**"
-      - "MAIN/deploy/**"
-      - "MAIN/docs/runbooks/production-deployment.md"
       - "MAIN/host/**"
       - "MAIN/infra/postgres/**"
       - "MAIN/compose.production.yaml"
@@ -36,16 +34,30 @@ on:
       - "MAIN/sdk/**"
       - "MAIN/scripts/production-prepare.sh"
       - "MAIN/scripts/test_evidence.py"
-      - "MAIN/scripts/production-preflight.sh"
-      - "MAIN/scripts/bootstrap-nsjail.sh"
-      - "MAIN/scripts/bootstrap-cloudflared.sh"
-      - "MAIN/scripts/install-mihomo-autograder.sh"
       - "MAIN/uv.lock"
       - ".github/scripts/deploy-ssh.sh"
-      - ".github/workflows/deploy-backend.yml"
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: "Read-only production preflight or deployment after reusing a verified source run"
+        required: true
+        type: choice
+        options:
+          - preflight
+          - deploy
+        default: preflight
+      verified_run_id:
+        description: "Completed workflow run ID whose verify job passed"
+        required: false
+        type: string
+      verified_commit_sha:
+        description: "Full source commit SHA verified by that run"
+        required: false
+        type: string
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: autograder-production
@@ -53,6 +65,7 @@ concurrency:
 
 jobs:
   verify:
+    if: github.event_name == 'push'
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     steps:
@@ -185,6 +198,7 @@ jobs:
 
   deploy:
     needs: verify
+    if: ${{ always() && (needs.verify.result == 'success' || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -192,6 +206,83 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Validate reused verification run
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF: ${{ github.ref }}
+          CURRENT_SHA: ${{ github.sha }}
+          OPERATION: ${{ inputs.operation }}
+          VERIFIED_RUN_ID: ${{ inputs.verified_run_id }}
+          VERIFIED_COMMIT_SHA: ${{ inputs.verified_commit_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$OPERATION" == preflight || "$OPERATION" == deploy ]] || {
+            echo "::error::Unsupported manual operation."
+            exit 1
+          }
+          [[ "$VERIFIED_RUN_ID" =~ ^[0-9]+$ ]] || {
+            echo "::error::A completed verification run ID is required."
+            exit 1
+          }
+          [[ "$VERIFIED_COMMIT_SHA" =~ ^[a-f0-9]{40}$ ]] || {
+            echo "::error::A full verified commit SHA is required."
+            exit 1
+          }
+          [[ "$GITHUB_REF" == refs/heads/main ]] || {
+            echo "::error::Production operations must run from main."
+            exit 1
+          }
+          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_RUN_ID")"
+          [[ "$(jq -r '.head_branch' <<<"$run_json")" == main ]] || {
+            echo "::error::The verification run must target main."
+            exit 1
+          }
+          [[ "$(jq -r '.event' <<<"$run_json")" == push && \
+            "$(jq -r '.path' <<<"$run_json")" == .github/workflows/deploy-backend.yml ]] || {
+            echo "::error::The verification run must be a push run of this workflow."
+            exit 1
+          }
+          [[ "$(jq -r '.head_sha' <<<"$run_json")" == "$VERIFIED_COMMIT_SHA" ]] || {
+            echo "::error::The supplied verification SHA does not match that run."
+            exit 1
+          }
+          [[ "$(jq -r '.status' <<<"$run_json")" == completed ]] || {
+            echo "::error::The supplied verification run has not completed."
+            exit 1
+          }
+          jobs_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_RUN_ID/jobs?per_page=100")"
+          verify_conclusion="$(jq -r '[.jobs[] | select(.name == "verify") | .conclusion][0] // empty' <<<"$jobs_json")"
+          [[ "$verify_conclusion" == success ]] || {
+            echo "::error::The referenced run has no successful verify job."
+            exit 1
+          }
+          git merge-base --is-ancestor "$VERIFIED_COMMIT_SHA" "$CURRENT_SHA" || {
+            echo "::error::The verified commit is not an ancestor of this deployment."
+            exit 1
+          }
+          while IFS= read -r changed_path; do
+            [[ -n "$changed_path" ]] || continue
+            case "$changed_path" in
+              .github/workflows/deploy-backend.yml|\
+              MAIN/deploy/*|MAIN/scripts/production-preflight.sh|\
+              MAIN/scripts/bootstrap-nsjail.sh|MAIN/scripts/bootstrap-cloudflared.sh|\
+              MAIN/scripts/install-mihomo-autograder.sh|\
+              MAIN/docs/runbooks/production-deployment.md|\
+              MAIN/docs/phases/active/phase-01-integration-runtime.md)
+                ;;
+              *)
+                echo "::error::Cannot reuse verification after non-operational change: $changed_path"
+                exit 1
+                ;;
+            esac
+          done < <(git diff --name-only "$VERIFIED_COMMIT_SHA" "$CURRENT_SHA")
+          for script in MAIN/scripts/production-preflight.sh MAIN/deploy/*.sh .github/scripts/deploy-ssh.sh; do
+            bash -n "$script"
+          done
 
       - name: Fetch deployment secrets from Doppler
         uses: DopplerHQ/secrets-fetch-action@cf794d40f721280fa2c068fa4f9e8afbc966e41d
@@ -265,7 +356,8 @@ jobs:
           chmod 0600 "$known_hosts_file"
           printf 'AUTOGRADER_SSH_KNOWN_HOSTS=%s\n' "$known_hosts_file" >> "$GITHUB_ENV"
 
-      - name: Clear only empty directories from the interrupted first attempt
+      - name: Clear only empty upload and release directories from an interrupted first attempt
+        if: github.event_name == 'push' || inputs.operation == 'deploy'
         env:
           DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
           DEPLOY_SSH_USER: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
@@ -310,11 +402,20 @@ jobs:
             exit 0
           fi
           unexpected="$(find "$root" -mindepth 1 -maxdepth 1 \
-            ! -name incoming ! -name staging ! -name releases -print -quit)"
+            ! -name python ! -name incoming ! -name staging ! -name releases -print -quit)"
           [[ -z "$unexpected" ]] || {
             echo "::error::/opt/autograder contains data from another state; refusing cleanup."
             exit 1
           }
+          if [[ -e "$root/python" || -L "$root/python" ]]; then
+            [[ -d "$root/python" && ! -L "$root/python" && \
+              "$(stat -c %U "$root/python")" == autograder && \
+              "$(stat -c %G "$root/python")" == autograder && \
+              "$(stat -c %a "$root/python")" == 750 ]] || {
+              echo "::error::/opt/autograder/python is not the managed Python runtime directory."
+              exit 1
+            }
+          fi
           for directory in incoming staging releases; do
             path="$root/$directory"
             if [[ -e "$path" || -L "$path" ]]; then
@@ -334,10 +435,13 @@ jobs:
               rmdir -- "$path"
             fi
           done
-          rmdir -- "$root"
+          if [[ -z "$(find "$root" -mindepth 1 -print -quit)" ]]; then
+            rmdir -- "$root"
+          fi
           REMOTE
 
       - name: Upload read-only server preflight
+        if: github.event_name == 'push' || inputs.operation == 'preflight' || inputs.operation == 'deploy'
         env:
           DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
           DEPLOY_SSH_USER: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
@@ -353,6 +457,7 @@ jobs:
             MAIN/scripts/production-preflight.sh "$target"
 
       - name: Run read-only server preflight
+        if: github.event_name == 'push' || inputs.operation == 'preflight' || inputs.operation == 'deploy'
         env:
           DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
           DEPLOY_SSH_USER: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
@@ -373,6 +478,7 @@ jobs:
           REMOTE
 
       - name: Prepare private incoming directory
+        if: github.event_name == 'push' || inputs.operation == 'deploy'
         id: prepare
         env:
           DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
@@ -391,9 +497,11 @@ jobs:
           REMOTE
 
       - name: Create source archive
+        if: github.event_name == 'push' || inputs.operation == 'deploy'
         run: git archive --format=tar.gz --output=autograder.tar.gz "$GITHUB_SHA"
 
       - name: Render server runtime environment
+        if: github.event_name == 'push' || inputs.operation == 'deploy'
         env:
           POSTGRES_PASSWORD: ${{ steps.doppler.outputs.POSTGRES_PASSWORD }}
           B2_DB_PASSWORD: ${{ steps.doppler.outputs.B2_DB_PASSWORD }}
@@ -404,6 +512,7 @@ jobs:
         run: node MAIN/deploy/write-runtime-env.mjs runtime.env setup.env "$GITHUB_SHA"
 
       - name: Upload release and runtime environment
+        if: github.event_name == 'push' || inputs.operation == 'deploy'
         env:
           DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
           DEPLOY_SSH_USER: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
@@ -421,6 +530,7 @@ jobs:
         run: rm -f runtime.env setup.env autograder.tar.gz
 
       - name: Deploy native API service
+        if: github.event_name == 'push' || inputs.operation == 'deploy'
         env:
           DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
           DEPLOY_SSH_USER: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
@@ -442,7 +552,7 @@ jobs:
           REMOTE
 
       - name: Remove failed or incomplete remote upload
-        if: always() && steps.prepare.outcome == 'success'
+        if: ${{ always() && steps.prepare.outcome == 'success' && (github.event_name == 'push' || inputs.operation == 'deploy') }}
         env:
           DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
           DEPLOY_SSH_USER: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}

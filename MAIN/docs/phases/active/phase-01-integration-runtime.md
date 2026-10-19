@@ -1148,7 +1148,7 @@ cloudflared RPM 2026.10.1-1 已安装，`cloudflared.service` active/enabled。�
 
 | 验收项 | 当前状态 | 证据/下一步 |
 |---|---|---|
-| `api.91idc.me` Tunnel DNS 与 connector | 已完成 | 权威 DNS CNAME 正确；cloudflared active/enabled，QUIC 已注册 |
+| `api.91idc.me` Tunnel DNS 与 connector | 阻塞 | 权威 DNS CNAME 与 token 配置正确；最近一次部署回滚后 `cloudflared.service` inactive，成功部署会重新启用 |
 | Mihomo 出站代理与数据库镜像 | 已完成 | 本机代理返回 HTTP 204；两个生产镜像已缓存 |
 | 生产环境只读预检 | 已完成 | `production-preflight.sh` 首部署模式通过 |
 | AutoGrader API 与 readiness | 待部署 | 18000 无 listener；需推送已验证源码触发 workflow |
@@ -1165,3 +1165,17 @@ cloudflared RPM 2026.10.1-1 已安装，`cloudflared.service` active/enabled。�
 修复仅调整 B2 Linux 验收镜像：在镜像内将 `/usr/bin/python3` 指向基础镜像的 Python 3.12，并加入构建期可执行检查。
 本机按更新 Dockerfile 构建后，4 个无需数据库的失败用例全部通过（11.81 秒）；I5 与完整 B2/模块交付扫描尚未在本机执行。
 推送后由生产部署工作流先跑完整 B1–B5、MAIN 门禁，再部署；这些门禁若失败，生产 deploy job 会保持跳过。
+
+### 15.2 CI 通过、首次部署遗留状态阻塞（2026-10-19）
+
+工作流 `39247432392` 的 verify job **通过**：前端验证、Lint、Linux/nsjail 镜像、B1–B5 全套和 MAIN 契约/文档门禁均通过。
+部署 job 在服务器清理步骤停止。由工作流自身执行的只读目录清点确认上次首次部署失败留下的是本项目创建的部分状态：
+`/opt/autograder/python`；`/etc/autograder/runtime.env` 与 `setup.env`；空的
+`/var/lib/autograder/{artifacts,backups,jwks,jwt,workspace}` 与 `/var/cache/autograder/uv`；
+`autograder` system user。没有 AutoGrader Docker 数据卷，`autograder.service` inactive。
+`runtime.env` 与 `setup.env` 内容未读；其属主和 0600 mode 将由后续只读预检确认。Cloudflare token 内容未读取或打印；
+metadata 为 `root:cloudflared 0640`。Cloudflare connector 查询为 inactive，部署成功后会重新启用。
+
+修复首次部署恢复逻辑：只有在没有 current release、运行中的 AutoGrader 进程、Compose 项目和数据库/NATS 卷，且上述目录为空、所有者/权限准确时才允许续跑。清理步骤只移除空的 incoming/staging/releases 目录；专用 Python runtime 与 uv cache 目录必须为空并保留，token 保持原样，root-only 环境文件会在发布时覆盖。未知条目或非空应用数据仍会让预检失败。
+
+针对“纯运维变更不必重复跑五个模块”的要求，工作流新增显式 `preflight` / `deploy` 手动入口。它要求输入一个 verify job 已成功的 run ID 和对应 commit SHA，并确认当前与已验证 commit 之间只改了部署运维文件；业务代码或契约变化仍要求 push 工作流完整验证。该机制以本轮 `39247432392` 的成功 verify job 为当前运维修改的验证基点。

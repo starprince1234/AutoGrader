@@ -6,6 +6,14 @@ fail() {
     exit 1
 }
 
+require_directory() {
+    local path="$1" owner="$2" group="$3" mode="$4"
+    [[ -d "$path" && ! -L "$path" ]] || fail "$path must be a real directory"
+    [[ "$(stat -c %U "$path")" == "$owner" ]] || fail "$path must be owned by $owner"
+    [[ "$(stat -c %G "$path")" == "$group" ]] || fail "$path must be in group $group"
+    [[ "$(stat -c %a "$path")" == "$mode" ]] || fail "$path must have mode $mode"
+}
+
 sha="${1:-}"
 run_attempt="${2:-}"
 if [[ -n "$sha" || -n "$run_attempt" ]]; then
@@ -18,9 +26,12 @@ fi
 # shellcheck disable=SC1091
 . /etc/os-release
 
-for command_name in dnf rpm docker systemctl runuser useradd install curl python3 ss stat df awk find readlink tail nproc grep id uname; do
+for command_name in dnf rpm docker systemctl runuser useradd install curl python3 ss stat df awk find readlink tail nproc grep id uname pgrep getent cut; do
     command -v "$command_name" >/dev/null 2>&1 || fail "required command is missing: $command_name"
 done
+[[ -x /usr/bin/python3 ]] || fail "B2's configured runner interpreter /usr/bin/python3 is missing"
+runner_python_version="$(/usr/bin/python3 --version 2>&1)"
+runner_python_path="$(readlink -f /usr/bin/python3)"
 
 [[ -d /run/systemd/system ]] || fail "systemd is not the active init system"
 [[ "$(stat -fc %T /sys/fs/cgroup)" == "cgroup2fs" ]] || \
@@ -87,6 +98,7 @@ root=/opt/autograder
 current="$root/current"
 [[ ! -L "$root" ]] || fail "$root must not be a symbolic link"
 first_deployment=false
+partial_first_deployment=false
 if [[ -L "$current" ]]; then
     current_release="$(readlink -f "$current")"
     [[ -n "$current_release" && -d "$current_release" ]] || fail "the existing current link is broken"
@@ -96,15 +108,48 @@ elif [[ -e "$current" ]]; then
     fail "$current exists but is not a symlink"
 else
     first_deployment=true
-    if [[ -n "$sha" ]]; then
-        expected_stage="$root/staging/${sha}-${run_attempt}"
-        [[ -d "$root/incoming/$sha" ]] || fail "the uploaded incoming directory is missing"
-        [[ -d "$expected_stage" ]] || fail "the expected staging directory is missing"
+    if [[ -e "$root" ]]; then
+        require_directory "$root" root root 755
+        partial_first_deployment=true
+        [[ -e "$root/python" || -L "$root/python" ]] || \
+            fail "$root exists without the interrupted deployment's Python runtime directory"
+        require_directory "$root/python" autograder autograder 750
+        [[ -z "$(find "$root/python" -mindepth 1 -print -quit)" ]] || \
+            fail "$root/python contains runtime data without a current release"
         unexpected="$(find "$root" -mindepth 1 -maxdepth 1 \
-            ! -name incoming ! -name staging -print -quit 2>/dev/null || true)"
-        [[ -z "$unexpected" ]] || fail "$root contains data outside this deployment's incoming/staging directories"
-    elif [[ -e "$root" ]]; then
-        fail "$root already exists without an AutoGrader current release"
+            ! -name python ! -name incoming ! -name staging ! -name releases -print -quit)"
+        [[ -z "$unexpected" ]] || fail "$root contains an unrecognized first-deployment entry"
+
+        for directory in incoming staging releases; do
+            path="$root/$directory"
+            if [[ -e "$path" || -L "$path" ]]; then
+                require_directory "$path" root root 755
+                if [[ -z "$sha" ]]; then
+                    [[ -z "$(find "$path" -mindepth 1 -print -quit)" ]] || \
+                        fail "$path contains data before the deployment upload"
+                fi
+            fi
+        done
+
+        if [[ -n "$sha" ]]; then
+            expected_stage="$root/staging/${sha}-${run_attempt}"
+            [[ -d "$root/incoming/$sha" && ! -L "$root/incoming/$sha" ]] || \
+                fail "the uploaded incoming directory is missing or not a real directory"
+            [[ -d "$expected_stage" && ! -L "$expected_stage" ]] || \
+                fail "the expected staging directory is missing or not a real directory"
+            unexpected_incoming="$(find "$root/incoming" -mindepth 1 -maxdepth 1 \
+                ! -name "$sha" -print -quit)"
+            [[ -z "$unexpected_incoming" ]] || fail "$root/incoming contains an unexpected deployment"
+            unexpected_staging="$(find "$root/staging" -mindepth 1 -maxdepth 1 \
+                ! -name "${sha}-${run_attempt}" -print -quit)"
+            [[ -z "$unexpected_staging" ]] || fail "$root/staging contains an unexpected deployment"
+            if [[ -d "$root/releases" ]]; then
+                [[ -z "$(find "$root/releases" -mindepth 1 -print -quit)" ]] || \
+                    fail "$root/releases contains a release without a current link"
+            fi
+        fi
+    elif [[ -n "$sha" ]]; then
+        fail "$root is missing before the deployment upload"
     fi
 
     if systemctl cat autograder.service >/dev/null 2>&1; then
@@ -135,6 +180,25 @@ else
     fi
     for user in autograder cloudflared; do
         if id "$user" >/dev/null 2>&1; then
+            if [[ "$user" == autograder && "$partial_first_deployment" == true ]]; then
+                account="$(getent passwd autograder)"
+                [[ -n "$account" ]] || fail "the interrupted AutoGrader system account is missing"
+                account_uid="$(cut -d: -f3 <<< "$account")"
+                account_gid="$(cut -d: -f4 <<< "$account")"
+                account_home="$(cut -d: -f6 <<< "$account")"
+                account_shell="$(cut -d: -f7 <<< "$account")"
+                [[ "$account_uid" =~ ^[0-9]+$ ]] && (( account_uid >= 100 && account_uid < 1000 )) || \
+                    fail "the interrupted AutoGrader account is not a system user"
+                [[ "$account_home" == /var/lib/autograder && "$account_shell" == /sbin/nologin ]] || \
+                    fail "the interrupted AutoGrader account has unexpected settings"
+                account_group="$(getent group autograder || true)"
+                [[ -n "$account_group" && "$(cut -d: -f3 <<< "$account_group")" == "$account_gid" ]] || \
+                    fail "the interrupted AutoGrader primary group is unexpected"
+                if pgrep -u autograder >/dev/null 2>&1; then
+                    fail "an AutoGrader system-user process is running without a current release"
+                fi
+                continue
+            fi
             if [[ "$user" == cloudflared && "$cloudflared_unit_managed" == true ]]; then
                 continue
             fi
@@ -150,11 +214,45 @@ else
     compose_conflict="$(python3 -c 'import json,sys; projects=json.load(sys.stdin); print(str(any(item.get("Name") == "autograder" for item in projects)).lower())' <<< "$compose_projects")" || \
         fail "could not parse the existing Compose project list"
     [[ "$compose_conflict" != true ]] || fail "a Compose project named autograder already exists"
-    if [[ -e /etc/autograder/runtime.env || -e /etc/autograder/setup.env ]]; then
-        fail "/etc/autograder already contains an environment file without an AutoGrader current release"
-    fi
+    for path in /etc/autograder/runtime.env /etc/autograder/setup.env; do
+        if [[ -e "$path" || -L "$path" ]]; then
+            [[ "$partial_first_deployment" == true ]] || \
+                fail "$path exists without an AutoGrader current release"
+            [[ -f "$path" && ! -L "$path" ]] || fail "$path must be a regular file"
+            [[ "$(stat -c %U "$path")" == root && "$(stat -c %a "$path")" == 600 ]] || \
+                fail "$path must be root-owned with mode 0600"
+        fi
+    done
     if [[ -e /var/lib/autograder || -L /var/lib/autograder ]]; then
-        fail "/var/lib/autograder already exists without an AutoGrader current release"
+        [[ "$partial_first_deployment" == true ]] || \
+            fail "/var/lib/autograder exists without an AutoGrader current release"
+        require_directory /var/lib/autograder autograder autograder 750
+        unexpected_state="$(find /var/lib/autograder -mindepth 1 -maxdepth 1 \
+            ! -name artifacts ! -name backups ! -name jwks ! -name jwt ! -name workspace -print -quit)"
+        [[ -z "$unexpected_state" ]] || fail "/var/lib/autograder contains an unrecognized first-deployment entry"
+        for path in \
+            /var/lib/autograder/artifacts \
+            /var/lib/autograder/jwks \
+            /var/lib/autograder/jwt \
+            /var/lib/autograder/workspace; do
+            if [[ -e "$path" || -L "$path" ]]; then
+                require_directory "$path" autograder autograder 750
+                [[ -z "$(find "$path" -mindepth 1 -print -quit)" ]] || \
+                    fail "$path contains data and is not an empty first-deployment directory"
+            fi
+        done
+        if [[ -e /var/lib/autograder/backups || -L /var/lib/autograder/backups ]]; then
+            require_directory /var/lib/autograder/backups root root 700
+            [[ -z "$(find /var/lib/autograder/backups -mindepth 1 -print -quit)" ]] || \
+                fail "/var/lib/autograder/backups contains data without a current release"
+        fi
+    fi
+    if [[ -e /var/cache/autograder/uv || -L /var/cache/autograder/uv ]]; then
+        [[ "$partial_first_deployment" == true ]] || \
+            fail "/var/cache/autograder/uv exists without an AutoGrader current release"
+        require_directory /var/cache/autograder/uv autograder autograder 750
+        [[ -z "$(find /var/cache/autograder/uv -mindepth 1 -print -quit)" ]] || \
+            fail "/var/cache/autograder/uv contains cache data without a current release"
     fi
     if [[ -e /var/lib/cloudflared || -L /var/lib/cloudflared ]]; then
         [[ "$cloudflared_unit_managed" == true && -d /var/lib/cloudflared && ! -L /var/lib/cloudflared ]] || \
@@ -176,4 +274,10 @@ printf '[autograder-preflight] passed: os=%s version=%s kernel=%s architecture=%
     "${ID:-unknown}" "${VERSION_ID:-unknown}" "$(uname -r)" "$(uname -m)" \
     "$(nproc)" "$((memory_total_kib / 1024))" "$((memory_available_kib / 1024))" \
     "$((disk_total_kib / 1048576))" "$((disk_available_kib / 1048576))" \
-    "$(if [[ "$first_deployment" == true ]]; then printf first; else printf upgrade; fi)"
+    "$(if [[ "$first_deployment" == true ]]; then
+        if [[ "$partial_first_deployment" == true ]]; then printf first-resume; else printf first; fi
+      else
+        printf upgrade
+      fi)"
+printf '[autograder-preflight] B2 runner interpreter=%s resolved_path=%s\n' \
+    "$runner_python_version" "$runner_python_path"
