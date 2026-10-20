@@ -195,7 +195,7 @@ def build_registration_router(state: B4State, dependencies: Dependencies) -> API
                     f"请 {max(1, wait_seconds or 1)} 秒后再获取验证码。"
                 )
             if rejection == "hourly":
-                raise too_many_requests("该邮箱一小时内获取验证码的次数已达上限，请稍后再试。")
+                raise too_many_requests("该邮箱一小时内获取验证码的次数已达上限,请稍后再试。")
             if rejection == "username":
                 raise conflict("该用户名已被使用。")
             if rejection == "email":
@@ -203,11 +203,11 @@ def build_registration_router(state: B4State, dependencies: Dependencies) -> API
             if rejection == "student_number":
                 raise conflict("该学号已被注册。")
             raise unprocessable(
-                "姓名或学号不在注册名单中。若名单刚更新或信息有误，请联系课程管理员。"
+                "姓名或学号不在注册名单中。若名单刚更新或信息有误,请联系课程管理员。"
             )
 
         if code is None:  # pragma: no cover - the guarded branch above always sets it
-            raise unprocessable("验证码未能生成，请重试。")
+            raise unprocessable("验证码未能生成,请重试。")
         try:
             mailer.send_verification_code(
                 settings, to=email, code=code, ttl_seconds=settings.registration_code_ttl_seconds
@@ -329,13 +329,13 @@ def build_registration_router(state: B4State, dependencies: Dependencies) -> API
             raise conflict("该用户名、邮箱或学号已被占用。") from error
 
         if rejection == "no_code":
-            raise unprocessable("验证码无效或已过期，请重新获取。")
+            raise unprocessable("验证码无效或已过期,请重新获取。")
         if rejection == "attempts":
-            raise too_many_requests("验证码尝试次数过多，请重新获取。")
+            raise too_many_requests("验证码尝试次数过多,请重新获取。")
         if rejection == "mismatch":
             raise unprocessable("验证码不正确。")
         if rejection == "allowlist":
-            raise unprocessable("该身份已不在注册名单中，请联系课程管理员。")
+            raise unprocessable("该身份已不在注册名单中,请联系课程管理员。")
         if duplicating_field is not None:
             detail = {
                 "username": "该用户名已被使用。",
@@ -345,7 +345,7 @@ def build_registration_router(state: B4State, dependencies: Dependencies) -> API
             raise conflict(detail)
 
         if created_user_id is None or created_username is None:  # pragma: no cover
-            raise unprocessable("注册未完成，请重试。")
+            raise unprocessable("注册未完成,请重试。")
         logger.info(
             "registration.created",
             extra={"event": "registration.created", "user_id": str(created_user_id)},

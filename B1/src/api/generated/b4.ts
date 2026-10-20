@@ -86,6 +86,92 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/registrations/code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send the e-mail verification code for a self-service registration
+         * @description Self-service registration is open (no approval step): the caller proves the
+         *     mailbox, the identity is checked against the administrator's allowlist, and the
+         *     account created by `createRegistration` can sign in immediately.
+         *
+         *     This operation validates the claimed identity (13-digit student number, full
+         *     name present in the allowlist) **before** sending anything, so a code is never
+         *     mailed for an identity that cannot register. It stores only a SHA-256 digest of
+         *     the code, bound to the exact registration intent, and it never stores the
+         *     password. A missing or failing SMTP configuration is `503`: the endpoint never
+         *     degrades to skipping verification.
+         */
+        post: operations["requestRegistrationCode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/registrations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Complete a self-service registration with the e-mailed code
+         * @description Verifies the code against the intent stored by `requestRegistrationCode`, then
+         *     creates the account in one transaction: `b4.users`, `b4.credentials` (Argon2id),
+         *     the platform `student` role, and a link for every roster enrollment that already
+         *     carries this student number but no user yet. The account is usable immediately —
+         *     there is no approval state.
+         *
+         *     The request repeats the e-mail only as a lookup key; the username, student number
+         *     and display name come from the stored intent so that "what was verified" and
+         *     "what is created" cannot diverge.
+         */
+        post: operations["createRegistration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registration-allowlists": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Report the active registration allowlist (admin only) */
+        get: operations["getRegistrationAllowlist"];
+        put?: never;
+        /**
+         * Replace the registration allowlist from a CSV file (admin only)
+         * @description The CSV carries the identity anchor used by self-service registration: a
+         *     `姓名`/`学号` header (a `name`/`student_number` header is accepted too) and one
+         *     row per student. The upload **replaces** the allowlist in one transaction: rows
+         *     absent from the new file can no longer register, and previous batches stay
+         *     recorded for traceability.
+         *
+         *     Encoding: UTF-8 (with or without BOM) or GBK/GB18030. A file that decodes into
+         *     something other than 13-digit student numbers is rejected rather than imported
+         *     partially. Columns are located by header name, never by position.
+         */
+        post: operations["replaceRegistrationAllowlist"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/users": {
         parameters: {
             query?: never;
@@ -537,15 +623,6 @@ export interface components {
                 "application/problem+json": components["schemas"]["ProblemDetails"];
             };
         };
-        /** @description Authenticated, but the role or course scope does not permit the operation. */
-        Forbidden: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content: {
-                "application/problem+json": components["schemas"]["ProblemDetails"];
-            };
-        };
         /** @description State conflict, e.g. an immutable version, a referenced version or a concurrent edit. */
         Conflict: {
             headers: {
@@ -555,8 +632,8 @@ export interface components {
                 "application/problem+json": components["schemas"]["ProblemDetails"];
             };
         };
-        /** @description Authenticated and authorized, but the resource does not exist. */
-        NotFound: {
+        /** @description Authenticated, but the role or course scope does not permit the operation. */
+        Forbidden: {
             headers: {
                 [name: string]: unknown;
             };
@@ -566,6 +643,15 @@ export interface components {
         };
         /** @description File, aggregate or attachment size limit exceeded. */
         PayloadTooLarge: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["ProblemDetails"];
+            };
+        };
+        /** @description Authenticated and authorized, but the resource does not exist. */
+        NotFound: {
             headers: {
                 [name: string]: unknown;
             };
@@ -726,6 +812,167 @@ export interface operations {
                     };
                 };
             };
+        };
+    };
+    requestRegistrationCode: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description W3C Trace Context. Propagated to logs, database records and emitted events. */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Correlation identifier. Generated at the entry point when absent. */
+                "X-Request-ID"?: components["parameters"]["RequestId"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Login identifier. Lowercase; must not contain "@". */
+                    username: string;
+                    /** Format: email */
+                    email: string;
+                    student_number: string;
+                    display_name: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Code sent (or the same answer when one was already in flight). */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        expires_in_seconds: number;
+                        resend_after_seconds: number;
+                    };
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["UnprocessableEntity"];
+            429: components["responses"]["TooManyRequests"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    createRegistration: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description W3C Trace Context. Propagated to logs, database records and emitted events. */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Correlation identifier. Generated at the entry point when absent. */
+                "X-Request-ID"?: components["parameters"]["RequestId"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: email */
+                    email: string;
+                    code: string;
+                    /** Format: password */
+                    password: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Account created; the caller can sign in immediately. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        user_id: string;
+                        username: string;
+                    };
+                };
+            };
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["UnprocessableEntity"];
+            429: components["responses"]["TooManyRequests"];
+        };
+    };
+    getRegistrationAllowlist: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description W3C Trace Context. Propagated to logs, database records and emitted events. */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Correlation identifier. Generated at the entry point when absent. */
+                "X-Request-ID"?: components["parameters"]["RequestId"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The active batch, or nulls when none was ever imported. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        batch_id: string | null;
+                        filename: string | null;
+                        row_count: number;
+                        /** Format: date-time */
+                        uploaded_at: string | null;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    replaceRegistrationAllowlist: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description W3C Trace Context. Propagated to logs, database records and emitted events. */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Correlation identifier. Generated at the entry point when absent. */
+                "X-Request-ID"?: components["parameters"]["RequestId"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": {
+                    /** Format: binary */
+                    file: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Allowlist replaced. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** Format: uuid */
+                        batch_id: string;
+                        row_count: number;
+                        replaced_row_count: number;
+                        content_sha256: string;
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["UnprocessableEntity"];
         };
     };
     listUsers: {

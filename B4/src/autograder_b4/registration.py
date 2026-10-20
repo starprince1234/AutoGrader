@@ -56,7 +56,14 @@ MAX_DISPLAY_NAME_LENGTH = 50
 MAX_ALLOWLIST_ROWS = 20000
 
 _NAME_HEADERS = {"姓名", "name", "display_name", "display name", "学生姓名"}
-_NUMBER_HEADERS = {"学号", "student_number", "student number", "student_id", "student id", "学号(13位)"}
+_NUMBER_HEADERS = {
+    "学号",
+    "student_number",
+    "student number",
+    "student_id",
+    "student id",
+    "学号(13位)",
+}
 
 
 class AllowlistError(ValueError):
@@ -82,7 +89,7 @@ def validate_username(raw: str) -> str:
     candidate = normalize_username(raw)
     if not USERNAME_PATTERN.match(candidate):
         raise unprocessable(
-            "用户名需为 3–32 位小写字母、数字、点、下划线或连字符，且以字母开头（不能包含 @）。"
+            "用户名需为 3-32 位小写字母、数字、点、下划线或连字符,且以字母开头(不能包含 @)。"
         )
     return candidate
 
@@ -139,7 +146,7 @@ def _decode_csv(content: bytes) -> str:
             return content.decode(encoding)
         except UnicodeDecodeError:
             continue
-    raise AllowlistError("文件编码无法识别：请用 UTF-8 或 GBK 保存 CSV。")
+    raise AllowlistError("文件编码无法识别:请用 UTF-8 或 GBK 保存 CSV。")
 
 
 def _normalize_header(value: str) -> str:
@@ -165,8 +172,8 @@ def parse_allowlist_csv(content: bytes) -> list[AllowlistRow]:
     number_index = next((i for i, h in enumerate(header) if h in _NUMBER_HEADERS), None)
     if name_index is None or number_index is None:
         raise AllowlistError(
-            "CSV 表头必须包含“姓名”和“学号”两列（按列名定位，不按列序）。"
-            f"实际表头：{', '.join(cell.strip() for cell in rows[0])}"
+            "CSV 表头必须包含“姓名”和“学号”两列(按列名定位,不按列序)。"
+            f"实际表头:{', '.join(cell.strip() for cell in rows[0])}"
         )
 
     parsed: list[AllowlistRow] = []
@@ -177,22 +184,24 @@ def parse_allowlist_csv(content: bytes) -> list[AllowlistRow]:
         student_number = row[number_index].strip()
         display_name = row[name_index].strip()
         if not STUDENT_NUMBER_PATTERN.match(student_number):
-            raise AllowlistError(f"第 {line_number} 行的学号不是 13 位数字：{student_number!r}")
+            raise AllowlistError(f"第 {line_number} 行的学号不是 13 位数字:{student_number!r}")
         if not display_name:
             raise AllowlistError(f"第 {line_number} 行的姓名为空。")
         if len(display_name) > MAX_DISPLAY_NAME_LENGTH:
-            raise AllowlistError(f"第 {line_number} 行的姓名超过 {MAX_DISPLAY_NAME_LENGTH} 个字符。")
+            raise AllowlistError(
+            f"第 {line_number} 行的姓名超过 {MAX_DISPLAY_NAME_LENGTH} 个字符。"
+        )
         if student_number in seen:
             raise AllowlistError(
-                f"第 {line_number} 行与第 {seen[student_number]} 行的学号重复：{student_number}"
+                f"第 {line_number} 行与第 {seen[student_number]} 行的学号重复:{student_number}"
             )
         seen[student_number] = line_number
         parsed.append(AllowlistRow(student_number=student_number, display_name=display_name))
 
     if not parsed:
-        raise AllowlistError("上传的 CSV 只有表头，没有学生。")
+        raise AllowlistError("上传的 CSV 只有表头,没有学生。")
     if len(parsed) > MAX_ALLOWLIST_ROWS:
-        raise AllowlistError(f"一次最多导入 {MAX_ALLOWLIST_ROWS} 行，当前 {len(parsed)} 行。")
+        raise AllowlistError(f"一次最多导入 {MAX_ALLOWLIST_ROWS} 行,当前 {len(parsed)} 行。")
     return parsed
 
 

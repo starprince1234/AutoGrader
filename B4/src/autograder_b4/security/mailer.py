@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import smtplib
 import ssl
-
 from email.message import EmailMessage
 from email.utils import formataddr
 from typing import Final
@@ -28,16 +27,16 @@ logger = get_logger("mailer")
 
 SUBJECT: Final = "AutoGrader 注册验证码"
 
-BODY: Final = """你好：
+BODY: Final = """你好:
 
-你正在注册 AutoGrader。本次注册的验证码是：
+你正在注册 AutoGrader。本次注册的验证码是:
 
     {code}
 
-该验证码 {minutes} 分钟内有效，且只能使用一次。验证码用于确认这个邮箱属于你，
+该验证码 {minutes} 分钟内有效,且只能使用一次。验证码用于确认这个邮箱属于你,
 请勿转发给他人。
 
-如果这不是你发起的注册，请忽略本邮件；没有验证码，任何人无法用这个邮箱完成注册。
+如果这不是你发起的注册,请忽略本邮件;没有验证码,任何人无法用这个邮箱完成注册。
 
 —— AutoGrader
 """

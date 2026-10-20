@@ -33,21 +33,32 @@ const indexRoute = createRoute({
   component: HomeRoute,
 });
 
+/**
+ * `/login` 的查询串。**两个键都必须可选**：多数入口是裸的 `/login`（首页提示、注册页链接），
+ * 若把键推成"必填但可为 undefined"，那些 `Link` 会全部报类型错。
+ */
+type LoginSearch = { redirect?: string; registered?: string };
+
+function validateLoginSearch(search: Record<string, unknown>): LoginSearch {
+  const parsed: LoginSearch = {};
+  // `redirect` 只接受站内相对路径；`//host` 会被浏览器当成外站，必须排除（开放重定向）。
+  if (
+    typeof search.redirect === "string" &&
+    search.redirect.startsWith("/") &&
+    !search.redirect.startsWith("//")
+  ) {
+    parsed.redirect = search.redirect;
+  }
+  if (typeof search.registered === "string" && search.registered !== "") {
+    parsed.registered = search.registered;
+  }
+  return parsed;
+}
+
 const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/login",
-  // 两个参数都只从查询串读，且都做白名单化：`redirect` 必须是站内相对路径（避免开放重定向），
-  // `registered` 只是"刚注册完的用户名"，用于显示成功提示。
-  validateSearch: (search: Record<string, unknown>) => ({
-    redirect:
-      typeof search.redirect === "string" && search.redirect.startsWith("/")
-        ? search.redirect
-        : undefined,
-    registered:
-      typeof search.registered === "string" && search.registered !== ""
-        ? search.registered
-        : undefined,
-  }),
+  validateSearch: validateLoginSearch,
   component: LoginPage,
 });
 
