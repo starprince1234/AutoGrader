@@ -30,6 +30,8 @@ MAIN/contracts
 MAIN/deploy/autograder.service
 MAIN/deploy/cloudflared.service
 MAIN/deploy/deploy-release.sh
+MAIN/deploy/check-readiness.py
+MAIN/deploy/reset-database.sh
 MAIN/deploy/release-manifest.txt
 MAIN/host/src
 MAIN/host/wait_for_postgres.py

@@ -46,7 +46,7 @@ fi
     --dsn "$PLATFORM_DATABASE_URL" --timeout "$POSTGRES_WAIT_SECONDS"
 
 for module in B2 B4 B3; do
-    printf '[autograder] migrating %s\n' "$module"
+    printf '[autograder] applying %s database schema\n' "$module"
     (
         cd "$B4_MODULE_ROOT/$module"
         DATABASE_URL="$PLATFORM_DATABASE_URL" "$ALEMBIC" upgrade head

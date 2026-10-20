@@ -1,180 +1,63 @@
 #!/usr/bin/env bash
 set -euo pipefail
 umask 077
-
-fail() {
-    printf '[autograder-deployctl] ERROR: %s\n' "$*" >&2
-    exit 1
-}
-
-repo_url=https://github.com/starprince1234/AutoGrader.git
+fail() { printf '[autograder-deployctl] ERROR: %s\n' "$*" >&2; exit 1; }
 root=/opt/autograder
-git_cache="$root/git-cache"
-proxy_url=http://127.0.0.1:7893
-preflight=/usr/local/lib/autograder/production-preflight.sh
-
 case "${1:-}" in
     preflight)
-        [[ "$#" == 1 ]] || fail "usage: autograder-deployctl preflight"
-        [[ -x "$preflight" ]] || fail "the host preflight script is not installed"
-        exec "$preflight"
+        exec /usr/local/lib/autograder/production-preflight.sh
         ;;
     status)
-        [[ "$#" == 1 ]] || fail "usage: autograder-deployctl status"
-        current_release="$(readlink -f "$root/current" 2>/dev/null || true)"
-        printf 'current_release=%s\n' "${current_release:-none}"
-        printf 'api_service=%s\n' "$(systemctl is-active autograder.service 2>/dev/null || true)"
-        printf 'tunnel_service=%s\n' "$(systemctl is-active cloudflared.service 2>/dev/null || true)"
+        printf 'current_release=%s\n' "$(readlink -f "$root/current" || true)"
+        systemctl show autograder.service cloudflared.service \
+            --property=Id,ActiveState,SubState,Result,ExecMainStatus
         ;;
     deploy)
-        [[ "$#" == 3 ]] || fail "usage: autograder-deployctl deploy <40-hex-SHA> <attempt>"
-        [[ "$(id -u)" == 0 ]] || fail "deployment requires the root service identity"
+        [[ "$#" == 3 && "$2" =~ ^[a-f0-9]{40}$ && "$3" =~ ^[1-9][0-9]*-[1-9][0-9]*$ ]] || \
+            fail "usage: autograder-deployctl deploy <SHA> <run-id>-<attempt>"
+        [[ "$(id -u)" == 0 ]] || fail "run as root"
         sha="$2"
-        attempt="$3"
-        [[ "$sha" =~ ^[a-f0-9]{40}$ ]] || fail "a full commit SHA is required"
-        [[ "$attempt" =~ ^[1-9][0-9]*$ ]] || fail "a positive workflow attempt is required"
-        [[ -d "$root" && ! -L "$root" ]] || fail "$root is not a managed directory"
-
+        release_id="$sha-$3"
         exec 9>/run/lock/autograder-deploy.lock
         flock -x 9
-
-        current_release="$(readlink -f "$root/current" 2>/dev/null || true)"
-        if [[ "$current_release" == "$root/releases/"* && \
-            "${current_release##*/}" == "$sha-"* ]] && \
-            systemctl is-active --quiet autograder.service && \
-            curl --fail --silent --max-time 5 http://127.0.0.1:18000/health/ready \
-                | python3 -c 'import json,sys; p=json.load(sys.stdin); raise SystemExit(0 if p.get("ready") is True else 1)'; then
-            printf '[autograder-deployctl] SHA %s is already current and locally ready\n' "$sha"
+        /usr/local/lib/autograder/production-preflight.sh
+        export HTTP_PROXY=http://127.0.0.1:7893 HTTPS_PROXY=http://127.0.0.1:7893
+        export http_proxy="$HTTP_PROXY" https_proxy="$HTTPS_PROXY"
+        export GIT_TERMINAL_PROMPT=0
+        cache="$root/git-cache"
+        [[ ! -L "$root" && ! -L "$cache" ]] || fail "source directories must not be symlinks"
+        install -d -m 0700 "$cache"
+        if [[ ! -f "$cache/config" ]]; then
+            git init --bare --quiet "$cache"
+            git --git-dir="$cache" remote add origin https://github.com/starprince1234/AutoGrader.git
+            git --git-dir="$cache" config extensions.partialClone origin
+            git --git-dir="$cache" config remote.origin.promisor true
+            git --git-dir="$cache" config remote.origin.partialclonefilter blob:none
+        fi
+        current_main="$(timeout 30 git --git-dir="$cache" ls-remote origin refs/heads/main | awk 'NR == 1 { print $1 }')"
+        [[ "$current_main" =~ ^[a-f0-9]{40}$ ]] || fail "could not resolve the production main SHA"
+        if [[ "$current_main" != "$sha" ]]; then
+            printf '[autograder-deployctl] skipping stale SHA %s; main is now %s\n' "$sha" "$current_main"
             exit 0
         fi
-
-        [[ -x "$preflight" ]] || fail "the host preflight script is not installed"
-        "$preflight"
-        if [[ -e "$root/incoming" || -L "$root/incoming" ]]; then
-            [[ -d "$root/incoming" && ! -L "$root/incoming" && \
-                "$(stat -c %U:%G:%a "$root/incoming")" == root:root:755 && \
-                -z "$(find "$root/incoming" -mindepth 1 -print -quit)" ]] || \
-                fail "the legacy incoming directory is not empty and safe to remove"
-            rmdir -- "$root/incoming"
-        fi
-        [[ -r /etc/autograder/runtime.env && -s /etc/autograder/runtime.env ]] || \
-            fail "the root-owned runtime environment is missing"
-        [[ -r /etc/autograder/setup.env && -s /etc/autograder/setup.env ]] || \
-            fail "the root-owned infrastructure environment is missing"
-
-        export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0
-        run_git() {
-            local duration="$1"
-            shift
-            timeout "$duration" env \
-                HTTP_PROXY="$proxy_url" HTTPS_PROXY="$proxy_url" ALL_PROXY="$proxy_url" \
-                http_proxy="$proxy_url" https_proxy="$proxy_url" all_proxy="$proxy_url" \
-                NO_PROXY= no_proxy= \
-                git -c "http.proxy=$proxy_url" "$@"
-        }
-
-        if [[ -e "$git_cache" || -L "$git_cache" ]]; then
-            [[ -d "$git_cache" && ! -L "$git_cache" ]] || fail "$git_cache is not a real directory"
-            [[ "$(stat -c %U:%G:%a "$git_cache")" == root:root:700 ]] || \
-                fail "$git_cache has unexpected ownership or permissions"
-        else
-            install -d -o root -g root -m 0700 "$git_cache"
-        fi
-        if [[ ! -f "$git_cache/config" ]]; then
-            [[ -z "$(find "$git_cache" -mindepth 1 -print -quit)" ]] || \
-                fail "$git_cache contains data but is not a managed bare repository"
-            git init --bare --quiet "$git_cache"
-            git --git-dir="$git_cache" remote add origin "$repo_url"
-            git --git-dir="$git_cache" config extensions.partialClone origin
-            git --git-dir="$git_cache" config remote.origin.promisor true
-            git --git-dir="$git_cache" config remote.origin.partialclonefilter blob:none
-        fi
-        [[ "$(git --git-dir="$git_cache" rev-parse --is-bare-repository)" == true ]] || \
-            fail "$git_cache is not a bare Git repository"
-        [[ "$(git --git-dir="$git_cache" remote get-url origin)" == "$repo_url" ]] || \
-            fail "$git_cache has an unexpected origin"
-
-        advertised_main="$(run_git 30s ls-remote "$repo_url" refs/heads/main \
-            | awk '$2 == "refs/heads/main" { print $1; exit }')"
-        [[ "$advertised_main" =~ ^[a-f0-9]{40}$ ]] || fail "could not resolve the production main SHA"
-        [[ "$advertised_main" == "$sha" ]] || \
-            fail "requested SHA is no longer the current main head; refusing a stale deployment"
-
-        if ! git --git-dir="$git_cache" cat-file -e "$sha^{commit}" 2>/dev/null; then
-            run_git 120s --git-dir="$git_cache" fetch --quiet --filter=blob:none --depth=1 origin "$sha"
-        fi
-        [[ "$(git --git-dir="$git_cache" rev-parse "$sha^{commit}")" == "$sha" ]] || \
-            fail "the fetched commit does not match the requested SHA"
-
-        temp_dir=""
-        stage="$root/staging/$sha-$attempt"
-        release="$root/releases/$sha-$attempt"
-        cleanup() {
-            local status=$?
-            trap - EXIT
-            if [[ -n "$temp_dir" && "$temp_dir" == /var/tmp/autograder-deploy.* && \
-                -d "$temp_dir" && ! -L "$temp_dir" ]]; then
-                rm -rf -- "$temp_dir"
-            fi
-            if [[ -d "$stage" && ! -L "$stage" && "$stage" == "$root/staging/"* && \
-                ! -e "$release" && ! -L "$release" ]]; then
-                rm -rf -- "$stage"
-            fi
-            exit "$status"
-        }
-        trap cleanup EXIT
-
-        [[ ! -e "$stage" && ! -L "$stage" ]] || fail "the candidate staging directory already exists"
-        [[ ! -e "$release" && ! -L "$release" ]] || fail "the candidate release already exists"
-        temp_dir="$(mktemp -d /var/tmp/autograder-deploy.XXXXXX)"
-        manifest="$temp_dir/release-manifest.txt"
-        archive="$temp_dir/release.tar"
-        entries="$temp_dir/archive.entries"
-        if ! run_git 30s --git-dir="$git_cache" show "$sha:MAIN/deploy/release-manifest.txt" >"$manifest"; then
-            fail "the target commit has no release manifest"
-        fi
-
+        timeout 120 git --git-dir="$cache" fetch --quiet --filter=blob:none --no-tags --depth=1 origin refs/heads/main
+        [[ "$(git --git-dir="$cache" rev-parse FETCH_HEAD)" == "$sha" ]] || fail "fetched SHA mismatch"
+        stage="$root/staging/$release_id"
+        [[ ! -e "$stage" && ! -e "$root/releases/$release_id" ]] || fail "release ID already exists"
+        install -d -m 0755 "$root/staging"
+        install -d -m 0750 "$stage"
+        manifest="$(git --git-dir="$cache" show "$sha:MAIN/deploy/release-manifest.txt")"
         paths=()
-        while IFS= read -r entry || [[ -n "$entry" ]]; do
-            [[ -z "$entry" || "$entry" == \#* ]] && continue
-            [[ "$entry" =~ ^(B2|B3|B4|B5|MAIN)(/[A-Za-z0-9._-]+)*$ ]] || \
-                fail "release manifest contains an invalid path"
-            [[ "$entry" != *..* ]] || fail "release manifest contains a parent traversal"
-            manifest_tree_entry="$(run_git 30s --git-dir="$git_cache" \
-                ls-tree -r "$sha" -- "$entry")" || \
-                fail "could not inspect the target tree for manifest path: $entry"
-            [[ -n "$manifest_tree_entry" ]] || \
-                fail "release manifest path is missing from the target commit: $entry"
-            paths+=("$entry")
-        done < "$manifest"
-        [[ "${#paths[@]}" -ge 20 ]] || fail "release manifest is incomplete"
-        for required in MAIN/contracts MAIN/host/src MAIN/sdk/pyproject.toml MAIN/sdk/src MAIN/uv.lock \
-            MAIN/scripts/production-prepare.sh B2/contracts.lock B2/src \
-            B3/contracts.lock B3/src B4/contracts.lock B4/src B5/contracts.lock B5/src; do
-            printf '%s\n' "${paths[@]}" | grep -Fqx "$required" || \
-                fail "release manifest is missing $required"
-        done
-        if run_git 30s --git-dir="$git_cache" ls-tree -r "$sha" -- "${paths[@]}" \
-            | awk '$1 == "120000" { found=1 } END { exit !found }'; then
-            fail "the runtime manifest contains a symbolic link"
-        fi
-
-        install -d -o root -g root -m 0755 "$root/staging"
-        install -d -o root -g root -m 0750 "$stage"
-        run_git 180s --git-dir="$git_cache" archive --format=tar --output="$archive" "$sha" "${paths[@]}"
-        tar -tf "$archive" >"$entries" || fail "the target runtime archive is invalid"
-        if grep -Eq '(^/|(^|/)\.\.?(/|$)|\\|\.pptx$)' "$entries"; then
-            fail "the target runtime archive contains an unsafe or excluded path"
-        fi
-        grep -qx 'MAIN/contracts/manifest.schema.json' "$entries" || \
-            fail "the runtime archive is missing the contract manifest"
-        tar --extract --file="$archive" --directory="$stage" --no-same-owner
-        printf '%s\n' "$sha" >"$stage/.autograder-source-sha"
-
-        bash "$stage/MAIN/scripts/production-preflight.sh" "$sha" "$attempt"
+        while IFS= read -r path; do
+            [[ -z "$path" || "$path" == \#* ]] && continue
+            [[ "$path" =~ ^(B2|B3|B4|B5|MAIN)(/[A-Za-z0-9._-]+)*$ && "$path" != *..* ]] || \
+                fail "invalid release manifest path"
+            paths+=("$path")
+        done <<< "$manifest"
+        [[ "${#paths[@]}" -gt 0 ]] || fail "empty release manifest"
+        timeout 180 git --git-dir="$cache" archive "$sha" "${paths[@]}" \
+            | tar -x -C "$stage" --no-same-owner
         bash "$stage/MAIN/deploy/deploy-release.sh" "$sha" "$stage"
         ;;
-    *)
-        fail "usage: autograder-deployctl {preflight|status|deploy} ..."
-        ;;
+    *) fail "usage: autograder-deployctl {preflight|status|deploy}" ;;
 esac

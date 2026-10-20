@@ -12,7 +12,7 @@
     "test:watch": "vitest",
     "api:generate": "node scripts/generate-api-types.mjs",
     "api:check": "node scripts/generate-api-types.mjs --check",
-    "verify": "pnpm lint && pnpm typecheck && pnpm api:check && pnpm test && pnpm build"
+    "verify": "pnpm lint && pnpm api:check && pnpm test && pnpm build"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.0.0",

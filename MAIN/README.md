@@ -6,7 +6,7 @@ MAIN 不实现任何业务功能，也不拥有任何业务数据。它的职责
 
 1. **定义接口**：`contracts/` 下的 OpenAPI / AsyncAPI / JSON Schema 是四个模块之间唯一的机器可读权威。
 2. **组装系统**：一个 composition host 按 capability DAG 装载 B2/B3/B4 插件；B1 独立部署到 Vercel，见 [ADR-0017](docs/adr/ADR-0017-vercel-frontend-native-api-host.md)。
-3. **守住边界**：用可执行门禁强制契约一致、需求覆盖、文档完整、数据所有权不被跨越。
+3. **提供集成工具**：维护契约检查、应用组装和部署脚本；开发按影响验证，文档与历史验收记录不阻塞上线。
 
 > 一句话：**MAIN 是微内核，不是业务服务。** 删除任一后端模块，host 会因缺失 capability 而明确失败——这正是"即插即用"的可验证形态（[ADR-0001](docs/adr/ADR-0001-plugin-composition-and-schema-ownership.md)）。
 
@@ -38,13 +38,13 @@ AutoGrader/
 └── B4/     平台插件 —— 身份/课程/数据库/消息/运行期注册表
 ```
 
-**五个目录是五个独立的 Git 项目。** 各模块按自己的 README 独立开发；只有集成运行时 MAIN 才需要看到其他目录。
+**当前是一个 Git 仓库内的模块目录。** 各模块按自己的 README 独立开发；只有集成运行时 MAIN 才需要看到其他目录。
 
 ---
 
 ## 快速开始
 
-### 最小路径：只跑门禁（不需要 Docker、不需要装其他模块）
+### 按需专项审计（不作为日常开发或上线前置条件）
 
 ```powershell
 cd D:\VScodeProjects\AutoGrader\MAIN

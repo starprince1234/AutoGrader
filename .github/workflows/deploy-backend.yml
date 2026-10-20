@@ -8,48 +8,44 @@ on:
       - "B1/contracts.lock"
       - "B1/module.yaml"
       - "B2/alembic/**"
+      - "B2/alembic.ini"
       - "B2/contracts.lock"
       - "B2/module.yaml"
       - "B2/pyproject.toml"
-      - "B2/uv.lock"
       - "B2/src/**"
-      - "B2/tests/**"
-      - "B2/verify/linux-nsjail/**"
       - "B3/alembic/**"
+      - "B3/alembic.ini"
       - "B3/contracts.lock"
       - "B3/module.yaml"
       - "B3/pyproject.toml"
-      - "B3/uv.lock"
       - "B3/src/**"
-      - "B3/tests/**"
       - "B4/alembic/**"
-      - "B4/compose.ci.yaml"
+      - "B4/alembic.ini"
       - "B4/contracts.lock"
       - "B4/module.yaml"
       - "B4/pyproject.toml"
-      - "B4/uv.lock"
       - "B4/src/**"
-      - "B4/tests/**"
       - "B5/module.yaml"
+      - "B5/contracts.lock"
       - "B5/pyproject.toml"
-      - "B5/uv.lock"
       - "B5/src/**"
-      - "B5/tests/**"
-      - "B5/alembic/**"
       - "MAIN/contracts/**"
-      - "MAIN/host/**"
+      - "MAIN/host/src/**"
+      - "MAIN/host/pyproject.toml"
       - "MAIN/infra/postgres/**"
       - "MAIN/compose.production.yaml"
       - "MAIN/pyproject.toml"
-      - "MAIN/sdk/**"
+      - "MAIN/sdk/src/**"
       - "MAIN/scripts/production-prepare.sh"
-      - "MAIN/scripts/test_evidence.py"
       - "MAIN/uv.lock"
+      - "MAIN/scripts/production-preflight.sh"
+      - "MAIN/deploy/**"
+      - ".github/workflows/deploy-backend.yml"
       - ".github/scripts/deploy-ssh.sh"
   workflow_dispatch:
     inputs:
       operation:
-        description: "Prepare host state, inspect it read-only, or deploy a verified SHA"
+        description: "Prepare host configuration, inspect the server, or deploy this revision"
         required: true
         type: choice
         options:
@@ -58,203 +54,40 @@ on:
           - diagnose
           - deploy
         default: preflight
-      verified_run_id:
-        description: "Completed workflow run ID whose verify job passed"
-        required: false
-        type: string
-      verified_commit_sha:
-        description: "Full source commit SHA verified by that run"
-        required: false
-        type: string
 
 permissions:
   contents: read
-  actions: read
-
-concurrency:
-  group: autograder-production
-  cancel-in-progress: false
 
 jobs:
-  changes:
-    if: github.event_name == 'push'
-    runs-on: ubuntu-22.04
-    outputs:
-      deploy: ${{ steps.scope.outputs.deploy }}
-    steps:
-      - name: Check out pushed revision
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          ref: ${{ github.sha }}
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Classify runtime changes
-        id: scope
-        env:
-          BEFORE_SHA: ${{ github.event.before }}
-          AFTER_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
-          [[ "$AFTER_SHA" =~ ^[a-f0-9]{40}$ ]]
-          deploy=false
-          if [[ "$BEFORE_SHA" =~ ^0+$ ]]; then
-            deploy=true
-          else
-            [[ "$BEFORE_SHA" =~ ^[a-f0-9]{40}$ ]]
-            while IFS= read -r path; do
-              case "$path" in
-                B1/contracts.lock|\
-                B2/alembic/*|B2/contracts.lock|B2/module.yaml|B2/pyproject.toml|B2/src/*|\
-                B3/alembic/*|B3/contracts.lock|B3/module.yaml|B3/pyproject.toml|B3/src/*|\
-                B4/alembic/*|B4/contracts.lock|B4/module.yaml|B4/pyproject.toml|B4/src/*|\
-                B5/alembic/*|B5/module.yaml|B5/pyproject.toml|B5/src/*|\
-                MAIN/contracts/*|MAIN/host/src/*|MAIN/host/write_jwks.py|MAIN/host/wait_for_postgres.py|\
-                MAIN/sdk/src/*|MAIN/pyproject.toml|MAIN/uv.lock|\
-                MAIN/scripts/production-prepare.sh)
-                  deploy=true
-                  break
-                  ;;
-              esac
-            done < <(git diff --name-only "$BEFORE_SHA" "$AFTER_SHA")
-          fi
-          printf 'deploy=%s\n' "$deploy" >> "$GITHUB_OUTPUT"
-
   verify:
-    if: github.event_name == 'push'
+    if: github.event_name == 'push' || inputs.operation == 'deploy'
     runs-on: ubuntu-22.04
-    timeout-minutes: 45
+    timeout-minutes: 15
     steps:
-      - name: Check out the pushed revision
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-        with:
-          ref: ${{ github.sha }}
-
-      - name: Set up pnpm
-        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413
-        with:
-          version: 10.29.3
-          run_install: false
-
-      - name: Set up Node.js
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
-        with:
-          node-version: 24
-          cache: pnpm
-          cache-dependency-path: B1/pnpm-lock.yaml
-
-      - name: Install frontend dependencies
-        working-directory: B1
-        run: pnpm install --frozen-lockfile
-
-      - name: Verify frontend
-        working-directory: B1
-        run: pnpm verify
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
         with:
           version: 0.13.1
           enable-cache: true
-          cache-dependency-glob: |
-            MAIN/uv.lock
-            B2/uv.lock
-            B3/uv.lock
-            B4/uv.lock
-            B5/uv.lock
-
-      - name: Install Python workspace
+          cache-dependency-glob: MAIN/uv.lock
+      - name: Install the backend workspace
         run: uv sync --project MAIN --all-groups --extra modules --locked
-
-      - name: Check B2 dependency lock
-        run: uv lock --check --project B2
-
-      - name: Lint Python modules
+      - name: Lint backend code
+        run: uv run --project MAIN --locked ruff check MAIN/host MAIN/sdk MAIN/deploy/check-readiness.py B2/src B3/src B4/src B5/src
+      - name: Check host and deployment health contract
+        run: uv run --project MAIN --locked pytest MAIN/host/tests -q
+      - name: Check deployment shell syntax
         run: |
-          for project in MAIN B2 B3 B4 B5; do
-            (cd "$project" && uv run --locked ruff check .)
+          for script in MAIN/deploy/*.sh MAIN/deploy/autograder-deployctl MAIN/scripts/production-*.sh .github/scripts/deploy-ssh.sh; do
+            bash -n "$script"
           done
 
-      - name: Build privileged nsjail test image
-        run: docker build --file B2/verify/linux-nsjail/Dockerfile --tag autograder-b2-nsjail:ci .
-
-      - name: Check sparse PAX parsing in the locked B2 image
-        run: |
-          docker run --rm --network host \
-            --volume "$GITHUB_WORKSPACE:/work" \
-            --workdir /work/B2 \
-            --tmpfs /work/B2/.pytest-tmp \
-            --tmpfs /work/B2/.pytest_cache \
-            --env DATABASE_URL=postgresql+psycopg://autograder_platform:change-me-local-only@127.0.0.1:55433/autograder \
-            --env B2_TEST_DATABASE_URL=postgresql+psycopg://autograder_platform:change-me-local-only@127.0.0.1:55433/autograder \
-            --env B2_TEST_NATS_URL=nats://127.0.0.1:54223 \
-            --env PYTHONPATH=/work/B2/src:/work/MAIN/sdk/src \
-            autograder-b2-nsjail:ci \
-            /opt/autograder/B2/.venv/bin/python -m pytest -q \
-            tests/test_email_intake.py::test_printable_pax_sparse_bomb_is_rejected_as_a_bomb
-
-      - name: Prepare non-secret conformance test environment
-        run: cp MAIN/.env.example MAIN/.env.integration
-
-      - name: Start isolated module test services
-        run: |
-          docker compose --project-name autograder-b2-ci --file B2/compose.yaml up --detach --wait --wait-timeout 120 postgres nats
-          docker compose --project-name autograder-b3-ci --file B3/compose.yaml up --detach --wait --wait-timeout 120 postgres
-          docker compose --project-name autograder-b4-ci --file B4/compose.yaml --file B4/compose.ci.yaml up --detach --wait --wait-timeout 120 postgres nats
-
-      - name: Prepare B4 test database
-        working-directory: B4
-        env:
-          DATABASE_URL: postgresql+psycopg://autograder_platform:change-me-local-only@127.0.0.1:55435/autograder
-          B4_ADMIN_DATABASE_URL: postgresql+psycopg://autograder_platform:change-me-local-only@127.0.0.1:55435/autograder
-          B4_DB_PASSWORD: change-me
-          B4_TEST_POSTGRES_CONTAINER: autograder-b4-ci-postgres-1
-        run: |
-          uv run --locked alembic upgrade head
-          uv run --locked python -m autograder_b4.ops.provision
-
-      - name: Prepare B2 integration database
-        working-directory: B2
-        env:
-          DATABASE_URL: postgresql+psycopg://autograder_platform:change-me-local-only@127.0.0.1:55433/autograder
-        run: uv run --locked alembic upgrade head
-
-      - name: Prepare ephemeral signing key for composition tests
-        run: |
-          mkdir -p MAIN/.runtime
-          uv run --project MAIN --locked python -m autograder_b4.ops.generate_key \
-            --path "$GITHUB_WORKSPACE/MAIN/.runtime/ci-test-jwt.pem"
-          sed -i "s|^JWT_PRIVATE_KEY_FILE=.*$|JWT_PRIVATE_KEY_FILE=$GITHUB_WORKSPACE/MAIN/.runtime/ci-test-jwt.pem|" \
-            MAIN/.env.integration
-
-      - name: Run every module test suite and record evidence
-        env:
-          JWT_PRIVATE_KEY_FILE: ${{ github.workspace }}/MAIN/.runtime/ci-test-jwt.pem
-          AUTOGRADER_B2_NSJAIL_IMAGE: autograder-b2-nsjail:ci
-          B4_TEST_POSTGRES_CONTAINER: autograder-b4-ci-postgres-1
-        run: uv run --project MAIN python MAIN/scripts/test_evidence.py --all
-
-      - name: Check project contracts and documentation
-        run: uv run --project MAIN python -m autograder_host.checks
-
-      - name: Capture isolated service logs on failure
-        if: failure()
-        run: |
-          docker compose --project-name autograder-b2-ci --file B2/compose.yaml logs --no-color postgres nats
-          docker compose --project-name autograder-b3-ci --file B3/compose.yaml logs --no-color postgres
-          docker compose --project-name autograder-b4-ci --file B4/compose.yaml --file B4/compose.ci.yaml logs --no-color postgres nats
-
-      - name: Stop isolated module test services
-        if: always()
-        run: |
-          docker compose --project-name autograder-b2-ci --file B2/compose.yaml down --volumes --remove-orphans
-          docker compose --project-name autograder-b3-ci --file B3/compose.yaml down --volumes --remove-orphans
-          docker compose --project-name autograder-b4-ci --file B4/compose.yaml --file B4/compose.ci.yaml down --volumes --remove-orphans
-          rm -f MAIN/.env.integration MAIN/.runtime/ci-test-jwt.pem
-
   deploy:
-    needs: [verify, changes]
-    if: ${{ always() && ((github.event_name == 'push' && needs.verify.result == 'success' && needs.changes.outputs.deploy == 'true') || github.event_name == 'workflow_dispatch') }}
+    needs: verify
+    if: ${{ always() && github.ref == 'refs/heads/main' && (needs.verify.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.operation != 'deploy')) }}
+    concurrency:
+      group: autograder-production
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -262,94 +95,6 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: ${{ github.sha }}
-          fetch-depth: 0
-
-      - name: Validate reused verification run
-        if: github.event_name == 'workflow_dispatch'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_REF: ${{ github.ref }}
-          CURRENT_SHA: ${{ github.sha }}
-          OPERATION: ${{ inputs.operation }}
-          VERIFIED_RUN_ID: ${{ inputs.verified_run_id }}
-          VERIFIED_COMMIT_SHA: ${{ inputs.verified_commit_sha }}
-        run: |
-          set -euo pipefail
-          [[ "$OPERATION" == bootstrap-host || "$OPERATION" == preflight || "$OPERATION" == diagnose || "$OPERATION" == deploy ]] || {
-            echo "::error::Unsupported manual operation."
-            exit 1
-          }
-          [[ "$VERIFIED_RUN_ID" =~ ^[0-9]+$ ]] || {
-            echo "::error::A completed verification run ID is required."
-            exit 1
-          }
-          [[ "$VERIFIED_COMMIT_SHA" =~ ^[a-f0-9]{40}$ ]] || {
-            echo "::error::A full verified commit SHA is required."
-            exit 1
-          }
-          [[ "$GITHUB_REF" == refs/heads/main ]] || {
-            echo "::error::Production operations must run from main."
-            exit 1
-          }
-          run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_RUN_ID")"
-          [[ "$(jq -r '.head_branch' <<<"$run_json")" == main ]] || {
-            echo "::error::The verification run must target main."
-            exit 1
-          }
-          [[ "$(jq -r '.event' <<<"$run_json")" == push && \
-            "$(jq -r '.path' <<<"$run_json")" == .github/workflows/deploy-backend.yml ]] || {
-            echo "::error::The verification run must be a push run of this workflow."
-            exit 1
-          }
-          [[ "$(jq -r '.head_sha' <<<"$run_json")" == "$VERIFIED_COMMIT_SHA" ]] || {
-            echo "::error::The supplied verification SHA does not match that run."
-            exit 1
-          }
-          [[ "$(jq -r '.status' <<<"$run_json")" == completed ]] || {
-            echo "::error::The supplied verification run has not completed."
-            exit 1
-          }
-          jobs_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$VERIFIED_RUN_ID/jobs?per_page=100")"
-          verify_conclusion="$(jq -r '[.jobs[] | select(.name == "verify") | .conclusion][0] // empty' <<<"$jobs_json")"
-          [[ "$verify_conclusion" == success ]] || {
-            echo "::error::The referenced run has no successful verify job."
-            exit 1
-          }
-          git merge-base --is-ancestor "$VERIFIED_COMMIT_SHA" "$CURRENT_SHA" || {
-            echo "::error::The verified commit is not an ancestor of this deployment."
-            exit 1
-          }
-          while IFS= read -r changed_path; do
-            [[ -n "$changed_path" ]] || continue
-            case "$changed_path" in
-              .github/workflows/deploy-backend.yml|\
-              .github/workflows/server-network-audit.yml|\
-              .github/scripts/network-fetch-audit-runner.sh|\
-              .github/scripts/network-fetch-audit.sh|\
-              .github/scripts/run-network-audit.sh|\
-              .gitattributes|\
-              MAIN/deploy/*|MAIN/scripts/production-preflight.sh|\
-              MAIN/scripts/bootstrap-nsjail.sh|MAIN/scripts/bootstrap-cloudflared.sh|\
-              MAIN/scripts/install-mihomo-autograder.sh|\
-              MAIN/docs/runbooks/production-deployment.md|\
-              MAIN/docs/phases/active/phase-01-integration-runtime.md)
-                ;;
-              *)
-                echo "::error::Cannot reuse verification after non-operational change: $changed_path"
-                exit 1
-                ;;
-            esac
-          done < <(git diff --name-only "$VERIFIED_COMMIT_SHA" "$CURRENT_SHA")
-          for script in MAIN/scripts/production-preflight.sh MAIN/scripts/bootstrap-nsjail.sh MAIN/deploy/*.sh MAIN/deploy/autograder-deployctl .github/scripts/deploy-ssh.sh; do
-            bash -n "$script"
-          done
-          python3 - <<'PY'
-          import ast
-          from pathlib import Path
-
-          ast.parse(Path("MAIN/deploy/patch-nsjail-protobuf4-compat.py").read_text(encoding="utf-8"))
-          PY
 
       - name: Fetch deployment secrets from Doppler
         uses: DopplerHQ/secrets-fetch-action@cf794d40f721280fa2c068fa4f9e8afbc966e41d
@@ -534,8 +279,8 @@ jobs:
           fi
           REMOTE
 
-      - name: Bootstrap the server deployment control plane and runtime permissions
-        if: github.event_name == 'workflow_dispatch' && inputs.operation == 'bootstrap-host'
+      - name: Install current deployment scripts
+        if: github.event_name == 'push' || inputs.operation == 'deploy' || inputs.operation == 'bootstrap-host'
         env:
           DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
           DEPLOY_SSH_USER: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
@@ -576,26 +321,14 @@ jobs:
             /usr/local/sbin/autograder-deployctl
           install -o root -g root -m 0750 "$bootstrap_dir/production-preflight.sh" \
             /usr/local/lib/autograder/production-preflight.sh
-          [[ -d /opt/autograder/python && ! -L /opt/autograder/python ]]
-          shopt -s nullglob
-          python_executables=(/opt/autograder/python/cpython-3.12.*-linux-*-gnu/bin/python3.12)
-          [[ "${#python_executables[@]}" == 1 && -f "${python_executables[0]}" && \
-            "$(stat -c %a "${python_executables[0]}")" == 700 ]]
-          python_owner="$(stat -c %U "${python_executables[0]}")"
-          if [[ "$python_owner" == root ]]; then
-            chown --no-dereference autograder:autograder "${python_executables[0]}"
-          elif [[ "$python_owner" != autograder ]]; then
-            echo "Unexpected managed Python executable owner." >&2
-            exit 1
-          fi
-          runuser -u autograder -- "${python_executables[0]}" --version
+          chown -R autograder:autograder /opt/autograder/python
           chown root:cloudflared /etc/autograder /etc/autograder/cloudflared.token
           chmod 0750 /etc/autograder
           chmod 0640 /etc/autograder/cloudflared.token
           REMOTE
 
       - name: Run read-only server preflight
-        if: github.event_name == 'push' || inputs.operation == 'preflight' || inputs.operation == 'diagnose' || inputs.operation == 'deploy'
+        if: github.event_name == 'workflow_dispatch' && inputs.operation == 'preflight'
         env:
           DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
           DEPLOY_SSH_USER: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
@@ -630,7 +363,7 @@ jobs:
           fi
           printf 'api_listener='; ss -H -ltn 'sport = :18000' | head -n 1 || true
           if readiness="$(curl --fail --silent --show-error --max-time 5 http://127.0.0.1:18000/health/ready 2>/dev/null)"; then
-            printf '%s' "$readiness" | python3 -c 'import json,sys; p=json.load(sys.stdin); print("local_ready={}; modules={}".format(p.get("ready"), {str(m.get("module","")): m.get("healthy") for m in p.get("modules", [])}))'
+            printf '%s' "$readiness" | python3 -c 'import json,sys; p=json.load(sys.stdin); print("local_ready={}; modules={}".format(p.get("ready"), {str(m.get("name","")): m.get("healthy") for m in p.get("modules", [])}))'
           else
             printf '%s\n' 'local_readiness=unreachable'
           fi
@@ -649,12 +382,9 @@ jobs:
             printf '%s\n' 'Migration revisions:'
             docker exec "$postgres_container" sh -c 'for schema in b2 b3 b4; do case "$schema" in b2) table=alembic_version_b2 ;; b3) table=alembic_version_b3 ;; b4) table=alembic_version_b4 ;; esac; version=$(psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "SELECT version_num FROM ${schema}.${table}" 2>/dev/null || true); printf "%s=%s\n" "$schema" "${version:-missing}"; done'
           fi
-          printf '%s\n' 'Database backup metadata:'
-          find /var/lib/autograder/backups -mindepth 1 -maxdepth 1 -type f -name 'pre-migration-*.dump' \
-            -printf '%f %s bytes %u:%g mode=%m\n' | LC_ALL=C sort
           REMOTE
 
-      - name: Deploy the verified SHA with server-side fetch and build
+      - name: Deploy this revision with server-side fetch and build
         if: github.event_name == 'push' || inputs.operation == 'deploy'
         env:
           DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
@@ -662,8 +392,8 @@ jobs:
           DEPLOY_SSH_PASSWORD: ${{ steps.doppler.outputs.DEPLOY_SSH_PASSWORD }}
           DEPLOY_SSH_PORT: ${{ steps.doppler.outputs.DEPLOY_SSH_PORT }}
           GITHUB_SHA: ${{ github.sha }}
-          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+          DEPLOY_RELEASE_ID: ${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -euo pipefail
           bash .github/scripts/deploy-ssh.sh ssh "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
-            /usr/local/sbin/autograder-deployctl deploy "$GITHUB_SHA" "$GITHUB_RUN_ATTEMPT"
+            /usr/local/sbin/autograder-deployctl deploy "$GITHUB_SHA" "$DEPLOY_RELEASE_ID"

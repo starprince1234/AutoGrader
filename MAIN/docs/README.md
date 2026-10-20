@@ -1,10 +1,10 @@
 # MAIN 文档索引
 
-**本文件是 MAIN 文档的唯一导航入口。** 不在本索引中的正式文档视为**治理缺陷**；新增、移动、归档或删除文档时必须同步更新本索引。
+本文件是 MAIN 文档导航。开发执行规则见仓库根 AGENTS.md；历史治理表、状态表与阶段模板用于参考，不增加日常开发或发布的前置步骤。
 
 - 全局术语：[glossary.md](glossary.md)
 - 课程知识应用矩阵：[knowledge-matrix.md](knowledge-matrix.md)
-- 模块文档规范（对四个模块强制）：[collaboration/module-doc-spec.md](collaboration/module-doc-spec.md)
+- 模块文档参考模板：[collaboration/module-doc-spec.md](collaboration/module-doc-spec.md)
 
 ---
 

@@ -1,30 +1,12 @@
-"""Record what each module's test suite actually did, so the numbers in the docs are checkable.
+"""Run requested module suites and record their actual results.
 
-Why this exists: this project's phase documents quote test totals ("1145 passed", "23 files /
-133 tests"), and those numbers are the main evidence that anything works. They are also
-**hand-copied prose**. Nothing detects the case that actually happens: the contract moves, the
-suite is never re-run, and the quoted number silently describes a revision that no longer
-exists. The number stays plausible, which is worse than being wrong.
-
-So each run is recorded as a machine-readable artefact bound to the contract version and digest
-it was measured against, and `autograder_host.checks.check_test_evidence()` fails when a module's
-evidence is missing or was recorded against a contract the repository has since moved past.
-
-That gate is a correction, not the original design. This script was written *for* the gate and
-then wired into nothing, so for the whole interval from contract 0.7.0 to 0.16.0 `--check` reported
-"B1 recorded at 0.7.0; B2/B3/B4/B5 no evidence" to no one, and the documents meanwhile quoted B1 at
-133 tests against a repository whose suite had reached 263. A mechanism with no enforcement point
-is indistinguishable from no mechanism, which is why the gate now lives in `checks.py` and calls
-`evidence_problems()` below rather than reimplementing it.
+This is an explicit acceptance/reporting tool, not a prerequisite for development,
+contract audits, diagnostics or deployment. Missing records do not block those workflows.
 
 Usage:
-    python MAIN/scripts/test_evidence.py --module B2          # run one suite and record it
-    python MAIN/scripts/test_evidence.py --all                # the delivery sweep (all five)
-    python MAIN/scripts/test_evidence.py --check              # the same verdict checks.py gates on
-
-Deliberately, there is **no way to write an evidence file by hand**: the only writer parses a
-real test-runner run (pytest for B2-B5, vitest for B1). A hand-writable evidence file would be a
-second place to state a claim, which is the failure mode this whole project keeps finding.
+    python MAIN/scripts/test_evidence.py --module B2
+    python MAIN/scripts/test_evidence.py --all
+    python MAIN/scripts/test_evidence.py --check
 """
 
 from __future__ import annotations

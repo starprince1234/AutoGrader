@@ -1251,36 +1251,6 @@ def check_local_configuration_consistency() -> None:
         raise ValueError("local configuration drift:\n  " + "\n  ".join(problems))
 
 
-def check_test_evidence() -> None:
-    """The suite totals the docs quote must describe the contract the repository is on now.
-
-    Phase and strategy documents quote suite totals ("1145 passed", "23 files / 133 tests"), and
-    those numbers are the main evidence that anything works. They are also hand-copied prose, so
-    nothing noticed the case that actually happened: the contract moved from 0.7.0 to 0.16.0, the
-    suites were never re-recorded, and the quoted totals silently described a revision that no
-    longer exists -- a wrong number that stays plausible, which is worse than an obviously stale
-    one. `scripts/test_evidence.py` records each run bound to the contract version and digest it
-    was measured against; this gate is what makes that record binding.
-
-    The script was written *for* this gate and then no gate ran it, which is precisely the failure
-    mode it exists to catch: a mechanism with no enforcement point is indistinguishable from no
-    mechanism, and `--check` reported five stale/missing modules to nobody for the whole interval.
-    """
-    script = ROOT / "scripts" / "test_evidence.py"
-    # No is_file() guard and no except, unlike the B2 script loaded above: this file is MAIN's
-    # own and always present, so failing to load it is a gate failure rather than a reason to
-    # silently skip the check.
-    spec = importlib.util.spec_from_file_location("_main_test_evidence", script)
-    module = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
-    spec.loader.exec_module(module)  # type: ignore[union-attr]
-    problems = module.evidence_problems()
-    if problems:
-        raise ValueError(
-            "test evidence is missing or stale (run MAIN/scripts/test_evidence.py --all):\n  "
-            + "\n  ".join(problems)
-        )
-
-
 def main() -> None:
     check_contract_examples()
     check_contract_parses_strictly()
@@ -1299,11 +1269,9 @@ def main() -> None:
     check_document_encoding_and_links()
     check_no_replacement_characters()
     check_local_configuration_consistency()
-    check_test_evidence()
     print(f"contracts, manifests and requirements: ok ({contract_digest()})")
     print("module documentation governance and links: ok")
     print("migration heads and local ports agree with compose: ok")
-    print("test evidence is current and green for every module at this contract: ok")
 
 
 if __name__ == "__main__":

@@ -130,7 +130,7 @@ TOTAL   3206   324   90%
 
 ## 5. 契约门禁的自动化内容（已实现）
 
-`host/src/autograder_host/checks.py` 当前断言：
+`host/src/autograder_host/checks.py` 是按需执行的专项审计，不阻塞日常发布。全模块测试记录由 `scripts/test_evidence.py` 按需生成，不要求每次契约变化重跑全套。当前审计内容：
 
 | 检查 | 内容 |
 |---|---|
@@ -141,7 +141,6 @@ TOTAL   3206   324   90%
 | `check_module_governance` | 四个模块均具备必需的文档集合与阶段记录 |
 | `check_document_encoding_and_links` | Markdown 为有效 UTF-8、无 BOM、相对链接不失效 |
 | `check_shared_vocabularies` | **被两处声明的值集必须一致**。OpenAPI 无法 `$ref` 进 `schemas/*.json`（不同方言、不同文档），因此两边都要命名的词表必然写两遍（`language` 一直如此；`CHG-0019` 加了 `failure_category` 与 `adapter_kind`，后者是 OpenAPI↔OpenAPI 的重复——不能跨引 `b3.yaml`，因为 B2 的契约测试只从 `common.yaml` 解析外部引用）。此前**没有任何门禁比对这些副本**，单侧修改会静默漂移。可空性**单独**比对：同一个可空性两种拼法都合法（JSON Schema 把 `null` 列为 `enum` 成员；OpenAPI 3.1 之前风格的写法用 `anyOf`），逐字比对会把拼法差异误报成分歧——**会乱叫的门禁会被关掉**。两侧都剥掉 `null` 再比集合，比的是值集本身。**新增一处重复词表时，必须在同一次变更里把该对登记进 `SHARED_VOCABULARIES`** |
-| `check_test_evidence` | 文档引用的套件总数必须是**当前契约下的实测值**。`scripts/test_evidence.py` 把每次运行记成绑定"契约版本 + 契约摘要"的物件（`B1` 走 vitest，`B2`–`B5` 走 pytest），本门禁是让这份记录真正具备约束力的**执行点**。它此前**并不存在**：脚本是*为了*门禁而写的，却没有任何地方调用它，于是从契约 0.7.0 到 0.16.0，`--check` 一直报"B1 记录在 0.7.0、B2–B5 无记录"而无人接收，同期文档仍引用 B1 的 133 个测试（实际已到 263）——**一个没有执行点的机制与没有机制无法区分**。判定逻辑只有一份：脚本里的 `evidence_problems()`，门禁按路径加载后调用它；在两边各写一遍会产生同一仓库上的两个判决，而它们之间的分歧不可见 |
 
 **尚未实现**：OpenAPI/AsyncAPI 的**元 schema（meta-schema）校验**；跨 schema FK 检测（需数据库连接）；`module.yaml`/`descriptor`/注册表三方一致性校验（需运行 host）。
 
