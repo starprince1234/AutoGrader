@@ -49,12 +49,13 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: "Prepare the one-time host state, run a read-only preflight, or deploy a verified SHA"
+        description: "Prepare host state, inspect it read-only, or deploy a verified SHA"
         required: true
         type: choice
         options:
           - bootstrap-host
           - preflight
+          - diagnose
           - deploy
         default: preflight
       verified_run_id:
@@ -275,7 +276,7 @@ jobs:
           VERIFIED_COMMIT_SHA: ${{ inputs.verified_commit_sha }}
         run: |
           set -euo pipefail
-          [[ "$OPERATION" == bootstrap-host || "$OPERATION" == preflight || "$OPERATION" == deploy ]] || {
+          [[ "$OPERATION" == bootstrap-host || "$OPERATION" == preflight || "$OPERATION" == diagnose || "$OPERATION" == deploy ]] || {
             echo "::error::Unsupported manual operation."
             exit 1
           }
@@ -594,7 +595,7 @@ jobs:
           REMOTE
 
       - name: Run read-only server preflight
-        if: github.event_name == 'push' || inputs.operation == 'preflight' || inputs.operation == 'deploy'
+        if: github.event_name == 'push' || inputs.operation == 'preflight' || inputs.operation == 'diagnose' || inputs.operation == 'deploy'
         env:
           DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
           DEPLOY_SSH_USER: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
@@ -604,6 +605,50 @@ jobs:
           set -euo pipefail
           bash .github/scripts/deploy-ssh.sh ssh "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
             /usr/local/sbin/autograder-deployctl preflight
+
+      - name: Capture read-only API and database migration state
+        if: github.event_name == 'workflow_dispatch' && inputs.operation == 'diagnose'
+        env:
+          DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
+          DEPLOY_SSH_USER: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
+          DEPLOY_SSH_PASSWORD: ${{ steps.doppler.outputs.DEPLOY_SSH_PASSWORD }}
+          DEPLOY_SSH_PORT: ${{ steps.doppler.outputs.DEPLOY_SSH_PORT }}
+        run: |
+          set -euo pipefail
+          bash .github/scripts/deploy-ssh.sh ssh "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          printf '%s\n' 'Service state:'
+          for unit in autograder.service cloudflared.service; do
+            printf 'unit=%s ' "$unit"
+            systemctl show "$unit" --property=LoadState,ActiveState,SubState,Result,ExecMainStatus | tr '\n' ' '
+            printf '\n'
+          done
+          printf 'current_release=%s\n' "$(readlink -f /opt/autograder/current 2>/dev/null || printf none)"
+          printf 'api_listener='; ss -H -ltn 'sport = :18000' | head -n 1 || true
+          if readiness="$(curl --fail --silent --show-error --max-time 5 http://127.0.0.1:18000/health/ready 2>/dev/null)"; then
+            printf '%s' "$readiness" | python3 -c 'import json,sys; p=json.load(sys.stdin); print("local_ready={}; modules={}".format(p.get("ready"), {str(m.get("module","")): m.get("healthy") for m in p.get("modules", [])}))'
+          else
+            printf '%s\n' 'local_readiness=unreachable'
+          fi
+          printf '%s\n' 'Recent service error lines (credentials redacted):'
+          for unit in autograder.service cloudflared.service; do
+            journalctl -u "$unit" --since '-30 min' --no-pager -o cat 2>/dev/null \
+              | grep -Ei 'Traceback|ModuleNotFoundError|ImportError|PermissionError|Permission denied|Address already in use|ConnectionRefusedError|RuntimeError|ERROR:|failed' \
+              | tail -n 30 \
+              | sed -E 's#(postgres(ql)?(\+psycopg)?://)[^[:space:]@]+@#\1<redacted>@#g; s/Bearer[[:space:]]+[^[:space:]]+/Bearer <redacted>/g; s/[A-Fa-f0-9]{64}/<redacted-hex>/g' \
+              || true
+          done
+          postgres_container="$(docker ps --filter label=com.docker.compose.project=autograder --filter label=com.docker.compose.service=postgres --format '{{.Names}}' | head -n 1)"
+          if [[ -z "$postgres_container" ]]; then
+            printf '%s\n' 'migration_revisions=postgres_container_missing'
+          else
+            printf '%s\n' 'Migration revisions:'
+            docker exec "$postgres_container" sh -c 'for schema in b2 b3 b4; do case "$schema" in b2) table=alembic_version_b2 ;; b3) table=alembic_version_b3 ;; b4) table=alembic_version_b4 ;; esac; version=$(psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Atqc "SELECT version_num FROM ${schema}.${table}" 2>/dev/null || true); printf "%s=%s\n" "$schema" "${version:-missing}"; done'
+          fi
+          printf '%s\n' 'Database backup metadata:'
+          find /var/lib/autograder/backups -mindepth 1 -maxdepth 1 -type f -name 'pre-migration-*.dump' \
+            -printf '%f %s bytes %u:%g mode=%m\n' | LC_ALL=C sort
+          REMOTE
 
       - name: Deploy the verified SHA with server-side fetch and build
         if: github.event_name == 'push' || inputs.operation == 'deploy'
