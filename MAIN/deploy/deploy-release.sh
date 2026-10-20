@@ -149,11 +149,19 @@ runuser -u autograder -- env \
 chown --no-dereference --recursive root:root "$release"
 chmod 0755 "$release"
 venv_python="$release/MAIN/.venv/bin/python"
+venv_dir="$release/MAIN/.venv"
+[[ -d "$venv_dir" && ! -L "$venv_dir" ]] || \
+    fail "the release Python environment is not a real directory"
+chgrp --no-dereference --recursive autograder "$venv_dir"
+find "$venv_dir" -xdev -type d -exec chmod 0750 {} +
+find "$venv_dir" -xdev -type f ! -perm /111 -exec chmod 0640 {} +
+find "$venv_dir" -xdev -type f -perm /111 -exec chmod 0750 {} +
 resolved_python="$(readlink -f "$venv_python" 2>/dev/null || true)"
 [[ -n "$resolved_python" && -f "$resolved_python" ]] || \
     fail "the release Python executable does not resolve to a regular file"
 if [[ "$resolved_python" == "$release/"* ]]; then
-    chmod 0755 "$resolved_python"
+    [[ "$(stat -c %U:%G:%a "$resolved_python")" == root:autograder:750 ]] || \
+        fail "the release-local Python executable has unexpected ownership or permissions"
 elif [[ "$resolved_python" == "$root/python/"* ]]; then
     [[ "$(stat -c %U:%G "$resolved_python")" == autograder:autograder && \
         "$(stat -c %a "$resolved_python")" == 700 ]] || \
