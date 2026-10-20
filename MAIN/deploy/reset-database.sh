@@ -3,7 +3,8 @@
 set -euo pipefail
 [[ "$(id -u)" == 0 ]] || { printf 'Run as root.\n' >&2; exit 1; }
 release="$(readlink -f "${1:?usage: reset-database.sh /opt/autograder/releases/<release>}")"
-[[ "$release" == /opt/autograder/releases/* && -x "$release/MAIN/.venv/bin/python" ]]
+[[ "$release" == /opt/autograder/releases/* && -x "$release/MAIN/.venv/bin/python" && \
+    -f "$release/MAIN/scripts/production-prepare.sh" ]]
 set -a
 source /etc/autograder/setup.env
 source /etc/autograder/runtime.env
