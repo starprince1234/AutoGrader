@@ -140,7 +140,10 @@ case "${1:-}" in
             [[ "$entry" =~ ^(B2|B3|B4|B5|MAIN)(/[A-Za-z0-9._-]+)*$ ]] || \
                 fail "release manifest contains an invalid path"
             [[ "$entry" != *..* ]] || fail "release manifest contains a parent traversal"
-            git --git-dir="$git_cache" cat-file -e "$sha:$entry" 2>/dev/null || \
+            manifest_tree_entry="$(run_git 30s --git-dir="$git_cache" \
+                ls-tree -r "$sha" -- "$entry")" || \
+                fail "could not inspect the target tree for manifest path: $entry"
+            [[ -n "$manifest_tree_entry" ]] || \
                 fail "release manifest path is missing from the target commit: $entry"
             paths+=("$entry")
         done < "$manifest"
