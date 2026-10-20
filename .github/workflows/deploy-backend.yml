@@ -268,6 +268,10 @@ jobs:
             [[ -n "$changed_path" ]] || continue
             case "$changed_path" in
               .github/workflows/deploy-backend.yml|\
+              .github/workflows/server-network-audit.yml|\
+              .github/scripts/network-fetch-audit-runner.sh|\
+              .github/scripts/network-fetch-audit.sh|\
+              .github/scripts/run-network-audit.sh|\
               .gitattributes|\
               MAIN/deploy/*|MAIN/scripts/production-preflight.sh|\
               MAIN/scripts/bootstrap-nsjail.sh|MAIN/scripts/bootstrap-cloudflared.sh|\
