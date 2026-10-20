@@ -488,8 +488,28 @@ else
             /var/lib/autograder/workspace; do
             if [[ -e "$path" || -L "$path" ]]; then
                 require_directory "$path" autograder autograder 750
-                [[ -z "$(find "$path" -mindepth 1 -print -quit)" ]] || \
-                    fail "$path contains data and is not an empty first-deployment directory"
+                case "$path" in
+                    /var/lib/autograder/jwt)
+                        key_file="$path/jwt-ed25519.pem"
+                        [[ -f "$key_file" && ! -L "$key_file" && -s "$key_file" && \
+                            "$(stat -c %U:%G:%a "$key_file")" == autograder:autograder:600 && \
+                            "$(find "$path" -mindepth 1 -maxdepth 1 -print | wc -l)" == 1 ]] || \
+                            fail "$path does not contain exactly the managed private signing key"
+                        printf '[autograder-preflight] recognized and will preserve the managed private signing key\n'
+                        ;;
+                    /var/lib/autograder/jwks)
+                        jwks_file="$path/jwks.json"
+                        [[ -f "$jwks_file" && ! -L "$jwks_file" && -s "$jwks_file" && \
+                            "$(stat -c %U:%G:%a "$jwks_file")" == autograder:autograder:600 && \
+                            "$(find "$path" -mindepth 1 -maxdepth 1 -print | wc -l)" == 1 ]] || \
+                            fail "$path does not contain exactly the managed public JWKS file"
+                        printf '[autograder-preflight] recognized and will preserve the managed JWKS file\n'
+                        ;;
+                    *)
+                        [[ -z "$(find "$path" -mindepth 1 -print -quit)" ]] || \
+                            fail "$path contains data and is not an empty first-deployment directory"
+                        ;;
+                esac
             fi
         done
         if [[ -e /var/lib/autograder/backups || -L /var/lib/autograder/backups ]]; then
