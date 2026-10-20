@@ -124,6 +124,14 @@ cmp -s "$stage/MAIN/deploy/autograder.service" /etc/systemd/system/autograder.se
 cmp -s "$stage/MAIN/deploy/cloudflared.service" /etc/systemd/system/cloudflared.service || \
     fail "the host Tunnel unit differs from the release; update host configuration separately"
 
+if [[ -e "$root/releases" || -L "$root/releases" ]]; then
+    [[ -d "$root/releases" && ! -L "$root/releases" && \
+        "$(stat -c %U:%G:%a "$root/releases")" == root:root:755 ]] || \
+        fail "$root/releases has unexpected type, ownership, or permissions"
+else
+    install -d -o root -g root -m 0755 "$root/releases"
+fi
+
 mv "$stage" "$release"
 chown -R autograder:autograder "$release"
 runuser -u autograder -- env \
