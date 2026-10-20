@@ -1,4 +1,5 @@
 import { chmodSync, writeFileSync } from "node:fs";
+import { mailEnvEntries } from "./mail-env.mjs";
 
 const runtimeEnvPath = process.argv[2];
 const setupEnvPath = process.argv[3];
@@ -40,6 +41,11 @@ const postgres = "127.0.0.1:25432/autograder";
 const natsUrl = "nats://127.0.0.1:25222";
 const apiUrl = "http://127.0.0.1:18000";
 
+// The mail channel lives in its own module so that `sync-mail-channel` can render the
+// same entries for an existing host; omitting it here is what made the first deployment
+// report the channel as unconfigured while Doppler held every value.
+const mailEntries = mailEnvEntries(process.env);
+
 const runtimeEntries = {
   B4_DATABASE_URL: "postgresql+psycopg://autograder_b4:" + b4Password + "@" + postgres,
   B4_NATS_URL: natsUrl,
@@ -68,6 +74,7 @@ const runtimeEntries = {
   JWT_PRIVATE_KEY_FILE: "/var/lib/autograder/jwt/jwt-ed25519.pem",
   B4_REFRESH_COOKIE_SECURE: "true",
   AUTOGRADER_CORS_ORIGINS: "https://www.91idc.me",
+  ...mailEntries,
 };
 
 const setupEntries = {

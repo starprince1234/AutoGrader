@@ -86,6 +86,35 @@ gh workflow run deploy-backend.yml --ref main -f operation=preflight
 
 首次生成服务器环境文件仍用 `operation=bootstrap-host`；已有环境文件保持原值。诊断不以预检通过为前提。密钥、SSH 主机指纹、最小权限数据库账号与 nsjail 隔离保持有效。
 
+### 邮件通道变量（`operation=sync-mail-channel`）
+
+生产环境文件只渲染一次（`bootstrap-host`），日常发布不会重写它。自助注册需要的 `SMTP_*` 因此单独有一套
+显式操作：
+
+```bash
+gh workflow run deploy-backend.yml --ref main -f operation=sync-mail-channel
+```
+
+它只做四件事：
+
+1. 从 Doppler `autograder/prd` 取 `SMTP_HOST/PORT/USER/PASS/FROM/FROM_NAME/TLS_MODE/TIMEOUT_SECONDS`；
+2. 把渲染结果与 `MAIN/deploy/merge-env-keys.py` 上传到服务器 `/tmp` 的 0700 暂存目录；
+3. **只合并这八个键**进 `/etc/autograder/runtime.env`：缺失则追加、值变则原地替换，其余字节不动；
+   原子写入（同目录临时文件 + `os.replace`），保持 `0600 root:root`；
+4. 重启 `autograder.service`，并在 30 次轮询内等待 `/health/ready` 出现 `"ready": true`。
+
+这个操作不会重新渲染 `runtime.env` 的其余部分，也不会触发发布。
+
+**缺口是怎么来的**：这些变量曾经确实存在于 Doppler，但 `write-runtime-env.mjs` 的 `runtimeEntries`
+是硬编码白名单，没列进去 ⇒ 文件里没有 ⇒ 进程读不到 ⇒ 启动日志
+`module.registration_mail_unconfigured` 且注册端点返回 `503`。现在两条渲染路径共用
+`MAIN/deploy/mail-env.mjs`，不会各维护一份。
+
+**手工等价操作**（不想再跑一次 workflow 时）：把同样八行追加到 `/etc/autograder/runtime.env`
+（`root:root 0600`）后 `systemctl restart autograder.service`；手工方式需自行保证引号与转义正确，
+写入前确认文件不是符号链接。
+
+
 ## 3. 空库重建与后续数据
 
 2026-10-20 用户已授权删除当前生产业务数据，并要求后续发布保留新数据。重建由独立的 [`reset-database.sh`](../../deploy/reset-database.sh) 执行，不接入 push 或日常 deploy，也不提供自动清库开关。
