@@ -57,8 +57,11 @@ class ConfigurationError(RuntimeError):
     """Raised when the environment cannot safely boot the module."""
 
 
-def _env_int(name: str, default: int) -> int:
-    raw = os.getenv(name)
+def _env_int(source: Mapping[str, str], name: str, default: int) -> int:
+    # Read from the mapping the caller passed, never os.getenv: the composition host hands
+    # each module its own view (ADR-0008), and a helper that bypasses it would resolve the
+    # process-wide value while the rest of Settings resolves the module-scoped one.
+    raw = source.get(name)
     if raw is None or raw.strip() == "":
         return default
     try:
@@ -70,15 +73,15 @@ def _env_int(name: str, default: int) -> int:
     return value
 
 
-def _env_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name)
+def _env_bool(source: Mapping[str, str], name: str, default: bool) -> bool:
+    raw = source.get(name)
     if raw is None or raw.strip() == "":
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _env_str(name: str) -> str:
-    raw = os.getenv(name)
+def _env_str(source: Mapping[str, str], name: str) -> str:
+    raw = source.get(name)
     return "" if raw is None else raw.strip()
 
 
@@ -129,6 +132,20 @@ class Settings:
         return bool(self.smtp_host and self.smtp_user and self.smtp_password and self.smtp_from)
 
     @property
+    def smtp_missing_variables(self) -> tuple[str, ...]:
+        """Names (never values) of the variables the mail channel still lacks."""
+        return tuple(
+            name
+            for name, value in (
+                ("SMTP_HOST", self.smtp_host),
+                ("SMTP_USER", self.smtp_user),
+                ("SMTP_PASS", self.smtp_password),
+                ("SMTP_FROM", self.smtp_from),
+            )
+            if not value
+        )
+
+    @property
     def smtp_uses_implicit_tls(self) -> bool:
         """`465`/`smtps` speak TLS from the first byte; STARTTLS is a different handshake."""
         mode = self.smtp_tls_mode.lower()
@@ -161,77 +178,81 @@ class Settings:
             jwt_issuer=(source.get("B4_JWT_ISSUER") or "autograder-b4").strip(),
             jwt_audience=(source.get("B4_JWT_AUDIENCE") or "autograder").strip(),
             access_token_ttl_seconds=_env_int(
-                "B4_ACCESS_TOKEN_TTL_SECONDS", DEFAULT_ACCESS_TOKEN_TTL_SECONDS
+                source, "B4_ACCESS_TOKEN_TTL_SECONDS", DEFAULT_ACCESS_TOKEN_TTL_SECONDS
             ),
             refresh_token_ttl_seconds=_env_int(
-                "B4_REFRESH_TOKEN_TTL_SECONDS", DEFAULT_REFRESH_TOKEN_TTL_SECONDS
+                source, "B4_REFRESH_TOKEN_TTL_SECONDS", DEFAULT_REFRESH_TOKEN_TTL_SECONDS
             ),
             roster_upload_max_bytes=_env_int(
-                "B4_ROSTER_UPLOAD_MAX_BYTES", DEFAULT_ROSTER_UPLOAD_MAX_BYTES
+                source, "B4_ROSTER_UPLOAD_MAX_BYTES", DEFAULT_ROSTER_UPLOAD_MAX_BYTES
             ),
             login_failure_window_seconds=_env_int(
-                "B4_LOGIN_FAILURE_WINDOW_SECONDS", DEFAULT_LOGIN_FAILURE_WINDOW_SECONDS
+                source, "B4_LOGIN_FAILURE_WINDOW_SECONDS", DEFAULT_LOGIN_FAILURE_WINDOW_SECONDS
             ),
-            login_failure_limit=_env_int("B4_LOGIN_FAILURE_LIMIT", DEFAULT_LOGIN_FAILURE_LIMIT),
+            login_failure_limit=_env_int(
+                source, "B4_LOGIN_FAILURE_LIMIT", DEFAULT_LOGIN_FAILURE_LIMIT
+            ),
             module_root=module_root_from_environment(source),
             refresh_cookie_name=(
                 source.get("B4_REFRESH_COOKIE_NAME") or "autograder_refresh"
             ).strip(),
-            refresh_cookie_secure=_env_bool("B4_REFRESH_COOKIE_SECURE", True),
-            allow_weak_password=_env_bool("B4_ALLOW_WEAK_PASSWORD", environment != "production"),
-            smtp_host=_env_str("SMTP_HOST"),
-            smtp_port=_env_int("SMTP_PORT", DEFAULT_SMTP_PORT),
-            smtp_user=_env_str("SMTP_USER"),
-            smtp_password=_env_str("SMTP_PASS"),
-            smtp_from=_env_str("SMTP_FROM"),
-            smtp_from_name=_env_str("SMTP_FROM_NAME") or "AutoGrader",
-            smtp_tls_mode=_env_str("SMTP_TLS_MODE").lower() or DEFAULT_SMTP_TLS_MODE,
-            smtp_timeout_seconds=_env_int("SMTP_TIMEOUT_SECONDS", DEFAULT_SMTP_TIMEOUT_SECONDS),
+            refresh_cookie_secure=_env_bool(source, "B4_REFRESH_COOKIE_SECURE", True),
+            allow_weak_password=_env_bool(
+                source, "B4_ALLOW_WEAK_PASSWORD", environment != "production"
+            ),
+            smtp_host=_env_str(source, "SMTP_HOST"),
+            smtp_port=_env_int(source, "SMTP_PORT", DEFAULT_SMTP_PORT),
+            smtp_user=_env_str(source, "SMTP_USER"),
+            smtp_password=_env_str(source, "SMTP_PASS"),
+            smtp_from=_env_str(source, "SMTP_FROM"),
+            smtp_from_name=_env_str(source, "SMTP_FROM_NAME") or "AutoGrader",
+            smtp_tls_mode=_env_str(source, "SMTP_TLS_MODE").lower() or DEFAULT_SMTP_TLS_MODE,
+            smtp_timeout_seconds=_env_int(
+                source, "SMTP_TIMEOUT_SECONDS", DEFAULT_SMTP_TIMEOUT_SECONDS
+            ),
             registration_code_ttl_seconds=_env_int(
-                "B4_REGISTRATION_CODE_TTL_SECONDS", DEFAULT_REGISTRATION_CODE_TTL_SECONDS
+                source, "B4_REGISTRATION_CODE_TTL_SECONDS", DEFAULT_REGISTRATION_CODE_TTL_SECONDS
             ),
             registration_resend_seconds=_env_int(
-                "B4_REGISTRATION_RESEND_SECONDS", DEFAULT_REGISTRATION_RESEND_SECONDS
+                source, "B4_REGISTRATION_RESEND_SECONDS", DEFAULT_REGISTRATION_RESEND_SECONDS
             ),
             registration_max_attempts=_env_int(
-                "B4_REGISTRATION_MAX_ATTEMPTS", DEFAULT_REGISTRATION_MAX_ATTEMPTS
+                source, "B4_REGISTRATION_MAX_ATTEMPTS", DEFAULT_REGISTRATION_MAX_ATTEMPTS
             ),
             registration_email_hourly_limit=_env_int(
-                "B4_REGISTRATION_EMAIL_HOURLY_LIMIT", DEFAULT_REGISTRATION_EMAIL_HOURLY_LIMIT
+                source,
+                "B4_REGISTRATION_EMAIL_HOURLY_LIMIT",
+                DEFAULT_REGISTRATION_EMAIL_HOURLY_LIMIT,
             ),
             registration_client_hourly_limit=_env_int(
-                "B4_REGISTRATION_CLIENT_HOURLY_LIMIT", DEFAULT_REGISTRATION_CLIENT_HOURLY_LIMIT
+                source,
+                "B4_REGISTRATION_CLIENT_HOURLY_LIMIT",
+                DEFAULT_REGISTRATION_CLIENT_HOURLY_LIMIT,
             ),
             registration_allowlist_max_bytes=_env_int(
-                "B4_REGISTRATION_ALLOWLIST_MAX_BYTES", DEFAULT_REGISTRATION_ALLOWLIST_MAX_BYTES
+                source,
+                "B4_REGISTRATION_ALLOWLIST_MAX_BYTES",
+                DEFAULT_REGISTRATION_ALLOWLIST_MAX_BYTES,
             ),
         )
         settings.validate()
         return settings
 
     def validate(self) -> None:
-        """Reject configurations that would break a hard rule."""
+        """Reject configurations that would break a hard rule.
+
+        The registration mail channel is deliberately **not** one of them. An unconfigured
+        sender is reported at startup and by the registration endpoint (`503`), but it must
+        not stop the process: taking login, courses and every other endpoint down because an
+        optional channel is missing turns a degraded feature into an outage. What must never
+        happen is the opposite -- accepting an address without the code -- and that is refused
+        at the endpoint, not by refusing to boot.
+        """
         if self.is_production:
             if self.jwt_private_key_file is None:
                 raise ConfigurationError("production requires JWT_PRIVATE_KEY_FILE")
             if self.allow_weak_password:
                 raise ConfigurationError("production must not allow weak default passwords")
-            if not self.smtp_configured:
-                missing = [
-                    name
-                    for name, value in (
-                        ("SMTP_HOST", self.smtp_host),
-                        ("SMTP_USER", self.smtp_user),
-                        ("SMTP_PASS", self.smtp_password),
-                        ("SMTP_FROM", self.smtp_from),
-                    )
-                    if not value
-                ]
-                raise ConfigurationError(
-                    "production requires the self-service registration mail channel; missing "
-                    f"{', '.join(missing)}. Registration verifies the mailbox, so a deployment "
-                    "without a sender would silently accept unverified addresses."
-                )
         password = _password_from_url(self.database_url)
         if (
             password is not None

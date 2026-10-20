@@ -86,6 +86,18 @@ class B4Module:
             return self._state
         settings = self._settings or Settings.from_environment(_context_environ(context))
         configure_logging(logging.INFO if settings.is_production else logging.DEBUG)
+        if not settings.smtp_configured:
+            # A warning, not a refusal. The registration endpoints answer `503` on their own;
+            # stopping the process here would take login and every other endpoint down for a
+            # missing optional channel -- a worse failure than the one it tries to prevent.
+            logger.warning(
+                "module.registration_mail_unconfigured",
+                extra={
+                    "event": "module.registration_mail_unconfigured",
+                    "missing": list(settings.smtp_missing_variables),
+                    "effect": "self-service registration returns 503 until these are set",
+                },
+            )
         signing_key = load_signing_key(settings.jwt_private_key_file)
         engine = create_engine_from_settings(settings)
         _reject_superuser(engine, settings)

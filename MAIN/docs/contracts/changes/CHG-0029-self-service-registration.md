@@ -43,7 +43,8 @@
 1. **新增 4 条路径**，`createSession` 一字未改：
    - `POST /api/v1/auth/registrations/code`（`requestRegistrationCode`）：先校验用户名/邮箱/学号唯一性与
      名单归属，再发码；只存验证码的 SHA-256 摘要，摘要绑本条意图的 `code_id`；**发信失败返回 `503`，
-     不降级为"跳过验证"**。生产环境缺 SMTP 变量时**启动即失败**（`config.validate`）。
+     不降级为"跳过验证"**。生产环境缺 SMTP 变量时**进程照常启动**，但启动日志点名缺失变量、
+     注册端点返回 `503`（理由见 §2.5）。
    - `POST /api/v1/auth/registrations`（`createRegistration`）：校验验证码（单次使用、10 分钟、
      错 5 次作废），在**一个事务**内建 `users`（`created_via='self'`）、`credentials`（Argon2id）、
      平台级 `student` 角色，并**回填**该学号下 `user_id IS NULL` 的 `enrollments`。
@@ -56,6 +57,23 @@
 4. **登录侧仍然不可枚举**：未知用户、错口令、停用账号同一 `401` 且走等时 Argon2。注册侧必须告诉
    用户"用户名/邮箱/学号已被占用"，否则无法纠正 —— 这是产品必需的信息披露，用限流兜底
    （同邮箱 60 秒冷却、每小时 5 次）。
+
+### 2.5 为什么"缺发件人"不阻止启动
+
+最初的实现让 `config.validate()` 在生产缺 `SMTP_*` 时抛 `ConfigurationError`。**这个取舍是错的**，
+第一次部署就把它暴露出来：整个后端在 `create_app()` 阶段崩溃，登录、课程、评测、成绩**全部不可用**，
+而缺的只是一个尚未上线功能的发信通道。
+
+现在的行为：
+
+| 场景 | 行为 |
+|---|---|
+| 生产缺 SMTP | 进程**正常启动**；日志 `module.registration_mail_unconfigured` 列出缺失变量名（不含值） |
+| 调用 `requestRegistrationCode` | `503`，`detail` 点名邮件通道不可用；**不建号、不发码、不占用限流配额** |
+| 其余端点 | 不受影响 |
+
+判据是一致的：**"不能跳过验证"是硬约束**（由端点拒绝来兑现），**"必须能启动"也是硬约束**。
+把前者实现成后者，等于用一个可选依赖换掉整个平台。
 
 ## 3. 变更文件
 
@@ -95,6 +113,9 @@
 - `tsc -b` → 通过；`eslint . --max-warnings 0` → 通过；`vitest run` → **265 passed / 32 files**
 - `vite build` → 通过（仅 chunk 体积警告）
 - `pytest MAIN/host/tests -q` → **7 passed**
+- `Settings.from_environment` 冒烟（2026-10-20）：生产缺 SMTP **可构造**（`smtp_configured=False`、
+  缺失变量恰为那四个）；配齐后 `smtp_configured=True`，且 `465 + tls →` 隐式 TLS、
+  `587 + starttls →` STARTTLS 升级
 - `checks.py` 中不依赖已安装模块的门禁：契约示例、严格解析、共享词表、manifests、需求基线、
   决策引用、变更记录、路由声明、文档治理与死链、替换字符、本地配置一致性 → 全部通过；
   摘要 `2061d47e…`，五份锁一致
