@@ -623,19 +623,23 @@ jobs:
             systemctl show "$unit" --property=LoadState,ActiveState,SubState,Result,ExecMainStatus | tr '\n' ' '
             printf '\n'
           done
-          printf 'current_release=%s\n' "$(readlink -f /opt/autograder/current 2>/dev/null || printf none)"
+          if [[ -L /opt/autograder/current ]]; then
+            printf 'current_release=%s\n' "$(readlink -f /opt/autograder/current 2>/dev/null || printf broken)"
+          else
+            printf '%s\n' 'current_release=none'
+          fi
           printf 'api_listener='; ss -H -ltn 'sport = :18000' | head -n 1 || true
           if readiness="$(curl --fail --silent --show-error --max-time 5 http://127.0.0.1:18000/health/ready 2>/dev/null)"; then
             printf '%s' "$readiness" | python3 -c 'import json,sys; p=json.load(sys.stdin); print("local_ready={}; modules={}".format(p.get("ready"), {str(m.get("module","")): m.get("healthy") for m in p.get("modules", [])}))'
           else
             printf '%s\n' 'local_readiness=unreachable'
           fi
-          printf '%s\n' 'Recent service error lines (credentials redacted):'
+          printf '%s\n' 'Recent service error traces (credentials redacted):'
           for unit in autograder.service cloudflared.service; do
             journalctl -u "$unit" --since '-30 min' --no-pager -o cat 2>/dev/null \
-              | grep -Ei 'Traceback|ModuleNotFoundError|ImportError|PermissionError|Permission denied|Address already in use|ConnectionRefusedError|RuntimeError|ERROR:|failed' \
-              | tail -n 30 \
-              | sed -E 's#(postgres(ql)?(\+psycopg)?://)[^[:space:]@]+@#\1<redacted>@#g; s/Bearer[[:space:]]+[^[:space:]]+/Bearer <redacted>/g; s/[A-Fa-f0-9]{64}/<redacted-hex>/g' \
+              | grep -Ei 'Traceback|  File |Error:|Exception:|Permission denied|Address already in use|ERROR:|failed|critical' \
+              | tail -n 120 \
+              | sed -E 's#(postgres(ql)?(\+psycopg)?://)[^[:space:]@]+@#\1<redacted>@#g; s/Bearer[[:space:]]+[^[:space:]]+/Bearer <redacted>/g; s/[A-Fa-f0-9]{64}/<redacted-hex>/g; s#-----BEGIN [A-Z ]*PRIVATE KEY-----.*#<redacted-private-key>#g' \
               || true
           done
           postgres_container="$(docker ps --filter label=com.docker.compose.project=autograder --filter label=com.docker.compose.service=postgres --format '{{.Names}}' | head -n 1)"

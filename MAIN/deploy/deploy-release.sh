@@ -68,11 +68,9 @@ rollback() {
         systemctl stop autograder.service >/dev/null 2>&1
 
         restore_ok=true
-        if [[ "$database_migration_started" == true && -n "$database_backup" && -s "$database_backup" ]]; then
-            if ! docker compose --project-name autograder --env-file "$setup_env" --file "$release/MAIN/compose.production.yaml" exec -T postgres sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" pg_restore --clean --if-exists --no-owner --single-transaction --exit-on-error --username="$POSTGRES_USER" --dbname="$POSTGRES_DB"' < "$database_backup"; then
-                printf '[autograder-deploy] ERROR: database restore failed; API and Tunnel remain stopped\n' >&2
-                restore_ok=false
-            fi
+        if [[ "$database_migration_started" == true ]]; then
+            printf '[autograder-deploy] database migration preparation began; no automatic database restore is attempted. The pre-migration backup is retained and API/Tunnel remain stopped for forward recovery.\n' >&2
+            restore_ok=false
         fi
 
         if [[ "$current_switched" == true ]]; then

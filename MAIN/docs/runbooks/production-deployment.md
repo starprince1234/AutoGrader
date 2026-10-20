@@ -70,7 +70,7 @@ GitHub Actions 先对本次 `main` SHA 执行验证，再通过已固定主机�
 
 每次 release 使用锁定的 `uv.lock` 在服务器构建独立 `.venv`，明确设置 `UV_PROJECT_ENVIRONMENT` 到候选版本目录，并在迁移前验证 Python 与 Alembic 可执行文件。`uv`、Python runtime、nsjail、cloudflared、systemd units 和 PostgreSQL/NATS 属宿主或基础设施生命周期；应用发布不会安装这些依赖、执行 `docker compose up`、重建容器或改动数据卷。基础设施未就绪时预检失败并停止。
 
-数据库迁移前在 `/var/lib/autograder/backups` 保存 root-only PostgreSQL custom dump。迁移或 readiness 失败时，部署脚本停止新服务、在有备份时恢复数据库、切回先前 release；首次部署没有旧 release 时会保持 API/Tunnel 停止并保留数据。API 仅监听 `127.0.0.1:18000`，Cloudflare Tunnel 仍使用既有 `api.91idc.me` 路由。成功判据是本机和公网 `/health/ready` 都返回 `ready: true`。
+数据库迁移前在 `/var/lib/autograder/backups` 保存 root-only PostgreSQL custom dump。候选构建失败时不会触碰数据库；迁移准备开始后若失败，发布脚本保留备份、回退 release 指针并保持 API/Tunnel 停止，不自动执行数据库回滚，必须按 revision 状态前向修复。尚未开始迁移且已有旧 release 时，应用可切回旧指针并恢复先前运行状态。API 仅监听 `127.0.0.1:18000`，Cloudflare Tunnel 仍使用既有 `api.91idc.me` 路由。成功判据是本机和公网 `/health/ready` 都返回 `ready: true`。
 
 运行手动的运维操作时，必须引用同一仓库 `main` 上成功的 verify run ID 和 SHA；入口核验两者间只有运维文件变化。首次安装控制器：
 
