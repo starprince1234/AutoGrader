@@ -149,7 +149,8 @@ case "${1:-}" in
         done < "$manifest"
         [[ "${#paths[@]}" -ge 20 ]] || fail "release manifest is incomplete"
         for required in MAIN/contracts MAIN/host/src MAIN/sdk/pyproject.toml MAIN/sdk/src MAIN/uv.lock \
-            MAIN/scripts/production-prepare.sh B2/src B3/src B4/src B5/src; do
+            MAIN/scripts/production-prepare.sh B2/contracts.lock B2/src \
+            B3/contracts.lock B3/src B4/contracts.lock B4/src B5/contracts.lock B5/src; do
             printf '%s\n' "${paths[@]}" | grep -Fqx "$required" || \
                 fail "release manifest is missing $required"
         done
