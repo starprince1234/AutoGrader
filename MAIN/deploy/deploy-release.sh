@@ -148,6 +148,23 @@ runuser -u autograder -- env \
 
 chown --no-dereference --recursive root:root "$release"
 chmod 0755 "$release"
+venv_python="$release/MAIN/.venv/bin/python"
+resolved_python="$(readlink -f "$venv_python" 2>/dev/null || true)"
+[[ -n "$resolved_python" && -f "$resolved_python" ]] || \
+    fail "the release Python executable does not resolve to a regular file"
+if [[ "$resolved_python" == "$release/"* ]]; then
+    chmod 0755 "$resolved_python"
+elif [[ "$resolved_python" == "$root/python/"* ]]; then
+    [[ "$(stat -c %U:%G "$resolved_python")" == autograder:autograder && \
+        "$(stat -c %a "$resolved_python")" == 700 ]] || \
+        fail "the shared uv-managed interpreter has unexpected ownership or permissions"
+else
+    fail "the release Python executable resolves outside the release and managed runtime"
+fi
+runuser -u autograder -- /usr/bin/test -x "$venv_python" || \
+    fail "the release Python executable is not runnable by the API service user"
+runuser -u autograder -- /usr/bin/test -x "$release/MAIN/.venv/bin/alembic" || \
+    fail "the release Alembic executable is not runnable by the API service user"
 [[ -d "$backup_dir" && ! -L "$backup_dir" ]] || fail "the managed database backup directory is missing"
 mapfile -t postgres_containers < <(docker ps \
     --filter label=com.docker.compose.project=autograder \
