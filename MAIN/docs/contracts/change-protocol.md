@@ -10,4 +10,6 @@
 
 不要求先提交 CHG 提案、按 P1–P4 分级审批、逐模块请求授权、重复维护全部追踪表或等待全模块测试证据。历史 [CHG 记录](changes/README.md) 保留为背景资料。
 
+> **Windows 换行陷阱**：摘要是按**工作区字节**算的。用会做换行转换的编辑器或脚本（例如 Python `Path.write_text`、多数 GUI 编辑器的默认设置）改 `contracts/**`，会把整个文件写成 CRLF；本地算出的摘要于是与 Linux 检出后的字节不同。症状是部署启动时 `contract digest drift`，而本地 `checks.py` 坚称一致。改完先跑 `git ls-files --eol MAIN/contracts` 确认全是 `i/lf w/lf`，再重算摘要。
+
 保持鉴权、数据隔离和敏感信息保护。契约与实现不一致时依据用户目标核对双方并一次修正，不能为通过检查隐藏缺陷或擅自引入兼容层。
