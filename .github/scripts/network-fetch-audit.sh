@@ -16,16 +16,12 @@ repository_url="$5"
 [[ "$target_sha" =~ ^[a-f0-9]{40}$ && "$base_sha" =~ ^[a-f0-9]{40}$ ]] || fail "invalid commit SHA"
 [[ "$repository_url" =~ ^https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.git$ ]] || \
     fail "repository URL is not a GitHub HTTPS URL"
-github_token="${GITHUB_TOKEN:-}"
-[[ -n "$github_token" ]] || fail "short-lived GitHub token is empty"
-
 bench_dir="/tmp/autograder-fetch-bench-${run_id}-${attempt}"
 [[ ! -e "$bench_dir" && ! -L "$bench_dir" ]] || fail "benchmark path already exists"
 install -d -o root -g root -m 0700 "$bench_dir"
 cleanup() {
     local status=$?
     trap - EXIT
-    unset GITHUB_TOKEN github_token auth_header git_auth_header GIT_CONFIG_VALUE_0
     if [[ "$bench_dir" == "/tmp/autograder-fetch-bench-${run_id}-${attempt}" && \
         -d "$bench_dir" && ! -L "$bench_dir" ]]; then
         rm -rf -- "$bench_dir"
@@ -35,9 +31,7 @@ cleanup() {
 trap cleanup EXIT
 
 proxy_url=http://127.0.0.1:7893
-auth_header="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$github_token" | base64 | tr -d '\r\n')"
-git_auth_header="$auth_header"
-unset GITHUB_TOKEN github_token auth_header HTTP_PROXY HTTPS_PROXY ALL_PROXY \
+unset HTTP_PROXY HTTPS_PROXY ALL_PROXY \
     http_proxy https_proxy all_proxy NO_PROXY no_proxy
 export GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null GIT_TERMINAL_PROMPT=0
 
@@ -47,8 +41,6 @@ elapsed_ms() { awk -v start="$1" -v end="$2" 'BEGIN { printf "%.0f", (end - star
 git_route() {
     local route="$1" limit="$2" rc
     shift 2
-    export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=http.extraheader
-    export GIT_CONFIG_VALUE_0="$git_auth_header"
     if [[ "$route" == direct ]]; then
         if env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
             -u http_proxy -u https_proxy -u all_proxy -u NO_PROXY -u no_proxy \
@@ -67,7 +59,6 @@ git_route() {
             rc=$?
         fi
     fi
-    unset GIT_CONFIG_VALUE_0 GIT_CONFIG_COUNT GIT_CONFIG_KEY_0
     return "$rc"
 }
 
@@ -218,7 +209,7 @@ audit_route() {
     printf 'route_summary route=%s result=fetch_and_archive_succeeded\n' "$route"
 }
 
-for command_name in git curl timeout tar base64 du stat date awk grep; do
+for command_name in git curl timeout tar du stat date awk grep; do
     command -v "$command_name" >/dev/null 2>&1 || fail "required benchmark command is missing: $command_name"
 done
 

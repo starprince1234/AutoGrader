@@ -84,12 +84,13 @@ const setupEntries = {
 };
 
 function writeEnvFile(path, values) {
-  const content = Object.entries(values)
-    .map(([name, value]) => {
-      const escaped = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
-      return name + '=\"' + escaped + '\"';
-    })
-    .join("\n") + "\n";
+  const content =
+    Object.entries(values)
+      .map(([name, value]) => {
+        const escaped = value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+        return name + '="' + escaped + '"';
+      })
+      .join("\n") + "\n";
   writeFileSync(path, content, { encoding: "utf8", mode: 0o600 });
   chmodSync(path, 0o600);
 }

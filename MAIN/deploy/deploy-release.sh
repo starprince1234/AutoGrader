@@ -17,7 +17,6 @@ stage="${2:-}"
 [[ "$sha" =~ ^[a-f0-9]{40}$ ]] || fail "a full Git commit SHA is required"
 
 root=/opt/autograder
-incoming="$root/incoming/$sha"
 stage_prefix="$root/staging/$sha-"
 stage_id="${stage##*/}"
 [[ "$stage" == "$stage_prefix"* ]] || fail "invalid staging path"
@@ -36,12 +35,17 @@ database_migration_started=false
 current_switched=false
 deployment_succeeded=false
 
-[[ "$incoming" == "$root/incoming/"* ]] || fail "invalid incoming path"
 [[ "$release" == "$root/releases/"* ]] || fail "invalid release path"
-[[ -d "$stage/MAIN" ]] || fail "staged source tree is missing"
-[[ -f "$incoming/runtime.env" ]] || fail "runtime environment file is missing"
-[[ -f "$incoming/setup.env" ]] || fail "setup environment file is missing"
+[[ -d "$stage/MAIN" && ! -L "$stage/MAIN" ]] || fail "staged source tree is missing"
+[[ -f "$stage/.autograder-source-sha" && ! -L "$stage/.autograder-source-sha" && \
+    "$(<"$stage/.autograder-source-sha")" == "$sha" ]] || \
+    fail "staged source does not identify the requested commit"
 [[ -s /etc/autograder/cloudflared.token ]] || fail "Cloudflare Tunnel token is not installed"
+for config in "$runtime_env" "$setup_env"; do
+    [[ -f "$config" && ! -L "$config" && -s "$config" && \
+        "$(stat -c %U:%a "$config")" == root:600 ]] || \
+        fail "$config must be a non-empty root-owned 0600 file"
+done
 [[ ! -e "$release" ]] || fail "release already exists: $stage_id"
 
 bash "$stage/MAIN/scripts/production-preflight.sh" "$sha" "$run_attempt"
@@ -106,48 +110,49 @@ rollback() {
 }
 trap rollback EXIT
 
-if ! id autograder >/dev/null 2>&1; then
-    useradd --system --home-dir /var/lib/autograder --shell /sbin/nologin autograder
-fi
-if ! id cloudflared >/dev/null 2>&1; then
-    useradd --system --home-dir /var/lib/cloudflared --shell /sbin/nologin cloudflared
-fi
-
-install -d -o root -g root -m 0755 "$root/releases" "$root/staging"
-install -d -o root -g root -m 0700 "$root/incoming" "$incoming"
-chmod 0700 "$incoming"
-install -d -o autograder -g autograder -m 0750 /opt/autograder/python /var/cache/autograder/uv /var/lib/autograder /var/lib/autograder/jwt /var/lib/autograder/jwks /var/lib/autograder/artifacts /var/lib/autograder/workspace
-install -d -o root -g root -m 0700 "$backup_dir"
-install -d -o root -g cloudflared -m 0750 /etc/autograder
-
-chown --no-dereference --recursive autograder:autograder /opt/autograder/python
+id autograder >/dev/null 2>&1 || fail "the AutoGrader service account is missing; run host bootstrap"
+id cloudflared >/dev/null 2>&1 || fail "the Tunnel service account is missing; run host bootstrap"
+for command_name in uv nsjail cloudflared; do
+    command -v "$command_name" >/dev/null 2>&1 || \
+        fail "host dependency $command_name is missing; run host bootstrap"
+done
+[[ -f /etc/systemd/system/autograder.service && ! -L /etc/systemd/system/autograder.service && \
+    -f /etc/systemd/system/cloudflared.service && ! -L /etc/systemd/system/cloudflared.service ]] || \
+    fail "managed systemd units are missing; run host bootstrap"
+cmp -s "$stage/MAIN/deploy/autograder.service" /etc/systemd/system/autograder.service || \
+    fail "the host API unit differs from the release; update host configuration separately"
+cmp -s "$stage/MAIN/deploy/cloudflared.service" /etc/systemd/system/cloudflared.service || \
+    fail "the host Tunnel unit differs from the release; update host configuration separately"
 
 mv "$stage" "$release"
 chown -R autograder:autograder "$release"
-install -o root -g root -m 0600 "$incoming/runtime.env" "$runtime_env"
-install -o root -g root -m 0600 "$incoming/setup.env" "$setup_env"
-
-if ! command -v uv >/dev/null 2>&1; then
-    curl -LsSf https://astral.sh/uv/0.13.1/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
-fi
-if ! command -v nsjail >/dev/null 2>&1; then
-    /bin/bash "$release/MAIN/scripts/bootstrap-nsjail.sh"
-fi
-if ! command -v cloudflared >/dev/null 2>&1; then
-    /bin/bash "$release/MAIN/scripts/bootstrap-cloudflared.sh"
-fi
-
-runuser -u autograder -- env UV_PYTHON_INSTALL_DIR=/opt/autograder/python UV_CACHE_DIR=/var/cache/autograder/uv UV_PYTHON_DOWNLOADS=automatic /usr/local/bin/uv sync --project "$release/MAIN" --extra modules --no-dev --locked
+runuser -u autograder -- env \
+    HOME=/var/lib/autograder \
+    UV_PROJECT_ENVIRONMENT="$release/MAIN/.venv" \
+    UV_PYTHON_INSTALL_DIR=/opt/autograder/python \
+    UV_CACHE_DIR=/var/cache/autograder/uv \
+    UV_PYTHON_DOWNLOADS=automatic \
+    /usr/local/bin/uv sync --project "$release/MAIN" --extra modules --no-dev --locked
+[[ -x "$release/MAIN/.venv/bin/python" ]] || \
+    fail "uv sync completed without creating the release Python environment"
+[[ -x "$release/MAIN/.venv/bin/alembic" ]] || \
+    fail "the release Python environment is missing Alembic"
 
 chown --no-dereference --recursive root:root "$release"
 chmod 0755 "$release"
-install -o root -g root -m 0644 "$release/MAIN/deploy/autograder.service" /etc/systemd/system/autograder.service
-install -o root -g root -m 0644 "$release/MAIN/deploy/cloudflared.service" /etc/systemd/system/cloudflared.service
-chown root:cloudflared /etc/autograder/cloudflared.token
-chmod 0640 /etc/autograder/cloudflared.token
-systemctl daemon-reload
-
-docker compose --project-name autograder --env-file "$setup_env" --file "$release/MAIN/compose.production.yaml" up --detach --wait --wait-timeout 180
+[[ -d "$backup_dir" && ! -L "$backup_dir" ]] || fail "the managed database backup directory is missing"
+mapfile -t postgres_containers < <(docker ps \
+    --filter label=com.docker.compose.project=autograder \
+    --filter label=com.docker.compose.service=postgres --format '{{.Names}}')
+mapfile -t nats_containers < <(docker ps \
+    --filter label=com.docker.compose.project=autograder \
+    --filter label=com.docker.compose.service=nats --format '{{.Names}}')
+[[ "${#postgres_containers[@]}" == 1 && "${#nats_containers[@]}" == 1 ]] || \
+    fail "PostgreSQL and NATS must already be running as the managed infrastructure"
+[[ "$(docker inspect --format '{{.State.Health.Status}}' "${postgres_containers[0]}")" == healthy ]] || \
+    fail "the managed PostgreSQL service is not healthy"
+[[ "$(docker inspect --format '{{.State.Status}}' "${nats_containers[0]}")" == running ]] || \
+    fail "the managed NATS service is not running"
 
 if systemctl is-active --quiet cloudflared.service; then
     systemctl stop cloudflared.service
@@ -157,6 +162,8 @@ if systemctl is-active --quiet autograder.service; then
 fi
 
 database_backup="$backup_dir/pre-migration-${stage_id}.dump"
+[[ ! -e "$database_backup" && ! -L "$database_backup" ]] || \
+    fail "the candidate migration backup path already exists"
 docker compose --project-name autograder --env-file "$setup_env" --file "$release/MAIN/compose.production.yaml" exec -T postgres sh -c 'PGPASSWORD="$POSTGRES_PASSWORD" pg_dump --username="$POSTGRES_USER" --dbname="$POSTGRES_DB" --format=custom' > "$database_backup"
 [[ -s "$database_backup" ]] || fail "database backup is empty"
 chmod 0600 "$database_backup"
@@ -201,7 +208,6 @@ for attempt in $(seq 1 8); do
 done
 [[ "$public_ready" == true ]] || fail "api.91idc.me did not return a healthy readiness response"
 
-rm -rf -- "$incoming"
 deployment_succeeded=true
 
 find "$backup_dir" -mindepth 1 -maxdepth 1 -type f -name 'pre-migration-*.dump' -printf '%T@ %p\n' | sort -rn | tail -n +6 | cut -d ' ' -f 2- | while IFS= read -r candidate; do

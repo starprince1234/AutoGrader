@@ -19,13 +19,23 @@ on:
       - "B3/contracts.lock"
       - "B3/module.yaml"
       - "B3/pyproject.toml"
+      - "B3/uv.lock"
       - "B3/src/**"
+      - "B3/tests/**"
       - "B4/alembic/**"
       - "B4/compose.ci.yaml"
       - "B4/contracts.lock"
       - "B4/module.yaml"
       - "B4/pyproject.toml"
+      - "B4/uv.lock"
       - "B4/src/**"
+      - "B4/tests/**"
+      - "B5/module.yaml"
+      - "B5/pyproject.toml"
+      - "B5/uv.lock"
+      - "B5/src/**"
+      - "B5/tests/**"
+      - "B5/alembic/**"
       - "MAIN/contracts/**"
       - "MAIN/host/**"
       - "MAIN/infra/postgres/**"
@@ -39,10 +49,11 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: "Read-only production preflight or deployment after reusing a verified source run"
+        description: "Prepare the one-time host state, run a read-only preflight, or deploy a verified SHA"
         required: true
         type: choice
         options:
+          - bootstrap-host
           - preflight
           - deploy
         default: preflight
@@ -64,6 +75,50 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  changes:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-22.04
+    outputs:
+      deploy: ${{ steps.scope.outputs.deploy }}
+    steps:
+      - name: Check out pushed revision
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Classify runtime changes
+        id: scope
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+          AFTER_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$AFTER_SHA" =~ ^[a-f0-9]{40}$ ]]
+          deploy=false
+          if [[ "$BEFORE_SHA" =~ ^0+$ ]]; then
+            deploy=true
+          else
+            [[ "$BEFORE_SHA" =~ ^[a-f0-9]{40}$ ]]
+            while IFS= read -r path; do
+              case "$path" in
+                B1/contracts.lock|\
+                B2/alembic/*|B2/contracts.lock|B2/module.yaml|B2/pyproject.toml|B2/src/*|\
+                B3/alembic/*|B3/contracts.lock|B3/module.yaml|B3/pyproject.toml|B3/src/*|\
+                B4/alembic/*|B4/contracts.lock|B4/module.yaml|B4/pyproject.toml|B4/src/*|\
+                B5/alembic/*|B5/module.yaml|B5/pyproject.toml|B5/src/*|\
+                MAIN/contracts/*|MAIN/host/src/*|MAIN/host/write_jwks.py|MAIN/host/wait_for_postgres.py|\
+                MAIN/sdk/src/*|MAIN/pyproject.toml|MAIN/uv.lock|\
+                MAIN/scripts/production-prepare.sh)
+                  deploy=true
+                  break
+                  ;;
+              esac
+            done < <(git diff --name-only "$BEFORE_SHA" "$AFTER_SHA")
+          fi
+          printf 'deploy=%s\n' "$deploy" >> "$GITHUB_OUTPUT"
+
   verify:
     if: github.event_name == 'push'
     runs-on: ubuntu-22.04
@@ -197,8 +252,8 @@ jobs:
           rm -f MAIN/.env.integration MAIN/.runtime/ci-test-jwt.pem
 
   deploy:
-    needs: verify
-    if: ${{ always() && (needs.verify.result == 'success' || github.event_name == 'workflow_dispatch') }}
+    needs: [verify, changes]
+    if: ${{ always() && ((github.event_name == 'push' && needs.verify.result == 'success' && needs.changes.outputs.deploy == 'true') || github.event_name == 'workflow_dispatch') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -220,7 +275,7 @@ jobs:
           VERIFIED_COMMIT_SHA: ${{ inputs.verified_commit_sha }}
         run: |
           set -euo pipefail
-          [[ "$OPERATION" == preflight || "$OPERATION" == deploy ]] || {
+          [[ "$OPERATION" == bootstrap-host || "$OPERATION" == preflight || "$OPERATION" == deploy ]] || {
             echo "::error::Unsupported manual operation."
             exit 1
           }
@@ -285,7 +340,7 @@ jobs:
                 ;;
             esac
           done < <(git diff --name-only "$VERIFIED_COMMIT_SHA" "$CURRENT_SHA")
-          for script in MAIN/scripts/production-preflight.sh MAIN/scripts/bootstrap-nsjail.sh MAIN/deploy/*.sh .github/scripts/deploy-ssh.sh; do
+          for script in MAIN/scripts/production-preflight.sh MAIN/scripts/bootstrap-nsjail.sh MAIN/deploy/*.sh MAIN/deploy/autograder-deployctl .github/scripts/deploy-ssh.sh; do
             bash -n "$script"
           done
           python3 - <<'PY'
@@ -367,8 +422,9 @@ jobs:
           chmod 0600 "$known_hosts_file"
           printf 'AUTOGRADER_SSH_KNOWN_HOSTS=%s\n' "$known_hosts_file" >> "$GITHUB_ENV"
 
-      - name: Clear only empty upload and release directories from an interrupted first attempt
-        if: github.event_name == 'push' || inputs.operation == 'deploy'
+      - name: Inspect one-time server environment state
+        if: github.event_name == 'workflow_dispatch' && inputs.operation == 'bootstrap-host'
+        id: host_config
         env:
           DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
           DEPLOY_SSH_USER: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
@@ -376,99 +432,80 @@ jobs:
           DEPLOY_SSH_PORT: ${{ steps.doppler.outputs.DEPLOY_SSH_PORT }}
         run: |
           set -euo pipefail
-          bash .github/scripts/deploy-ssh.sh ssh "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
-            bash -s <<'REMOTE'
+          state="$(bash .github/scripts/deploy-ssh.sh ssh "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" bash -s <<'REMOTE'
           set -euo pipefail
-          root=/opt/autograder
-          printf '%s\n' 'First-deploy state inventory (names and metadata only):'
-          for path in \
-            /opt/autograder \
-            /etc/autograder \
-            /var/lib/autograder \
-            /var/lib/cloudflared \
-            /var/cache/autograder/uv; do
+          count=0
+          for path in /etc/autograder/runtime.env /etc/autograder/setup.env; do
             if [[ -e "$path" || -L "$path" ]]; then
-              stat -c '%n %F %a %U:%G' "$path"
-              if [[ -d "$path" && ! -L "$path" ]]; then
-                find "$path" -mindepth 1 -maxdepth 2 \
-                  -printf '  %P %y %m %u:%g\n' | LC_ALL=C sort
-              fi
+              [[ -f "$path" && ! -L "$path" && -s "$path" && \
+                "$(stat -c %U:%a "$path")" == root:600 ]] || exit 1
+              count=$((count + 1))
             fi
           done
-          for user in autograder cloudflared; do
-            if getent passwd "$user" >/dev/null; then
-              getent passwd "$user" | cut -d: -f1,3,4,6,7
-            fi
-          done
-          systemctl is-active autograder.service cloudflared.service 2>/dev/null || true
-          docker volume ls --format '{{.Name}}' | LC_ALL=C sort | grep autograder || true
-          if [[ ! -e "$root" && ! -L "$root" ]]; then
-            exit 0
-          fi
-          [[ -d "$root" && ! -L "$root" ]] || {
-            echo "::error::/opt/autograder is not a real directory."
+          case "$count" in
+            0) printf 'missing\n' ;;
+            2) printf 'present\n' ;;
+            *) exit 1 ;;
+          esac
+          REMOTE
+          )"
+          [[ "$state" == missing || "$state" == present ]] || {
+            echo "::error::Existing host environment files are incomplete or invalid."
             exit 1
           }
-          if [[ -e "$root/current" || -L "$root/current" ]]; then
-            exit 0
-          fi
-          unexpected="$(find "$root" -mindepth 1 -maxdepth 1 \
-            ! -name python ! -name incoming ! -name staging ! -name releases -print -quit)"
-          [[ -z "$unexpected" ]] || {
-            echo "::error::/opt/autograder contains data from another state; refusing cleanup."
-            exit 1
-          }
-          if [[ -e "$root/python" || -L "$root/python" ]]; then
-            [[ -d "$root/python" && ! -L "$root/python" && \
-              "$(stat -c %U "$root/python")" == autograder && \
-              "$(stat -c %G "$root/python")" == autograder && \
-              "$(stat -c %a "$root/python")" == 750 ]] || {
-              echo "::error::/opt/autograder/python is not the managed Python runtime directory."
-              exit 1
-            }
-          fi
-          for directory in incoming staging releases; do
-            path="$root/$directory"
-            if [[ -e "$path" || -L "$path" ]]; then
-              [[ -d "$path" && ! -L "$path" ]] || {
-                echo "::error::$path is not a real directory."
-                exit 1
-              }
-              [[ -z "$(find "$path" -mindepth 1 -print -quit)" ]] || {
-                echo "::error::$path is not empty; refusing cleanup."
-                exit 1
-              }
-            fi
+          printf 'state=%s\n' "$state" >> "$GITHUB_OUTPUT"
+
+      - name: Render one-time host environment files
+        if: github.event_name == 'workflow_dispatch' && inputs.operation == 'bootstrap-host' && steps.host_config.outputs.state == 'missing'
+        env:
+          POSTGRES_PASSWORD: ${{ steps.doppler.outputs.POSTGRES_PASSWORD }}
+          B2_DB_PASSWORD: ${{ steps.doppler.outputs.B2_DB_PASSWORD }}
+          B3_APP_DB_PASSWORD: ${{ steps.doppler.outputs.B3_APP_DB_PASSWORD }}
+          B3_INTERNAL_DB_PASSWORD: ${{ steps.doppler.outputs.B3_INTERNAL_DB_PASSWORD }}
+          B4_DB_PASSWORD: ${{ steps.doppler.outputs.B4_DB_PASSWORD }}
+          B2_B3_SERVICE_TOKEN: ${{ steps.doppler.outputs.B2_B3_SERVICE_TOKEN }}
+        run: node MAIN/deploy/write-runtime-env.mjs runtime.env setup.env "$GITHUB_SHA"
+
+      - name: Install one-time host environment files
+        if: github.event_name == 'workflow_dispatch' && inputs.operation == 'bootstrap-host' && steps.host_config.outputs.state == 'missing'
+        env:
+          DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
+          DEPLOY_SSH_USER: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
+          DEPLOY_SSH_PASSWORD: ${{ steps.doppler.outputs.DEPLOY_SSH_PASSWORD }}
+          DEPLOY_SSH_PORT: ${{ steps.doppler.outputs.DEPLOY_SSH_PORT }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          config_dir="/tmp/autograder-config-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          bash .github/scripts/deploy-ssh.sh ssh "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
+            install -d -o root -g root -m 0700 "$config_dir"
+          bash .github/scripts/deploy-ssh.sh scp runtime.env setup.env \
+            "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST:$config_dir/"
+          bash .github/scripts/deploy-ssh.sh ssh "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
+            bash -s -- "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" <<'REMOTE'
+          set -euo pipefail
+          [[ "$1" =~ ^[0-9]+$ && "$2" =~ ^[1-9][0-9]*$ ]]
+          config_dir="/tmp/autograder-config-$1-$2"
+          [[ -d "$config_dir" && ! -L "$config_dir" ]]
+          for name in runtime.env setup.env; do
+            [[ -f "$config_dir/$name" && ! -L "$config_dir/$name" && -s "$config_dir/$name" ]]
           done
-          for directory in incoming staging releases; do
-            path="$root/$directory"
-            if [[ -d "$path" ]]; then
-              rmdir -- "$path"
-            fi
-          done
-          if [[ -z "$(find "$root" -mindepth 1 -print -quit)" ]]; then
-            rmdir -- "$root"
-          fi
+          [[ ! -e /etc/autograder/runtime.env && ! -L /etc/autograder/runtime.env && \
+            ! -e /etc/autograder/setup.env && ! -L /etc/autograder/setup.env ]]
+          install -d -o root -g cloudflared -m 0750 /etc/autograder
+          install -o root -g root -m 0600 "$config_dir/runtime.env" /etc/autograder/runtime.env
+          install -o root -g root -m 0600 "$config_dir/setup.env" /etc/autograder/setup.env
+          rm -f -- "$config_dir/runtime.env" "$config_dir/setup.env"
+          rmdir -- "$config_dir"
           REMOTE
 
-      - name: Upload read-only server preflight
-        if: github.event_name == 'push' || inputs.operation == 'preflight' || inputs.operation == 'deploy'
-        env:
-          DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
-          DEPLOY_SSH_USER: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
-          DEPLOY_SSH_PASSWORD: ${{ steps.doppler.outputs.DEPLOY_SSH_PASSWORD }}
-          DEPLOY_SSH_PORT: ${{ steps.doppler.outputs.DEPLOY_SSH_PORT }}
-        run: |
-          set -euo pipefail
-          preflight_dir="/tmp/autograder-preflight-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          target="$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST:$preflight_dir/production-preflight.sh"
-          bash .github/scripts/deploy-ssh.sh ssh "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
-            install -d -m 0700 "$preflight_dir"
-          bash .github/scripts/deploy-ssh.sh scp \
-            MAIN/scripts/production-preflight.sh "$target"
+      - name: Remove local one-time environment files
+        if: always()
+        run: rm -f runtime.env setup.env
 
-      - name: Run read-only server preflight
-        if: github.event_name == 'push' || inputs.operation == 'preflight' || inputs.operation == 'deploy'
+      - name: Remove one-time server environment staging files
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.operation == 'bootstrap-host' && steps.host_config.outputs.state == 'missing'
         env:
           DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
           DEPLOY_SSH_USER: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
@@ -481,66 +518,94 @@ jobs:
           bash .github/scripts/deploy-ssh.sh ssh "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
             bash -s -- "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" <<'REMOTE'
           set -euo pipefail
-          [[ "$1" =~ ^[0-9]+$ ]]
-          [[ "$2" =~ ^[1-9][0-9]*$ ]]
-          preflight_dir="/tmp/autograder-preflight-$1-$2"
-          trap 'rm -rf -- "$preflight_dir"' EXIT
-          bash "$preflight_dir/production-preflight.sh"
+          [[ "$1" =~ ^[0-9]+$ && "$2" =~ ^[1-9][0-9]*$ ]]
+          config_dir="/tmp/autograder-config-$1-$2"
+          if [[ -e "$config_dir" || -L "$config_dir" ]]; then
+            [[ -d "$config_dir" && ! -L "$config_dir" ]]
+            for name in runtime.env setup.env; do
+              path="$config_dir/$name"
+              if [[ -e "$path" || -L "$path" ]]; then
+                [[ -f "$path" && ! -L "$path" ]]
+                rm -f -- "$path"
+              fi
+            done
+            rmdir -- "$config_dir"
+          fi
           REMOTE
 
-      - name: Prepare private incoming directory
-        if: github.event_name == 'push' || inputs.operation == 'deploy'
-        id: prepare
+      - name: Bootstrap the server deployment control plane and runtime permissions
+        if: github.event_name == 'workflow_dispatch' && inputs.operation == 'bootstrap-host'
         env:
           DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
           DEPLOY_SSH_USER: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
           DEPLOY_SSH_PASSWORD: ${{ steps.doppler.outputs.DEPLOY_SSH_PASSWORD }}
           DEPLOY_SSH_PORT: ${{ steps.doppler.outputs.DEPLOY_SSH_PORT }}
-          GITHUB_SHA: ${{ github.sha }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -euo pipefail
+          bootstrap_dir="/tmp/autograder-control-plane-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           bash .github/scripts/deploy-ssh.sh ssh "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
-            bash -s -- "$GITHUB_SHA" <<'REMOTE'
-          set -euo pipefail
-          [[ "$1" =~ ^[a-f0-9]{40}$ ]]
-          install -d -o root -g root -m 0755 /opt/autograder /opt/autograder/incoming /opt/autograder/staging
-          install -d -o root -g root -m 0700 "/opt/autograder/incoming/$1"
-          REMOTE
-
-      - name: Create source archive
-        if: github.event_name == 'push' || inputs.operation == 'deploy'
-        run: git archive --format=tar.gz --output=autograder.tar.gz "$GITHUB_SHA"
-
-      - name: Render server runtime environment
-        if: github.event_name == 'push' || inputs.operation == 'deploy'
-        env:
-          POSTGRES_PASSWORD: ${{ steps.doppler.outputs.POSTGRES_PASSWORD }}
-          B2_DB_PASSWORD: ${{ steps.doppler.outputs.B2_DB_PASSWORD }}
-          B3_APP_DB_PASSWORD: ${{ steps.doppler.outputs.B3_APP_DB_PASSWORD }}
-          B3_INTERNAL_DB_PASSWORD: ${{ steps.doppler.outputs.B3_INTERNAL_DB_PASSWORD }}
-          B4_DB_PASSWORD: ${{ steps.doppler.outputs.B4_DB_PASSWORD }}
-          B2_B3_SERVICE_TOKEN: ${{ steps.doppler.outputs.B2_B3_SERVICE_TOKEN }}
-        run: node MAIN/deploy/write-runtime-env.mjs runtime.env setup.env "$GITHUB_SHA"
-
-      - name: Upload release and runtime environment
-        if: github.event_name == 'push' || inputs.operation == 'deploy'
-        env:
-          DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
-          DEPLOY_SSH_USER: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
-          DEPLOY_SSH_PASSWORD: ${{ steps.doppler.outputs.DEPLOY_SSH_PASSWORD }}
-          DEPLOY_SSH_PORT: ${{ steps.doppler.outputs.DEPLOY_SSH_PORT }}
-          GITHUB_SHA: ${{ github.sha }}
-        run: |
-          set -euo pipefail
+            install -d -o root -g root -m 0700 "$bootstrap_dir"
           bash .github/scripts/deploy-ssh.sh scp \
-            autograder.tar.gz runtime.env setup.env \
-            "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST:/opt/autograder/incoming/$GITHUB_SHA/"
+            MAIN/deploy/autograder-deployctl MAIN/scripts/production-preflight.sh \
+            "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST:$bootstrap_dir/"
+          bash .github/scripts/deploy-ssh.sh ssh "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
+            bash -s -- "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" <<'REMOTE'
+          set -euo pipefail
+          [[ "$1" =~ ^[0-9]+$ && "$2" =~ ^[1-9][0-9]*$ ]]
+          bootstrap_dir="/tmp/autograder-control-plane-$1-$2"
+          [[ -d "$bootstrap_dir" && ! -L "$bootstrap_dir" ]]
+          cleanup() {
+            status=$?
+            trap - EXIT
+            for name in autograder-deployctl production-preflight.sh; do
+              path="$bootstrap_dir/$name"
+              if [[ -e "$path" || -L "$path" ]]; then
+                [[ -f "$path" && ! -L "$path" ]]
+                rm -f -- "$path"
+              fi
+            done
+            rmdir -- "$bootstrap_dir"
+            exit "$status"
+          }
+          trap cleanup EXIT
+          install -d -o root -g root -m 0755 /usr/local/lib/autograder
+          install -o root -g root -m 0750 "$bootstrap_dir/autograder-deployctl" \
+            /usr/local/sbin/autograder-deployctl
+          install -o root -g root -m 0750 "$bootstrap_dir/production-preflight.sh" \
+            /usr/local/lib/autograder/production-preflight.sh
+          [[ -d /opt/autograder/python && ! -L /opt/autograder/python ]]
+          shopt -s nullglob
+          python_executables=(/opt/autograder/python/cpython-3.12.*-linux-*-gnu/bin/python3.12)
+          [[ "${#python_executables[@]}" == 1 && -f "${python_executables[0]}" && \
+            "$(stat -c %a "${python_executables[0]}")" == 700 ]]
+          python_owner="$(stat -c %U "${python_executables[0]}")"
+          if [[ "$python_owner" == root ]]; then
+            chown --no-dereference autograder:autograder "${python_executables[0]}"
+          elif [[ "$python_owner" != autograder ]]; then
+            echo "Unexpected managed Python executable owner." >&2
+            exit 1
+          fi
+          runuser -u autograder -- "${python_executables[0]}" --version
+          chown root:cloudflared /etc/autograder /etc/autograder/cloudflared.token
+          chmod 0750 /etc/autograder
+          chmod 0640 /etc/autograder/cloudflared.token
+          REMOTE
 
-      - name: Remove local secret files
-        if: always()
-        run: rm -f runtime.env setup.env autograder.tar.gz
+      - name: Run read-only server preflight
+        if: github.event_name == 'push' || inputs.operation == 'preflight' || inputs.operation == 'deploy'
+        env:
+          DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
+          DEPLOY_SSH_USER: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
+          DEPLOY_SSH_PASSWORD: ${{ steps.doppler.outputs.DEPLOY_SSH_PASSWORD }}
+          DEPLOY_SSH_PORT: ${{ steps.doppler.outputs.DEPLOY_SSH_PORT }}
+        run: |
+          set -euo pipefail
+          bash .github/scripts/deploy-ssh.sh ssh "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
+            /usr/local/sbin/autograder-deployctl preflight
 
-      - name: Deploy native API service
+      - name: Deploy the verified SHA with server-side fetch and build
         if: github.event_name == 'push' || inputs.operation == 'deploy'
         env:
           DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
@@ -552,45 +617,4 @@ jobs:
         run: |
           set -euo pipefail
           bash .github/scripts/deploy-ssh.sh ssh "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
-            bash -s -- "$GITHUB_SHA" "$GITHUB_RUN_ATTEMPT" <<'REMOTE'
-          set -euo pipefail
-          [[ "$1" =~ ^[a-f0-9]{40}$ ]]
-          [[ "$2" =~ ^[1-9][0-9]*$ ]]
-          stage="/opt/autograder/staging/$1-$2"
-          install -d -o root -g root -m 0750 "$stage"
-          tar -xzf "/opt/autograder/incoming/$1/autograder.tar.gz" -C "$stage"
-          bash "$stage/MAIN/deploy/deploy-release.sh" "$1" "$stage"
-          REMOTE
-
-      - name: Remove failed or incomplete remote upload
-        if: ${{ always() && steps.prepare.outcome == 'success' && (github.event_name == 'push' || inputs.operation == 'deploy') }}
-        env:
-          DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
-          DEPLOY_SSH_USER: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
-          DEPLOY_SSH_PASSWORD: ${{ steps.doppler.outputs.DEPLOY_SSH_PASSWORD }}
-          DEPLOY_SSH_PORT: ${{ steps.doppler.outputs.DEPLOY_SSH_PORT }}
-          GITHUB_SHA: ${{ github.sha }}
-          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
-        run: |
-          set -euo pipefail
-          bash .github/scripts/deploy-ssh.sh ssh "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
-            bash -s -- "$GITHUB_SHA" "$GITHUB_RUN_ATTEMPT" <<'REMOTE'
-          set -euo pipefail
-          [[ "$1" =~ ^[a-f0-9]{40}$ ]]
-          [[ "$2" =~ ^[1-9][0-9]*$ ]]
-          incoming="/opt/autograder/incoming/$1"
-          stage="/opt/autograder/staging/$1-$2"
-          if [[ -d "$incoming" && "$incoming" == /opt/autograder/incoming/* ]]; then
-            rm -rf -- "$incoming"
-          fi
-          if [[ -d "$stage" && "$stage" == /opt/autograder/staging/* ]]; then
-            rm -rf -- "$stage"
-          fi
-          for directory in /opt/autograder/incoming /opt/autograder/staging \
-              /opt/autograder/releases /opt/autograder; do
-            if [[ -d "$directory" && ! -L "$directory" ]] && \
-                [[ -z "$(find "$directory" -mindepth 1 -print -quit)" ]]; then
-              rmdir -- "$directory"
-            fi
-          done
-          REMOTE
+            /usr/local/sbin/autograder-deployctl deploy "$GITHUB_SHA" "$GITHUB_RUN_ATTEMPT"

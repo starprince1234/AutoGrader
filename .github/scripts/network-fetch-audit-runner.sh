@@ -17,13 +17,4 @@ shift
     exit 66
 }
 
-IFS= read -r GITHUB_TOKEN || {
-    printf '[network-audit] ERROR: short-lived GitHub token was not provided\n' >&2
-    exit 1
-}
-[[ -n "$GITHUB_TOKEN" ]] || {
-    printf '[network-audit] ERROR: short-lived GitHub token is empty\n' >&2
-    exit 1
-}
-export GITHUB_TOKEN
 exec bash "$audit_script" "$@"

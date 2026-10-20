@@ -3,7 +3,7 @@ set -euo pipefail
 
 for name in \
     DEPLOY_SSH_HOST DEPLOY_SSH_USER DEPLOY_SSH_PASSWORD DEPLOY_SSH_PORT \
-    AUTOGRADER_SSH_KNOWN_HOSTS GITHUB_TOKEN TARGET_SHA BASE_SHA AUTOGRADER_REPO_URL \
+    AUTOGRADER_SSH_KNOWN_HOSTS TARGET_SHA BASE_SHA AUTOGRADER_REPO_URL \
     GITHUB_RUN_ID GITHUB_RUN_ATTEMPT; do
     [[ -n "${!name:-}" ]] || {
         printf '[network-audit] ERROR: required environment value %s is missing\n' "$name" >&2
@@ -54,9 +54,8 @@ bash .github/scripts/deploy-ssh.sh scp \
     .github/scripts/network-fetch-audit-runner.sh \
     "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST:$remote_script_dir/"
 
-{ printf '%s\n' "$GITHUB_TOKEN"; } | \
-    bash .github/scripts/deploy-ssh.sh ssh "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
-        bash "$remote_script_dir/network-fetch-audit-runner.sh" \
-        "$remote_script_dir/network-fetch-audit.sh" \
-        "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$TARGET_SHA" "$BASE_SHA" \
-        "$AUTOGRADER_REPO_URL"
+bash .github/scripts/deploy-ssh.sh ssh "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
+    bash "$remote_script_dir/network-fetch-audit-runner.sh" \
+    "$remote_script_dir/network-fetch-audit.sh" \
+    "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$TARGET_SHA" "$BASE_SHA" \
+    "$AUTOGRADER_REPO_URL"

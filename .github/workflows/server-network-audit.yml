@@ -123,7 +123,6 @@ jobs:
           DEPLOY_SSH_USER: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
           DEPLOY_SSH_PASSWORD: ${{ steps.doppler.outputs.DEPLOY_SSH_PASSWORD }}
           DEPLOY_SSH_PORT: ${{ steps.doppler.outputs.DEPLOY_SSH_PORT }}
-          GITHUB_TOKEN: ${{ github.token }}
           TARGET_SHA: ${{ github.sha }}
           BASE_SHA: ${{ steps.revisions.outputs.base_sha }}
           AUTOGRADER_REPO_URL: https://github.com/${{ github.repository }}.git

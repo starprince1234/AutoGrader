@@ -50,57 +50,49 @@ Docker 镜像拉取由 dockerd 发起，本机 Mihomo 环境变量不会代理�
 
 ### Vercel
 
-- 项目 `auto-grader` 已绑定私有仓库 `starprince1234/AutoGrader`，`www.91idc.me` 为 Production 前端入口，根域跳转到 `www`。
+- 项目 `auto-grader` 已绑定公开仓库 `starprince1234/AutoGrader`，`www.91idc.me` 为 Production 前端入口，根域跳转到 `www`。
 - Vercel 项目的 Root Directory、Include source files outside of Root Directory、Production 环境变量和 Git 自动部署状态尚未通过项目设置页核实。确认 Root Directory 为 `B1`，并允许构建读取 `../MAIN/contracts`。仓库的 `B1/.env.production` 只含公开 API origin。Doppler `VITE_API_BASE_URL` 已核实为 `https://api.91idc.me` 并设为 `unmasked`；用户截图曾显示 Vercel Config Sync 因该变量被标为 Secret 而 Disabled，改动后仍需确认同步已恢复。
 - `B1/vercel.json` 指定 Vite、`pnpm api:check && pnpm build`、`dist`、`/app/` 路由及 ignore command。ignore command 只在前端构建输入或 `MAIN/contracts/**` 改动时构建；文档修改会跳过。
 
 ### Doppler 与 GitHub Actions
 
-项目配置为 Doppler `autograder/prd`。部署渲染脚本只接受 64 位 hex 的 PostgreSQL 与 B2↔B3 服务密钥，避免 DSN/SQL 字符转义问题。当前配置中的数据库 DSN 使用 `127.0.0.1:55432`（仓库本地集成 PostgreSQL 端口），其密码与仓库本地集成默认值相同；B2↔B3 token 也与本地集成默认值相同。为避免覆盖现有字段，已在 Doppler 新增独立的 `POSTGRES_PASSWORD`、`B2_DB_PASSWORD`、`B3_APP_DB_PASSWORD`、`B3_INTERNAL_DB_PASSWORD`、`B4_DB_PASSWORD` 和 `B2_B3_SERVICE_TOKEN`，每个值均为随机 32-byte hex。
+项目配置为 Doppler `autograder/prd`。数据库与服务密钥位于宿主机受限文件 `/etc/autograder/runtime.env`、`/etc/autograder/setup.env`；日常 release 不重新渲染或上传这些文件。生产密码项为独立的随机 32-byte hex，不复用仓库本地集成配置。
 
-只读且仅限 `autograder/prd` 的 Doppler service token `github-actions-autograder-prd` 已保存为 GitHub Actions repository secret `DOPPLER_TOKEN`。工作流通过 Doppler action 的 step outputs 按步骤传递必需字段，不把全部 Doppler secrets 注入整个 job，也不把值写入仓库。`DEPLOY_SSH_HOSTKEY` 已通过 Doppler CLI 写入，去除了命令输出中的主机名后缀，并验证为 SHA256 fingerprint 格式；值未输出。工作流会在任何 SSH 连接前拒绝缺失或格式不正确的 fingerprint。
+只读且仅限 `autograder/prd` 的 Doppler service token `github-actions-autograder-prd` 已保存为 GitHub Actions repository secret `DOPPLER_TOKEN`。工作流只读取 SSH 连接字段，不注入数据库或应用密钥。`DEPLOY_SSH_HOSTKEY` 是 SHA256 fingerprint；工作流在任何 SSH 连接前固定并校验它。仓库公开，因此 server-side Git fetch 不使用额外 GitHub 凭据。
 
-## 2. 服务器首次部署
+## 2. 服务器发布
 
-`DEPLOY_SSH_USER` 当前为 root。2026-10-19 首次只读预检已通过，确认 DNF、systemd、cgroup v2、Compose v2、资源余量、端口空闲且没有同名 AutoGrader 服务、卷或 Compose 项目。GitHub Actions 通过 `.github/workflows/deploy-backend.yml` 执行发布前验证与部署：
+GitHub Actions 先对本次 `main` SHA 执行验证，再通过已固定主机指纹的 SSH 发送完整 SHA 和运行尝试号。仓库是公开的，服务器不接收 GitHub token。服务器上的 `/usr/local/sbin/autograder-deployctl` 核验 GitHub `main` 当前指向该 SHA 后，经实测有效的本机代理 `127.0.0.1:7893` 增量获取 Git 对象，在 `/opt/autograder/git-cache` 复用对象缓存，并按目标 SHA 的 [`release-manifest.txt`](../../deploy/release-manifest.txt) 在服务器本地生成 release。Git 代理设置只作用于 fetch/archive。
 
-1. 推送后端源码、迁移、模块清单、契约、生产 Compose 或测试相关变更时，GitHub Actions 运行 B1 验证、B1–B5 测试和 MAIN 契约/文档门禁；通过后才读取部署字段。SSH 预检脚本放入本次运行独有的 `/tmp/autograder-preflight-<run-id>-<attempt>` 目录，避免与其他项目的临时文件冲突。连接后先执行只读预检，要求 DNF、systemd、cgroup v2、Docker Compose v2、足够资源、无端口或同名项目冲突。首次部署不支持的环境会在改动服务前停止。
-2. 通过固定版本的 `uv` 安装锁定的 Python 依赖；首次部署从固定的 nsjail 3.4 源码构建并运行 `MAIN/deploy/patch-nsjail-protobuf4-compat.py`，兼容 OpenCloudOS 9 的 Protobuf 24.x（protobuf 4 API）。构建后执行 `nsjail --help` 启动检查，再安装 Cloudflare `cloudflared`。专用 Python runtime 由 `autograder` 所有；锁定 release 权限时不跟随 `.venv/bin/python` 符号链接修改 runtime 文件。
-3. 先将包含凭据的临时上传目录设为 root-only，再把发布代码放入 `/opt/autograder/releases/<sha>-<run>`，安装只读 runtime env 到 `/etc/autograder/runtime.env`。
-4. 以 Compose 项目 `autograder` 启动 PostgreSQL/NATS；卷名固定，后端发布不会删除业务卷。生产端口为 loopback `25432`（PostgreSQL）和 `25222`（NATS），与当前 Doppler 中的本地端口不同。
-5. root-only `setup.env` 仅供 Compose 初始化与一次性迁移/角色供给；API 的常驻 systemd 服务只读取 `runtime.env`，不继承平台 superuser DSN。systemd 以 `autograder` 用户在 cgroup v2 委派子树运行 API；`cloudflared` 用户运行 Tunnel connector。
-6. 每次迁移前在 `/var/lib/autograder/backups` 保存权限为 `0600` 的 PostgreSQL custom dump。迁移或 readiness 失败时，部署脚本停止新服务、恢复数据库快照、切回上一版代码并恢复原本运行的 API/Tunnel。API 会在迁移期间短暂停止；成功后保留近五份数据库备份和近三版代码。
-7. 发布只有在本机 `/health/ready` 与经 Cloudflare 的 `https://api.91idc.me/health/ready` 都返回 `ready: true` 后才报告成功。首次部署失败时没有旧版本可切回，服务会保持停止且数据保留，需先查明失败原因再重试。
+首次安装只进行一次 `bootstrap-host` 操作：若两份 root-only 环境文件都不存在，工作流从 Doppler 生成并经固定主机指纹的 SSH 安装；若两份都已正确存在则保留原值，只有部分存在或属主/权限不符时停止。该操作同时安装部署控制器与只读预检脚本，并将已识别的 uv-managed Python 可执行文件和 Cloudflare token 权限收敛到服务所需的精确属主/模式。之后日常发布请求只含 SHA 和 attempt，不上传源码归档、运行环境文件或 GitHub 凭据。PostgreSQL/NATS 容器及数据卷由独立基础设施流程管理。
 
-首次部署若在准备数据库迁移时中断，重试会识别这一组受限的部分状态：无 current release、API unit inactive、一个健康 PostgreSQL 与一个运行中的 NATS 容器、匹配的两个 AutoGrader Compose volumes，以及与上次 Compose 配置路径匹配的 root-only pre-migration dump。数据库/NATS 容器、volumes 和备份会被保留并复用；额外容器、卷或备份、配置不匹配、活动 API 进程时预检停止。`/var/lib/autograder` 的预建数据子目录必须为空。专用 Python runtime 可以为空，或只含一个结构完整的 uv-managed CPython 3.12 安装；预检核对版本别名、文件类型、属主和私有目录权限，部署前会把它的所有权归一到 `autograder`。uv cache 必须保持 AutoGrader 专用属主与目录权限；不清理已有缓存。
+网络对照测量（2026-10-19，生产服务器 x86_64）：经代理的 GitHub `ls-remote` 约 0.64–0.67 秒，blobless baseline fetch 约 1.13 秒，增量 fetch 约 1.01 秒；runtime archive 3,698,574 bytes 在 4.819 秒完成。直连 `ls-remote` 约 1.2–1.6 秒，但对同一 SHA 的 runtime archive 在 180 秒后超时。首次测量使用了 Actions 短时只读 token；公开仓库的发布流程不需要此凭据，后续会用无认证路径重测。
 
-纯运维脚本或本工作流变更不再自动触发五模块全量测试。此类变更在本地完成 `bash -n` 后，可手动执行只读预检或部署；必须引用一个 verify job 成功的工作流 run ID 和它验证的 commit SHA。手动入口会确认该 SHA 是当前部署的祖先、verify job 确实成功，且两者之间只有部署运维文件变化。示例：
+每次 release 使用锁定的 `uv.lock` 在服务器构建独立 `.venv`，明确设置 `UV_PROJECT_ENVIRONMENT` 到候选版本目录，并在迁移前验证 Python 与 Alembic 可执行文件。`uv`、Python runtime、nsjail、cloudflared、systemd units 和 PostgreSQL/NATS 属宿主或基础设施生命周期；应用发布不会安装这些依赖、执行 `docker compose up`、重建容器或改动数据卷。基础设施未就绪时预检失败并停止。
+
+数据库迁移前在 `/var/lib/autograder/backups` 保存 root-only PostgreSQL custom dump。迁移或 readiness 失败时，部署脚本停止新服务、在有备份时恢复数据库、切回先前 release；首次部署没有旧 release 时会保持 API/Tunnel 停止并保留数据。API 仅监听 `127.0.0.1:18000`，Cloudflare Tunnel 仍使用既有 `api.91idc.me` 路由。成功判据是本机和公网 `/health/ready` 都返回 `ready: true`。
+
+运行手动的运维操作时，必须引用同一仓库 `main` 上成功的 verify run ID 和 SHA；入口核验两者间只有运维文件变化。首次安装控制器：
 
 ```bash
 VERIFIED_RUN_ID="<completed-run-id>"
 VERIFIED_COMMIT_SHA="<verified-40-character-sha>"
 
 gh workflow run deploy-backend.yml --ref main \
-  -f operation=preflight \
-  -f "verified_run_id=$VERIFIED_RUN_ID" \
-  -f "verified_commit_sha=$VERIFIED_COMMIT_SHA"
-
-gh workflow run deploy-backend.yml --ref main \
-  -f operation=deploy \
+  -f operation=bootstrap-host \
   -f "verified_run_id=$VERIFIED_RUN_ID" \
   -f "verified_commit_sha=$VERIFIED_COMMIT_SHA"
 ```
 
-应用源码、迁移或契约发生变化时不能复用旧 verify 结果，需由 push 工作流重新通过全部门禁。
-
-发布归档通过 Git attributes 排除 `MAIN/references/**` 课程课件；它们不参与服务器运行，避免每次发布都重复上传。
+只读检查用 `operation=preflight`；部署用 `operation=deploy`，参数相同。应用、迁移或契约改动不得复用旧 verify 结果；应由 push workflow 对目标 SHA 完成完整门禁。
 
 首次数据库初始化会由 `initialize-db.sh` 把各模块专属密码传给 PostgreSQL；B2/B3/B4 使用各自最小权限账号。Ed25519 JWT 私钥及应用数据持久化在 `/var/lib/autograder`。
 
 ## 3. 自动更新范围
 
 - B1 的构建输入或 `MAIN/contracts/**` 改动由 Vercel Git Integration 自动部署 `www.91idc.me`；文档-only 修改跳过。
-- 后端源码、迁移、模块清单、契约、production Compose 或部署脚本改动，在推送到 `main` 后触发 GitHub Actions 更新服务器。
+- 后端源码、迁移、模块清单、契约、锁文件或生产 Compose 改动，在推送到 `main` 后由 GitHub Actions 验证并请求服务器部署同一 SHA。
+- 宿主 bootstrap、部署控制器、发布脚本与预检逻辑不随应用 push 自动执行；变更后通过手动入口复用成功的 verify run，必要时单独安装/更新控制器。
 - `concurrency` 按 production group 排队，不会并发切换当前 release。
 
 ## 4. 运维与排障

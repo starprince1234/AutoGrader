@@ -70,7 +70,7 @@ validate_managed_python_runtime() {
     [[ -z "$unexpected" ]] || \
         fail "$version_dir contains files outside the AutoGrader-owned runtime"
 
-    printf '[autograder-preflight] recognized uv-managed CPython 3.12 runtime; deployment will normalize ownership\n'
+    printf '[autograder-preflight] recognized uv-managed CPython 3.12 runtime; host bootstrap will normalize the interpreter executable if needed\n'
 }
 
 validate_interrupted_compose_deployment() {
@@ -284,6 +284,21 @@ token_mode="$(stat -c %a /etc/autograder/cloudflared.token)"
 [[ "$token_mode" == "600" || "$token_mode" == "640" ]] || \
     fail "the Tunnel token mode must be 0600 or 0640"
 
+for path in /etc/autograder/runtime.env /etc/autograder/setup.env; do
+    [[ -s "$path" && "$(stat -c %U "$path")" == root && \
+        "$(stat -c %a "$path")" == 600 ]] || \
+        fail "$path must be a non-empty root-owned 0600 file"
+done
+
+for command_name in git flock tar timeout; do
+    command -v "$command_name" >/dev/null 2>&1 || \
+        fail "required server-side deployment command is missing: $command_name"
+done
+for command_name in uv nsjail cloudflared; do
+    command -v "$command_name" >/dev/null 2>&1 || \
+        fail "host dependency $command_name is missing; run host bootstrap separately"
+done
+
 root=/opt/autograder
 current="$root/current"
 [[ ! -L "$root" ]] || fail "$root must not be a symbolic link"
@@ -338,29 +353,41 @@ else
             partial_compose_recovery=true
         fi
         unexpected="$(find "$root" -mindepth 1 -maxdepth 1 \
-            ! -name python ! -name incoming ! -name staging ! -name releases -print -quit)"
+            ! -name python ! -name incoming ! -name staging ! -name releases ! -name git-cache -print -quit)"
         [[ -z "$unexpected" ]] || fail "$root contains an unrecognized first-deployment entry"
 
-        for directory in incoming staging releases; do
+        if [[ -e "$root/git-cache" || -L "$root/git-cache" ]]; then
+            require_directory "$root/git-cache" root root 700
+            [[ -f "$root/git-cache/config" && \
+                "$(git --git-dir="$root/git-cache" rev-parse --is-bare-repository 2>/dev/null || true)" == true ]] || \
+                fail "$root/git-cache is not the managed bare source cache"
+            [[ "$(git --git-dir="$root/git-cache" remote get-url origin 2>/dev/null || true)" == \
+                https://github.com/starprince1234/AutoGrader.git ]] || \
+                fail "$root/git-cache has an unexpected origin"
+        fi
+
+        if [[ -e "$root/incoming" || -L "$root/incoming" ]]; then
+            require_directory "$root/incoming" root root 755
+            [[ -z "$(find "$root/incoming" -mindepth 1 -print -quit)" ]] || \
+                fail "$root/incoming contains stale uploaded content; inspect it before deployment"
+            [[ -z "$sha" ]] || fail "the legacy incoming directory must be removed before a server-side release"
+        fi
+
+        for directory in staging releases; do
             path="$root/$directory"
             if [[ -e "$path" || -L "$path" ]]; then
                 require_directory "$path" root root 755
                 if [[ -z "$sha" ]]; then
                     [[ -z "$(find "$path" -mindepth 1 -print -quit)" ]] || \
-                        fail "$path contains data before the deployment upload"
+                        fail "$path contains data outside the active server-side release"
                 fi
             fi
         done
 
         if [[ -n "$sha" ]]; then
             expected_stage="$root/staging/${sha}-${run_attempt}"
-            [[ -d "$root/incoming/$sha" && ! -L "$root/incoming/$sha" ]] || \
-                fail "the uploaded incoming directory is missing or not a real directory"
             [[ -d "$expected_stage" && ! -L "$expected_stage" ]] || \
-                fail "the expected staging directory is missing or not a real directory"
-            unexpected_incoming="$(find "$root/incoming" -mindepth 1 -maxdepth 1 \
-                ! -name "$sha" -print -quit)"
-            [[ -z "$unexpected_incoming" ]] || fail "$root/incoming contains an unexpected deployment"
+                fail "the server-fetched staging directory is missing or not a real directory"
             unexpected_staging="$(find "$root/staging" -mindepth 1 -maxdepth 1 \
                 ! -name "${sha}-${run_attempt}" -print -quit)"
             [[ -z "$unexpected_staging" ]] || fail "$root/staging contains an unexpected deployment"
@@ -370,7 +397,7 @@ else
             fi
         fi
     elif [[ -n "$sha" ]]; then
-        fail "$root is missing before the deployment upload"
+        fail "$root is missing before the server-side deployment"
     fi
 
     if systemctl cat autograder.service >/dev/null 2>&1; then
