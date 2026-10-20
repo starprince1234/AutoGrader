@@ -34,5 +34,7 @@ MAIN/infra/postgres
 MAIN/pyproject.toml
 MAIN/scripts/production-prepare.sh
 MAIN/scripts/production-preflight.sh
+MAIN/sdk/README.md
+MAIN/sdk/pyproject.toml
 MAIN/sdk/src
 MAIN/uv.lock
