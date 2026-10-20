@@ -86,6 +86,7 @@ export const messages = {
     "register.username": "用户名",
     "register.usernameHint": "3–32 位小写字母、数字、点、下划线或连字符，以字母开头；登录时使用这个用户名。",
     "register.displayName": "姓名",
+    "register.displayNameRequired": "请填写姓名（必须与课程名单一致）。",
     "register.studentNumber": "学号",
     "register.studentNumberHint": "13 位数字，必须与课程名单一致。",
     "register.email": "邮箱",

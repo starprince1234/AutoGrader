@@ -54,19 +54,29 @@ export function RegisterPage() {
     }, 1000);
   };
 
-  const identityReady =
+  /**
+   * 请求验证码只需要这四项（服务端的 `requestRegistrationCode` 也只收这四项）。
+   * 口令与邮箱验证码是两件独立的事：把发码按钮绑在"整张表单合法"上，
+   * 会让用户在还没想好密码时看到一个永远点不动的灰按钮，且没有任何原因提示。
+   */
+  const canRequestCode =
     USERNAME_PATTERN.test(username) &&
     displayName.trim() !== "" &&
     STUDENT_NUMBER_PATTERN.test(studentNumber) &&
-    email.trim() !== "" &&
-    password.length >= 8 &&
-    password === confirmPassword;
+    email.trim() !== "";
+
+  /** 提交注册才需要口令齐全。 */
+  const identityReady = canRequestCode && password.length >= 8 && password === confirmPassword;
 
   const sendCode = async () => {
     setError(null);
     setNotice(null);
     if (!USERNAME_PATTERN.test(username)) {
       setError(t("register.usernameHint"));
+      return;
+    }
+    if (displayName.trim() === "") {
+      setError(t("register.displayNameRequired"));
       return;
     }
     if (!STUDENT_NUMBER_PATTERN.test(studentNumber)) {
@@ -133,6 +143,26 @@ export function RegisterPage() {
           </Field>
           <p className="muted">{t("register.usernameHint")}</p>
 
+          {/* 凭据三件套紧挨着用户名：它们是一组，和下面的"身份 + 邮箱验证"分开。 */}
+          <Field label={t("register.password")} htmlFor="register-password">
+            <input
+              id="register-password"
+              type="password"
+              autoComplete="new-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+            />
+          </Field>
+          <Field label={t("register.confirmPassword")} htmlFor="register-confirm-password">
+            <input
+              id="register-confirm-password"
+              type="password"
+              autoComplete="new-password"
+              value={confirmPassword}
+              onChange={(event) => setConfirmPassword(event.target.value)}
+            />
+          </Field>
+
           <Field label={t("register.displayName")} htmlFor="register-display-name">
             <input
               id="register-display-name"
@@ -175,7 +205,7 @@ export function RegisterPage() {
             type="button"
             className="button button--ghost"
             data-testid="register-send-code"
-            disabled={sending || cooldown > 0 || !identityReady}
+            disabled={sending || cooldown > 0}
             onClick={() => {
               void sendCode();
             }}
@@ -187,24 +217,6 @@ export function RegisterPage() {
                 : t("register.sendCode")}
           </button>
 
-          <Field label={t("register.password")} htmlFor="register-password">
-            <input
-              id="register-password"
-              type="password"
-              autoComplete="new-password"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-            />
-          </Field>
-          <Field label={t("register.confirmPassword")} htmlFor="register-confirm-password">
-            <input
-              id="register-confirm-password"
-              type="password"
-              autoComplete="new-password"
-              value={confirmPassword}
-              onChange={(event) => setConfirmPassword(event.target.value)}
-            />
-          </Field>
 
           {notice ? (
             <Banner tone="info" testId="register-notice">
