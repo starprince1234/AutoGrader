@@ -1,6 +1,7 @@
 import { createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
 import { AppShell } from "./AppShell";
 import { LoginPage } from "../features/auth/LoginPage";
+import { RegisterPage } from "../features/auth/RegisterPage";
 import {
   AssignmentDetailRoute,
   AssignmentsRoute,
@@ -12,6 +13,7 @@ import {
   QualityRoute,
   QuestionDetailRoute,
   QuestionListRoute,
+  RegistrationAllowlistRoute,
   RosterImportRoute,
   RosterRoute,
   SubmitRoute,
@@ -34,7 +36,25 @@ const indexRoute = createRoute({
 const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/login",
+  // 两个参数都只从查询串读，且都做白名单化：`redirect` 必须是站内相对路径（避免开放重定向），
+  // `registered` 只是"刚注册完的用户名"，用于显示成功提示。
+  validateSearch: (search: Record<string, unknown>) => ({
+    redirect:
+      typeof search.redirect === "string" && search.redirect.startsWith("/")
+        ? search.redirect
+        : undefined,
+    registered:
+      typeof search.registered === "string" && search.registered !== ""
+        ? search.registered
+        : undefined,
+  }),
   component: LoginPage,
+});
+
+const registerRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/register",
+  component: RegisterPage,
 });
 
 const questionsRoute = createRoute({
@@ -101,6 +121,12 @@ const rosterImportRoute = createRoute({
   component: RosterImportRoute,
 });
 
+const registrationAllowlistRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/admin/registration-allowlist",
+  component: RegistrationAllowlistRoute,
+});
+
 const usersRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/admin/users",
@@ -136,6 +162,7 @@ const qualityRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   loginRoute,
+  registerRoute,
   questionsRoute,
   // 静态段 `/questions/new` 必须与动态段 `/questions/$questionId` 同时注册：
   // 路由器按段排序，静态段优先，因此 `new` 不会被当成一个 question_id。
@@ -149,6 +176,7 @@ const routeTree = rootRoute.addChildren([
   rosterRoute,
   rosterImportRoute,
   usersRoute,
+  registrationAllowlistRoute,
   quarantineRoute,
   qualityRoute,
 ]);

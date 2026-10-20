@@ -35,7 +35,7 @@ from .logging import configure_logging, get_logger, log_event
 class B3Module:
     descriptor = ModuleDescriptor(
         module="B3",
-        contract_version="0.16.0",
+        contract_version="0.17.0",
         provides=("b3-questions",),
         requires=("host", "b4-course"),
         routes=("/api/v1/questions", "/api/v1/question-versions", "/api/v1/assignments"),

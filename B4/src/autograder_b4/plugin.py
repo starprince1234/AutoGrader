@@ -38,7 +38,7 @@ logger = get_logger("plugin")
 
 DESCRIPTOR = ModuleDescriptor(
     module="B4",
-    contract_version="0.16.0",
+    contract_version="0.17.0",
     provides=("b4-auth", "b4-course", "postgres", "nats"),
     requires=("host",),
     routes=(
@@ -50,6 +50,7 @@ DESCRIPTOR = ModuleDescriptor(
         "/api/v1/roster-imports",
         "/api/v1/audit-records",
         "/api/v1/modules",
+        "/api/v1/registration-allowlists",
     ),
     events=("autograder.v1.roster.import.completed",),
 )

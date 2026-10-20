@@ -12,6 +12,7 @@ import { RosterImportPage } from "../features/roster-import/RosterImportPage";
 import { RosterPage } from "../features/roster/RosterPage";
 import { SubmitPage } from "../features/submission/SubmitPage";
 import { UsersPage } from "../features/users/UsersPage";
+import { RegistrationAllowlistPage } from "../features/admin/RegistrationAllowlistPage";
 import { RequireAuth, RequirePermission } from "../auth/guards";
 import {
   canAuthorQuestions,
@@ -205,6 +206,20 @@ export function QualityRoute() {
             });
           }}
         />
+      </RequirePermission>
+    </RequireAuth>
+  );
+}
+
+/**
+ * 注册白名单维护（仅管理员）。名单是自助注册的身份锚点，所以它的写入口与用户管理同权限；
+ * 服务端仍是判定方，前端可见性只是体验。
+ */
+export function RegistrationAllowlistRoute() {
+  return (
+    <RequireAuth>
+      <RequirePermission allow={canManageUsers} allowedRoles={["admin"]}>
+        <RegistrationAllowlistPage />
       </RequirePermission>
     </RequireAuth>
   );

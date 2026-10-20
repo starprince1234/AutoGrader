@@ -1,6 +1,6 @@
 schema_version: 1
 module: B4
-contract_version: 0.16.0
+contract_version: 0.17.0
 entry_point: autograder_b4.plugin:create_module
 provides: [b4-auth, b4-course, postgres, nats]
 requires: [host]
@@ -13,9 +13,10 @@ routes:
   - /api/v1/roster-imports
   - /api/v1/audit-records
   - /api/v1/modules
+  - /api/v1/registration-allowlists
 events:
   publishes: [autograder.v1.roster.import.completed]
   subscribes: []
 database:
   schema: b4
-  migration_head: "20260915_0002"
+  migration_head: "20261020_0003"

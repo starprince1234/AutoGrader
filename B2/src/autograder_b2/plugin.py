@@ -49,7 +49,7 @@ from autograder_b2.runtime import B2Runtime, build_b2_runtime
 class B2Module:
     descriptor = ModuleDescriptor(
         module="B2",
-        contract_version="0.16.0",
+        contract_version="0.17.0",
         provides=("b2-submissions",),
         requires=("host", "b4-auth", "b3-questions"),
         routes=(

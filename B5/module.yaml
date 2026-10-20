@@ -1,6 +1,6 @@
 schema_version: 1
 module: B5
-contract_version: 0.16.0
+contract_version: 0.17.0
 entry_point: autograder_b5.plugin:create_module
 provides: [b5-conformance]
 # `b4-auth` because the contract's endpoint is bearer-protected and B5 verifies the token

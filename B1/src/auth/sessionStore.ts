@@ -65,6 +65,31 @@ export function subscribeSession(listener: () => void): () => void {
   return () => listeners.delete(listener);
 }
 
+/**
+ * 会话恢复是否已经结束。
+ *
+ * `restoreSession()` 是异步的：在它完成之前状态必然是 `anonymous`，若此时就按
+ * "未登录"重定向，持有有效刷新 cookie 的用户会被无故踢到登录页。所有"未登录就跳转"
+ * 的判断都必须等这个标志为 true。
+ */
+let sessionReady = false;
+const readyListeners = new Set<() => void>();
+
+export function isSessionReady(): boolean {
+  return sessionReady;
+}
+
+export function subscribeSessionReady(listener: () => void): () => void {
+  readyListeners.add(listener);
+  return () => readyListeners.delete(listener);
+}
+
+function markSessionReady(): void {
+  if (sessionReady) return;
+  sessionReady = true;
+  for (const listener of readyListeners) listener();
+}
+
 export function getAccessToken(): string | null {
   return accessToken;
 }
@@ -234,11 +259,17 @@ export async function refreshAccessToken(): Promise<string | null> {
 
 /** 应用启动时尝试用 HttpOnly 刷新凭据恢复会话；失败即匿名。 */
 export async function restoreSession(): Promise<SessionState> {
-  if (accessToken) return state;
+  if (accessToken) {
+    markSessionReady();
+    return state;
+  }
   try {
     await refreshAccessToken();
   } catch {
     clearSession();
+  } finally {
+    // 无论成功与否，恢复都到此为止：路由守卫在这之后才允许把未登录用户送去登录页。
+    markSessionReady();
   }
   return state;
 }

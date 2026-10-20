@@ -535,6 +535,49 @@
 
 ---
 
+## 0.17.0 — 自助注册、邮箱验证码与注册白名单（CHG-0029）
+
+- **级别**：P1 增补（三条新路径）；其中 409/422/429 的语义沿用 common.yaml 既有定义，不新增错误语义
+- **状态**：已生效
+- **动机**：用户要求账号“注册即可登录（无审核激活）”，注册界面强制收集 用户名 / 密码 / 姓名 / 学号 / 邮箱 / 验证码，
+  并使用管理员导入的 姓名+学号 名单校验身份；**登录只保留用户名 + 密码**（现有 createSession 一字未改）。
+  这三条路径是 B4 此前完全不存在的能力：没有注册端点、没有发信组件、没有平台级注册白名单。
+- **变更文件**：
+  - openapi/b4.yaml：新增 POST /api/v1/auth/registrations/code（
+equestRegistrationCode）、
+    POST /api/v1/auth/registrations（createRegistration）、
+    POST /api/v1/registration-allowlists（
+eplaceRegistrationAllowlist，管理员）、
+    GET /api/v1/registration-allowlists（getRegistrationAllowlist，管理员）
+  - 六份契约文件同步 info.version（含 syncapi/events.yaml）
+- **受影响模块与需要做的改动**：
+  - **B4**：新增迁移 20261020_0003（
+egistration_allowlist、
+egistration_allowlist_batches、
+    
+egistration_codes 三张表、users.created_via 列、users 的 lower(btrim(email)) 部分唯一索引）、
+    发信模块与 SMTP 配置、三条端点与路由声明
+  - **B1**：新增 /register 页、未登录强制跳转 /login（含回跳）、登录页返回原页
+  - **B2 / B3 / B5**：**无改动**。登录请求体、令牌声明与 JWKS 形状均未变化，本地验签不受影响
+- **是否破坏兼容**：否。全部为新增路径与新增表；createSession 的请求体仍是 {username, password}。
+  唯一需要写明的“收紧”是：users.email 在数据库层获得**非 NULL 时唯一**的约束（大小写与首尾空格归一后），
+  这会让“同一邮箱注册两个管理员账号”从可行变成 409
+- **迁移方式**：一次性切换，不保留兼容层。若存量 users 中存在归一化后重复的邮箱，迁移会**明确失败**
+  并要求先治理数据，而不是静默挑选一条
+- **验证**：**未执行**。本机没有 uv/模块虚拟环境/PostgreSQL，也没有 B1 的 
+ode_modules，
+  因此 checks.py、
+elock_contracts.py、
+uff、pytest、pnpm * 都无法运行。
+  摘要由 SDK 的 contract_digest()（MAIN/sdk/src/autograder_platform/contracts.py）直接计算后写入五份锁；
+  该文件是 checks.py 委托的同一实现，但**仍应在有环境的机器上重跑** python MAIN/scripts/relock_contracts.py --check
+  与 uv run pytest、pnpm verify
+- **摘要**：见五份 contracts.lock（由 contract_digest() 计算，此处不复制）
+- **回滚方式**：还原本批文本与版本号、回退迁移 20261020_0003、移除 B4 的注册路由与 B1 的注册页，
+  然后重跑 scripts/relock_contracts.py；版本回到 0.16.0
+
+---
+
 ## 记录模板（后续变更复制此块）
 
 ```md

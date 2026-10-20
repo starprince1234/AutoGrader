@@ -18,7 +18,7 @@
 
 ## 我提供的端点（`module.yaml: routes`）
 
-`module.yaml: routes` 现在声明 OpenAPI 覆盖的**全部 8 个前缀**；下表列出每个 operation 的认证与作用域要求。实现状态一栏对应代码，不再混同"契约已锁定"与"实现已完成"。
+`module.yaml: routes` 现在声明 OpenAPI 覆盖的**全部 9 个前缀**；下表列出每个 operation 的认证与作用域要求。实现状态一栏对应代码，不再混同"契约已锁定"与"实现已完成"。
 
 | 方法+路径 | operationId | 用途 | 认证 | 作用域 | 实现状态 |
 |---|---|---|---|---|---|
@@ -26,6 +26,10 @@
 | `POST /api/v1/auth/session/refresh` | `refreshSession` | 轮换刷新凭据、重发访问令牌 | 刷新 cookie | — | `已完成` |
 | `DELETE /api/v1/auth/session/logout` | `deleteSession` | 注销 | 是 | — | `已完成` |
 | `GET /api/v1/auth/jwks` | `getJwks` | 暴露 Ed25519 公钥 | 无需 | — | `已完成` |
+| `POST /api/v1/auth/registrations/code` | `requestRegistrationCode` | 校验身份并发送邮箱验证码 | 无需 | — | `已完成` |
+| `POST /api/v1/auth/registrations` | `createRegistration` | 用验证码完成自助注册（建号即可登录） | 无需 | — | `已完成` |
+| `POST /api/v1/registration-allowlists` | `replaceRegistrationAllowlist` | 上传 CSV 全量替换注册白名单 | 是 | 管理员 | `已完成` |
+| `GET /api/v1/registration-allowlists` | `getRegistrationAllowlist` | 读取当前生效的名单批次 | 是 | 管理员 | `已完成` |
 | `GET /api/v1/users` | `listUsers` | 用户列表（游标分页、角色过滤） | 是 | 管理员 | `已完成` |
 | `POST /api/v1/users` | `createUser` | 创建用户 | 是 | 管理员 | `已完成` |
 | `PATCH /api/v1/users/{user_id}` | `updateUser` | 改资料/角色（`expected_updated_at` 乐观并发） | 是 | 管理员 | `已完成` |
@@ -44,6 +48,26 @@
 | `GET /api/v1/audit-records` | `listAuditRecords` | 审计查询 | 是 | 管理员全量；教师/助教限本课程 | `已完成` |
 | `GET /api/v1/modules` | `listRegisteredModules` | 运行期模块注册表 | 是 | 管理员 | `已完成` |
 | `GET /api/v1/modules/{module}/health` | `getModuleHealth` | 单模块存活（公开、最小） | 无需 | — | `已完成` |
+
+## 自助注册（0.17.0）
+
+登录仍然只收 **用户名 + 密码**，`createSession` 一字未改。注册是独立的两步，**没有审核激活**：
+
+1. `requestRegistrationCode`：先校验用户名/邮箱/学号唯一性，再要求 `(学号, 姓名)` 命中管理员导入的
+   白名单，然后把 6 位验证码发到邮箱。**发信失败返回 `503`，绝不降级为"跳过验证"**；数据库里只存
+   验证码的 SHA-256 摘要，且摘要绑定本条注册意图的 id。
+2. `createRegistration`：校验验证码（单次使用、10 分钟、错 5 次作废），在**一个事务**内建
+   `users`（`created_via='self'`）、`credentials`（Argon2id）、平台级 `student` 角色，并把该学号
+   名下**尚未关联**的 `enrollments.user_id` 回填——否则"先导名单、后注册"的学生会在登录后看不到课程。
+
+几个刻意的取舍：
+
+- **邮箱不参与登录**（需求明确），因此 `users.email` 的唯一索引意义是"绑定关系"，不是凭据；
+  它同样**不用于找回口令**——未验证的字段不能承担安全决策。`users.created_via` 只是运维标记。
+- **白名单是全量替换**：CSV 是某班/某学期的快照，未出现在文件里的学号从此刻起不能再注册；
+  历史批次保留（文件名 + 摘要 + 行数 + 上传人），以便事后回答"当时谁被允许"。
+- **枚举**：注册侧必须告诉用户"用户名/邮箱/学号已被占用"，否则无法纠正；登录侧仍保持失败不可区分。
+  限流按邮箱做冷却与小时配额，防止把注册页当邮件轰炸工具。
 
 ## 复核发现（只读复核，未修改 `MAIN/contracts/**`）
 

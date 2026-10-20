@@ -1,12 +1,24 @@
 # B4 数据库 schema（表意图）
 
-> 铁律一：**不抄 DDL**。物理表结构的唯一权威是本模块 `../alembic/versions/**`；本文只写表意图、关键约束、生命周期、敏感列标记。表已由 `20260915_0002` 建成并实测（见 `../phases/active/phase-01-platform-implementation.md`）。
+> 铁律一：**不抄 DDL**。物理表结构的唯一权威是本模块 `../alembic/versions/**`；本文只写表意图、关键约束、生命周期、敏感列标记。平台表由 `20260915_0002` 建成，注册相关表与 `users.created_via` 由 `20261020_0003` 增加（见 `../phases/active/phase-01-platform-implementation.md`）。
 
 ## 归属声明
 
-- 我拥有 `b4` schema 的 8 类平台实体，物理表为 **15 张业务表 + `alembic_version_b4`**。
+- 我拥有 `b4` schema 的 8 类平台实体，物理表为 **18 张业务表 + `alembic_version_b4`**（0.17.0 新增 3 张注册相关表）。
 - **B2/B3 物理表不归我**：我不代管、不读写、不迁移它们（见 `../../MAIN/docs/database/ownership.md`）。
 - 我只负责实例、角色、schema、备份、健康；应用连接用最小权限角色，禁止超级用户。
+
+## 自助注册相关表（`20261020_0003`）
+
+| 表 | 主键 | 意图 | 关键约束 | 敏感列 |
+|---|---|---|---|---|
+| `registration_allowlist_batches` | `batch_id` | 每次名单导入的批次记录（文件名、内容摘要、行数、上传人） | `content_sha256` 必须 64 位十六进制；上传人外键 `ON DELETE SET NULL` | 无（文件名可能含班级信息，属低敏） |
+| `registration_allowlist` | `entry_id` | **当前生效**的注册白名单：`(学号, 姓名)` 是注册时的身份锚点 | 学号唯一且必须是 13 位数字；批次外键 `ON DELETE CASCADE` | 学号 + 姓名（与名单同源，属学生身份信息） |
+| `registration_codes` | `code_id` | 一次注册意图：邮箱、拟用用户名/学号/姓名、验证码摘要、过期与尝试次数 | 只存 SHA-256 摘要（绑 `code_id`）；`email` 必须已归一化（小写去空格）；`attempts >= 0` | 邮箱（PII），**不含验证码原文与口令** |
+
+补充：`users` 新增 `created_via`（`admin` / `self`），用于区分"管理员建号"与"自助注册"；它只做运维标记，
+不参与任何授权判定。`users.email` 上有一条 `lower(btrim(email))` 的**部分唯一索引**（非空时唯一），
+迁移在发现存量重复邮箱时会**明确失败**，不会替操作者挑选保留哪一行。
 
 ## 实体 ↔ 表名对照
 

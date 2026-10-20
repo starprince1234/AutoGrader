@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AutoGrader B4 Platform API
-  version: 0.16.0
+  version: 0.17.0
   description: |
     Identity, courses, sections, enrollments, roster import, audit and the runtime
     module registry. Owned by B4 (RQ-B-4-10/20/30/40/50/99).
@@ -159,6 +159,178 @@ paths:
                         alg: {type: string, const: EdDSA}
                       additionalProperties: true
                 additionalProperties: false
+
+  /api/v1/auth/registrations/code:
+    post:
+      operationId: requestRegistrationCode
+      summary: Send the e-mail verification code for a self-service registration
+      description: |
+        Self-service registration is open (no approval step): the caller proves the
+        mailbox, the identity is checked against the administrator's allowlist, and the
+        account created by `createRegistration` can sign in immediately.
+
+        This operation validates the claimed identity (13-digit student number, full
+        name present in the allowlist) **before** sending anything, so a code is never
+        mailed for an identity that cannot register. It stores only a SHA-256 digest of
+        the code, bound to the exact registration intent, and it never stores the
+        password. A missing or failing SMTP configuration is `503`: the endpoint never
+        degrades to skipping verification.
+      tags: [auth]
+      security: []
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Traceparent'
+        - $ref: './common.yaml#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, email, student_number, display_name]
+              properties:
+                username:
+                  type: string
+                  minLength: 3
+                  maxLength: 32
+                  pattern: '^[a-z][a-z0-9._-]{2,31}$'
+                  description: Login identifier. Lowercase; must not contain "@".
+                email: {type: string, format: email, maxLength: 320}
+                student_number: {type: string, pattern: '^[0-9]{13}$'}
+                display_name: {type: string, minLength: 1, maxLength: 50}
+              additionalProperties: false
+      responses:
+        '202':
+          description: Code sent (or the same answer when one was already in flight).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [expires_in_seconds, resend_after_seconds]
+                properties:
+                  expires_in_seconds: {type: integer, minimum: 1}
+                  resend_after_seconds: {type: integer, minimum: 1}
+                additionalProperties: false
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+        '429': {$ref: './common.yaml#/components/responses/TooManyRequests'}
+        '503': {$ref: './common.yaml#/components/responses/ServiceUnavailable'}
+
+  /api/v1/auth/registrations:
+    post:
+      operationId: createRegistration
+      summary: Complete a self-service registration with the e-mailed code
+      description: |
+        Verifies the code against the intent stored by `requestRegistrationCode`, then
+        creates the account in one transaction: `b4.users`, `b4.credentials` (Argon2id),
+        the platform `student` role, and a link for every roster enrollment that already
+        carries this student number but no user yet. The account is usable immediately —
+        there is no approval state.
+
+        The request repeats the e-mail only as a lookup key; the username, student number
+        and display name come from the stored intent so that "what was verified" and
+        "what is created" cannot diverge.
+      tags: [auth]
+      security: []
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Traceparent'
+        - $ref: './common.yaml#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, code, password]
+              properties:
+                email: {type: string, format: email, maxLength: 320}
+                code: {type: string, pattern: '^[0-9]{6}$'}
+                password: {type: string, minLength: 8, maxLength: 128, format: password}
+              additionalProperties: false
+      responses:
+        '201':
+          description: Account created; the caller can sign in immediately.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [user_id, username]
+                properties:
+                  user_id: {type: string, format: uuid}
+                  username: {type: string}
+                additionalProperties: false
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+        '429': {$ref: './common.yaml#/components/responses/TooManyRequests'}
+
+  /api/v1/registration-allowlists:
+    post:
+      operationId: replaceRegistrationAllowlist
+      summary: Replace the registration allowlist from a CSV file (admin only)
+      description: |
+        The CSV carries the identity anchor used by self-service registration: a
+        `姓名`/`学号` header (a `name`/`student_number` header is accepted too) and one
+        row per student. The upload **replaces** the allowlist in one transaction: rows
+        absent from the new file can no longer register, and previous batches stay
+        recorded for traceability.
+
+        Encoding: UTF-8 (with or without BOM) or GBK/GB18030. A file that decodes into
+        something other than 13-digit student numbers is rejected rather than imported
+        partially. Columns are located by header name, never by position.
+      tags: [registration]
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Traceparent'
+        - $ref: './common.yaml#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: {type: string, format: binary}
+              additionalProperties: false
+      responses:
+        '200':
+          description: Allowlist replaced.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [batch_id, row_count, replaced_row_count, content_sha256]
+                properties:
+                  batch_id: {type: string, format: uuid}
+                  row_count: {type: integer, minimum: 0}
+                  replaced_row_count: {type: integer, minimum: 0}
+                  content_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
+                additionalProperties: false
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '413': {$ref: './common.yaml#/components/responses/PayloadTooLarge'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+    get:
+      operationId: getRegistrationAllowlist
+      summary: Report the active registration allowlist (admin only)
+      tags: [registration]
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Traceparent'
+        - $ref: './common.yaml#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: The active batch, or nulls when none was ever imported.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [batch_id, filename, row_count, uploaded_at]
+                properties:
+                  batch_id: {type: [string, 'null'], format: uuid}
+                  filename: {type: [string, 'null']}
+                  row_count: {type: integer, minimum: 0}
+                  uploaded_at: {type: [string, 'null'], format: date-time}
+                additionalProperties: false
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
 
   /api/v1/users:
     get:

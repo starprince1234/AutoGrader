@@ -44,6 +44,9 @@ users = Table(
     Column("email", Text, nullable=True),
     Column("is_active", Boolean, nullable=False, server_default="true"),
     Column("deactivated_at", TIMESTAMPTZ, nullable=True),
+    #: `admin` for accounts an administrator created; `self` for self-service registration.
+    #: Operational only: it answers "where did this account come from" without a second table.
+    Column("created_via", Text, nullable=False, server_default="admin"),
     Column("created_at", TIMESTAMPTZ, nullable=False, server_default=func.now()),
     Column("updated_at", TIMESTAMPTZ, nullable=False, server_default=func.now()),
 )
@@ -247,11 +250,55 @@ login_attempts = Table(
 )
 
 #: The version table Alembic owns, declared here so schema-conformance checks know it
-#: is expected rather than an unmanaged hand-made table.
+#: is expected rather than an unmanaged hand-measured table.
 alembic_version = Table(
     "alembic_version_b4",
     metadata,
     Column("version_num", Text, primary_key=True),
+)
+
+# ---------------------------------------------------------------------------- registration
+#
+# Self-service registration has no approval step, so the two things that would otherwise be
+# approved by a human are made into data instead: an allowlist (who may register) and a
+# verification code (which mailbox belongs to the claim). Neither table can hold a secret
+# that would let an attacker act: the allowlist holds public roster fields, and the code
+# row holds only a SHA-256 digest plus the intent it was issued for.
+
+registration_allowlist_batches = Table(
+    "registration_allowlist_batches",
+    metadata,
+    Column("batch_id", PGUUID(as_uuid=True), primary_key=True),
+    Column("filename", Text, nullable=False),
+    Column("content_sha256", Text, nullable=False),
+    Column("row_count", Integer, nullable=False),
+    Column("uploaded_by", PGUUID(as_uuid=True), nullable=True),
+    Column("created_at", TIMESTAMPTZ, nullable=False, server_default=func.now()),
+)
+
+registration_allowlist = Table(
+    "registration_allowlist",
+    metadata,
+    Column("entry_id", PGUUID(as_uuid=True), primary_key=True),
+    Column("batch_id", PGUUID(as_uuid=True), nullable=False),
+    Column("student_number", Text, nullable=False, unique=True),
+    Column("display_name", Text, nullable=False),
+    Column("created_at", TIMESTAMPTZ, nullable=False, server_default=func.now()),
+)
+
+registration_codes = Table(
+    "registration_codes",
+    metadata,
+    Column("code_id", PGUUID(as_uuid=True), primary_key=True),
+    Column("email", Text, nullable=False),
+    Column("username", Text, nullable=False),
+    Column("student_number", Text, nullable=False),
+    Column("display_name", Text, nullable=False),
+    Column("code_hash", Text, nullable=False),
+    Column("attempts", Integer, nullable=False, server_default="0"),
+    Column("expires_at", TIMESTAMPTZ, nullable=False),
+    Column("consumed_at", TIMESTAMPTZ, nullable=True),
+    Column("created_at", TIMESTAMPTZ, nullable=False, server_default=func.now()),
 )
 
 ALL_TABLES = (
@@ -270,4 +317,7 @@ ALL_TABLES = (
     inbox_events,
     dlq_messages,
     login_attempts,
+    registration_allowlist_batches,
+    registration_allowlist,
+    registration_codes,
 )

@@ -36,6 +36,22 @@ DEFAULT_ROSTER_UPLOAD_MAX_BYTES = 5 * 1024 * 1024
 DEFAULT_LOGIN_FAILURE_WINDOW_SECONDS = 300
 DEFAULT_LOGIN_FAILURE_LIMIT = 5
 
+#: Self-service registration. The code is short-lived because it is the only proof that the
+#: mailbox belongs to the claimant; the resend cooldown keeps one form from becoming a
+#: mail-bombing tool, and the hourly limits bound the cost of a burst of registrations.
+DEFAULT_REGISTRATION_CODE_TTL_SECONDS = 600
+DEFAULT_REGISTRATION_RESEND_SECONDS = 60
+DEFAULT_REGISTRATION_MAX_ATTEMPTS = 5
+DEFAULT_REGISTRATION_EMAIL_HOURLY_LIMIT = 5
+DEFAULT_REGISTRATION_CLIENT_HOURLY_LIMIT = 30
+DEFAULT_REGISTRATION_ALLOWLIST_MAX_BYTES = 2 * 1024 * 1024
+
+#: SMTP defaults match the deployment's environment: 465 is implicit TLS (`SMTPS`), which is
+#: what a `tls` mode plus port 465 means. `starttls` belongs to 587.
+DEFAULT_SMTP_PORT = 465
+DEFAULT_SMTP_TLS_MODE = "tls"
+DEFAULT_SMTP_TIMEOUT_SECONDS = 60
+
 
 class ConfigurationError(RuntimeError):
     """Raised when the environment cannot safely boot the module."""
@@ -61,6 +77,11 @@ def _env_bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _env_str(name: str) -> str:
+    raw = os.getenv(name)
+    return "" if raw is None else raw.strip()
+
+
 @dataclass(frozen=True)
 class Settings:
     """Immutable view of the environment B4 needs."""
@@ -80,10 +101,49 @@ class Settings:
     refresh_cookie_name: str
     refresh_cookie_secure: bool
     allow_weak_password: bool
+    # Self-service registration and the mail channel it needs. `smtp_*` are read from the
+    # same environment Doppler injects; an unconfigured channel is a request-time `503`
+    # (`registration code cannot be delivered`), never a silent skip of the verification.
+    smtp_host: str
+    smtp_port: int
+    smtp_user: str
+    smtp_password: str
+    smtp_from: str
+    smtp_from_name: str
+    smtp_tls_mode: str
+    smtp_timeout_seconds: int
+    registration_code_ttl_seconds: int
+    registration_resend_seconds: int
+    registration_max_attempts: int
+    registration_email_hourly_limit: int
+    registration_client_hourly_limit: int
+    registration_allowlist_max_bytes: int
 
     @property
     def is_production(self) -> bool:
         return self.environment == "production"
+
+    @property
+    def smtp_configured(self) -> bool:
+        """Everything needed to deliver a message is present."""
+        return bool(self.smtp_host and self.smtp_user and self.smtp_password and self.smtp_from)
+
+    @property
+    def smtp_uses_implicit_tls(self) -> bool:
+        """`465`/`smtps` speak TLS from the first byte; STARTTLS is a different handshake."""
+        mode = self.smtp_tls_mode.lower()
+        if mode in {"ssl", "smtps", "implicit"}:
+            return True
+        if mode == "tls":
+            # `tls` on 465 means implicit TLS (the deployment's own configuration); on any
+            # other port it means the STARTTLS upgrade. Guessing the other way would make a
+            # correct configuration fail with an opaque handshake error.
+            return self.smtp_port == 465
+        return False
+
+    @property
+    def smtp_uses_starttls(self) -> bool:
+        return self.smtp_tls_mode.lower() in {"starttls", "tls"} and not self.smtp_uses_implicit_tls
 
     @classmethod
     def from_environment(cls, environ: dict[str, str] | None = None) -> Settings:
@@ -119,6 +179,32 @@ class Settings:
             ).strip(),
             refresh_cookie_secure=_env_bool("B4_REFRESH_COOKIE_SECURE", True),
             allow_weak_password=_env_bool("B4_ALLOW_WEAK_PASSWORD", environment != "production"),
+            smtp_host=_env_str("SMTP_HOST"),
+            smtp_port=_env_int("SMTP_PORT", DEFAULT_SMTP_PORT),
+            smtp_user=_env_str("SMTP_USER"),
+            smtp_password=_env_str("SMTP_PASS"),
+            smtp_from=_env_str("SMTP_FROM"),
+            smtp_from_name=_env_str("SMTP_FROM_NAME") or "AutoGrader",
+            smtp_tls_mode=_env_str("SMTP_TLS_MODE").lower() or DEFAULT_SMTP_TLS_MODE,
+            smtp_timeout_seconds=_env_int("SMTP_TIMEOUT_SECONDS", DEFAULT_SMTP_TIMEOUT_SECONDS),
+            registration_code_ttl_seconds=_env_int(
+                "B4_REGISTRATION_CODE_TTL_SECONDS", DEFAULT_REGISTRATION_CODE_TTL_SECONDS
+            ),
+            registration_resend_seconds=_env_int(
+                "B4_REGISTRATION_RESEND_SECONDS", DEFAULT_REGISTRATION_RESEND_SECONDS
+            ),
+            registration_max_attempts=_env_int(
+                "B4_REGISTRATION_MAX_ATTEMPTS", DEFAULT_REGISTRATION_MAX_ATTEMPTS
+            ),
+            registration_email_hourly_limit=_env_int(
+                "B4_REGISTRATION_EMAIL_HOURLY_LIMIT", DEFAULT_REGISTRATION_EMAIL_HOURLY_LIMIT
+            ),
+            registration_client_hourly_limit=_env_int(
+                "B4_REGISTRATION_CLIENT_HOURLY_LIMIT", DEFAULT_REGISTRATION_CLIENT_HOURLY_LIMIT
+            ),
+            registration_allowlist_max_bytes=_env_int(
+                "B4_REGISTRATION_ALLOWLIST_MAX_BYTES", DEFAULT_REGISTRATION_ALLOWLIST_MAX_BYTES
+            ),
         )
         settings.validate()
         return settings
@@ -130,6 +216,22 @@ class Settings:
                 raise ConfigurationError("production requires JWT_PRIVATE_KEY_FILE")
             if self.allow_weak_password:
                 raise ConfigurationError("production must not allow weak default passwords")
+            if not self.smtp_configured:
+                missing = [
+                    name
+                    for name, value in (
+                        ("SMTP_HOST", self.smtp_host),
+                        ("SMTP_USER", self.smtp_user),
+                        ("SMTP_PASS", self.smtp_password),
+                        ("SMTP_FROM", self.smtp_from),
+                    )
+                    if not value
+                ]
+                raise ConfigurationError(
+                    "production requires the self-service registration mail channel; missing "
+                    f"{', '.join(missing)}. Registration verifies the mailbox, so a deployment "
+                    "without a sender would silently accept unverified addresses."
+                )
         password = _password_from_url(self.database_url)
         if (
             password is not None
