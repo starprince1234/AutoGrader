@@ -13,7 +13,6 @@ import {
   QualityRoute,
   QuestionDetailRoute,
   QuestionListRoute,
-  RegistrationAllowlistRoute,
   RosterImportRoute,
   RosterRoute,
   SubmitRoute,
@@ -132,15 +131,25 @@ const rosterImportRoute = createRoute({
   component: RosterImportRoute,
 });
 
-const registrationAllowlistRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/admin/registration-allowlist",
-  component: RegistrationAllowlistRoute,
-});
+/**
+ * P14 的标签走查询串（`?tab=users|allowlist`）：刷新、前进、后退都回到同一个标签，
+ * 而切换标签本身不触发任何写操作。
+ *
+ * 未知值（例如旧的 `/admin/users?tab=platform`）被**丢弃**而不是渲染成第三条页面：
+ * 归一后就是默认的 `users`，服务端授权检查照常执行。
+ */
+type AdminUsersSearch = { tab?: "users" | "allowlist" };
+
+function validateAdminUsersSearch(search: Record<string, unknown>): AdminUsersSearch {
+  if (search.tab === "allowlist") return { tab: "allowlist" };
+  if (search.tab === "users") return { tab: "users" };
+  return {};
+}
 
 const usersRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/admin/users",
+  validateSearch: validateAdminUsersSearch,
   component: UsersRoute,
 });
 
@@ -187,7 +196,6 @@ const routeTree = rootRoute.addChildren([
   rosterRoute,
   rosterImportRoute,
   usersRoute,
-  registrationAllowlistRoute,
   quarantineRoute,
   qualityRoute,
 ]);

@@ -29,6 +29,8 @@ export const queryKeys = {
   enrollments: (sectionId: string) => ["enrollments", sectionId] as const,
   rosterImport: (id: string) => ["roster-import", id] as const,
   users: (role: string | null) => ["users", role] as const,
+  /** 当前生效的注册名单批次（P14）。只有一个对象，没有筛选维度可进键。 */
+  registrationAllowlist: ["registration-allowlist"] as const,
   questions: (courseId: string | null) => ["questions", courseId] as const,
   /**
    * 题库标签覆盖度（CHG-0020）。作用域（课程 + `published_only`）进键：同一门课在

@@ -202,7 +202,15 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** Deactivate a user (admin only) */
+        /**
+         * Deactivate a user (admin only)
+         * @description **Deactivation, not deletion.** The row, its historical records and the accounts it
+         *     owns stay in place; `is_active` becomes `false` and every open session of that user is
+         *     revoked, so the account can no longer sign in. An administrator whose own row this is
+         *     gets `409`: deactivating yourself would end the session that is performing the request
+         *     and can leave the platform without an active administrator. Re-activation has no
+         *     endpoint here — it is deliberately not invented by a client.
+         */
         delete: operations["deleteUser"];
         options?: never;
         head?: never;
@@ -475,6 +483,19 @@ export interface components {
             display_name: string;
             student_number?: string | null;
             roles: components["schemas"]["Role"][];
+            /**
+             * @description Whether the account may sign in. `deleteUser` is a **soft** deactivation, so this
+             *     is the only field that distinguishes a deactivated account from a usable one: an
+             *     admin screen that omits it has no way to say whether `204` actually took effect,
+             *     and RQ-B-4-50 requires the account state to be visible.
+             */
+            is_active: boolean;
+            /**
+             * @description Last modification. It is the value `updateUser.expected_updated_at` is compared
+             *     against, so it is required here: without it a client can only send a timestamp it
+             *     guessed, and concurrent administrator edits either always conflict or never do.
+             */
+            updated_at: components["schemas"]["Timestamp"];
             created_at?: components["schemas"]["Timestamp"];
         };
         CourseSummary: {
@@ -980,6 +1001,13 @@ export interface operations {
             query?: {
                 cursor?: components["parameters"]["Cursor"];
                 limit?: components["parameters"]["Limit"];
+                /**
+                 * @description Restrict the page to holders of that **platform** role (a course-scoped grant is
+                 *     not a platform role). The filter selects rows; it never widens what a row shows.
+                 *     There is no name/username search: the contract declares none, and a client that
+                 *     pulled the whole table to filter locally would spread identity data for a feature
+                 *     the server does not offer.
+                 */
                 role?: components["schemas"]["Role"];
             };
             header?: never;
@@ -1028,12 +1056,21 @@ export interface operations {
             };
         };
         responses: {
-            /** @description User created. */
+            /**
+             * @description User created. The body carries the identity of the new account so an admin
+             *     screen can name what it created (`RQ-B-4-50`): it is not a credential and it
+             *     is not a second read of the user — a client that wants the full row still
+             *     re-reads the list.
+             */
             201: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        user_id: components["schemas"]["Uuid"];
+                    };
+                };
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
@@ -1062,6 +1099,12 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+            /**
+             * @description Refused because the target is the caller's own account. Deactivation revokes the
+             *     caller's sessions, so the operation cannot be reported back to the actor that
+             *     asked for it; a second administrator has to perform it.
+             */
+            409: components["responses"]["Conflict"];
         };
     };
     updateUser: {

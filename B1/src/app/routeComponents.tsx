@@ -11,8 +11,8 @@ import { QuestionListPage } from "../features/questions/QuestionListPage";
 import { RosterImportPage } from "../features/roster-import/RosterImportPage";
 import { RosterPage } from "../features/roster/RosterPage";
 import { SubmitPage } from "../features/submission/SubmitPage";
-import { UsersPage } from "../features/users/UsersPage";
-import { RegistrationAllowlistPage } from "../features/admin/RegistrationAllowlistPage";
+import { AdminUsersPage } from "../features/admin/AdminUsersPage";
+import { normalizeAdminTab } from "../features/admin/tab";
 import { RequireAuth, RequirePermission } from "../auth/guards";
 import {
   canAuthorQuestions,
@@ -151,11 +151,24 @@ export function RosterImportRoute() {
   );
 }
 
+/**
+ * P14 管理员账户工作区（`/admin/users?tab=users|allowlist`，仅管理员）。
+ *
+ * 标签状态住在 URL 里：刷新、前进、后退都回到同一个标签，且切换标签只改视图。
+ * 可见性仍不是授权——B4 对用户与名单的每个端点独立判定角色，非管理员直接调用得到 403。
+ */
 export function UsersRoute() {
+  const { tab } = useSearch({ from: "/admin/users" });
+  const navigate = useNavigate();
   return (
     <RequireAuth>
       <RequirePermission allow={canManageUsers} allowedRoles={["admin"]}>
-        <UsersPage />
+        <AdminUsersPage
+          tab={normalizeAdminTab(tab)}
+          onTabChange={(next) => {
+            void navigate({ to: "/admin/users", search: { tab: next } });
+          }}
+        />
       </RequirePermission>
     </RequireAuth>
   );
@@ -206,20 +219,6 @@ export function QualityRoute() {
             });
           }}
         />
-      </RequirePermission>
-    </RequireAuth>
-  );
-}
-
-/**
- * 注册白名单维护（仅管理员）。名单是自助注册的身份锚点，所以它的写入口与用户管理同权限；
- * 服务端仍是判定方，前端可见性只是体验。
- */
-export function RegistrationAllowlistRoute() {
-  return (
-    <RequireAuth>
-      <RequirePermission allow={canManageUsers} allowedRoles={["admin"]}>
-        <RegistrationAllowlistPage />
       </RequirePermission>
     </RequireAuth>
   );

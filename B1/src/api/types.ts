@@ -53,6 +53,37 @@ export type UserPage = JsonBody<B4Operations["listUsers"], 200>;
 export type CoursePage = JsonBody<B4Operations["listCourses"], 200>;
 export type EnrollmentPage = JsonBody<B4Operations["listEnrollments"], 200>;
 
+/**
+ * 创建用户的响应（`createUser` 的 `201`）：只有新账号的 `user_id`。
+ *
+ * 它**不是**一份用户记录：要拿整行（角色、状态、`updated_at`）仍由列表读回。P14 用它把
+ * "创建成功"说清楚成"创建了哪个账号"，而不是只弹一句成功。
+ */
+export type CreateUserResponse = JsonBody<B4Operations["createUser"], 201>;
+
+/**
+ * 当前生效的注册名单批次（`getRegistrationAllowlist`）。
+ *
+ * 四门字段 `batch_id`/`filename`/`uploaded_at` 都可为 `null`，且**零批次时仍是这四门字段**
+ * （而不是空对象）：页面因此能区分"从没导入过"与"读取失败"。
+ */
+export type RegistrationAllowlistState = JsonBody<
+  B4Operations["getRegistrationAllowlist"],
+  200
+>;
+
+/**
+ * 一次全量替换的结果（`replaceRegistrationAllowlist`）。
+ *
+ * `row_count` 是本次文件的有效行数，`replaced_row_count` 是被它替换掉的旧行数；两者都来自
+ * 服务端事务，页面不自己数。
+ */
+export type RegistrationAllowlistReplacement = JsonBody<
+  B4Operations["replaceRegistrationAllowlist"],
+  200
+>;
+
+
 /* ------------------------------------------------------------------- B3（题目/作业） */
 
 export type QuestionPublic = B3Schemas["QuestionPublic"];

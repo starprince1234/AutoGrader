@@ -60,12 +60,9 @@ export function AppShell() {
       visible: canReviewQuarantine(session),
     },
     { to: "/quality", label: t("nav.quality"), visible: canViewQuestionQuality(session) },
+    // 用户管理与注册名单是同一个管理员工作区（P14）的两个标签，因此只有一个导航入口：
+    // 独立的 /admin/registration-allowlist 已被移除，不保留别名或隐藏路由。
     { to: "/admin/users", label: t("nav.users"), visible: canManageUsers(session) },
-    {
-      to: "/admin/registration-allowlist",
-      label: t("nav.registrationAllowlist"),
-      visible: canManageUsers(session),
-    },
   ];
 
   return (

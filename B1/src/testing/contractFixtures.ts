@@ -23,6 +23,8 @@ import type {
   QuestionTagCoverage,
   QuestionVersionPublic,
   ReferenceVerification,
+  RegistrationAllowlistReplacement,
+  RegistrationAllowlistState,
   RosterImportPreview,
   Role,
   SessionCreated,
@@ -117,15 +119,55 @@ export function enrollmentPage(
   return { items, next_cursor: nextCursor };
 }
 
+/**
+ * 用户行（`UserSummary`，P14）。
+ *
+ * `is_active` 与 `updated_at` 都是必需字段：前者让"停用了没有"可读，后者是
+ * `PATCH /users/{id}` 的 `expected_updated_at` 的唯一来源。夹具按"可登录、刚读到的行"给默认值。
+ */
 export function userSummary(overrides?: Partial<UserSummary>): UserSummary {
   return {
     user_id: UUID_C,
+    username: "zhangsan",
     display_name: "张三",
     student_number: "20260001",
     roles: ["student"],
+    is_active: true,
+    updated_at: "2026-09-15T07:00:00.000Z",
     created_at: "2026-09-15T07:00:00.000Z",
     ...overrides,
   } as UserSummary;
+}
+
+/** 用户页（`listUsers` 的 200）：游标与行组合，没有权威总数。 */
+export function userPage(items: UserSummary[], nextCursor: string | null = null) {
+  return { items, next_cursor: nextCursor };
+}
+
+/** 当前生效的注册名单批次（`getRegistrationAllowlist`）：默认"已导入过一份 36 人的名单"。 */
+export function allowlistState(
+  overrides?: Partial<RegistrationAllowlistState>,
+): RegistrationAllowlistState {
+  return {
+    batch_id: UUID_A,
+    filename: "allowlist-2026.csv",
+    row_count: 36,
+    uploaded_at: "2026-09-15T07:00:00.000Z",
+    ...overrides,
+  } as RegistrationAllowlistState;
+}
+
+/** 全量替换的结果（`replaceRegistrationAllowlist`）：三个数字都来自服务端事务。 */
+export function allowlistReplacement(
+  overrides?: Partial<RegistrationAllowlistReplacement>,
+): RegistrationAllowlistReplacement {
+  return {
+    batch_id: UUID_B,
+    row_count: 38,
+    replaced_row_count: 36,
+    content_sha256: SHA_A,
+    ...overrides,
+  } as RegistrationAllowlistReplacement;
 }
 
 export function gradeRow(overrides?: Partial<GradeRow>): GradeRow {
