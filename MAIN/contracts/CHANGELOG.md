@@ -576,6 +576,40 @@ uff、pytest、pnpm * 都无法运行。
 - **回滚方式**：还原本批文本与版本号、回退迁移 20261020_0003、移除 B4 的注册路由与 B1 的注册页，
   然后重跑 scripts/relock_contracts.py；版本回到 0.16.0
 
+### 0.17.0 修订 — 让 P14 管理员工作区可据契约实现（无 CHG 编号）
+
+- **级别**：P2 语义（补全 `UserSummary`、`createUser` 响应体与 `deleteUser` 的一个错误码；
+  不新增路径、不改请求体、不删除既有字段）
+- **状态**：已生效
+- **动机**：P14（`/admin/users`）的两个标签要求"展示账号状态并在停用后如实反映""多管理员并发
+  改角色不静默覆盖""停用自己不被当成普通成功"。三条在 0.17.0 契约里都没有依据：
+  ① `UserSummary` 没有 `is_active`，而 `deleteUser` 是**软停用**，于是"账号是否已停用"在契约里
+  无处可读——页面只能把"点过按钮"当成停用成功，这与 `RQ-B-4-50` 要求的账号状态可见直接冲突；
+  ② `UserSummary` 没有 `updated_at`，而 `updateUser` 的唯一并发保护是 `expected_updated_at`：
+  客户端拿不到当前值，就只能省略它（并发编辑互相覆盖）或猜一个（永远 409）；
+  ③ `deleteUser` 的 `204` 对"停用自己"是**不可报告**的——该请求本身会撤销发起者的会话。
+- **变更文件**：`openapi/b4.yaml`
+  - `UserSummary`：新增 `is_active`（必需）、`updated_at`（必需），并写明两者各自由谁产生、
+    `updated_at` 与 `updateUser.expected_updated_at` 的对应关系；
+  - `createUser`：`201` 增加响应体 `{user_id}`（B4 早已返回该值，契约此前无 schema）；
+  - `deleteUser`：增加 `409`，语义为**拒绝停用调用者自己的账号**（防自锁），并把
+    "停用 ≠ 物理删除""重新激活不在本契约"写进 operation description；
+  - `listUsers`：`role` 查询参数的说明明确它匹配**平台**角色（课程作用域授权不算），
+    并写明契约没有姓名/用户名搜索。
+- **受影响模块与需要做的改动**：**B4** 在 `_user_document` 中返回 `is_active`/`updated_at`、
+  角色筛选只匹配平台角色、`delete_user` 拒绝自停用并返回 `409`（有测试）；
+  **B1** 生成类型重新生成后 `UserSummary` 多两个字段，P14 页面据此展示状态、发送
+  `expected_updated_at`；`B2/B3/B5` 无改动（不消费 `UserSummary`）。
+- **是否破坏兼容**：否（纯增量）。**但需写明**：`UserSummary` 的两个新字段是 `required`，
+  任何自行构造该对象的生产者都必须补上它们；`deleteUser` 新增的 `409` 只出现在
+  "管理员停用自己"这一条路径上，其他既有调用不受影响。
+- **迁移方式**：一次性切换，不保留兼容层（无数据库结构变化，无迁移文件）。
+- **验证**：见本批次提交说明；`pnpm api:check`、`pnpm typecheck`、相关 Vitest 与
+  `python MAIN/scripts/relock_contracts.py --check` 的结果以**实际执行**为准，
+  B4 的 ruff/pytest 需要 uv 环境与 PostgreSQL 容器，本机未具备。
+- **摘要**：见五份 `contracts.lock`（由 `contract_digest()` 计算，此处不复制）
+- **回滚方式**：还原上述四段文本，重跑 `scripts/relock_contracts.py`；模块版本仍为 0.17.0。
+
 ---
 
 ## 记录模板（后续变更复制此块）
