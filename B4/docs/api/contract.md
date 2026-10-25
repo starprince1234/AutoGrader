@@ -33,7 +33,7 @@
 | `GET /api/v1/users` | `listUsers` | 用户列表（游标分页、角色过滤） | 是 | 管理员 | `已完成` |
 | `POST /api/v1/users` | `createUser` | 创建用户 | 是 | 管理员 | `已完成` |
 | `PATCH /api/v1/users/{user_id}` | `updateUser` | 改资料/角色（`expected_updated_at` 乐观并发） | 是 | 管理员 | `已完成` |
-| `DELETE /api/v1/users/{user_id}` | `deleteUser` | 停用（软删除）并撤销其会话 | 是 | 管理员 | `已完成` |
+| `DELETE /api/v1/users/{user_id}` | `deleteUser` | 停用（软删除）并撤销其会话；停用**自己**返回 `409`（否则执行者的会话会被自己撤销，结果也无从上报） | 是 | 管理员 | `已完成` |
 | `GET /api/v1/courses` | `listCourses` | 列出调用者作用域内课程 | 是 | 按作用域 | `已完成` |
 | `POST /api/v1/courses` | `createCourse` | 创建课程（同时为创建者写入课程级授予） | 是 | 教师/管理员 | `已完成` |
 | `GET /api/v1/courses/{course_id}/sections` | `listSections` | 课序列表 | 是 | 课程读 | `已完成` |

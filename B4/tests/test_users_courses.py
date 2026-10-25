@@ -8,9 +8,10 @@ the audit record every management write leaves behind.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
 from autograder_b4.db.tables import audit_records, courses, enrollments, roles, users
 
@@ -172,7 +173,9 @@ def test_update_user_rejects_a_stale_expected_updated_at(client, admin, sign_in_
     target = factory.user(username="alice", roles=("student",))
     headers = sign_in_as("root").headers
     listed = client.get("/api/v1/users", headers=headers).json()["items"]
-    stamp = next(item["created_at"] for item in listed if item["user_id"] == str(target))
+    # The guard compares against `updated_at`, which the list now carries: a client no longer
+    # has to guess it from `created_at`.
+    stamp = next(item["updated_at"] for item in listed if item["user_id"] == str(target))
 
     assert client.patch(
         f"/api/v1/users/{target}", headers=headers, json={"display_name": "First"}
@@ -211,6 +214,136 @@ def test_deactivating_a_user_keeps_the_row_and_frees_the_username(
 def test_deactivating_a_missing_user_is_404(client, admin, sign_in_as) -> None:
     response = client.delete(f"/api/v1/users/{uuid.uuid4()}", headers=sign_in_as("root").headers)
     assert response.status_code == 404
+
+
+def test_an_administrator_cannot_deactivate_their_own_account(
+    client, admin, sign_in_as, engine
+) -> None:
+    """Deactivation revokes the caller's sessions, so "succeeding" is unreportable.
+
+    The refusal is an authorisation decision and is audited like every other denial; the
+    account itself stays active, which is the part a second administrator has to be able to
+    read back from the list.
+    """
+    response = client.delete(f"/api/v1/users/{admin}", headers=sign_in_as("root").headers)
+    assert response.status_code == 409, response.text
+    assert "own account" in response.json()["detail"]
+
+    with engine.connect() as connection:
+        still_active = connection.execute(
+            select(users.c.is_active).where(users.c.user_id == admin)
+        ).scalar_one()
+        denial = connection.execute(
+            select(audit_records.c.outcome).where(audit_records.c.action == "authz.denied")
+        ).fetchone()
+    assert still_active is True
+    assert denial is not None and denial[0] == "denied"
+
+
+def test_user_listing_exposes_the_account_state_and_concurrency_stamp(
+    client, admin, sign_in_as, factory
+) -> None:
+    """`is_active` and `updated_at` are required in `UserSummary`, so the list must carry them.
+
+    Without `is_active` a soft deactivation is invisible (the page can only report that a
+    button was pressed); without `updated_at` no client can send `expected_updated_at` and
+    concurrent administrator edits silently overwrite each other.
+    """
+    target = factory.user(username="alice", roles=("student",))
+    listed = client.get("/api/v1/users", headers=sign_in_as("root").headers).json()["items"]
+    row = next(item for item in listed if item["user_id"] == str(target))
+    assert row["is_active"] is True
+    assert row["updated_at"]
+    # `UserSummary` is `additionalProperties: false`: the exact key set *is* the contract.
+    assert set(row) == {
+        "user_id",
+        "username",
+        "display_name",
+        "student_number",
+        "roles",
+        "is_active",
+        "updated_at",
+        "created_at",
+    }
+
+    headers = sign_in_as("root").headers
+    assert client.delete(f"/api/v1/users/{target}", headers=headers).status_code == 204
+    after = next(
+        item
+        for item in client.get("/api/v1/users", headers=headers).json()["items"]
+        if item["user_id"] == str(target)
+    )
+    assert after["is_active"] is False
+    # Soft deactivation keeps the row: the account can still be read back and audited.
+    assert after["display_name"] == "alice"
+
+
+def test_the_role_filter_matches_platform_roles_not_course_grants(
+    client, admin, sign_in_as, factory
+) -> None:
+    """A course-scoped grant is course authorisation, not a platform role.
+
+    Filtering on every role row made the filter disagree with the row it returned: an
+    account whose teaching grant belonged to one course appeared under `role=teacher` while
+    its own `roles` said `student`.
+    """
+    course_id = factory.course(code="CS101")
+    platform_teacher = factory.user(username="platform-teacher", roles=("teacher",))
+    scoped_only = factory.user(username="scoped-only", roles=("student",))
+    factory.grant(user_id=scoped_only, course_id=course_id, role="teacher")
+
+    headers = sign_in_as("root").headers
+    teachers = client.get("/api/v1/users", headers=headers, params={"role": "teacher"}).json()
+    assert {item["user_id"] for item in teachers["items"]} == {str(platform_teacher)}
+
+    listed = client.get("/api/v1/users", headers=headers).json()["items"]
+    row = next(item for item in listed if item["user_id"] == str(scoped_only))
+    assert row["roles"] == ["student"]
+
+
+def test_reassigning_roles_advances_the_concurrency_stamp(
+    client, admin, sign_in_as, factory, engine
+) -> None:
+    """A role-only PATCH must move `updated_at`, or `expected_updated_at` never advances.
+
+    Before this, two administrators reassigning the same account from the same snapshot both
+    received `200` and the second one silently overwrote the first.
+    """
+    target = factory.user(username="alice", roles=("student",))
+    headers = sign_in_as("root").headers
+    pinned = datetime(2026, 1, 1, tzinfo=UTC)
+    with engine.begin() as connection:
+        connection.execute(
+            update(users).where(users.c.user_id == target).values(updated_at=pinned)
+        )
+    before = next(
+        item
+        for item in client.get("/api/v1/users", headers=headers).json()["items"]
+        if item["user_id"] == str(target)
+    )
+    assert before["updated_at"] == "2026-01-01T00:00:00.000Z"
+
+    first = client.patch(
+        f"/api/v1/users/{target}",
+        headers=headers,
+        json={"roles": ["teacher"], "expected_updated_at": before["updated_at"]},
+    )
+    assert first.status_code == 200, first.text
+
+    after = next(
+        item
+        for item in client.get("/api/v1/users", headers=headers).json()["items"]
+        if item["user_id"] == str(target)
+    )
+    assert after["roles"] == ["teacher"]
+    assert after["updated_at"] != before["updated_at"]
+
+    stale = client.patch(
+        f"/api/v1/users/{target}",
+        headers=headers,
+        json={"roles": ["assistant"], "expected_updated_at": before["updated_at"]},
+    )
+    assert stale.status_code == 409
 
 
 # ------------------------------------------------------------------------- courses

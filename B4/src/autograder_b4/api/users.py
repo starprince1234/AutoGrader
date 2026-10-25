@@ -29,7 +29,7 @@ from ..db.tables import roles as roles_table
 from ..errors import bad_request, conflict, not_found, unprocessable
 from ..logging import get_logger
 from ..security.passwords import hash_password
-from .dependencies import B4State, Dependencies, actor_of
+from .dependencies import B4State, Dependencies, actor_of, audit_denial
 from .pagination import clamp_limit, descending_page_filter, page_envelope
 from .problem import ProblemRoute
 from .timestamps import rfc3339
@@ -88,6 +88,15 @@ def _user_document(row, role_values: list[str]) -> dict[str, object]:
         "display_name": row.display_name,
         "student_number": row.student_number,
         "roles": sorted(role_values),
+        # `deleteUser` is a soft deactivation, so without this field the API cannot say
+        # whether the account may still sign in -- the admin screen would have to treat
+        # "the button was pressed" as "the account is deactivated", which is exactly the
+        # ambiguity RQ-B-4-50 forbids.
+        "is_active": bool(row.is_active),
+        # The value `updateUser.expected_updated_at` is compared against. A client that
+        # cannot read it must omit the guard, which lets concurrent administrator edits
+        # overwrite each other silently.
+        "updated_at": rfc3339(row.updated_at),
         "created_at": rfc3339(row.created_at),
     }
 
@@ -121,8 +130,17 @@ def build_users_router(state: B4State, dependencies: Dependencies) -> APIRouter:
         if cursor_filter is not None:
             statement = statement.where(cursor_filter)
         if role is not None:
+            # A **platform** role is a grant with `course_id IS NULL`; a course-scoped grant
+            # is course authorisation, not a platform role. Filtering on every role row made
+            # the filter and the returned `roles` disagree: an account whose teaching grant
+            # belonged to one course was listed under `role=teacher` while the row still said
+            # `student`, so the page showed a teacher row with a student label.
             statement = statement.where(
-                users.c.user_id.in_(select(roles_table.c.user_id).where(roles_table.c.role == role))
+                users.c.user_id.in_(
+                    select(roles_table.c.user_id).where(
+                        and_(roles_table.c.role == role, roles_table.c.course_id.is_(None))
+                    )
+                )
             )
         rows = connection.execute(statement.limit(size)).fetchall()
         items = [_user_document(row, _platform_roles(connection, row.user_id)) for row in rows]
@@ -229,7 +247,11 @@ def build_users_router(state: B4State, dependencies: Dependencies) -> APIRouter:
             if payload.email is not None:
                 stripped = str(payload.email).strip().lower()
                 updates["email"] = stripped or None  # type: ignore[assignment]
-            if updates:
+            # `updated_at` moves on **every** applied change, role reassignment included.
+            # Leaving it alone for a role-only PATCH made `expected_updated_at` a guard that
+            # never advances: two administrators reassigning the same account from the same
+            # snapshot both saw 200, and the second one silently overwrote the first.
+            if updates or role_values is not None:
                 updates["updated_at"] = now
                 connection.execute(
                     update(users).where(users.c.user_id == user_id).values(**updates)
@@ -280,10 +302,23 @@ def build_users_router(state: B4State, dependencies: Dependencies) -> APIRouter:
         from fastapi import Response
 
         now = _now()
+        with engine.connect() as read:
+            existing = read.execute(
+                select(users.c.user_id).where(users.c.user_id == user_id)
+            ).fetchone()
+        if existing is None:
+            raise not_found("The user does not exist.")
+        if existing.user_id == caller.user_id:
+            # Refusing this is an authorisation decision, so it is audited before the raise
+            # (in its own transaction, like every other denial) instead of being rolled back
+            # with the request. A second administrator has to perform the deactivation.
+            audit_denial(
+                engine,
+                principal=caller,
+                detail="refused to deactivate the caller's own administrator account",
+            )
+            raise conflict("An administrator cannot deactivate their own account.")
         with engine.begin() as connection:
-            row = connection.execute(select(users).where(users.c.user_id == user_id)).fetchone()
-            if row is None:
-                raise not_found("The user does not exist.")
             connection.execute(
                 update(users)
                 .where(users.c.user_id == user_id)
