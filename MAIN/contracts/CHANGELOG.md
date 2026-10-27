@@ -612,6 +612,21 @@ uff、pytest、pnpm * 都无法运行。
 
 ---
 
+## 0.19.0 — 作业单条读取、课序响应与创建响应成形（P04/P05/P12）
+
+- **级别**：P1 增补（两处新增操作响应、一条新路径）；无字段删除，无兼容别名
+- **状态**：已生效
+- **动机**：作业详情页原先"取全部作业列表再按 id 本地查找"，一旦列表分页就得出错误结论；
+  课序列表与课程/课序创建响应在契约里没有 schema，客户端只能靠候选键猜字段。三处缺口都由
+  真实调用场景暴露，因此在本批次一并成形：
+  1. `POST /api/v1/assignments` 补 `201` 响应体 `AssignmentPublic`（B3 早已返回该结构，契约只是没写）。
+  2. 新增 `GET /api/v1/assignments/{assignment_id}`：`200 AssignmentPublic` / `401` / `403`（越权，
+     不伪装成 `404`）/ `404`（不存在）。详情页据此单条读取。
+  3. `b4.yaml` 以 `CoursePublic` 取代同义的 `CourseSummary`，并为
+     `GET /courses/{course_id}/sections`、`POST /courses/{course_id}/sections`、`POST /courses`
+     补 `SectionPublic` / `CoursePublic` 响应体。客户端不再读不透明行。
+- **影响模块**：B3（新增 GET、201 响应）、B4（创建响应补全字段）、B1（生成类型与调用点）
+
 ## 0.18.0 — 结构化题目草稿、教师令牌夹具上传、学习提示上下文
 
 - **级别**：P1 增补（新增操作与 schema；一处**收紧**并改正授权声明）

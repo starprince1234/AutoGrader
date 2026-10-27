@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AutoGrader B4 Platform API
-  version: 0.18.0
+  version: 0.19.0
   description: |
     Identity, courses, sections, enrollments, roster import, audit and the runtime
     module registry. Owned by B4 (RQ-B-4-10/20/30/40/50/99).
@@ -480,7 +480,7 @@ paths:
                     properties:
                       items:
                         type: array
-                        items: {$ref: '#/components/schemas/CourseSummary'}
+                        items: {$ref: '#/components/schemas/CoursePublic'}
         '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
     post:
       operationId: createCourse
@@ -498,7 +498,11 @@ paths:
                 title: {type: string, minLength: 1, maxLength: 200}
               additionalProperties: false
       responses:
-        '201': {description: Course created.}
+        '201':
+          description: Course created; the body is the stored course.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CoursePublic'}
         '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
         '403': {$ref: './common.yaml#/components/responses/Forbidden'}
         '409': {$ref: './common.yaml#/components/responses/Conflict'}
@@ -511,7 +515,18 @@ paths:
       summary: List sections (课序) of a course
       tags: [courses]
       responses:
-        '200': {description: Sections of the course.}
+        '200':
+          description: Sections of the course, ordered by section code.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/SectionPublic'}
+                additionalProperties: false
         '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
         '403': {$ref: './common.yaml#/components/responses/Forbidden'}
         '404': {$ref: './common.yaml#/components/responses/NotFound'}
@@ -531,7 +546,11 @@ paths:
                 term: {type: [string, "null"], maxLength: 64}
               additionalProperties: false
       responses:
-        '201': {description: Section created.}
+        '201':
+          description: Section created; the body is the stored section.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SectionPublic'}
         '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
         '403': {$ref: './common.yaml#/components/responses/Forbidden'}
         '404': {$ref: './common.yaml#/components/responses/NotFound'}
@@ -815,13 +834,33 @@ components:
         created_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
       additionalProperties: false
 
-    CourseSummary:
+    CoursePublic:
       type: object
+      description: |
+        A course as the API returns it, for reads and for the create response. The create
+        response previously carried only `course_id`, so a client could not show the new
+        course without a second round trip.
       required: [course_id, course_code, title]
       properties:
         course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
         course_code: {type: string}
         title: {type: string}
+      additionalProperties: false
+
+    SectionPublic:
+      type: object
+      description: |
+        A section (课序) of a course. Defined here because the read and create responses
+        had no schema, which forced the client to guess which key carried the identifier
+        and which one carried the label.
+      required: [section_id, course_id, section_code]
+      properties:
+        section_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        section_code: {type: string, minLength: 1, maxLength: 64}
+        term: {type: [string, 'null'], maxLength: 64}
+        created_at:
+          anyOf: [{$ref: './common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]
       additionalProperties: false
 
     RosterImportPreview:

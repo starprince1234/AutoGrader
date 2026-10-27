@@ -10,7 +10,7 @@ import type {
   AssignmentPublic,
   AuthoringAssistance,
   ComparisonDiagnostics,
-  CourseSummary,
+  CoursePublic,
   EnrollmentPublic,
   EvaluationCommentary,
   EvaluationQualitySummary,
@@ -63,11 +63,11 @@ export function problem(overrides?: Partial<ProblemDetails>): ProblemDetails {
   };
 }
 
-export function courseSummary(overrides?: Partial<CourseSummary>): CourseSummary {
+export function courseSummary(overrides?: Partial<CoursePublic>): CoursePublic {
   return { course_id: UUID_A, course_code: "OS-2026", title: "操作系统", ...overrides };
 }
 
-export function coursePage(courses: CourseSummary[], nextCursor: string | null = null) {
+export function coursePage(courses: CoursePublic[], nextCursor: string | null = null) {
   return { items: courses, next_cursor: nextCursor };
 }
 

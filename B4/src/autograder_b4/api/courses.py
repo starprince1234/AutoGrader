@@ -136,6 +136,7 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
         course_id = uuid.uuid4()
         now = _now()
         code = payload.course_code.strip()
+        title = payload.title.strip()
         with engine.begin() as connection:
             existing = connection.execute(
                 select(courses.c.course_id).where(courses.c.course_code == code)
@@ -146,7 +147,7 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
                 courses.insert().values(
                     course_id=course_id,
                     course_code=code,
-                    title=payload.title.strip(),
+                    title=title,
                     created_by=caller.user_id,
                     is_active=True,
                     created_at=now,
@@ -178,7 +179,11 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
         logger.info(
             "course.created", extra={"event": "course.created", "course_id": str(course_id)}
         )
-        return {"course_id": str(course_id)}
+        return {
+            "course_id": str(course_id),
+            "course_code": code,
+            "title": title,
+        }
 
     @router.get("/api/v1/courses/{course_id}/sections")
     def list_sections(
@@ -268,7 +273,13 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
                 "section_id": str(section_id),
             },
         )
-        return {"section_id": str(section_id)}
+        return {
+            "section_id": str(section_id),
+            "course_id": str(course_id),
+            "section_code": code,
+            "term": term,
+            "created_at": _rfc3339(now),
+        }
 
     @router.get("/api/v1/sections/{section_id}/enrollments")
     def list_enrollments(

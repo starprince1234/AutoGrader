@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
-import { screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "../../testing/renderWithProviders";
 import {
@@ -9,7 +10,7 @@ import {
   type FetchStub,
 } from "../../testing/httpBoundary";
 import { courseSummary, rosterImportPreview } from "../../testing/contractFixtures";
-import { RosterImportPage } from "./RosterImportPage";
+import { RosterImportPanel } from "./RosterImportPanel";
 
 const COURSE_ID = courseSummary().course_id;
 const SECTION_ID = rosterImportPreview().section_id;
@@ -68,14 +69,27 @@ function baseRoutes(
   ];
 }
 
-async function selectCourseAndSection(user: ReturnType<typeof userEvent.setup>) {
-  const courseSelect = await screen.findByLabelText("课程");
-  await waitFor(() => expect(within(courseSelect).getAllByRole("option")).toHaveLength(2));
-  await user.selectOptions(courseSelect, COURSE_ID);
 
-  const sectionSelect = screen.getByLabelText("课序");
-  await waitFor(() => expect(within(sectionSelect).getAllByRole("option")).toHaveLength(2));
-  await user.selectOptions(sectionSelect, SECTION_ID);
+
+
+/**
+ * 面板的作用域与任务 ID 来自页面（真实页面把它们放在 URL 里）。
+ * 这里用一个持有 state 的壳代替 URL：上传成功后 id 回写，面板据此进入预览/映射。
+ */
+function PanelHarness({ initialImportId = null }: { initialImportId?: string | null }) {
+  const [importId, setImportId] = useState<string | null>(initialImportId);
+  return (
+    <RosterImportPanel
+      courseId={COURSE_ID}
+      sectionId={SECTION_ID}
+      importId={importId}
+      onImportId={setImportId}
+    />
+  );
+}
+
+function renderPanel(importId: string | null = null) {
+  return renderWithProviders(<PanelHarness initialImportId={importId} />);
 }
 
 describe("名单导入向导（RQ-B-1-10）", () => {
@@ -83,8 +97,7 @@ describe("名单导入向导（RQ-B-1-10）", () => {
     const user = userEvent.setup();
     stub = installFetchStub(baseRoutes(rosterImportPreview()));
 
-    renderWithProviders(<RosterImportPage />);
-    await selectCourseAndSection(user);
+    renderPanel();
 
     const file = new File(["roster"], "roster.xlsx", {
       type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -139,8 +152,7 @@ describe("名单导入向导（RQ-B-1-10）", () => {
       }),
     );
 
-    renderWithProviders(<RosterImportPage />);
-    await selectCourseAndSection(user);
+    renderPanel();
     await user.upload(
       screen.getByLabelText("名单文件（PDF / XLSX）"),
       new File(["roster"], "roster.xlsx", {
@@ -171,8 +183,7 @@ describe("名单导入向导（RQ-B-1-10）", () => {
       baseRoutes(rosterImportPreview({ status: "mapping_required", proposed_mapping: {} })),
     );
 
-    renderWithProviders(<RosterImportPage />);
-    await selectCourseAndSection(user);
+    renderPanel();
     await user.upload(
       screen.getByLabelText("名单文件（PDF / XLSX）"),
       new File(["x"], "roster.pdf", { type: "application/pdf" }),
@@ -214,8 +225,7 @@ describe("名单导入向导（RQ-B-1-10）", () => {
       baseRoutes(rosterImportPreview({ status: "failed_parse", accepted_rows: [], rejected_rows: [] })),
     );
 
-    renderWithProviders(<RosterImportPage />);
-    await selectCourseAndSection(user);
+    renderPanel();
     await user.upload(
       screen.getByLabelText("名单文件（PDF / XLSX）"),
       new File(["x"], "broken.pdf", { type: "application/pdf" }),
@@ -225,5 +235,44 @@ describe("名单导入向导（RQ-B-1-10）", () => {
     // 状态标签与错误提示都写明解析失败（页面不会显示可确认的假成功状态）
     expect(screen.getAllByText(/解析失败/).length).toBeGreaterThan(0);
     expect(screen.queryByTestId("confirm-import")).toBeNull();
+  });
+});
+
+describe("导入任务恢复（P12：任务 ID 住在 URL）", () => {
+  it("带 import_id 打开时直接恢复服务端预览，不重新上传", async () => {
+    const stub = installFetchStub(baseRoutes(rosterImportPreview()));
+    renderPanel(IMPORT_ID);
+
+    // 预览来自 GET /roster-imports/{id}：刷新后仍能看到逐行结果。
+    expect(await screen.findByTestId("accepted-rows")).toBeInTheDocument();
+    expect(screen.getByTestId("no-write-notice")).toBeInTheDocument();
+    const uploads = stub.requests.filter(
+      (request) => request.method === "POST" && request.url.pathname === "/api/v1/roster-imports",
+    );
+    expect(uploads).toHaveLength(0);
+    stub.restore();
+  });
+
+  it("任务已过期（404）时说明需要重新上传，不把 404 显示成空预览", async () => {
+    const stub = installFetchStub([
+      ...baseRoutes(rosterImportPreview()).filter(
+        (route) => route.path !== `/api/v1/roster-imports/${IMPORT_ID}`,
+      ),
+      {
+        path: `/api/v1/roster-imports/${IMPORT_ID}`,
+        respond: () =>
+          problemResponse({
+            status: 404,
+            title: "Not Found",
+            detail: "import task not found",
+            instance: `/api/v1/roster-imports/${IMPORT_ID}`,
+          }),
+      },
+    ]);
+    renderPanel(IMPORT_ID);
+
+    expect(await screen.findByTestId("import-expired")).toHaveTextContent("找不到这次导入");
+    expect(screen.queryByTestId("accepted-rows")).toBeNull();
+    stub.restore();
   });
 });

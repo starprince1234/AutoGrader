@@ -498,10 +498,27 @@ export interface components {
             updated_at: components["schemas"]["Timestamp"];
             created_at?: components["schemas"]["Timestamp"];
         };
-        CourseSummary: {
+        /**
+         * @description A course as the API returns it, for reads and for the create response. The create
+         *     response previously carried only `course_id`, so a client could not show the new
+         *     course without a second round trip.
+         */
+        CoursePublic: {
             course_id: components["schemas"]["Uuid"];
             course_code: string;
             title: string;
+        };
+        /**
+         * @description A section (课序) of a course. Defined here because the read and create responses
+         *     had no schema, which forced the client to guess which key carried the identifier
+         *     and which one carried the label.
+         */
+        SectionPublic: {
+            section_id: components["schemas"]["Uuid"];
+            course_id: components["schemas"]["Uuid"];
+            section_code: string;
+            term?: string | null;
+            created_at?: components["schemas"]["Timestamp"] | null;
         };
         /**
          * @description Parse preview for a roster import. `database.schema` of B4 is untouched while
@@ -1162,7 +1179,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CursorPage"] & {
-                        items?: components["schemas"]["CourseSummary"][];
+                        items?: components["schemas"]["CoursePublic"][];
                     };
                 };
             };
@@ -1185,12 +1202,14 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Course created. */
+            /** @description Course created; the body is the stored course. */
             201: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["CoursePublic"];
+                };
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
@@ -1208,12 +1227,16 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Sections of the course. */
+            /** @description Sections of the course, ordered by section code. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["SectionPublic"][];
+                    };
+                };
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
@@ -1238,12 +1261,14 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Section created. */
+            /** @description Section created; the body is the stored section. */
             201: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["SectionPublic"];
+                };
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];

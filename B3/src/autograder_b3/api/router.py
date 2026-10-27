@@ -30,6 +30,7 @@ from ..domain import (
     create_question,
     discard_generation,
     generation_capabilities,
+    get_assignment_detail,
     get_question,
     get_version,
     list_assignment_versions,
@@ -860,4 +861,16 @@ def create_assignment_endpoint(request: Request, payload: AssignmentCreateInputM
     result: AssignmentPublic = assignment_to_public(
         assignment, [item.question_version_id for item in items]
     )
+    return serialize_public(result)
+
+
+@router.get("/api/v1/assignments/{assignment_id}")
+def get_assignment_endpoint(request: Request, assignment_id: uuid.UUID) -> dict:
+    """Read one assignment; the detail page must not scan the list to find it."""
+    context = _context(request)
+    dependencies = _dependencies(request)
+    assignment, version_ids = get_assignment_detail(
+        dependencies.database, principal=context.principal, assignment_id=assignment_id
+    )
+    result: AssignmentPublic = assignment_to_public(assignment, version_ids)
     return serialize_public(result)

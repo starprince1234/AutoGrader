@@ -19,7 +19,6 @@ import {
   QualityRoute,
   QuestionDetailRoute,
   QuestionListRoute,
-  RosterImportRoute,
   RosterRoute,
   SubmitRoute,
   UsersRoute,
@@ -148,16 +147,38 @@ const gradesRoute = createRoute({
   component: GradesRoute,
 });
 
+/**
+ * P12 工作区：`view`（名单 / 导入名单）、课程/课序作用域、导入任务 ID 全部住在 query。
+ * 刷新、前进后退、复制链接都回到同一处状态；无效值按缺省处理，不渲染第三个页面。
+ */
+type RosterSearch = {
+  view?: "roster" | "import";
+  course_id?: string;
+  section_id?: string;
+  import_id?: string;
+};
+
+function validateRosterSearch(search: Record<string, unknown>): RosterSearch {
+  const result: RosterSearch = {};
+  if (search.view === "import") result.view = "import";
+  if (search.view === "roster") result.view = "roster";
+  if (typeof search.course_id === "string" && search.course_id !== "") {
+    result.course_id = search.course_id;
+  }
+  if (typeof search.section_id === "string" && search.section_id !== "") {
+    result.section_id = search.section_id;
+  }
+  if (typeof search.import_id === "string" && search.import_id !== "") {
+    result.import_id = search.import_id;
+  }
+  return result;
+}
+
 const rosterRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/roster",
+  validateSearch: validateRosterSearch,
   component: RosterRoute,
-});
-
-const rosterImportRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/roster/import",
-  component: RosterImportRoute,
 });
 
 /**
@@ -223,7 +244,6 @@ const routeTree = rootRoute.addChildren([
   assignmentDetailRoute,
   gradesRoute,
   rosterRoute,
-  rosterImportRoute,
   usersRoute,
   quarantineRoute,
   qualityRoute,

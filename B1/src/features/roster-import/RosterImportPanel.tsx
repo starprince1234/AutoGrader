@@ -7,15 +7,12 @@ import {
   Banner,
   ErrorState,
   Field,
-  LoadMoreActions,
-  PageTitle,
   Panel,
   Spinner,
   StatusPill,
   Table,
 } from "../../ui/components";
-import { describeApiError } from "../../api/problem";
-import { loadedCourses, useCourses, useSections } from "../../api/directory";
+import { describeApiError, isApiError } from "../../api/problem";
 import {
   TARGET_FIELDS,
   duplicateAssignments,
@@ -34,6 +31,14 @@ import {
   useSetRosterMapping,
 } from "./useRosterImport";
 
+/**
+ * 名单导入（P12 的第二个标签，不再是独立页面）。
+ *
+ * 流程身份是服务端的 `roster_import_id`，由调用方放进 URL：
+ * 刷新、复制链接、浏览器后退都能恢复同一个任务，而组件里的 state 只保存还没提交的文件。
+ * 确认前的一切（解析、列映射、逐行校验）都只写任务暂存区，不写正式名单。
+ */
+
 const STATUS_TONE: Record<RosterImportPreview["status"], "ok" | "warn" | "bad" | "idle"> = {
   uploaded: "idle",
   parsed: "idle",
@@ -45,7 +50,6 @@ const STATUS_TONE: Record<RosterImportPreview["status"], "ok" | "warn" | "bad" |
   failed_parse: "bad",
 };
 
-/** 状态 → 文案键（显式映射，避免用模板串拼出并不存在的键）。 */
 const STATUS_MESSAGE: Record<RosterImportPreview["status"], MessageKey> = {
   uploaded: "import.status.uploaded",
   parsed: "import.status.parsed",
@@ -61,14 +65,7 @@ function statusLabel(status: RosterImportPreview["status"]): string {
   return t(STATUS_MESSAGE[status]);
 }
 
-/** 逐行预览/结果报告表格：列来自服务端返回的键，敏感列脱敏（学号除外）。 */
-function RosterRowsTable({
-  rows,
-  rejected,
-}: {
-  rows: RosterRowPreview[];
-  rejected: boolean;
-}) {
+function RosterRowsTable({ rows, rejected }: { rows: RosterRowPreview[]; rejected: boolean }) {
   const valueColumns = useMemo(
     () => collectColumns(rows.map((row) => (row.values ?? {}) as OpaqueRow)),
     [rows],
@@ -84,11 +81,7 @@ function RosterRowsTable({
       rows={rows}
       getRowKey={(row, index) => `${row.row_number}-${index}`}
       columns={[
-        {
-          key: "row_number",
-          header: t("import.rowNumber"),
-          render: (row) => row.row_number,
-        },
+        { key: "row_number", header: t("import.rowNumber"), render: (row) => row.row_number },
         ...valueColumns.map((column) => ({
           key: column,
           header: column,
@@ -115,7 +108,6 @@ function MappingForm({ preview }: { preview: RosterImportPreview }) {
   const [draft, setDraft] = useState<MappingDraft>({});
   const [localError, setLocalError] = useState<string[]>([]);
   const mutation = useSetRosterMapping(preview.roster_import_id);
-
   const duplicates = duplicateAssignments(draft);
 
   return (
@@ -140,9 +132,7 @@ function MappingForm({ preview }: { preview: RosterImportPreview }) {
           }
           if (validation.unknownColumns.length > 0) {
             errors.push(
-              t("import.error.unknownColumn", {
-                column: validation.unknownColumns.join("、"),
-              }),
+              t("import.error.unknownColumn", { column: validation.unknownColumns.join("、") }),
             );
           }
           setLocalError(errors);
@@ -172,7 +162,11 @@ function MappingForm({ preview }: { preview: RosterImportPreview }) {
         {TARGET_FIELDS.map((field: TargetField) => {
           const selectId = `mapping-${field}`;
           return (
-            <Field key={field} label={t("import.mappingTarget", { field: t(fieldMessageKey(field)) })} htmlFor={selectId}>
+            <Field
+              key={field}
+              label={t("import.mappingTarget", { field: t(fieldMessageKey(field)) })}
+              htmlFor={selectId}
+            >
               <select
                 id={selectId}
                 value={draft[field] ?? ""}
@@ -233,9 +227,7 @@ function PreviewAndConfirm({ preview }: { preview: RosterImportPreview }) {
         {t("import.maskedNotice")}
       </p>
 
-      <Panel
-        title={t("import.acceptedRows", { count: preview.accepted_rows?.length ?? 0 })}
-      >
+      <Panel title={t("import.acceptedRows", { count: preview.accepted_rows?.length ?? 0 })}>
         <RosterRowsTable rows={preview.accepted_rows ?? []} rejected={false} />
       </Panel>
 
@@ -266,27 +258,33 @@ function PreviewAndConfirm({ preview }: { preview: RosterImportPreview }) {
   );
 }
 
-export function RosterImportPage() {
-  const courses = useCourses();
-  const courseOptions = loadedCourses(courses.data?.pages);
-  const [courseId, setCourseId] = useState("");
-  const [sectionId, setSectionId] = useState("");
+export function RosterImportPanel({
+  courseId,
+  sectionId,
+  importId,
+  onImportId,
+}: {
+  courseId: string;
+  sectionId: string;
+  importId: string | null;
+  /** 任务 ID 由 URL 持有：这里只把服务端返回的 id 交回去写进 query。 */
+  onImportId: (id: string | null) => void;
+}) {
   const [file, setFile] = useState<File | null>(null);
-  const [importId, setImportId] = useState<string | null>(null);
   const [uploadError, setUploadError] = useState<unknown>(null);
-  const [uploadMessage, setUploadMessage] = useState<string | null>(null);
-
-  const sections = useSections(courseId === "" ? null : courseId);
   const createImport = useCreateRosterImport();
   const previewQuery = useRosterImport(importId);
   const preview = previewQuery.data;
+  const ready = courseId !== "" && sectionId !== "";
+
+  const expired =
+    previewQuery.isError &&
+    isApiError(previewQuery.error) &&
+    previewQuery.error.status === 404;
 
   return (
     <div className="stack">
-      <PageTitle>{t("nav.rosterImport")}</PageTitle>
-
       <Panel title={t("import.uploadTitle")}>
-        {/* 序号由 `<ol>` 自己产生。文案里再写一遍 "1." 会渲染成 "1. 1. 上传文件"。 */}
         <ol className="steps muted">
           <li>{t("import.step.upload")}</li>
           <li>{t("import.step.preview")}</li>
@@ -295,62 +293,28 @@ export function RosterImportPage() {
           <li>{t("import.step.result")}</li>
         </ol>
 
+        {ready ? null : (
+          <Banner tone="warn" testId="import-needs-scope">
+            {t("import.needsScope")}
+          </Banner>
+        )}
+
         <form
           className="form-grid"
           data-testid="upload-form"
           onSubmit={(event) => {
             event.preventDefault();
             setUploadError(null);
-            setUploadMessage(null);
-            if (!file || courseId === "" || sectionId === "") return;
+            if (!file || !ready) return;
             createImport.mutate(
               { file, courseId, sectionId },
               {
-                onSuccess: (created) => {
-                  setImportId(created.roster_import_id);
-                  if (!needsMapping(created.status) && !isPreviewable(created.status)) {
-                    setUploadMessage(statusLabel(created.status));
-                  }
-                },
+                onSuccess: (created) => onImportId(created.roster_import_id),
                 onError: (error) => setUploadError(error),
               },
             );
           }}
         >
-          <Field label={t("import.course")} htmlFor="import-course">
-            <select
-              id="import-course"
-              value={courseId}
-              onChange={(event) => {
-                setCourseId(event.target.value);
-                setSectionId("");
-              }}
-            >
-              <option value="">{t("common.selectPrompt")}</option>
-              {courseOptions.map((course) => (
-                <option key={course.course_id} value={course.course_id}>
-                  {course.course_code} · {course.title}
-                </option>
-              ))}
-            </select>
-          </Field>
-
-          <Field label={t("import.section")} htmlFor="import-section">
-            <select
-              id="import-section"
-              value={sectionId}
-              onChange={(event) => setSectionId(event.target.value)}
-              disabled={courseId === ""}
-            >
-              <option value="">{t("common.selectPrompt")}</option>
-              {(sections.data ?? []).map((section) => (
-                <option key={section.sectionId} value={section.sectionId}>
-                  {section.label}
-                </option>
-              ))}
-            </select>
-          </Field>
-
           <Field label={t("import.file")} htmlFor="import-file">
             <input
               id="import-file"
@@ -359,49 +323,51 @@ export function RosterImportPage() {
               onChange={(event) => setFile(event.target.files?.[0] ?? null)}
             />
           </Field>
+          <p className="muted">{t("import.fileHint")}</p>
 
           <div className="inline">
             <button
               type="submit"
               className="button"
               data-testid="upload-submit"
-              disabled={createImport.isPending || !file || courseId === "" || sectionId === ""}
+              disabled={createImport.isPending || !file || !ready}
             >
               {createImport.isPending ? t("import.uploading") : t("import.upload")}
             </button>
+            {importId ? (
+              <button
+                type="button"
+                className="button button--ghost"
+                data-testid="import-reset"
+                onClick={() => {
+                  setFile(null);
+                  setUploadError(null);
+                  onImportId(null);
+                }}
+              >
+                {t("import.startOver")}
+              </button>
+            ) : null}
           </div>
         </form>
 
-        <div className="inline">
-          <span className="muted" data-testid="import-courses-count">
-            {t("common.coursesLoaded", { count: courseOptions.length })}
-          </span>
-          <LoadMoreActions
-            loadedCount={courseOptions.length}
-            hasNextPage={courses.hasNextPage}
-            isFetchingNextPage={courses.isFetchingNextPage}
-            onLoadMore={() => {
-              void courses.fetchNextPage();
-            }}
-            testId="courses"
-          />
-        </div>
-
-        {courses.isError ? <ErrorState error={courses.error} /> : null}
-        {sections.isError ? <ErrorState error={sections.error} /> : null}
         {uploadError ? (
           <Banner tone="error" testId="upload-error">
             <strong>{t("import.parseFailed")}</strong>
             <p>{describeApiError(uploadError)}</p>
           </Banner>
         ) : null}
-        {uploadMessage ? <Banner tone="warn">{uploadMessage}</Banner> : null}
+        <p className="muted">{t("import.noWriteBeforeConfirm")}</p>
       </Panel>
 
       {importId === null ? null : previewQuery.isPending ? (
-        <Spinner />
+        <Spinner label={t("import.loading")} />
+      ) : expired ? (
+        <Banner tone="warn" testId="import-expired">
+          {t("import.expired")}
+        </Banner>
       ) : previewQuery.isError ? (
-        <ErrorState error={previewQuery.error} />
+        <ErrorState error={previewQuery.error} testId="import-error" />
       ) : preview ? (
         <Panel title={`${t("import.title")} · ${statusLabel(preview.status)}`}>
           <div className="inline">

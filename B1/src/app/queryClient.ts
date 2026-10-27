@@ -41,6 +41,7 @@ export const queryKeys = {
     ["question-tag-coverage", courseId, publishedOnly] as const,
   assignments: (filter: Record<string, string | undefined>) =>
     ["assignments", filter] as const,
+  assignment: (assignmentId: string) => ["assignment", assignmentId] as const,
   question: (questionId: string) => ["question", questionId] as const,
   questionVersion: (versionId: string) => ["question-version", versionId] as const,
   questionDiagnostics: (questionId: string) =>

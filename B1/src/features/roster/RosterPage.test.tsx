@@ -214,3 +214,129 @@ describe("名单读取与编辑（RQ-B-1-20）", () => {
     stub.restore();
   });
 });
+
+describe("课程与名单工作区（P12）", () => {
+  it("新建课程会 POST 真实接口，只发送契约声明的字段", async () => {
+    const stub = installFetchStub([
+      // POST 必须排在最前：rosterRoutes 里的 GET 桩没写 method，会连 POST 一起接住。
+      {
+        method: "POST",
+        path: "/api/v1/courses",
+        respond: () =>
+          jsonResponse({ course_id: UUID_A, course_code: "CS9", title: "新课程" }, 201),
+      },
+      ...rosterRoutes({ role: "teacher" }),
+    ]);
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderWithRouter(<RosterPage />, { path: "/roster", linkTargets: [] });
+
+    await user.click(await screen.findByTestId("create-course-entry"));
+    const drawer = await screen.findByTestId("create-course");
+    await user.type(within(drawer).getByLabelText("课程编号"), "CS9");
+    await user.type(within(drawer).getByLabelText("课程名称"), "新课程");
+    await user.click(within(drawer).getByRole("button", { name: "创建课程" }));
+
+    await waitFor(() =>
+      expect(
+        stub.requests.some(
+          (candidate) =>
+            candidate.method === "POST" && candidate.url.pathname === "/api/v1/courses",
+        ),
+      ).toBe(true),
+    );
+    const request = stub.requests.find(
+      (candidate) =>
+        candidate.method === "POST" && candidate.url.pathname === "/api/v1/courses",
+    );
+    expect(request?.body).toEqual({ course_code: "CS9", title: "新课程" });
+    // 成功后抽屉关闭（选中新课程交给列表刷新，不在这里伪造一行）。
+    await waitFor(() => expect(screen.queryByTestId("create-course")).toBeNull());
+    stub.restore();
+  });
+
+  it("课程编号重复时显示 409 文案，保留输入且不关闭表单", async () => {
+    const stub = installFetchStub([
+      {
+        method: "POST",
+        path: "/api/v1/courses",
+        respond: () =>
+          problemResponse({
+            status: 409,
+            title: "Conflict",
+            detail: "A course with that code already exists.",
+            instance: "/api/v1/courses",
+          }),
+      },
+      ...rosterRoutes({ role: "teacher" }),
+    ]);
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderWithRouter(<RosterPage />, { path: "/roster", linkTargets: [] });
+
+    await user.click(await screen.findByTestId("create-course-entry"));
+    const drawer = await screen.findByTestId("create-course");
+    await user.type(within(drawer).getByLabelText("课程编号"), "CS9");
+    await user.type(within(drawer).getByLabelText("课程名称"), "新课程");
+    await user.click(within(drawer).getByRole("button", { name: "创建课程" }));
+
+    expect(await screen.findByTestId("create-course-error")).toHaveTextContent(
+      "该课程编号已存在。",
+    );
+    expect(within(drawer).getByLabelText("课程编号")).toHaveValue("CS9");
+    stub.restore();
+  });
+
+  it("新建课序写入课序号，学期留空时发送 null", async () => {
+    const stub = installFetchStub([
+      {
+        method: "POST",
+        path: `/api/v1/courses/${UUID_A}/sections`,
+        respond: () =>
+          jsonResponse(
+            {
+              section_id: UUID_B,
+              course_id: UUID_A,
+              section_code: "02",
+              term: null,
+              created_at: null,
+            },
+            201,
+          ),
+      },
+      ...rosterRoutes({ role: "teacher" }),
+    ]);
+    const user = await openRoster("teacher");
+    await user.click(await screen.findByTestId("create-section-entry"));
+    const drawer = await screen.findByTestId("create-section");
+    await user.type(within(drawer).getByLabelText("课序号"), "02");
+    await user.click(within(drawer).getByRole("button", { name: "创建课序" }));
+
+    await waitFor(() =>
+      expect(
+        stub.requests.some(
+          (candidate) =>
+            candidate.method === "POST" &&
+            candidate.url.pathname === `/api/v1/courses/${UUID_A}/sections`,
+        ),
+      ).toBe(true),
+    );
+    const request = stub.requests.find(
+      (candidate) =>
+        candidate.method === "POST" &&
+        candidate.url.pathname === `/api/v1/courses/${UUID_A}/sections`,
+    );
+    expect(request?.body).toEqual({ section_code: "02", term: null });
+    stub.restore();
+  });
+
+  it("导入名单是同一页的第二个标签，选好作用域后不再要求补选", async () => {
+    const stub = installFetchStub(rosterRoutes({ role: "teacher" }));
+    const user = await openRoster("teacher");
+
+    await user.click(await screen.findByRole("tab", { name: "导入名单" }));
+    expect(await screen.findByTestId("upload-form")).toBeInTheDocument();
+    expect(screen.queryByTestId("import-needs-scope")).toBeNull();
+    stub.restore();
+  });
+});

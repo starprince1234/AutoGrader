@@ -1575,6 +1575,59 @@ def test_assignment_with_a_draft_version_is_conflict(client, auth_headers):
     assert response.status_code == 409
 
 
+def test_assignment_detail_reads_one_assignment_by_id(client, auth_headers, published_question):
+    _question, version = published_question
+    created = client.post(
+        "/api/v1/assignments",
+        json={
+            "course_id": str(COURSE_A),
+            "section_id": "33333333-3333-4333-8333-333333333333",
+            "title": "Detail read",
+            "question_version_ids": [version["question_version_id"]],
+        },
+        headers=auth_headers("teacher-a"),
+    )
+    assert created.status_code == 201, created.text
+    assignment_id = created.json()["assignment_id"]
+
+    detail = client.get(f"/api/v1/assignments/{assignment_id}", headers=auth_headers("teacher-a"))
+    assert detail.status_code == 200, detail.text
+    body = detail.json()
+    assert body["assignment_id"] == assignment_id
+    assert body["course_id"] == str(COURSE_A)
+    assert body["question_version_ids"] == [version["question_version_id"]]
+    assert collect_keys(body) & PROTECTED_KEYS == set()
+
+
+def test_assignment_detail_outside_the_course_scope_is_forbidden(
+    client, auth_headers, published_question
+):
+    _question, version = published_question
+    created = client.post(
+        "/api/v1/assignments",
+        json={
+            "course_id": str(COURSE_A),
+            "section_id": "33333333-3333-4333-8333-333333333333",
+            "title": "Out of scope",
+            "question_version_ids": [version["question_version_id"]],
+        },
+        headers=auth_headers("teacher-a"),
+    )
+    assignment_id = created.json()["assignment_id"]
+
+    # teacher-b only holds COURSE_B: the record exists, the caller may not read it.
+    denied = client.get(f"/api/v1/assignments/{assignment_id}", headers=auth_headers("teacher-b"))
+    assert denied.status_code == 403
+    assert denied.headers["content-type"].startswith("application/problem+json")
+
+
+def test_assignment_detail_for_an_unknown_id_is_not_found(client, auth_headers):
+    response = client.get(
+        f"/api/v1/assignments/{uuid.uuid4()}", headers=auth_headers("teacher-a")
+    )
+    assert response.status_code == 404
+
+
 # --- validation ----------------------------------------------------------
 
 

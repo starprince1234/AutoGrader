@@ -39,7 +39,8 @@ export type RegistrationCompleteRequest =
   B4Operations["createRegistration"]["requestBody"]["content"]["application/json"];
 export type RegistrationCreated = JsonBody<B4Operations["createRegistration"], 201>;
 export type UserSummary = B4Schemas["UserSummary"];
-export type CourseSummary = B4Schemas["CourseSummary"];
+export type CoursePublic = B4Schemas["CoursePublic"];
+export type SectionPublic = B4Schemas["SectionPublic"];
 export type EnrollmentPublic = B4Schemas["EnrollmentPublic"];
 export type RosterImportPreview = B4Schemas["RosterImportPreview"];
 export type RosterRowPreview = B4Schemas["RosterRowPreview"];
@@ -57,6 +58,11 @@ export type CreateCourseSessionRequest =
 /** 游标页（`common.yaml` 的 `CursorPage`）与具体行的组合，来自契约的 `allOf`。 */
 export type UserPage = JsonBody<B4Operations["listUsers"], 200>;
 export type CoursePage = JsonBody<B4Operations["listCourses"], 200>;
+export type SectionListBody = JsonBody<B4Operations["listSections"], 200>;
+export type CreateCourseRequest =
+  B4Operations["createCourse"]["requestBody"]["content"]["application/json"];
+export type CreateSectionRequest =
+  B4Operations["createSection"]["requestBody"]["content"]["application/json"];
 export type EnrollmentPage = JsonBody<B4Operations["listEnrollments"], 200>;
 
 /**
@@ -95,8 +101,11 @@ export type RegistrationAllowlistReplacement = JsonBody<
 export type QuestionPublic = B3Schemas["QuestionPublic"];
 export type QuestionVersionPublic = B3Schemas["QuestionVersionPublic"];
 export type AssignmentPublic = B3Schemas["AssignmentPublic"];
+export type QuestionVersionSummary = B3Schemas["QuestionVersionSummary"];
 export type QuestionPage = JsonBody<B3Operations["listQuestions"], 200>;
 export type AssignmentPage = JsonBody<B3Operations["listAssignments"], 200>;
+export type CreateAssignmentRequest =
+  B3Operations["createAssignment"]["requestBody"]["content"]["application/json"];
 export type StemAsset = NonNullable<QuestionPublic["stem_assets"]>[number];
 
 /**

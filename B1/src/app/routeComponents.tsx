@@ -7,7 +7,6 @@ import { QuarantinePage } from "../features/intake/QuarantinePage";
 import { QualitySummaryPage } from "../features/quality/QualitySummaryPage";
 import { QuestionDetailPage } from "../features/questions/QuestionDetailPage";
 import { QuestionListPage } from "../features/questions/QuestionListPage";
-import { RosterImportPage } from "../features/roster-import/RosterImportPage";
 import { RosterPage } from "../features/roster/RosterPage";
 import { SubmitPage } from "../features/submission/SubmitPage";
 import { AdminUsersPage } from "../features/admin/AdminUsersPage";
@@ -15,7 +14,6 @@ import { normalizeAdminTab } from "../features/admin/tab";
 import { RequireAuth, RequirePermission } from "../auth/guards";
 import {
   canAuthorQuestions,
-  canImportRoster,
   canManageUsers,
   canReviewQuarantine,
   canSubmitAnswer,
@@ -148,15 +146,6 @@ export function RosterRoute() {
   );
 }
 
-export function RosterImportRoute() {
-  return (
-    <RequireAuth>
-      <RequirePermission allow={canImportRoster} allowedRoles={["teacher", "admin"]}>
-        <RosterImportPage />
-      </RequirePermission>
-    </RequireAuth>
-  );
-}
 
 /**
  * P14 管理员账户工作区（`/admin/users?tab=users|allowlist`，仅管理员）。
