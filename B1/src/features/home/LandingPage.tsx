@@ -197,10 +197,6 @@ export function LandingPage() {
           </p>
         </section>
       </main>
-
-      <footer className="landing__footer muted">
-        {authenticated ? t("landing.sessionHint") : t("landing.footerHint")}
-      </footer>
     </div>
   );
 }

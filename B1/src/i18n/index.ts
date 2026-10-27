@@ -31,8 +31,6 @@ export const messages = {
 
     // ---------------------------------------------------------------- 导览页（教师端 / 学生端）
     "landing.signedIn": "已登录：{name} · {roles}",
-    "landing.sessionHint": "已登录，点击对应入口会直接进入；退出后可切换身份。",
-    "landing.footerHint": "登录后按角色进入对应界面；最近登录过的账号会直接打开所选功能。",
     "landing.teacherEyebrow": "教师端",
     "landing.teacherTitle": "教学管理",
     "landing.teacherLead": "维护课程名单、题库与作业，查看班级提交情况和成绩。",

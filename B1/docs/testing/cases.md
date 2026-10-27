@@ -127,7 +127,7 @@
 | TC-B1-114 | P02 | 组件 | 邮箱格式错误 / 邮箱合法 | 点击「发送验证码」 | 格式错误就地报错且零请求；合法邮箱显示通用提示「如果该邮箱已注册…」并进入冷却 | 存在 | `src/features/auth/ForgotPasswordPage.test.tsx` |
 | TC-B1-115 | P02 | 组件+安全 | 验证码错误 / 新密码过短 / 两次不一致 | 提交重置 | 验证码错误落到验证码字段；密码规则在本地拦截；不把服务端细节或账号存在性暴露给用户 | 存在 | `src/features/auth/ForgotPasswordPage.test.tsx` |
 | TC-B1-116 | P02 | 组件 | 完整重置成功 | 邮箱 + 验证码 + 新密码提交 | 只发一次 `password-reset` 请求；成功后回 `/login?reset=done`，登录页显示「密码已重置，请使用新密码登录。」 | 存在 | `src/features/auth/ForgotPasswordPage.test.tsx`、`LoginPage.test.tsx` |
-| TC-B1-117 | P01 | 组件 | 匿名访客打开 `/` | 看第一视图 | 左教师、右学生两栏；教师端只有作业管理/题库/班级成绩/课程与名单/复核工作区，学生端只有我的作业/我的成绩；两栏互不串功能；页面没有欢迎语、功能磁贴、版本号或开发者文案 | 存在 | `src/features/home/LandingPage.test.tsx`（6 个用例）、`src/features/home/LandingPage.tsx` |
+| TC-B1-117 | P01 | 组件 | 匿名访客打开 `/` | 看第一视图 | 左教师、右学生两栏；教师端只有作业管理/题库/班级成绩/课程与名单/复核工作区，学生端只有我的作业/我的成绩；两栏互不串功能；页面没有欢迎语、功能磁贴、版本号、页脚提示或开发者文案 | 存在 | `src/features/home/LandingPage.test.tsx`（6 个用例）、`src/features/home/LandingPage.tsx` |
 | TC-B1-118 | P01/P02 | 组件+契约 | 匿名点教师端/学生端入口；随后登录；或会话仍有效（最近登录） | 观察跳转、登录回跳与会话恢复 | 点击时只记 `{portal, path}`（不写令牌/用户名）；会话仍有效则**跳过登录页**直接进入目标功能，匹配后清除一次性意图；匿名则先登录再回目标页；学生入口被点后意图是 `student`，不会带成 `teacher` | 存在 | `LandingPage.test.tsx`、`src/app/AppShell.test.tsx`、`src/auth/portal.test.ts` |
 | TC-B1-119 | P01/P02 | 组件+安全 | 学生账号带教师端意图 / 教师账号带学生端意图 / 混合角色 / 角色未知 | 打开目标页并刷新 | 角色与门户不匹配时显示阻断面板，**不渲染错误一端的功能视图**；刷新仍阻断；可返回导览页重选；已登录时错误一端的入口禁用并说明；教师侧角色与学生的混合账号只走教师端；角色未知时两端都 fail-closed | 存在 | `src/app/AppShell.test.tsx`、`LandingPage.test.tsx`、`src/auth/portal.test.ts` |
 

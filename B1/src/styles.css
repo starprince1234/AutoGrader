@@ -724,6 +724,9 @@ samp {
 
 .button {
   appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: var(--color-accent);
   color: #fff;
   border: 0;
@@ -733,6 +736,7 @@ samp {
   font: inherit;
   font-size: 14px;
   font-weight: 500;
+  line-height: 1;
   cursor: pointer;
   white-space: nowrap;
   transition: background 0.2s var(--ease), transform 0.12s var(--ease), opacity 0.2s var(--ease);
@@ -1757,12 +1761,6 @@ samp {
   margin: auto 0 0;
   color: var(--color-text-faint);
   font-size: 12.5px;
-}
-
-.landing__footer {
-  padding: 8px 0 0;
-  text-align: center;
-  font-size: 13px;
 }
 
 /* ---------------------------------------------------------------- 响应式 */
