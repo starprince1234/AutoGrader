@@ -22,6 +22,7 @@ import { queryKeys } from "../../app/queryClient";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   loadedQuarantines,
+  useDismissQuarantine,
   useQuarantineMail,
   useResolveQuarantine,
 } from "./useReviewMail";
@@ -50,11 +51,6 @@ import {
 
 function truncate(value: string, limit: number): string {
   return value.length <= limit ? value : `${value.slice(0, limit)}…`;
-}
-
-/** 邮件的 Message-ID 很长；表格里只显示可辨认的前缀，完整值留在 `title` 与详情里。 */
-function shortenMessageId(value: string): string {
-  return value.length <= 24 ? value : `${value.slice(0, 22)}…`;
 }
 
 function scopeText(
@@ -128,25 +124,43 @@ export function MailReviewTab({
   const isAdmin = session.rolesKnown && session.roles.includes("admin");
 
   const courses = useCourses();
-  const courseOptions = loadedCourses(courses.data?.pages);
+  const allCourses = loadedCourses(courses.data?.pages);
+  // 令牌作用域是浏览器端能拿到的**唯一**授权事实：下拉只展示它覆盖的课程/课序，
+  // 越权 URL 不会把别的课程"带进来"（服务端仍会 403，这里是不给它出现在界面里的机会）。
+  const scopeCourseIds = new Set(session.scope.map((entry) => entry.course_id));
+  const courseOptions = isAdmin
+    ? allCourses
+    : allCourses.filter((course) => scopeCourseIds.has(course.course_id));
   const courseMap = useMemo(
-    () =>
-      new Map(
-        loadedCourses(courses.data?.pages).map((course) => [course.course_id, course] as const),
-      ),
-    [courses.data],
+    () => new Map(courseOptions.map((course) => [course.course_id, course] as const)),
+    [courseOptions],
   );
-  // staff 未带 P04 上下文时预选**第一门有权课程**：课程列表本身已按 scope 过滤，
-  // 这不是推断授权；admin 默认"全部课程"（未关联行只在这里出现）。
-  const effectiveCourseId =
-    filter.courseId ?? (isAdmin ? null : (courseOptions[0]?.course_id ?? null));
+  // staff 未带 P04 上下文时预选**第一门有权课程**；URL 指向无权课程时也回落到有权课程，
+  // 而不是把无权 ID 发出去再显示 403（这样"不能选其他班级课程"在请求之前就成立）。
+  const requestedCourseId = filter.courseId;
+  const requestedAllowed =
+    requestedCourseId !== null && (isAdmin || scopeCourseIds.has(requestedCourseId));
+  const effectiveCourseId = isAdmin
+    ? requestedCourseId
+    : requestedAllowed
+      ? requestedCourseId
+      : (courseOptions[0]?.course_id ?? null);
   const sections = useSections(effectiveCourseId);
+  const sectionOptions = useMemo(() => {
+    const fetched = sections.data ?? [];
+    if (isAdmin || effectiveCourseId === null) return fetched;
+    const entries = session.scope.filter((entry) => entry.course_id === effectiveCourseId);
+    if (entries.some((entry) => entry.section_id === null)) return fetched;
+    const allowed = new Set(entries.map((entry) => entry.section_id));
+    return fetched.filter((section) => allowed.has(section.sectionId));
+  }, [effectiveCourseId, isAdmin, sections.data, session.scope]);
   const sectionMap = useMemo(
-    () => new Map((sections.data ?? []).map((item) => [item.sectionId, item.label] as const)),
-    [sections.data],
+    () => new Map(sectionOptions.map((item) => [item.sectionId, item.label] as const)),
+    [sectionOptions],
   );
 
-  const listEnabled = isAdmin || effectiveCourseId !== null;
+  // 没有课程筛选时也允许查询：服务端按行级 scope 过滤，老师一进来就能看到自己的待处理记录。
+  const listEnabled = isAdmin || session.scope.length > 0;
   const query = useQuarantineMail({
     identity,
     enabled: listEnabled,
@@ -170,6 +184,11 @@ export function MailReviewTab({
   const [pickerSectionId, setPickerSectionId] = useState("");
   const [success, setSuccess] = useState<string | null>(null);
   const resolve = useResolveQuarantine();
+  const [dismissTarget, setDismissTarget] = useState<IntakeQuarantineView | null>(null);
+  const [dismissNote, setDismissNote] = useState("");
+  const [dismissIssue, setDismissIssue] = useState<string | null>(null);
+  const [dismissConfirming, setDismissConfirming] = useState(false);
+  const dismiss = useDismissQuarantine();
 
   // 只有管理员处置未关联行时才需要课程/课序选择器；已关联行直接用记录 scope，
   // 不再多发一次课序列表请求。
@@ -239,6 +258,51 @@ export function MailReviewTab({
     );
   };
 
+  const openDismiss = (row: IntakeQuarantineView) => {
+    setSuccess(null);
+    setDismissTarget(row);
+    setDismissNote("");
+    setDismissIssue(null);
+    setDismissConfirming(false);
+    dismiss.reset();
+  };
+
+  const closeDismiss = () => {
+    setDismissTarget(null);
+    setDismissNote("");
+    setDismissIssue(null);
+    setDismissConfirming(false);
+    dismiss.reset();
+  };
+
+  const submitDismiss = () => {
+    if (dismissNote.length > 500) {
+      setDismissIssue(t("review.mail.issueNote"));
+      return;
+    }
+    setDismissIssue(null);
+    setDismissConfirming(true);
+  };
+
+  const confirmDismiss = () => {
+    if (!dismissTarget) return;
+    dismiss.mutate(
+      {
+        quarantineId: dismissTarget.intake_quarantine_id,
+        body: { note: dismissNote.trim() === "" ? null : dismissNote.trim() },
+      },
+      {
+        onSuccess: () => {
+          setSuccess(t("review.mail.dismissedOk"));
+          closeDismiss();
+        },
+        onError: () => {
+          setDismissConfirming(false);
+        },
+      },
+    );
+  };
+
   const changeFilter = (next: {
     courseId?: string | null;
     sectionId?: string | null;
@@ -256,6 +320,32 @@ export function MailReviewTab({
   };
 
   const forbidden = isApiError(query.error) && query.error.isForbidden;
+
+  const resolutionText = (row: IntakeQuarantineView): string => {
+    if (!row.resolved) return t("review.mail.unresolved");
+    if (row.resolution === "dismissed") return t("review.mail.dismissedState");
+    if (row.resolution === "attributed") return t("review.mail.attributedState");
+    // 0016 之前的历史行只有 `resolved=true`：如实显示"已处理"，不猜是哪一种。
+    return t("review.mail.resolvedState");
+  };
+
+  const trailText = (row: IntakeQuarantineView): string | null => {
+    if (!row.resolved) return null;
+    if (row.resolved_at === null && row.resolved_by === null) {
+      return t("review.mail.trailUnknown");
+    }
+    const actor =
+      row.resolved_by === null
+        ? t("review.mail.notProvided")
+        : row.resolved_by === session.subject
+          ? t("review.mail.actorYou")
+          : shortenId(row.resolved_by);
+    const time =
+      row.resolved_at === null
+        ? t("review.mail.notProvided")
+        : formatDateTime(row.resolved_at, t("common.none"));
+    return t("review.mail.processingTrail", { actor, time });
+  };
 
   return (
     <div className="stack">
@@ -348,7 +438,12 @@ export function MailReviewTab({
       </Panel>
 
       <Panel
-        title={t("review.mail.countLoaded", { count: rows.length })}
+        title={t(
+          filter.resolved === false
+            ? "review.mail.pendingTitle"
+            : "review.mail.countLoaded",
+          { count: rows.length },
+        )}
         actions={
           <LoadMoreActions
             loadedCount={rows.length}
@@ -389,11 +484,30 @@ export function MailReviewTab({
             getRowKey={(row) => row.intake_quarantine_id}
             columns={[
               {
-                key: "recorded_at",
-                header: t("review.mail.recordedAt"),
-                render: (row) =>
-                  // 列表里到分钟即可；秒没有区分意义，还会把操作列挤出可视区。
-                  formatDateTime(row.recorded_at, t("common.none")).slice(0, 16),
+                key: "subject",
+                header: t("review.mail.summary"),
+                render: (row) => (
+                  <div>
+                    <strong title={row.subject ?? undefined}>
+                      {row.subject ?? t("review.mail.noSubject")}
+                    </strong>
+                    <div className="muted">
+                      {formatDateTime(row.recorded_at, t("common.none")).slice(0, 16)}
+                    </div>
+                  </div>
+                ),
+              },
+              {
+                key: "reason",
+                header: t("review.mail.failureReason"),
+                render: (row) => (
+                  <div>
+                    <div>{reasonLabel(row.reason_code)}</div>
+                    <div className="muted" title={row.detail}>
+                      {truncate(row.detail, 18)}
+                    </div>
+                  </div>
+                ),
               },
               {
                 key: "scope",
@@ -401,37 +515,19 @@ export function MailReviewTab({
                 render: (row) => <span title={row.scope_course_id ?? ""}>{scopeText(row, courseMap, sectionMap)}</span>,
               },
               {
-                key: "source",
-                header: t("review.mail.source"),
-                render: (row) => (
-                  <div>
-                    <div>{row.mailbox === "" ? t("review.mail.notProvided") : row.mailbox}</div>
-                    <div className="muted mono-id" title={row.message_id ?? undefined}>
-                      {row.message_id ? shortenMessageId(row.message_id) : t("review.mail.notProvided")}
-                      {typeof row.uid === "number" ? ` · UID ${row.uid}` : ""}
-                    </div>
-                  </div>
-                ),
-              },
-              {
-                key: "reason",
-                header: t("review.mail.reason"),
-                render: (row) => (
-                  <div>
-                    <div>{reasonLabel(row.reason_code)}</div>
-                    <div className="muted" title={row.detail}>
-                      {truncate(row.detail, 8)}
-                    </div>
-                  </div>
-                ),
-              },
-              {
                 key: "state",
                 header: t("review.mail.state"),
                 render: (row) => (
-                  <StatusPill tone={row.resolved ? "ok" : "warn"}>
-                    {row.resolved ? t("review.mail.resolvedState") : t("review.mail.unresolved")}
-                  </StatusPill>
+                  <div>
+                    <StatusPill
+                      tone={
+                        !row.resolved ? "warn" : row.resolution === "dismissed" ? "idle" : "ok"
+                      }
+                    >
+                      {resolutionText(row)}
+                    </StatusPill>
+                    {trailText(row) ? <div className="muted">{trailText(row)}</div> : null}
+                  </div>
                 ),
               },
               {
@@ -457,6 +553,16 @@ export function MailReviewTab({
                         {t("review.mail.resolveAction")}
                       </button>
                     )}
+                    {row.resolved ? null : (
+                      <button
+                        type="button"
+                        className="button button--ghost"
+                        data-testid={`review-mail-dismiss-${row.intake_quarantine_id}`}
+                        onClick={() => openDismiss(row)}
+                      >
+                        {t("review.mail.dismissAction")}
+                      </button>
+                    )}
                   </div>
                 ),
               },
@@ -477,6 +583,10 @@ export function MailReviewTab({
               {t("review.mail.recordedAt")}：{formatDateTime(detailTarget.recorded_at, t("common.none"))}
             </p>
             <p>{t("review.mail.scope")}：{scopeText(detailTarget, courseMap, sectionMap)}</p>
+            <p>
+              {t("review.mail.summary")}：
+              {detailTarget.subject ?? t("review.mail.noSubject")}
+            </p>
             <p>
               {t("review.mail.mailbox")}：
               {detailTarget.mailbox === "" ? t("review.mail.notProvided") : detailTarget.mailbox}
@@ -503,7 +613,8 @@ export function MailReviewTab({
             <p>{t("review.mail.detail")}：{detailTarget.detail}</p>
             <p>
               {t("review.mail.state")}：
-              {detailTarget.resolved ? t("review.mail.resolvedState") : t("review.mail.unresolved")}
+              {resolutionText(detailTarget)}
+              {trailText(detailTarget) ? ` · ${trailText(detailTarget)}` : ""}
             </p>
             {detailTarget.resolved_student_id ? (
               <p>
@@ -705,6 +816,96 @@ export function MailReviewTab({
                 {t("review.mail.back")}
               </button>
             </div>
+          </div>
+        </Modal>
+      ) : null}
+
+      {dismissTarget ? (
+        <Modal
+          title={t("review.mail.dismissTitle")}
+          testId="review-mail-dismiss-drawer"
+          onClose={closeDismiss}
+        >
+          <div className="stack">
+            <p className="muted">{t("review.mail.dismissHint")}</p>
+            <p className="muted">
+              {reasonLabel(dismissTarget.reason_code)} ·{" "}
+              {formatDateTime(dismissTarget.recorded_at, t("common.none"))} ·{" "}
+              {scopeText(dismissTarget, courseMap, sectionMap)}
+            </p>
+            {dismissConfirming ? (
+              <div className="stack">
+                <p>{t("review.mail.dismissConfirmText")}</p>
+                <div className="row-actions">
+                  <button
+                    type="button"
+                    className="button"
+                    data-testid="review-mail-dismiss-confirm"
+                    disabled={dismiss.isPending}
+                    onClick={confirmDismiss}
+                  >
+                    {dismiss.isPending
+                      ? t("review.mail.submitting")
+                      : t("review.mail.dismissConfirm")}
+                  </button>
+                  <button
+                    type="button"
+                    className="button button--ghost"
+                    onClick={() => setDismissConfirming(false)}
+                  >
+                    {t("review.mail.back")}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <Field label={t("review.mail.dismissNote")} htmlFor="review-dismiss-note">
+                  <textarea
+                    id="review-dismiss-note"
+                    data-testid="review-dismiss-note"
+                    rows={3}
+                    maxLength={500}
+                    value={dismissNote}
+                    onChange={(event) => setDismissNote(event.target.value)}
+                  />
+                </Field>
+                <p className="muted">
+                  {t("review.mail.noteHint", { count: dismissNote.length })}
+                </p>
+                {dismissIssue ? (
+                  <Banner tone="error" testId="review-dismiss-issue">
+                    {dismissIssue}
+                  </Banner>
+                ) : null}
+                {isApiError(dismiss.error) && dismiss.error.isForbidden ? (
+                  <Banner tone="error" testId="review-dismiss-forbidden">
+                    {t("review.mail.resolveForbidden")}
+                  </Banner>
+                ) : null}
+                {isApiError(dismiss.error) && dismiss.error.isConflict ? (
+                  <Banner tone="warn" testId="review-dismiss-conflict">
+                    {t("review.mail.conflict")}
+                  </Banner>
+                ) : null}
+                {dismiss.isError &&
+                !(isApiError(dismiss.error) && (dismiss.error.isForbidden || dismiss.error.isConflict)) ? (
+                  <ErrorState error={dismiss.error} testId="review-dismiss-error" />
+                ) : null}
+                <div className="row-actions">
+                  <button
+                    type="button"
+                    className="button"
+                    data-testid="review-mail-dismiss-submit"
+                    onClick={submitDismiss}
+                  >
+                    {t("review.mail.dismissAction")}
+                  </button>
+                  <button type="button" className="button button--ghost" onClick={closeDismiss}>
+                    {t("common.cancel")}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </Modal>
       ) : null}

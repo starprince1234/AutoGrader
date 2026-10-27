@@ -197,9 +197,10 @@ export interface paths {
          *     trace. This is the read path.
          *
          *     Authorization: teacher/assistant/admin within the row's course scope. Rows carry a
-         *     `reason_code`, an already-redacted `detail`, and the record's own
-         *     `scope_course_id/scope_section_id`; they never carry attachment contents, student source
-         *     or any part of a submission.
+         *     `reason_code`, an already-redacted `detail`, the record's own
+         *     `scope_course_id/scope_section_id`, and a bounded `subject` header (printable characters
+         *     only, at most 200 characters; bodies and attachments are still never stored); they never
+         *     carry attachment contents, student source or any part of a submission.
          *
          *     **Scoping is per row** (P13). A row's scope is persisted when the mail path records it,
          *     and it comes from exactly one place: the matching rules' targets. When every matched rule
@@ -272,7 +273,13 @@ export interface paths {
          *        and which do not exist when matching failed. Closing that loop is a separate design, not
          *        a patch to this operation.
          *     3. **Attribution is recorded once.** A second attempt returns `409`; the row is never
-         *        silently re-attributed.
+         *        silently re-attributed. The same holds for a row already dismissed by
+         *        `dismissIntakeQuarantine` -- the two decisions share one "processed" state.
+         *
+         *     Each decision also writes `resolution=attributed`, `resolved_at` (server clock) and
+         *     `resolved_by` (the caller's platform user id). Those fields are what the review screen
+         *     shows as the processing trail; `null` on historical rows means "not recorded", never
+         *     "processed by nobody".
          *
          *     **Row scope is re-checked under the row lock (P13).** The record's
          *     `scope_course_id/scope_section_id` is the authoritative course association, and the
@@ -295,6 +302,46 @@ export interface paths {
          *     caller's role/scope instead of trusting the client's candidate list.
          */
         post: operations["resolveIntakeQuarantine"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/intake/quarantines/{intake_quarantine_id}/dismiss": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                intake_quarantine_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Dismiss a quarantined message without attributing it
+         * @description A teacher who has looked at a quarantined message can close it without naming a student.
+         *     This is deliberately a separate operation from attribution: attribution writes an
+         *     identity and is therefore limited to the two "identity could not be derived" reason
+         *     codes, while dismissal writes **no** identity and is valid for **every** reason code --
+         *     it only says "a human has reviewed this row and chose not to attribute it". Without it,
+         *     rows rejected by the automatic envelope checks could never leave the pending list.
+         *
+         *     The write is the same shape as attribution: one `UPDATE` on the locked row, no
+         *     submission, no outbox event, no evaluation. `resolution` becomes `dismissed`,
+         *     `resolved_student_id` stays `null`, and `resolved_at`/`resolved_by` record who closed
+         *     it and when.
+         *
+         *     Row-level authorization is identical to `resolveIntakeQuarantine`: staff only for rows
+         *     covered by their token course scope (null-scope rows are invisible), administrators for
+         *     any row. The row is locked and re-authorized before the already-resolved check, so a
+         *     caller outside the row's scope cannot learn its state from the status code.
+         *
+         *     A row that has already been attributed **or** dismissed returns `409`; neither decision
+         *     is silently overwritten.
+         */
+        post: operations["dismissIntakeQuarantine"];
         delete?: never;
         options?: never;
         head?: never;
@@ -596,9 +643,10 @@ export interface components {
             reason?: string | null;
         };
         /**
-         * @description One quarantined intake record (CHG-0014). Carries identification metadata and a
-         *     redacted reason, never message contents: the point is that a teacher can *find* the
-         *     message in their mailbox again, not that the platform becomes a second mail store.
+         * @description One quarantined intake record (CHG-0014). Carries identification metadata, a bounded
+         *     subject header and a redacted reason, never message bodies or attachments: the point is
+         *     that a teacher can *find* the message in their mailbox again, not that the platform
+         *     becomes a second mail store.
          *
          *     `scope_course_id/scope_section_id` are the record's **verified course association**
          *     (P13). They are persisted at intake time from the matching rules' targets and only when
@@ -666,6 +714,33 @@ export interface components {
              *     the database enforces that as a CHECK constraint.
              */
             scope_section_id: components["schemas"]["Uuid"] | null;
+            /**
+             * @description The message's Subject header, collapsed to printable characters and bounded to 200
+             *     characters at intake time. This is the only content-adjacent field the platform
+             *     keeps: message bodies, attachments and their digests are still never stored, and the
+             *     subject is only shown to a caller already authorized for the row. Rows recorded
+             *     before this field existed return `null`.
+             */
+            subject: string | null;
+            /**
+             * @description The human decision: `attributed` (a student was named), `dismissed` (reviewed and
+             *     closed without attribution), or `null` for rows that are still pending or that were
+             *     resolved before the decision trail existed. `resolved` remains the boolean form so
+             *     older filtered pages keep their meaning.
+             * @enum {string|null}
+             */
+            resolution: "attributed" | "dismissed" | null;
+            /**
+             * @description When the human decision was recorded (server clock). `null` for pending rows and for
+             *     rows resolved before this field existed.
+             */
+            resolved_at: components["schemas"]["Timestamp"] | null;
+            /**
+             * @description The platform user id (`sub` of the access token) that recorded the decision, so the
+             *     audit trail names an actor rather than only a time. `null` for pending rows and for
+             *     rows resolved before this field existed.
+             */
+            resolved_by: components["schemas"]["Uuid"] | null;
         };
         /**
          * @description A movable evidence bundle for one evaluation run (CHG-0014). Self-contained on purpose:
@@ -1426,7 +1501,8 @@ export interface operations {
                 section_id?: components["schemas"]["Uuid"];
                 reason_code?: string;
                 /**
-                 * @description `true` returns only attributed records, `false` only unattributed ones.
+                 * @description `true` returns only processed records (attributed **or** dismissed), `false` only
+                 *     unprocessed ones.
                  *
                  *     **Omitting it means no filter at all** -- both kinds, in one page. This is stated
                  *     explicitly because the previous wording ("the default view a teacher wants") read like
@@ -1480,6 +1556,40 @@ export interface operations {
         };
         responses: {
             /** @description Attributed; the record is marked resolved and the attribution is audited. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntakeQuarantineView"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    dismissIntakeQuarantine: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                intake_quarantine_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Why this dismissal, for the audit trail. */
+                    note?: string | null;
+                };
+            };
+        };
+        responses: {
+            /** @description Dismissed; the record is marked resolved and the decision is audited. */
             200: {
                 headers: {
                     [name: string]: unknown;

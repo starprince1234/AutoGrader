@@ -252,6 +252,8 @@ export type IntakeQuarantineView = B2Schemas["IntakeQuarantineView"];
 export type IntakeQuarantinePage = JsonBody<B2Operations["listIntakeQuarantines"], 200>;
 export type ResolveIntakeQuarantineRequest =
   B2Operations["resolveIntakeQuarantine"]["requestBody"]["content"]["application/json"];
+export type DismissIntakeQuarantineRequest =
+  B2Operations["dismissIntakeQuarantine"]["requestBody"]["content"]["application/json"];
 
 /**
  * 可移动的申诉证据包（`getAppealPack`）。`report` 受调用方 `view` 约束——

@@ -651,6 +651,10 @@ export function intakeQuarantineView(
     // 需要未关联行（只对管理员可见）时显式传 `scope_course_id: null, scope_section_id: null`。
     scope_course_id: UUID_A,
     scope_section_id: UUID_B,
+    subject: "作业一提交",
+    resolution: null,
+    resolved_at: null,
+    resolved_by: null,
     ...overrides,
   } as IntakeQuarantineView;
 }

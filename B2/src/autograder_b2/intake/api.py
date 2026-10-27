@@ -428,6 +428,79 @@ def build_router(runtime: IntakeRuntime) -> APIRouter:
         )
         return JSONResponse(status_code=200, content=quarantine_view_body(view))
 
+    @router.post("/api/v1/intake/quarantines/{intake_quarantine_id}/dismiss")
+    async def dismiss_intake_quarantine(intake_quarantine_id: str, request: Request) -> Response:
+        """驳回一条隔离记录（不归属学生）：**只记录处置，不触发评测**。
+
+        与归属共用同一套行锁与行级授权；区别是驳回可用于**任何**原因码——它不写学生身份，
+        只表示"这条记录已经人工看过、不归属任何人"，是老师清空待处理列表的出口。
+        """
+        instance = request.url.path
+        if not runtime.ready:
+            return _not_available(instance, runtime.unavailable_reason)
+        assert runtime.authenticator is not None and runtime.quarantines is not None
+        try:
+            principal = runtime.authenticator.authenticate(request.headers.get("authorization"))
+        except AuthenticationError:
+            return problem_response(UNAUTHORIZED, instance)
+
+        try:
+            payload = await request.json()
+        except ValueError:
+            return _unprocessable(instance, "request body must be a JSON object")
+        if not isinstance(payload, dict):
+            return _unprocessable(instance, "request body must be a JSON object")
+        unknown = sorted(set(payload) - {"note"})
+        if unknown:
+            return _unprocessable(instance, "request body has unknown fields: " + ", ".join(unknown))
+
+        try:
+            view = runtime.quarantines.dismiss(
+                principal=principal,
+                intake_quarantine_id=intake_quarantine_id,
+                note=payload.get("note"),
+            )
+        except AuthorizationError:
+            log_event(
+                logger,
+                "intake_quarantine.rejected",
+                level=logging.WARNING,
+                fields={"outcome": "denied", "decision": "forbidden"},
+            )
+            return problem_response(FORBIDDEN, instance)
+        except QuarantineRequestError as error:
+            return _unprocessable(instance, str(error))
+        except QuarantineNotFoundError:
+            return problem_response(
+                Problem(
+                    404, "not-found", "Not Found", "The quarantined intake record does not exist."
+                ),
+                instance,
+            )
+        except QuarantineAlreadyResolvedError:
+            return problem_response(
+                Problem(
+                    409,
+                    "conflict",
+                    "Conflict",
+                    "The quarantined intake record has already been resolved.",
+                ),
+                instance,
+            )
+        except SQLAlchemyError as error:
+            log_dependency_unavailable(
+                logger, dependency="database", error=error, stage="intake quarantines"
+            )
+            runtime.record_failure()
+            return problem_response(SERVICE_UNAVAILABLE, instance)
+
+        log_event(
+            logger,
+            "intake_quarantine.dismissed",
+            fields={"outcome": "dismissed", "status": "resolved"},
+        )
+        return JSONResponse(status_code=200, content=quarantine_view_body(view))
+
     return router
 
 

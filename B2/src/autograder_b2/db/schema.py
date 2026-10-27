@@ -9,14 +9,14 @@
 from __future__ import annotations
 
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 
 SCHEMA = "b2"
 
 #: 本代码期望的迁移版本（必须与 `module.yaml: database.migration_head` 和 Alembic head 三者一致）。
 #: 用途：readyness 探测据此判断"库结构与代码是否匹配"——连接得上但版本落后同样是**不可用**，
 #: 否则 health 会谎报健康而受权读请求全线 500。三者一致性由 `tests/test_migrations.py` 断言。
-EXPECTED_SCHEMA_REVISION = "20260915_0015"
+EXPECTED_SCHEMA_REVISION = "20260916_0016"
 
 metadata = sa.MetaData(schema=SCHEMA)
 
@@ -108,6 +108,11 @@ intake_quarantines = sa.Table(
     # 历史行保持 NULL（无法证明课程归属）⇒ 只对平台管理员可见，原始数据不动。
     sa.Column("scope_course_id", sa.Uuid(), nullable=True),
     sa.Column("scope_section_id", sa.Uuid(), nullable=True),
+    # 迁移 0016（P13 老师复核界面）：邮件主题头与人工处置留痕。历史行全为空。
+    sa.Column("subject", sa.Text(), nullable=True),
+    sa.Column("resolution", sa.Text(), nullable=True),
+    sa.Column("resolved_at", TIMESTAMP(timezone=True, precision=3), nullable=True),
+    sa.Column("resolved_by", sa.Uuid(), nullable=True),
 )
 
 artifact_gc_runs = sa.Table(

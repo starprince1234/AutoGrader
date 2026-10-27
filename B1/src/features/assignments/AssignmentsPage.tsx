@@ -550,32 +550,40 @@ export function AssignmentsPage() {
     <div className="stack">
       {/* 邮件隔离复核不占主导航：它从作业上下文进入（P13 的 mail 标签），
           把当前课程/课序作为筛选上下文带过去；授权仍由服务端按令牌与记录 scope 判定。 */}
-      <div className="inline">
+      <div className="panel__head">
         <PageTitle>{t("nav.assignments")}</PageTitle>
-        {cohortView ? (
-          <button
-            type="button"
-            className="button"
-            data-testid="assignments-create-entry"
-            onClick={() => setComposerOpen(true)}
-          >
-            {t("assignments.create.entry")}
-          </button>
-        ) : null}
-        {canReviewQuarantine(session) ? (
-          <Link
-            to="/review"
-            search={{
-              tab: "mail",
-              course_id: courseScope === "" ? undefined : courseScope,
-              section_id: sectionScope === "" ? undefined : sectionScope,
-            }}
-            className="button button--ghost"
-            data-testid="assignments-quarantine-link"
-          >
-            {t("review.mail.title")}
-          </Link>
-        ) : null}
+        <div className="row-actions">
+          {cohortView ? (
+            <button
+              type="button"
+              className="button"
+              data-testid="assignments-create-entry"
+              onClick={() => setComposerOpen(true)}
+            >
+              {t("assignments.create.entry")}
+            </button>
+          ) : null}
+          {canReviewQuarantine(session) ? (
+            <Link
+              to="/review"
+              search={{
+                tab: "mail",
+                course_id: courseScope === "" ? undefined : courseScope,
+                section_id: sectionScope === "" ? undefined : sectionScope,
+              }}
+              className="button button--ghost"
+              // `.button--ghost` 的底色与页面底色相同，在页头看起来像纯文字、也显得没对齐；
+              // 页面局部补一层卡面色与描边（不改共享 CSS），让它与"新建作业"是同一颗按钮。
+              style={{
+                background: "var(--color-surface)",
+                boxShadow: "inset 0 0 0 1px var(--color-border)",
+              }}
+              data-testid="assignments-quarantine-link"
+            >
+              {t("review.mail.title")}
+            </Link>
+          ) : null}
+        </div>
       </div>
 
       {!cohortView && scope === null ? (

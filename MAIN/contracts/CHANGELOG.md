@@ -789,6 +789,38 @@ uff、pytest、pnpm * 都无法运行。
 - **摘要**：见五份 `contracts.lock`（由 `contract_digest()` 计算，此处不复制）
 - **回滚方式**：还原本批契约文本与版本号、回退 B4 迁移 `20261027_0005`、移除 B1 的
   `/forgot-password` 页面与登录入口，然后重跑 `scripts/relock_contracts.py`；版本回到 `0.21.0`。
+## 0.23.0 — 隔离区人工处置留痕与邮件摘要
+
+- **级别**：P1 增补（新增 4 个响应字段与 1 个 operation；不改既有字段语义）
+- **状态**：已生效
+- **动机**：老师复核隔离邮件时只有邮箱/UID，认不出是哪封邮件；"驳回"没有出口，结构/附件类拒绝
+  的记录永远留在待处理列表；处置后也没有"谁在何时处理"的留痕。此前的 `IntakeQuarantineView`
+  只有 `resolved` 布尔、`resolved_student_id` 与 `resolution_note`，表达不了"已驳回"，也表达不了
+  操作人与时间。
+- **变更文件**：
+  - `openapi/b2.yaml`：`IntakeQuarantineView` 增加 `subject`/`resolution`/`resolved_at`/`resolved_by`
+    （均为 required，null 表示未记录）；新增 `POST /api/v1/intake/quarantines/{id}/dismiss`
+    （`dismissIntakeQuarantine`）；`resolveIntakeQuarantine` 补充处置结果与留痕语义；列表
+    `resolved` 描述改为"已处理（归属或驳回）/未处理"。
+  - 六份契约 `info.version`、五份 `contracts.lock` 与模块清单同步到 `0.23.0`（`0.22.0` 已被找回密码批次占用）。
+- **受影响模块与需要做的改动**：
+  - **B2**：迁移 `20260916_0016`（四列 + 三个 CHECK，历史行保持空）；邮件入口记录主题头
+    （可打印、折叠空白、≤200 字）；`resolve` 写 `attribution` 留痕；新增 `dismiss` 服务与路由
+    （任何原因码都可驳回，行锁 + 行级授权 + 409 原子性保持不变）。
+  - **B1**：生成类型重新生成；复核列表显示邮件摘要/失败原因/课程课序/状态/处理人+时间，
+    操作列提供「归属学生」「驳回」；归属弹窗仍只提交 `student_id/note`，驳回提交 `note`。
+  - **B3/B4/B5**：无行为改动，仅锁摘要与版本号随契约升级。
+- **是否破坏兼容**：否（新增字段为 nullable、新增 operation；旧客户端忽略新字段仍可工作）。
+- **迁移方式**：一次性加列/加约束；历史已处理行的处置结果与留痕为 `null`，界面显示"未记录"，
+  不做回填与猜测。
+- **示例变更**：
+  `POST /api/v1/intake/quarantines/{id}/dismiss` `{"note":"附件是误报"}` →
+  `{"intake_quarantine_id":"…","subject":"作业一提交","resolution":"dismissed","resolved":true,"resolved_at":"2026-10-27T08:00:00.000Z","resolved_by":"…","resolved_student_id":null,…}`。
+- **验证**：B2 迁移/接口/邮件主题的 pytest 与 B1 `tsc/eslint/api:check/vitest/build` 见本次提交
+  说明；真实 PostgreSQL 迁移 upgrade/downgrade 与 B2 API 行为在本机临时实例上执行。
+- **摘要**：见五份 `contracts.lock`（由官方 `relock_contracts.py` 计算，此处不复制）。
+- **回滚方式**：还原本批契约文本与版本号、回退 B2 迁移 `20260916_0016`（删除四列与三个约束，
+  会丢失主题与处置留痕）、移除 B1 的驳回入口，然后重跑 `relock_contracts.py`；版本回到 `0.22.0`。
 
 ---
 

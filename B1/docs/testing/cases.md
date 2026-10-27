@@ -113,6 +113,9 @@
 | TC-B1-101 | CHG-0017 | 组件+安全 | 编辑已有题目并提交用例（服务端那集合读不回来） | 勾选/不勾选整体替换确认后保存 | 未确认 ⇒ 报"会整体替换…本页读不到那份集合"且**不发请求**；确认后才发 PATCH；编辑路径以**零个用例**开场（不凭空渲染用例行），新建路径给一行邀请 | 存在 | `draft.test.ts`、`AuthoringPage.test.tsx` |
 | TC-B1-102 | P13-A | 组件+诚实性 | `resolved` 的三态 / 可归属与不可归属的原因码 | 打开 `/review?tab=mail` | 默认请求显式 `resolved=false`；URL `resolved=all` 时请求**省略**该参数（契约不能表达"两者都要"）；可归属（`not_uniquely_matched`/`ambiguous_match`）显示归属按钮，不可归属（如 `archive_bomb`）**不显示** | 存在 | `src/features/review/search.test.ts` + `MailReviewTab.test.tsx` |
 | TC-B1-103 | P13-B | 组件+诚实性 | `static_rule_hits` 含 `count=0`；`attempt_count=0`；`infrastructure_error` 存在 | 打开 `/review?tab=quality` | **0 命中行不被过滤**（`STAT-PY-013` 在场且为 `0`）；`attempt_count=0` 显示"没有评测记录"且**不**再叠"样本较少"；`infrastructure_error` 单列"系统问题"；三态安全与 `unmeasured_runs` 不合并、不转 0 | 存在 | `src/features/review/QualityReviewTab.test.tsx` |
+| TC-B1-113 | P13-A | 组件+契约 | 教师直接打开 `/review?tab=mail`（不带课程上下文） | 观察列表 | 无需先选课程即加载待处理列表；列含邮件摘要（含记录时间）、识别失败原因、课程/课序、处理状态、操作；已处理行显示处理人+时间；历史行显示"未记录" | 存在 | `src/features/review/MailReviewTab.test.tsx` |
+| TC-B1-114 | P13-A | 组件+契约 | 未处理记录（可归属/不可归属两类） | 点「驳回」→ 填备注 → 确认 | 确认前不发 POST；POST 体只有 `{note}`；成功后提示"邮件已驳回"并刷新；已处理行不再显示归属/驳回；不可归属原因码同样可驳回 | 存在 | 同上 |
+| TC-B1-115 | P13-A/P13-B | 组件+安全 | 令牌 scope 只含课程 A；`/courses` 还返回课程 B；URL 带课程 B | 打开两个标签的课程下拉 | 下拉只出现 A（及 scope 内的课序）；URL 的无权课程回落到 A，不把 B 发给服务端 | 存在 | `MailReviewTab.test.tsx`、`QualityReviewTab.test.tsx` |
 
 | TC-B1-104 | P01 | 组件 | 匿名打开受保护深链 | 等待会话恢复 | 先显示骨架、不渲染受保护内容；去登录页并在 `?redirect=` 保留原站内路径（含筛选） | 存在 | `src/app/AppShell.test.tsx` |
 | TC-B1-105 | P01 | 组件 | 已登录打开 `/` | 观察导览页与页头 | 仍显示双列导览页（不自动跳作业页），已登录身份与退出按钮可见；导览页不渲染应用侧栏；页头没有契约版本、欢迎语或课程作用域 UUID | 存在 | `src/app/AppShell.test.tsx`、`LandingPage.test.tsx`、`src/app/navigation.test.ts` |

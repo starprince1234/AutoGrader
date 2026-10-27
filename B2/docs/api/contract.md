@@ -13,7 +13,8 @@
 | `GET /api/v1/evaluation-runs/{evaluation_run_id}/appeal-pack` | 导出一个运行的**可移动证据包**（`CHG-0014`） | 是（JWT） | 教师/助教/管理员，**外加本人运行的学生**；`view=teacher` 仅 staff | 已实现（`tests/test_b2_routes.py`；见第 1c 节） |
 | `GET /api/v1/evaluation-runs/quality-summary` | 题目质量聚合（`CHG-0015`，**只有计数**） | 是（JWT） | 仅教师/助教/管理员 | 已实现（同上） |
 | `GET /api/v1/intake/quarantines` | 隔离区列表（`CHG-0014`）：教师能重新找到"没能变成提交"的邮件 | 是（JWT） | 教师/助教/管理员；staff 只返回**记录 scope 被令牌作用域覆盖**的行（NULL scope 仅管理员可见） | 已实现（`tests/test_intake_api.py`；见第 1d 节） |
-| `POST /api/v1/intake/quarantines/{intake_quarantine_id}/resolve` | 人工归属一条隔离记录（`CHG-0014`） | 是（JWT） | 同左；**行锁内**重查记录 scope：staff 对无 scope/跨课记录 403，管理员可处置未关联行 | 已实现（同上） |
+| `POST /api/v1/intake/quarantines/{intake_quarantine_id}/resolve` | 人工归属一条隔离记录（`CHG-0014`；写处理人/时间） | 是（JWT） | 同左；**行锁内**重查记录 scope：staff 对无 scope/跨课记录 403，管理员可处置未关联行 | 已实现（同上） |
+| `POST /api/v1/intake/quarantines/{intake_quarantine_id}/dismiss` | 驳回一条隔离记录（不归属学生；任何原因码都可） | 是（JWT） | 同左；行锁内重查 scope；已归属/已驳回 ⇒ 409 | 已实现（`0.23.0`，同上） |
 | `POST /api/v1/reference-verifications` | 在沙箱执行参考解答并逐用例比对（`CHG-0019`；发布门禁的执行入口） | 是（JWT） | 教师/助教/管理员且令牌携带课程作用域（**按题目的课程判定做不到，见缺口 ⑦**） | 已实现（`tests/test_reference_verification.py`；见第 1f 节） |
 
 补充（受 `module.yaml` routes 前缀 `/api/v1/evaluation-runs` 覆盖，契约已锁定，详见 `../../../MAIN/contracts/openapi/b2.yaml` 与 [../../../MAIN/docs/workstreams/B2.md](../../../MAIN/docs/workstreams/B2.md) 第 4 节）：
@@ -136,12 +137,13 @@ B2 侧的四条纪律（每条都有测试，见 [../testing/cases.md](../testin
    之一为数字）的运行数，`wall_seconds` 不算（那是 B2 自测的墙钟）；三态之和**完整划分**
    `attempt_count`（显式 `not_checked` 与"从未走到安全判定阶段"的 NULL 同属"我们没看过"）。
 
-## 1d. 隔离区复核（`CHG-0014` 的两条 intake 端点；P13 补行级课程范围）
+## 1d. 隔离区复核（`CHG-0014` 的 intake 端点；P13 补行级课程范围；0016 补处置留痕）
 
 | 方法 + 路径 | 语义 | 认证 / 角色 | 边界与取舍 |
 |---|---|---|---|
-| `GET /api/v1/intake/quarantines` | 分页列出**调用者可见**的隔离记录（按记录时间倒序），可按 `course_id`/`section_id`/`reason_code`/`resolved` 过滤 | 是（JWT）；教师/助教/管理员，且 staff 令牌必须携带**至少一个**课程作用域 | 行级谓词先于排序/limit/游标；`resolved` 缺省**不过滤**（契约没给它 `default`，见缺口 ④）；`course_id/section_id` 只缩小范围，越界 403；`section_id` 必须伴随 `course_id`（422） |
-| `POST .../{intake_quarantine_id}/resolve` | 人工归属；体 `{student_id, note?}`（`additionalProperties: false`） | 同上；行级判定在 `SELECT ... FOR UPDATE` 之后 | **只记录归属**：不建提交、不发事件、不评测；staff 对 NULL scope/跨课记录 403；管理员可处置未关联行（课程/课序选择只用于加载候选，不写回 scope） |
+| `GET /api/v1/intake/quarantines` | 分页列出**调用者可见**的隔离记录（按记录时间倒序），可按 `course_id`/`section_id`/`reason_code`/`resolved` 过滤；视图含 `subject`（主题头）与 `resolution`/`resolved_at`/`resolved_by` | 是（JWT）；教师/助教/管理员，且 staff 令牌必须携带**至少一个**课程作用域 | 行级谓词先于排序/limit/游标；`resolved` 缺省**不过滤**（契约没给它 `default`，见缺口 ④），`true` 表示归属**或**驳回；`course_id/section_id` 只缩小范围，越界 403；`section_id` 必须伴随 `course_id`（422） |
+| `POST .../{intake_quarantine_id}/resolve` | 人工归属；体 `{student_id, note?}`（`additionalProperties: false`） | 同上；行级判定在 `SELECT ... FOR UPDATE` 之后 | **只记录归属**：不建提交、不发事件、不评测；写 `resolution=attributed` + `resolved_at`/`resolved_by`；staff 对 NULL scope/跨课记录 403；管理员可处置未关联行（课程/课序选择只用于加载候选，不写回 scope） |
+| `POST .../{intake_quarantine_id}/dismiss` | 驳回（不归属学生）；体 `{note?}`（`additionalProperties: false`） | 同上；行级判定在 `SELECT ... FOR UPDATE` 之后 | **任何原因码都可驳回**（它不写学生身份）；写 `resolution=dismissed` + `resolved_at`/`resolved_by`，`resolved_student_id` 必须为空；同样只有一条 `UPDATE`，不建提交/不发事件/不评测 |
 
 **行的课程范围从哪来（P13 的核心）**：`b2.intake_quarantines.scope_course_id/scope_section_id`
 （迁移 `20260915_0015`，成对为空或非空）。写入侧只接受**匹配规则候选共识**——全部命中规则的
@@ -159,9 +161,10 @@ B2 侧的四条纪律（每条都有测试，见 [../testing/cases.md](../testin
    `unsupported_attachment_encoding`/`malformed_attachment`/`attachment_too_large`/
    `attachment_total_too_large`/`executable_attachment`/`archive_bomb`/`archive_attachment`/
    `unsupported_attachment_type`/`not_plain_text`/`nested_message_attachment`/`malformed_message`）。
-2. **归属不触发评测是结构性的**：`resolve()` 的全部写入只有一条 `UPDATE b2.intake_quarantines`；
-   用例以"提交/outbox/评测运行三张表计数逐条为零"把它钉住。
-3. **重复归属 ⇒ 409**（不覆盖前一个人的决定，也不静默返回旧值）；未知/非法标识 ⇒ 404；请求体违规 ⇒ 422。
+2. **归属/驳回都不触发评测是结构性的**：`resolve()` 与 `dismiss()` 的全部写入都只有一条
+   `UPDATE b2.intake_quarantines`；用例以"提交/outbox/评测运行三张表计数逐条为零"把它钉住。
+3. **重复处置 ⇒ 409**（归属与驳回共享"已处理"状态，不覆盖前一个人的决定，也不静默返回旧值）；
+   未知/非法标识 ⇒ 404；请求体违规 ⇒ 422。
 4. **名单成员关系不在 B2 复核**：B2 没有到 B4 名单的通道（无客户端、无 serviceToken 端点），
    因此 resolve 不重查"该学生是否仍在该课序"。客户端每次从 B4 现取候选；服务端重查的是**记录行
    scope + 调用者角色/作用域**，而不是信任客户端提交的候选列表。这是本轮登记在案的残留缺口。

@@ -81,7 +81,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import sqlalchemy as sa
-from sqlalchemy import Engine
+from sqlalchemy import Connection, Engine
 
 from autograder_b2.api.formatting import rfc3339_millis
 from autograder_b2.auth.authorization import (
@@ -135,7 +135,11 @@ class QuarantineRequestError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class IntakeQuarantineView:
-    """契约 `IntakeQuarantineView` 的一行（字段以契约为准，**不含**任何邮件正文/附件内容）。"""
+    """契约 `IntakeQuarantineView` 的一行（字段以契约为准，**不含**任何邮件正文/附件内容）。
+
+    `subject` 是例外中的**主题头**（有界、可打印、≤200 字），只用于让老师认出邮件；它仍不是正文，
+    也不参与任何授权判定。`resolution`/`resolved_at`/`resolved_by` 是人工处置留痕（0016）。
+    """
 
     intake_quarantine_id: str
     intake: str
@@ -151,6 +155,12 @@ class IntakeQuarantineView:
     #: 匹配规则候选共识给出的课程/课序；成对为空（未关联）或非空。未关联行只对管理员可见。
     scope_course_id: str | None = None
     scope_section_id: str | None = None
+    #: 邮件主题头（有界、无正文）；历史行为 `None`。
+    subject: str | None = None
+    #: 人工处置结果：`attributed`（归属学生）/`dismissed`（驳回）/`None`（未处理或历史遗留）。
+    resolution: str | None = None
+    resolved_at: datetime | None = None
+    resolved_by: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,6 +190,10 @@ def quarantine_view_body(view: IntakeQuarantineView) -> dict[str, Any]:
         "resolution_note": view.resolution_note,
         "scope_course_id": view.scope_course_id,
         "scope_section_id": view.scope_section_id,
+        "subject": view.subject,
+        "resolution": view.resolution,
+        "resolved_at": None if view.resolved_at is None else rfc3339_millis(view.resolved_at),
+        "resolved_by": view.resolved_by,
     }
 
 
@@ -299,6 +313,25 @@ def decode_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
         raise InvalidQuarantineCursorError("cursor position is not a quarantine id") from error
 
 
+def validate_resolution_note(note: object) -> str | None:
+    """处置备注校验：`None`/空串按"未提供"，其余必须是 ≤500 的字符串。
+
+    归属与驳回共用（`note` 是人工写的上下文，可能含学生信息，因此**只存用户提交的这段文本**，
+    不回读邮件内容）。
+    """
+    if note is None:
+        return None
+    if not isinstance(note, str):
+        raise QuarantineRequestError("note must be a string or null")
+    if note == "":
+        return None
+    if len(note) > MAX_RESOLUTION_NOTE:
+        raise QuarantineRequestError(
+            f"note must be at most {MAX_RESOLUTION_NOTE} characters"
+        )
+    return note
+
+
 def validate_resolution_request(*, student_id: object, note: object) -> tuple[str, str | None]:
     """请求体校验（契约 `additionalProperties: false` 由路由层判字段集）。
 
@@ -309,17 +342,7 @@ def validate_resolution_request(*, student_id: object, note: object) -> tuple[st
         canonical_student = str(uuid.UUID(str(student_id)))
     except (AttributeError, TypeError, ValueError) as error:
         raise QuarantineRequestError("student_id must be a UUID") from error
-    if note is None:
-        return canonical_student, None
-    if not isinstance(note, str):
-        raise QuarantineRequestError("note must be a string or null")
-    if note == "":
-        return canonical_student, None
-    if len(note) > MAX_RESOLUTION_NOTE:
-        raise QuarantineRequestError(
-            f"note must be at most {MAX_RESOLUTION_NOTE} characters"
-        )
-    return canonical_student, note
+    return canonical_student, validate_resolution_note(note)
 
 
 class IntakeQuarantineService:
@@ -384,7 +407,39 @@ class IntakeQuarantineService:
             )
         return IntakeQuarantinePage(items=items, next_cursor=next_cursor)
 
-    # --- 人工归属 ---------------------------------------------------------------------
+    # --- 人工处置 ---------------------------------------------------------------------
+
+    def _lock_authorized_row(
+        self,
+        connection: Connection,
+        principal: Principal,
+        identifier: uuid.UUID,
+    ) -> Any:
+        """在行锁内取记录并重判行级授权；返回锁住的行（调用方只看 `reason_code/resolved`）。
+
+        **顺序是安全性质**：先锁行、再按这一行的 scope 判权、最后才看"是否已处理"。
+        反过来（先 409 再看权限）会让越权者从"已处理"与"未处理"的差异里读到不该知道的记录状态。
+        """
+        row = connection.execute(
+            sa.select(
+                intake_quarantines.c.reason_code,
+                intake_quarantines.c.resolved,
+                intake_quarantines.c.scope_course_id,
+                intake_quarantines.c.scope_section_id,
+            )
+            .where(intake_quarantines.c.intake_quarantine_id == identifier)
+            .with_for_update()
+        ).fetchone()
+        if row is None:
+            raise QuarantineNotFoundError(str(identifier))
+        require_quarantine_row_authority(
+            principal,
+            scope_course_id=None if row.scope_course_id is None else str(row.scope_course_id),
+            scope_section_id=(
+                None if row.scope_section_id is None else str(row.scope_section_id)
+            ),
+        )
+        return row
 
     def resolve(
         self,
@@ -410,29 +465,9 @@ class IntakeQuarantineService:
             raise QuarantineNotFoundError("malformed quarantine id") from error
 
         with self._engine.begin() as connection:
-            # 行锁把"检查已归属"与"写入归属"变成一次原子判定：并发两次归属只会有一个成功，
+            # 行锁把"检查已处理"与"写入决定"变成一次原子判定：并发两次处置只会有一个成功，
             # 另一个拿到 409 而不是覆盖前一个人的决定。
-            row = connection.execute(
-                sa.select(
-                    intake_quarantines.c.reason_code,
-                    intake_quarantines.c.resolved,
-                    intake_quarantines.c.scope_course_id,
-                    intake_quarantines.c.scope_section_id,
-                )
-                .where(intake_quarantines.c.intake_quarantine_id == identifier)
-                .with_for_update()
-            ).fetchone()
-            if row is None:
-                raise QuarantineNotFoundError(str(identifier))
-            # 授权在**锁住这一行之后**重判：记录 scope 是写入侧产生的事实，不能被调用者或
-            # 请求参数替代。staff 对未关联/跨课记录 403；管理员不受课程限制。
-            require_quarantine_row_authority(
-                principal,
-                scope_course_id=None if row.scope_course_id is None else str(row.scope_course_id),
-                scope_section_id=(
-                    None if row.scope_section_id is None else str(row.scope_section_id)
-                ),
-            )
+            row = self._lock_authorized_row(connection, principal, identifier)
             if bool(row.resolved):
                 raise QuarantineAlreadyResolvedError(str(identifier))
             reason_code = str(row.reason_code)
@@ -443,7 +478,7 @@ class IntakeQuarantineService:
                 .where(
                     sa.and_(
                         intake_quarantines.c.intake_quarantine_id == identifier,
-                        # 兜底：即使锁语义在某些隔离级别下退化，也不会覆盖已有归属。
+                        # 兜底：即使锁语义在某些隔离级别下退化，也不会覆盖已有处置。
                         intake_quarantines.c.resolved.is_(False),
                     )
                 )
@@ -451,6 +486,60 @@ class IntakeQuarantineService:
                     resolved=True,
                     resolved_student_id=uuid.UUID(canonical_student),
                     resolution_note=canonical_note,
+                    resolution="attributed",
+                    resolved_at=datetime.now(UTC),
+                    resolved_by=uuid.UUID(principal.user_id),
+                )
+            )
+            updated = connection.execute(
+                _select_view().where(intake_quarantines.c.intake_quarantine_id == identifier)
+            ).fetchone()
+        assert updated is not None  # 同一事务内刚更新过这一行
+        return _view_of(updated)
+
+    def dismiss(
+        self,
+        *,
+        principal: Principal,
+        intake_quarantine_id: str,
+        note: str | None = None,
+    ) -> IntakeQuarantineView:
+        """驳回一条隔离记录（不归属学生）；**只写这一行**，不建提交、不触发评测。
+
+        与 `resolve` 的区别只有一处：驳回**不要求** `reason_code` 属于可归属集合。原因：
+        归属会写入一个学生身份，因此只能修"身份没推出来"；驳回只是"这条记录我处理过了、
+        不归属任何人"，对结构/附件类拒绝同样成立，而且这正是老师清空待处理列表的出口。
+
+        异常：`AuthorizationError` → 403；`QuarantineNotFoundError` → 404；
+        `QuarantineAlreadyResolvedError` → 409；`QuarantineRequestError` → 422。
+        """
+        require_intake_quarantine_authority(principal)
+        canonical_note = validate_resolution_note(note)
+        try:
+            identifier = uuid.UUID(intake_quarantine_id)
+        except (AttributeError, TypeError, ValueError) as error:
+            raise QuarantineNotFoundError("malformed quarantine id") from error
+
+        with self._engine.begin() as connection:
+            row = self._lock_authorized_row(connection, principal, identifier)
+            if bool(row.resolved):
+                raise QuarantineAlreadyResolvedError(str(identifier))
+            connection.execute(
+                sa.update(intake_quarantines)
+                .where(
+                    sa.and_(
+                        intake_quarantines.c.intake_quarantine_id == identifier,
+                        intake_quarantines.c.resolved.is_(False),
+                    )
+                )
+                .values(
+                    resolved=True,
+                    # 驳回不能留下"学生"：否则"已驳回"与"已归属"在数据上不可区分。
+                    resolved_student_id=None,
+                    resolution_note=canonical_note,
+                    resolution="dismissed",
+                    resolved_at=datetime.now(UTC),
+                    resolved_by=uuid.UUID(principal.user_id),
                 )
             )
             updated = connection.execute(
@@ -478,6 +567,10 @@ def _select_view() -> sa.Select[Any]:
         intake_quarantines.c.resolution_note,
         intake_quarantines.c.scope_course_id,
         intake_quarantines.c.scope_section_id,
+        intake_quarantines.c.subject,
+        intake_quarantines.c.resolution,
+        intake_quarantines.c.resolved_at,
+        intake_quarantines.c.resolved_by,
     )
 
 
@@ -586,6 +679,10 @@ def _view_of(row: Any) -> IntakeQuarantineView:
         resolution_note=None if row.resolution_note is None else str(row.resolution_note),
         scope_course_id=None if row.scope_course_id is None else str(row.scope_course_id),
         scope_section_id=None if row.scope_section_id is None else str(row.scope_section_id),
+        subject=None if row.subject is None else str(row.subject),
+        resolution=None if row.resolution is None else str(row.resolution),
+        resolved_at=row.resolved_at,
+        resolved_by=None if row.resolved_by is None else str(row.resolved_by),
     )
 
 

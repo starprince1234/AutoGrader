@@ -27,13 +27,17 @@
 | `20260915_0012` | 表标准整改（`RQ-B-4-30` / 缺陷 E16） | 18 个主键约束改名为 `pk_<table>` + 7 个 `created_at`/`updated_at` 列收窄到 `timestamptz(3)` |
 | `20260915_0013` | 隔离区人工归属落点（`CHG-0014`） | `intake_quarantines` 加 `resolved`/`resolved_student_id`/`resolution_note` + `ck_intake_quarantines_resolution`（`resolved = (resolved_student_id IS NOT NULL)`） |
 | `20260915_0014` | AI 评分参考的存储落点（`RQ-T-30` / `ADR-0014` / `CHG-0018`） | `evaluation_commentaries` 加 `advisory_score`/`advisory_max_score`/`advisory_rationale`/`advisory_confidence` 四列；**重写** `ck_evaluation_commentaries_shape`（把四列纳入状态配对）；新增 `ck_evaluation_commentaries_advisory_bounds`（`0 <= score <= max_score` 且 `max_score > 0`）、`..._advisory_confidence`、`..._advisory_rationale` |
-| `20260915_0015` | 隔离区的行级课程范围（P13 的越权修复） | `intake_quarantines` 加 `scope_course_id`/`scope_section_id`（可空）+ `ck_intake_quarantines_scope`（`(scope_course_id IS NULL) = (scope_section_id IS NULL)`）+ `ix_intake_quarantines_scope_created_at`；**当前 head** |
+| `20260915_0015` | 隔离区的行级课程范围（P13 的越权修复） | `intake_quarantines` 加 `scope_course_id`/`scope_section_id`（可空）+ `ck_intake_quarantines_scope`（`(scope_course_id IS NULL) = (scope_section_id IS NULL)`）+ `ix_intake_quarantines_scope_created_at` |
+| `20260916_0016` | 隔离区人工处置留痕与邮件摘要 | `intake_quarantines` 加 `subject`/`resolution`/`resolved_at`（`timestamptz(3)`）/`resolved_by`；加 `ck_intake_quarantines_subject`、`ck_intake_quarantines_decision`、`ck_intake_quarantines_decision_audit`；**删除并取代** 0013 的 `ck_intake_quarantines_resolution`（旧约束不允许"已驳回但没有学生"）；**当前 head** |
 
-- 当前 head = **`20260915_0015`**，三处一致（`uv run alembic heads` 实测为
-  `20260915_0015 (head)`）：`module.yaml: database.migration_head`、`db/schema.py: EXPECTED_SCHEMA_REVISION`、
+- 当前 head = **`20260916_0016`**，三处一致（`uv run alembic heads` 实测为
+  `20260916_0016 (head)`）：`module.yaml: database.migration_head`、`db/schema.py: EXPECTED_SCHEMA_REVISION`、
   Alembic 自身。**注意**：`EXPECTED_SCHEMA_REVISION` 是 readiness 判据，因此**部署时必须先跑
   `uv run alembic upgrade head`**——库停在上一个 revision 时评测/成绩/评语/隔离区路由会按设计返回 503
   （如实报"库结构版本与本构建不符"，而不是带着旧结构继续服务）。
+- **0016 的兼容性**：纯加列 + 新约束，历史行保持 NULL（主题与处置留痕显示"未记录"）；没有数据回填，
+  也没有"旧行必须补处置结果"的要求。`downgrade()` 会删除四列并恢复 0013 约束，届时已驳回行会
+  违反"已处理 ⇔ 有学生"，因此降级前必须先处理 `resolution='dismissed'` 的行（见回滚说明）。
 - **0015 为什么必须新增列**：P13 要求"教师只能读取授权范围内有可靠课程关联的隔离记录"。没有
   可持久化的课程/课序，"拥有任意课程权限"就等于"能读全局隔离数据"（旧行为是已登记的缺口）。
   列的**唯一**来源是邮件匹配规则的候选共识（全部命中规则的 `(course_id, section_id)` 完全一致）；

@@ -12,7 +12,9 @@
 
 1. **邮件的一切输入都可伪造**：正文与附件原文**从不**落库、**从不**进日志。日志与隔离记录里只
    允许出现 mailbox 标签、UIDVALIDITY/UID、`Message-ID`（它是消息标识符，不是内容）、附件**文件名**
-   与字节数、原因码——连发件人地址都不写（超范围 PII）；
+   与字节数、原因码——连发件人地址都不写（超范围 PII）。**唯一的例外是主题头**（迁移 0016）：
+   复核列表要靠它让老师认出邮件；入口只保留可打印字符、折叠空白并截断到 200 字（
+   `attachments._subject_for_storage`），它不参与匹配、幂等或授权判定，正文/附件仍不落库；
 2. **不唯一即隔离**：0 个或 ≥2 个不同身份都进隔离区，**绝不猜**，也绝不因此产生评测；
 3. **双键幂等**：`(mailbox, uidvalidity, uid)` 与 `(mailbox, message_id)` 任一命中即跳过；
    `processed` 的 checkpoint 与提交**同事务**写入（存在提交 ⇒ 必存在 checkpoint），
@@ -236,6 +238,8 @@ class QuarantineRecord:
     #: 由匹配规则候选共识产生的课程/课序（成对为空或非空）；运维读路径据此核对 scope 来源。
     scope_course_id: str | None = None
     scope_section_id: str | None = None
+    #: 邮件主题头（有界、无正文）；列表里帮老师认出邮件。历史行为 None。
+    subject: str | None = None
 
 
 class EmailCheckpointStore:
@@ -336,6 +340,7 @@ class QuarantineStore:
         now: datetime,
         scope: ScopeContext | None = None,
         intake: str = "email",
+        subject: str | None = None,
     ) -> str:
         """写一条隔离记录（在调用方事务内）。`detail` 已在调用方脱敏，这里只兜长度上限。
 
@@ -356,6 +361,7 @@ class QuarantineStore:
                 created_at=now,
                 scope_course_id=None if scope is None else uuid.UUID(scope.course_id),
                 scope_section_id=None if scope is None else uuid.UUID(scope.section_id),
+                subject=subject,
             )
         )
         return str(identifier)
@@ -376,6 +382,7 @@ class QuarantineStore:
             intake_quarantines.c.created_at,
             intake_quarantines.c.scope_course_id,
             intake_quarantines.c.scope_section_id,
+            intake_quarantines.c.subject,
         ).order_by(intake_quarantines.c.created_at.desc())
         if mailbox is not None:
             statement = statement.where(intake_quarantines.c.mailbox == mailbox)
@@ -394,6 +401,7 @@ class QuarantineStore:
                 created_at=row[8],
                 scope_course_id=None if row[9] is None else str(row[9]),
                 scope_section_id=None if row[10] is None else str(row[10]),
+                subject=None if row[11] is None else str(row[11]),
             )
             for row in rows
         )
@@ -577,6 +585,7 @@ class EmailIntakeService:
                     "the message carries no Message-ID header;"
                     " the double-key checkpoint cannot be formed",
                 ),
+                subject=message.subject,
             )
 
         existing = self._checkpoints.lookup(
@@ -595,7 +604,11 @@ class EmailIntakeService:
             accepted = screen_attachments(message, limits=self.limits)
         except AttachmentRejected as rejected:
             return self._reject(
-                uidvalidity=uidvalidity, uid=uid, message_id=message_id, rejection=rejected
+                uidvalidity=uidvalidity,
+                uid=uid,
+                message_id=message_id,
+                rejection=rejected,
+                subject=message.subject,
             )
 
         match = self._matcher.match(
@@ -614,6 +627,7 @@ class EmailIntakeService:
                 reason_code=reason,
                 detail=match.detail,
                 scope=match.scope_context,
+                subject=message.subject,
             )
 
         target = match.target
@@ -705,6 +719,7 @@ class EmailIntakeService:
         uid: int,
         message_id: str | None,
         rejection: AttachmentRejected,
+        subject: str | None = None,
     ) -> MessageOutcome:
         """安全/结构拒绝：隔离记录 + checkpoint 同事务，然后记一条结构化安全日志。"""
         outcome = self._record_outcome(
@@ -714,6 +729,7 @@ class EmailIntakeService:
             message_id=message_id,
             reason_code=rejection.reason,
             detail=rejection.detail,
+            subject=subject,
         )
         if outcome.status == "rejected":
             # 日志有意放在事务**之后**：日志说"已拒绝"时，隔离记录一定已经落库。
@@ -737,6 +753,7 @@ class EmailIntakeService:
         reason_code: EmailIntakeReason,
         detail: str,
         scope: ScopeContext | None,
+        subject: str | None = None,
     ) -> MessageOutcome:
         """无法唯一匹配：进隔离区、不产生提交、也**不因此**产生任何评测。"""
         outcome = self._record_outcome(
@@ -747,6 +764,7 @@ class EmailIntakeService:
             reason_code=reason_code,
             detail=detail,
             scope=scope,
+            subject=subject,
         )
         if outcome.status == "quarantined":
             logger.info(
@@ -769,6 +787,7 @@ class EmailIntakeService:
         reason_code: str,
         detail: str,
         scope: ScopeContext | None = None,
+        subject: str | None = None,
     ) -> MessageOutcome:
         mailbox = self._settings.mailbox
         now = utc_now()
@@ -784,6 +803,7 @@ class EmailIntakeService:
                     message_id=message_id,
                     now=now,
                     scope=scope,
+                    subject=subject,
                 )
                 self._checkpoints.record(
                     connection,

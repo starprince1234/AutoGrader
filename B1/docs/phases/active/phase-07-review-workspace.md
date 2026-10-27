@@ -52,8 +52,8 @@
 |---|---|
 | `node node_modules/typescript/bin/tsc -b --pretty false` | **通过**（exit 0） |
 | `node node_modules/eslint/bin/eslint.js . --max-warnings 0` | **通过**（0 error / 0 warning） |
-| `node scripts/generate-api-types.mjs --check` | `API types match MAIN/contracts.`（契约 `0.20.0`） |
-| `node node_modules/vitest/vitest.mjs run` | **45 文件 / 389 用例全部通过**（其中 `src/features/review` 新增 3 文件 / 25 用例；其余为成员页面与共享组件） |
+| `node scripts/generate-api-types.mjs --check` | `API types match MAIN/contracts.`（契约 `0.23.0`） |
+| `node node_modules/vitest/vitest.mjs run` | **48 文件 / 417 用例全部通过**（其中 `src/features/review` 4 文件 / 29 用例；其余为成员页面与共享组件） |
 
 新增测试覆盖：URL 三态与跨标签参数清理（6）；邮件标签的请求参数/403/空态/详情/不可归属/归属体/
 409/空候选/管理员未关联行（9）；质量标签的深链聚合/无版本不发请求/非法版本/B3 403 与 404 不拉聚合/
@@ -89,3 +89,26 @@
    版本可见性，正常 UI 路径不会向 B2 拉无权版本；**直接调用 B2 的向量未关闭**，不声称已隔离。
 5. **共享文件**：`router.tsx` 自带"改动前在 docs/phases/active 登记"的约定——本文件即登记；
    `i18n/index.ts` 的旧 `quarantine.*`/`quality.*` 键已替换为 `review.*`。
+
+## 6. 老师可用性与权限补充（2026-10-27，契约 0.23.0）
+
+上线后老师提出三点：作业页两个按钮不齐、邮件页只有查询框没有处理列表、课程下拉可能出现无权课程。
+本批的修正（只改 P13 页面与 P04 入口的布局，不动 AppShell/共享 CSS/其他成员页面逻辑）：
+
+1. **作业页按钮**：标题与「新建作业 / 邮件提交」改为 `.panel__head` + `.row-actions`，
+   两个按钮同一基线与同一行；窄屏也不会只剩一个按钮单独换行。
+2. **邮件页默认就是待处理列表**：`listEnabled` 不再要求先选课程（staff 只要令牌带作用域就查，
+   服务端仍按行级 scope 过滤）；列表字段按老师要求改为「邮件摘要（含记录时间）/ 识别失败原因 /
+   课程课序 / 处理状态（含处理人+时间）/ 操作」。
+3. **处置**：每行提供「归属学生」与「驳回」。归属弹窗仍只提交 `student_id/note`，候选来自
+   B4 当前课序名单；驳回弹窗提交 `note`（可空），不写学生、不触发评测；两者成功后统一刷新列表。
+   已处理行显示「已归属/已驳回」与「处理人：… · 时间」；0016 之前的历史行显示「未记录」。
+4. **课程/课序下拉按令牌 scope 过滤**：邮件与质量两个标签都只展示 scope 覆盖的课程；课序若
+   scope 只给了部分课序，则只列这些课序（`section_id=null` 的课程级 scope 才列全部）。
+   URL 指向无权课程时回落到第一门有权课程，不把无权 ID 发出去再展示 403。
+5. **契约 0.23.0 / 迁移 0016**：B2 新增 `dismissIntakeQuarantine`、视图 `subject`/`resolution`/
+   `resolved_at`/`resolved_by`；B1 重新生成类型并新增 `useDismissQuarantine`。B2 侧细节见
+   `B2/docs/phases/active/phase-11-quarantine-decision-trail.md`。
+
+**限制**：处理人只显示令牌主体（本人显示"你"，他人显示短 id）——B2 不知道用户名，B1 也不跨模块
+调管理员用户目录；这不是"显示不出来"，而是"只能显示可核对的标识"。

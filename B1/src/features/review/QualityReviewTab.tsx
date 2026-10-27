@@ -255,7 +255,12 @@ export function QualityReviewTab({
   }, [filter.from, filter.to]);
 
   const courses = useCourses();
-  const courseOptions = loadedCourses(courses.data?.pages);
+  const isAdmin = session.rolesKnown && session.roles.includes("admin");
+  // 与邮件标签同一口径：下拉只展示令牌作用域覆盖的课程；服务端仍会拒绝越权版本。
+  const scopeCourseIds = new Set(session.scope.map((entry) => entry.course_id));
+  const courseOptions = loadedCourses(courses.data?.pages).filter(
+    (course) => isAdmin || scopeCourseIds.has(course.course_id),
+  );
   const versionOptions = useVersionOptions(courseId === "" ? null : courseId);
 
   const invalidVersion = filter.questionVersionId !== null && !isUuid(filter.questionVersionId);

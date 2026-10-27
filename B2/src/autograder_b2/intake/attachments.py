@@ -144,6 +144,8 @@ MESSAGE_ID_LONG_PREFIX_LENGTH = MAX_MESSAGE_ID_LENGTH + 8
 MESSAGE_ID_DIGEST_LENGTH = 16
 #: `parse_message` 在未显式给上限时使用的具名部件上限（= 契约的 `files.maxItems`）。
 DEFAULT_MAX_ATTACHMENTS = MAX_FILES
+#: 邮件主题的落库上限（与 `IntakeQuarantineView.subject.maxLength` 一致）。
+MAX_SUBJECT_LENGTH = 200
 #: base64 的 4 字符一组对应 3 字节；去掉 padding 后余数字符再补 `余数 - 1` 个字节。
 _BASE64_CHARACTERS_PER_GROUP = 4
 _BASE64_BYTES_PER_GROUP = 3
@@ -385,6 +387,9 @@ class EmailMessage:
     attachments: tuple[RawAttachment, ...] = ()
     nested_attachments: tuple[str, ...] = ()
     attachments_overflow: bool = False
+    #: 邮件主题头，已折叠空白、只保留可打印字符、最多 200 字；**不是正文**。
+    #: 复核列表要老师"一眼认出这封邮件"，只靠邮箱/UID 认不出来；主题是唯一可用的有界元数据。
+    subject: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -452,8 +457,27 @@ def _raw_message_id(message: Message) -> str | None:
     return None
 
 
+def _subject_for_storage(message: Message) -> str | None:
+    """把主题头收敛成可落库的有界字符串（**只取主题，不碰正文**）。
+
+    主题同样是可伪造的输入，因此只用于展示：折叠空白、去掉控制字符、截断到 200 字。
+    截断不保证唯一，也不需要唯一——它不是幂等键，只是一个帮助老师认出邮件的标签。
+    """
+    try:
+        raw = message.get("Subject")
+    except Exception:  # noqa: BLE001 - 畸形头不应让整封邮件变成不可解析
+        return None
+    if raw is None:
+        return None
+    text = "".join(character for character in str(raw) if character.isprintable())
+    text = " ".join(text.split())
+    if not text:
+        return None
+    return text[:MAX_SUBJECT_LENGTH].rstrip() or None
+
+
 def parse_message(raw: bytes, *, max_attachments: int = DEFAULT_MAX_ATTACHMENTS) -> EmailMessage:
-    """解析原始 MIME 报文：只取 `Message-ID`、发件人与**具名**部件，正文原样丢弃。
+    """解析原始 MIME 报文：只取 `Message-ID`、发件人、**有界主题头**与**具名**部件，正文原样丢弃。
 
     `max_attachments` 在**遍历过程中**生效：具名部件数达到上限即停止物化并置
     `attachments_overflow`，因此"部件极多"的邮件不会先把整封物化再判断。
@@ -474,6 +498,7 @@ def parse_message(raw: bytes, *, max_attachments: int = DEFAULT_MAX_ATTACHMENTS)
         attachments=attachments,
         nested_attachments=nested,
         attachments_overflow=overflow,
+        subject=_subject_for_storage(message),
     )
 
 

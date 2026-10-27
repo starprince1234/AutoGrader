@@ -63,6 +63,8 @@ function routesFor(options: {
   quarantineRespond?: () => Response;
   enrollments?: ReturnType<typeof enrollmentPublic>[];
   resolveRespond?: () => Response;
+  dismissRespond?: () => Response;
+  courses?: ReturnType<typeof courseSummary>[];
 }): StubbedRoute[] {
   const rows = options.rows ?? [];
   return [
@@ -77,7 +79,11 @@ function routesFor(options: {
           }),
         ),
     },
-    { method: "GET", path: COURSES, respond: () => jsonResponse(coursePage([courseSummary()])) },
+    {
+      method: "GET",
+      path: COURSES,
+      respond: () => jsonResponse(coursePage(options.courses ?? [courseSummary()])),
+    },
     {
       method: "GET",
       path: SECTIONS,
@@ -108,6 +114,21 @@ function routesFor(options: {
             intake_quarantine_id: UUID_C,
             resolved: true,
             resolved_student_id: UUID_D,
+          }),
+        ),
+    },
+    {
+      method: "POST",
+      path: `/api/v1/intake/quarantines/${UUID_C}/dismiss`,
+      respond: () =>
+        options.dismissRespond?.() ??
+        jsonResponse(
+          intakeQuarantineView({
+            intake_quarantine_id: UUID_C,
+            resolved: true,
+            resolution: "dismissed",
+            resolved_at: "2026-09-15T09:00:00.000Z",
+            resolved_by: UUID_D,
           }),
         ),
     },
@@ -315,5 +336,89 @@ describe("P13-A 邮件提交标签", () => {
     // 管理员默认"全部课程"：不带课程筛选，未关联行才会出现。
     expect(request?.url.searchParams.get("course_id")).toBeNull();
     expect(request?.url.searchParams.get("resolved")).toBe("false");
+  });
+
+  it("未带课程上下文时也直接显示待处理列表", async () => {
+    stub = installFetchStub(
+      routesFor({ rows: [intakeQuarantineView({ intake_quarantine_id: UUID_C })] }),
+    );
+    await signIn("teacher1", "pw");
+    renderWithProviders(<Harness initial={{ tab: "mail" }} />);
+
+    // 老师从任意入口进来都应看到自己的待处理记录，而不是只有一个查询框。
+    expect(await screen.findByTestId("review-mail-table")).toBeInTheDocument();
+    expect(screen.getByText(/待处理记录/)).toBeInTheDocument();
+    expect(screen.getByTestId(`review-mail-dismiss-${UUID_C}`)).toBeInTheDocument();
+  });
+
+  it("课程下拉只展示令牌作用域内的课程", async () => {
+    const other = courseSummary({ course_id: UUID_D, course_code: "OTHER-1", title: "别的课" });
+    stub = installFetchStub(
+      routesFor({
+        rows: [],
+        courses: [courseSummary(), other],
+        scope: [{ course_id: UUID_A, section_id: UUID_B }],
+      }),
+    );
+    await signIn("teacher1", "pw");
+    renderWithProviders(<Harness initial={{ tab: "mail" }} />);
+
+    const select = await screen.findByTestId("review-mail-course");
+    await waitFor(() => {
+      const labels = Array.from(select.querySelectorAll("option")).map(
+        (option) => option.textContent ?? "",
+      );
+      expect(labels.some((label) => label.includes("OS-2026"))).toBe(true);
+      expect(labels.some((label) => label.includes("OTHER-1"))).toBe(false);
+    });
+  });
+
+  it("驳回：确认前不 POST，确认后体只含 note，成功后提示", async () => {
+    const user = userEvent.setup();
+    stub = installFetchStub(
+      routesFor({ rows: [intakeQuarantineView({ intake_quarantine_id: UUID_C })] }),
+    );
+    await signIn("teacher1", "pw");
+    renderWithProviders(<Harness initial={MAIL_PATH} />);
+
+    await user.click(await screen.findByTestId(`review-mail-dismiss-${UUID_C}`));
+    await user.type(screen.getByTestId("review-dismiss-note"), "附件是误报");
+    await user.click(screen.getByTestId("review-mail-dismiss-submit"));
+
+    expect(
+      stub!.requests.filter(
+        (item) => item.method === "POST" && item.url.pathname.includes("/dismiss"),
+      ),
+    ).toHaveLength(0);
+    await user.click(screen.getByTestId("review-mail-dismiss-confirm"));
+
+    await waitFor(() => {
+      const posted = stub!.requests.find(
+        (item) => item.method === "POST" && item.url.pathname.endsWith("/dismiss"),
+      );
+      expect(posted).toBeDefined();
+      expect(posted!.body).toEqual({ note: "附件是误报" });
+    });
+    expect(await screen.findByTestId("review-mail-resolved-ok")).toHaveTextContent("邮件已驳回");
+  });
+
+  it("已处理记录显示结果与处理人/时间，且不再提供归属或驳回", async () => {
+    const row = intakeQuarantineView({
+      intake_quarantine_id: UUID_C,
+      resolved: true,
+      resolution: "dismissed",
+      resolved_at: "2026-09-15T09:00:00.000Z",
+      resolved_by: UUID_D,
+    });
+    stub = installFetchStub(routesFor({ rows: [row] }));
+    await signIn("teacher1", "pw");
+    renderWithProviders(<Harness initial={MAIL_PATH} />);
+
+    const table = await screen.findByTestId("review-mail-table");
+    expect(within(table).getByText("已驳回")).toBeInTheDocument();
+    expect(within(table).getByText(/处理人：/)).toBeInTheDocument();
+    expect(within(table).getByText("作业一提交")).toBeInTheDocument();
+    expect(within(table).queryByTestId(`review-mail-resolve-${UUID_C}`)).toBeNull();
+    expect(within(table).queryByTestId(`review-mail-dismiss-${UUID_C}`)).toBeNull();
   });
 });

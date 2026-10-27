@@ -185,6 +185,9 @@ def test_created_constraints_exist(empty_database_url: str) -> None:
         "ck_intake_quarantines_intake",
         "ck_intake_quarantines_detail",
         "ck_intake_quarantines_scope",
+        "ck_intake_quarantines_subject",
+        "ck_intake_quarantines_decision",
+        "ck_intake_quarantines_decision_audit",
         "ck_artifact_gc_runs_trigger",
         "ck_artifact_gc_runs_counts_non_negative",
         "ck_artifact_gc_runs_artifact_counts_within_scanned",
@@ -605,6 +608,8 @@ def test_every_timestamp_column_has_millisecond_precision(empty_database_url: st
     remediation = _load_migration_module("20260915_0012_b2_table_standard_remediation.py")
 
     expected = {f"{table}.{column}" for table, column in remediation.MILLISECOND_COLUMNS}
+    # 0016 新增的处置时间列同样必须是 timestamptz(3)；0012 的清单是历史快照，不回头改。
+    expected.add("intake_quarantines.resolved_at")
     assert {f"{row[0]}.{row[1]}" for row in rows} == expected
 
 
