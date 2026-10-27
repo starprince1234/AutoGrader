@@ -57,3 +57,21 @@ export function useEvaluationRunId(
       apiRequest<SubmissionView>(`/api/v1/submissions/${submissionId}`),
   });
 }
+
+/**
+ * 按 `submission_id` 读取提交视图（P10 刷新恢复）。
+ *
+ * 受理后地址栏带 `?submission_id=…`：刷新时**先读**当前提交，再据其 `evaluation_run_id` 订阅进度，
+ * 因此刷新不会重复 `POST /submissions`，也不会从头重播历史进度（去重仍由 `sequence` 完成）。
+ * 没有 id 时不发请求（`enabled`）——首页或手工作答链接不应该产生一次无意义的 404。
+ */
+export function useSubmissionView(submissionId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.submission(submissionId ?? "none"),
+    enabled: Boolean(submissionId),
+    queryFn: async (): Promise<SubmissionView> =>
+      apiRequest<SubmissionView>(`/api/v1/submissions/${encodeURIComponent(submissionId as string)}`),
+    // 提交视图会随评测推进而变化；这里只在打开页面时读一次，后续进度由 SSE 提供。
+    staleTime: 0,
+  });
+}

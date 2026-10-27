@@ -28,6 +28,11 @@ B2 只拥有 `b2` schema、**不读 `b4` schema**（`AGENTS.md` 硬规则 2）�
 拼凑，也不伪造占位值——契约允许二者为 `null`，字段照常出现以保持 `GradeRow` 形状不变。
 （书面观察：一旦有人把 B4 的姓名/学号拼进成绩行，那就是跨 schema 读取；正确做法是由 B4 提供
 批量查询或由网关层补全，而不是在 B2 里 join。）
+
+**导出**是那条"正确做法"的落点：`grades.export` 经**已授权的 B4 HTTP 名单接口**
+（`GET /sections/{section_id}/enrollments`，转交调用者自己的 access token）按 `student_id` 关联，
+不在 B2 存第二份身份表、不做跨 schema SQL。关联失败时导出**拒绝生成**缺姓名的"成功"文件
+（见 `grades.identity`）；查询路径保持 `null`，由 B1 用同一个 B4 接口在页面上关联。
 """
 
 from __future__ import annotations
@@ -86,6 +91,10 @@ class GradeRow:
     is_pass: bool | None
     submitted_at: datetime
     evaluation_run_id: str | None
+    #: 三态安全结论（迁移 0011）。NULL = 没走到安全判定阶段，`not_checked` = 走了但没执行该项检查——
+    #: 二者不是一回事（`security_not_checked` 不能并进 `security_not_found`）。导出把它作为**可选列**，
+    #: 不进入平均分/通过率/排序。
+    security_status: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,6 +113,11 @@ class _Filters:
     sections: tuple[uuid.UUID, ...] | None
     question_version_id: uuid.UUID | None
     student_id: str | None
+    #: 时间范围（作用在 `b2.submissions.created_at`）：两端都**含**，且只由调用方显式给出时生效。
+    since: datetime | None = None
+    until: datetime | None = None
+    #: 按评测运行反查提交（P10 → P11 深链）。授权作用域仍然独立生效：他人的 run id 只会得到空集。
+    evaluation_run_id: uuid.UUID | None = None
 
 
 def encode_cursor(*, submitted_at: datetime, submission_id: str) -> str:
@@ -237,6 +251,7 @@ def grade_row_body(row: GradeRow) -> dict[str, Any]:
         "is_pass": row.is_pass,
         "submitted_at": rfc3339_millis(row.submitted_at),
         "evaluation_run_id": row.evaluation_run_id,
+        "security_status": row.security_status,
     }
 
 
@@ -268,12 +283,16 @@ class GradeQueryService:
         section_id: str | None = None,
         question_version_id: str | None = None,
         student_id: str | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        evaluation_run_id: str | None = None,
         limit: int = DEFAULT_LIMIT,
         cursor: str | None = None,
     ) -> GradePage:
         """查询一页成绩行。
 
         参数：`course_id` 必填；`section_id`/`question_version_id`/`student_id` 可选过滤；
+        `since`/`until` 可选时间范围（含两端，作用在提交时刻）；`evaluation_run_id` 可选按运行反查；
         `limit` ∈ [1, 200]（契约 `Limit`）；`cursor` 为上一页的 `next_cursor`（首页传 `None`）。
 
         异常：`AuthorizationError` → 路由层 403；`InvalidFilterError`/`InvalidCursorError` → 422。
@@ -286,6 +305,9 @@ class GradeQueryService:
             section_id=section_id,
             question_version_id=question_version_id,
             student_id=student_id,
+            since=since,
+            until=until,
+            evaluation_run_id=evaluation_run_id,
         )
         after = None if cursor is None else decode_cursor(cursor)
         with self._engine.connect() as connection:
@@ -300,6 +322,9 @@ class GradeQueryService:
         section_id: str | None = None,
         question_version_id: str | None = None,
         student_id: str | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        evaluation_run_id: str | None = None,
         batch_size: int | None = None,
     ) -> Iterator[GradeRow]:
         """按游标逐页遍历**全部**匹配行（导出的唯一取数入口）。
@@ -315,6 +340,9 @@ class GradeQueryService:
             section_id=section_id,
             question_version_id=question_version_id,
             student_id=student_id,
+            since=since,
+            until=until,
+            evaluation_run_id=evaluation_run_id,
         )
         return self._walk(filters, size)
 
@@ -338,11 +366,16 @@ class GradeQueryService:
         section_id: str | None,
         question_version_id: str | None,
         student_id: str | None,
+        since: datetime | None,
+        until: datetime | None,
+        evaluation_run_id: str | None,
     ) -> _Filters:
         course = _require_uuid(course_id, "course_id")
         section = _optional_uuid(section_id, "section_id")
         question = _optional_uuid(question_version_id, "question_version_id")
         requested_student = _optional_uuid(student_id, "student_id")
+        run = _optional_uuid(evaluation_run_id, "evaluation_run_id")
+        since, until = _validated_range(since, until)
         effective_student = require_grade_authority(
             principal,
             course_id=str(course),
@@ -362,6 +395,9 @@ class GradeQueryService:
             sections=sections,
             question_version_id=question,
             student_id=effective_student,
+            since=since,
+            until=until,
+            evaluation_run_id=run,
         )
 
 
@@ -396,7 +432,11 @@ def _statement(
     新提交落在游标之后（既不重复也不错位）。
     """
     latest_run = (
-        sa.select(evaluation_runs.c.evaluation_run_id, evaluation_runs.c.state)
+        sa.select(
+            evaluation_runs.c.evaluation_run_id,
+            evaluation_runs.c.state,
+            evaluation_runs.c.security_status,
+        )
         .where(evaluation_runs.c.submission_id == submissions.c.submission_id)
         .order_by(
             evaluation_runs.c.sequence.desc(),
@@ -417,6 +457,7 @@ def _statement(
             submissions.c.created_at,
             latest_run.c.evaluation_run_id,
             latest_run.c.state.label("run_state"),
+            latest_run.c.security_status,
             evaluation_results.c.score,
             evaluation_results.c.max_score,
             evaluation_results.c.is_pass,
@@ -439,6 +480,20 @@ def _statement(
         )
     if filters.student_id is not None:
         statement = statement.where(submissions.c.student_id == uuid.UUID(filters.student_id))
+    if filters.since is not None:
+        statement = statement.where(submissions.c.created_at >= filters.since)
+    if filters.until is not None:
+        statement = statement.where(submissions.c.created_at <= filters.until)
+    if filters.evaluation_run_id is not None:
+        # 按运行反查提交：只接受**本次查询作用域内**的提交。授权过滤（课程/课序/学生）仍然独立生效，
+        # 因此他人的 run id 只会得到空集——不会变成一条越权读路径。
+        statement = statement.where(
+            submissions.c.submission_id.in_(
+                sa.select(evaluation_runs.c.submission_id).where(
+                    evaluation_runs.c.evaluation_run_id == filters.evaluation_run_id
+                )
+            )
+        )
     if after is not None:
         moment, identifier = after
         statement = statement.where(
@@ -479,6 +534,7 @@ def _row_from_record(record: Any) -> GradeRow:
         is_pass=is_pass,
         submitted_at=record.created_at,
         evaluation_run_id=None if run_id is None else str(run_id),
+        security_status=None if record.security_status is None else str(record.security_status),
     )
 
 
@@ -494,6 +550,42 @@ def _optional_uuid(value: str | None, field: str) -> uuid.UUID | None:
     if value is None or value == "":
         return None
     return _require_uuid(value, field)
+
+
+def parse_timestamp(raw: str | None, field: str) -> datetime | None:
+    """解析 `from`/`to`（契约 `Timestamp`，RFC 3339）；空串 = 未提供，非法 → 422。
+
+    与 `evaluation.quality.parse_timestamp` 语义一致，但错误类型是 `InvalidFilterError`：
+    成绩路径的 422 映射只有一处（`grades_routes`），两种过滤错误不该借对方的异常类型表达。
+    """
+    if raw is None or raw == "":
+        return None
+    text = raw.strip()
+    if text[-1:] in {"Z", "z"}:
+        text = f"{text[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError as error:
+        raise InvalidFilterError(f"{field} must be an RFC 3339 timestamp") from error
+    if parsed.tzinfo is None:
+        raise InvalidFilterError(f"{field} must carry a timezone")
+    return parsed.astimezone(UTC)
+
+
+def _validated_range(
+    since: datetime | None, until: datetime | None
+) -> tuple[datetime | None, datetime | None]:
+    """时间范围：两端可单给；两端都给时**必须** `from <= to`，否则 422。
+
+    不把反向区间静默交换：那会让一次写错的筛选变成一个"看起来正常"的结果，而用户无从发现
+    自己查的其实是另一个时间段。
+    """
+    for value in (since, until):
+        if value is not None and value.tzinfo is None:
+            raise InvalidFilterError("from/to must carry a timezone")
+    if since is not None and until is not None and since > until:
+        raise InvalidFilterError("from must not be later than to")
+    return since, until
 
 
 def _validated_limit(limit: int) -> int:

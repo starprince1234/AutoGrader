@@ -105,4 +105,11 @@
   `message-broker` 分项会把未发布积压与 DLQ 报出来）。启动方式与重试节奏见
   [../runbooks/local-development.md](../runbooks/local-development.md) §5b。
 
+## 成员四本批（2026-10，CHG-0030 / 契约 0.19.0）
+
+| 需求 | 状态 | 证据 |
+|---|---|---|
+| RQ-B-1-30（成绩查询） | `已完成`（代码；真实 DB 未在本机执行） | `from`/`to`/`evaluation_run_id`、`GradeRow.security_status`、授权作用域不变；`tests/test_grades_query_export.py`（DB 用例在本机 skip） |
+| RQ-B-1-60 / RQ-B-2-60（导出） | `已完成`（代码；真实 B4 未联调） | `columns` 必需列不可删、未知字段 422；姓名/学号经 B4 授权名单（转交调用者 token），缺身份 409/503 拒绝生成文件；公式注入转义沿用既有导出层 |
+| AI-FLOW-01B（学生分层提示） | `已完成`（代码；真实 provider/B3 未联调） | 迁移 0015 + `hints` 包 + 两 operation；仅 run owner、completed+失败证据、幂等、预算 429、输出闸门；`tests/test_learning_hints_policy.py`（24 个纯单元用例） |
 

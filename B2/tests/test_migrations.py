@@ -55,6 +55,7 @@ BUSINESS_TABLES = {
     "case_evidence",
     "email_checkpoints",
     "evaluation_commentaries",
+    "evaluation_learning_hints",
     "evaluation_results",
     "evaluation_run_state_transitions",
     "evaluation_runs",
@@ -201,6 +202,13 @@ def test_created_constraints_exist(empty_database_url: str) -> None:
         "ck_submission_state_transitions_reason_length",
         "uq_submission_state_transitions_submission_id_sequence",
         "fk_submission_state_transitions_submission_id",
+        # 迁移 0015（AI-FLOW-01B）：学习提示表的关键约束。
+        "pk_evaluation_learning_hints",
+        "uq_evaluation_learning_hints_evaluation_run_id",
+        "fk_evaluation_learning_hints_evaluation_run_id",
+        "ck_evaluation_learning_hints_status",
+        "ck_evaluation_learning_hints_shape",
+        "ck_evaluation_learning_hints_context_scope_is_array",
     ):
         assert expected in constraints, f"约束缺失: {expected}"
 
@@ -222,6 +230,7 @@ def test_indexes_and_unique_keys_exist(empty_database_url: str) -> None:
         "ix_artifact_gc_audits_gc_run_id",
         "ix_artifact_gc_audits_content_sha256",
         "ix_submission_state_transitions_submission_id_occurred_at",
+        "ix_evaluation_learning_hints_student_requested_at",
     ):
         assert expected in indexes, f"索引/唯一键缺失: {expected}"
 
@@ -263,6 +272,7 @@ def test_primary_keys_follow_b4_naming_standard(empty_database_url: str) -> None
         "artifacts": ("artifact_id", "uuid"),
         "case_evidence": ("case_evidence_id", "uuid"),
         "evaluation_commentaries": ("evaluation_commentary_id", "uuid"),
+        "evaluation_learning_hints": ("evaluation_learning_hint_id", "uuid"),
         "evaluation_results": ("evaluation_run_id", "uuid"),
         "evaluation_run_state_transitions": ("evaluation_run_state_transition_id", "uuid"),
         "evaluation_runs": ("evaluation_run_id", "uuid"),
@@ -603,6 +613,12 @@ def test_every_timestamp_column_has_millisecond_precision(empty_database_url: st
     remediation = _load_migration_module("20260915_0012_b2_table_standard_remediation.py")
 
     expected = {f"{table}.{column}" for table, column in remediation.MILLISECOND_COLUMNS}
+    # 迁移 0015 新增的表自带 `timestamptz(3)`（建表时就按标准写），因此它不在 0012 的
+    # "整改清单"里，但必须同样满足精度要求。
+    expected |= {
+        "evaluation_learning_hints.requested_at",
+        "evaluation_learning_hints.generated_at",
+    }
     assert {f"{row[0]}.{row[1]}" for row in rows} == expected
 
 

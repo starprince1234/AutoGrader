@@ -661,6 +661,30 @@ uff、pytest、pnpm * 都无法运行。
 
 ---
 
+## 0.19.0 — 成绩身份关联与时间范围导出、学生分层提示（CHG-0030）
+
+- **级别**：P2 语义（成绩读/导出参数扩展 + 两条学生提示 operation + 一张新表）
+- **状态**：已生效
+- **变更文件**：
+  - `openapi/b2.yaml`：`listGrades` / `exportGrades` 新增 `from` / `to` / `evaluation_run_id`，
+    `exportGrades` 新增 `columns`；`GradeRow` 新增 `security_status`；新增
+    `GET/POST /api/v1/evaluation-runs/{evaluation_run_id}/learning-hints` 与
+    `LearningHintStep` / `LearningHintsResponse`。
+  - `openapi/common.yaml`、`openapi/b3.yaml`、`openapi/b4.yaml`、`openapi/b5.yaml`、
+    `asyncapi/events.yaml`：`info.version` 同步升至 `0.19.0`（内容未变）。
+- **不变的部分**：权威分数、逐项证据、`result_digest`、绑定摘要、导出汇总规则、评测沙箱路径；
+  提示不是分数依据，评语/参考分仍走独立轨。
+- **影响的模块**：B2（实现 + 迁移 `20260915_0015`）、B1（P10/P11 消费）、B3（`learning-context`
+  已在 `0.18.0` 提供，本批只消费、不改契约）、B4（无改动，`listEnrollments` 已有 `student_id`）。
+- **摘要**：由 `checks.py` 计算。
+- **回滚方式**：还原本批契约文本与版本号，删除 `b2.evaluation_learning_hints` 迁移
+  （`downgrade` 只删本表），撤回两条 learning-hints operation 与 grades 新参数，然后重跑
+  `relock_contracts.py`；版本回到 `0.18.0`。
+
+**详细裁决**：[CHG-0030](../docs/contracts/changes/CHG-0030-grades-identity-export-learning-hints.md)
+
+---
+
 ## 记录模板（后续变更复制此块）
 
 ```md

@@ -197,6 +197,7 @@ function StudentAssignmentList({
                 className="button button--ghost"
                 to="/submit/$questionVersionId"
                 params={{ questionVersionId: target }}
+                search={{}}
               >
                 {label}
               </Link>

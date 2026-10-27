@@ -186,3 +186,20 @@
   `questions.versionStemUnavailable` 已随该轮一并删除。
 - TC-B1-054 已随本批改写：它此前固定的是"诚实的未发布状态 + 没有发布按钮"，现在由 TC-B1-095…099 取代
   （`PublishRequirement.tsx` 与其 i18n 词条已删除，未保留双分支）。
+
+## 成员四本批（2026-10，契约 0.19.0 / CHG-0030）
+
+| ID | 场景 | 测试 |
+|---|---|---|
+| B1-P10-01 | 题干与编辑器同时可见，版本/语言/上限正确 | `SubmitPage.flow.test.tsx`「题目要求与编辑器同时可见…」 |
+| B1-P10-02 | 草稿恢复先询问；拒绝恢复清除本机草稿 | `SubmitPage.flow.test.tsx` + `SubmitPage.test.tsx` |
+| B1-P10-03 | 删除文件需确认 | `SubmitPage.flow.test.tsx`「删除文件需要确认…」 |
+| B1-P10-04 | 提交成功/终态/查看本次结果带真实 run id | `SubmitPage.test.tsx` + `SubmitPage.flow.test.tsx` |
+| B1-P10-05 | draft 版本不能作答 | `SubmitPage.flow.test.tsx`「draft 版本不能作答…」 |
+| B1-P11-01 | 时间范围本地→UTC；反向区间不发请求 | `GradesPage.p11.test.tsx` |
+| B1-P11-02 | B4 名单身份关联/缺失显示 | `GradesPage.p11.test.tsx` |
+| B1-P11-03 | 导出 Drawer 可选列与筛选同源 | `GradesPage.p11.test.tsx` + `GradesPage.test.tsx` |
+| B1-P11-04 | `?evaluation_run_id=` 深链打开同一 report | `GradesPage.p11.test.tsx` |
+| B1-P11-05 | 参考分只对教师；学生看到学习提示 | `GradesPage.p11.test.tsx` |
+| B1-HINT-01..07 | 提示六态、逐层展开、权限、返回作业 | `LearningHintsSection.test.tsx` |
+

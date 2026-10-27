@@ -127,6 +127,18 @@ const questionEditRoute = createRoute({
 const submitRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/submit/$questionVersionId",
+  // 受理后把真实 `submission_id` / `evaluation_run_id` 写进 URL：刷新能恢复状态与进度，
+  // 也能把“我正在等这次评测”贴给自己。URL 只放对象 id，不放源码、姓名或学号。
+  validateSearch: (search: Record<string, unknown>) => {
+    const result: { submission_id?: string; evaluation_run_id?: string } = {};
+    if (typeof search.submission_id === "string" && search.submission_id !== "") {
+      result.submission_id = search.submission_id;
+    }
+    if (typeof search.evaluation_run_id === "string" && search.evaluation_run_id !== "") {
+      result.evaluation_run_id = search.evaluation_run_id;
+    }
+    return result;
+  },
   component: SubmitRoute,
 });
 
@@ -145,6 +157,14 @@ const assignmentDetailRoute = createRoute({
 const gradesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/grades",
+  // P10 的“查看本次结果”用真实 `evaluation_run_id` 深链到同一个 report；URL 不携带学生身份。
+  validateSearch: (search: Record<string, unknown>) => {
+    const result: { evaluation_run_id?: string } = {};
+    if (typeof search.evaluation_run_id === "string" && search.evaluation_run_id !== "") {
+      result.evaluation_run_id = search.evaluation_run_id;
+    }
+    return result;
+  },
   component: GradesRoute,
 });
 

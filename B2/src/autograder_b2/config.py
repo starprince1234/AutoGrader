@@ -79,6 +79,17 @@ _COMMENTARY_VARIABLES = (
     "B2_COMMENTARY_TIMEOUT_SECONDS",
 )
 
+#: 读取 B4 名单的默认超时（秒）。与 `grades.identity.DEFAULT_TIMEOUT_SECONDS` 同值；定义在这里是
+#: 因为配置解析器是**唯一**读环境变量的一层，identity 模块不该再读一次环境。
+DEFAULT_B4_TIMEOUT_SECONDS = 10.0
+
+#: 学生分层学习提示的预算/输出配置（AI-FLOW-01B）。provider 复用评语轨，**不新增 provider**，
+#: 因此这里只配置"频次窗口"与"单条提示的输出长度预算"。
+DEFAULT_LEARNING_HINTS_WINDOW_HOURS = 24
+DEFAULT_LEARNING_HINTS_MAX_PER_WINDOW = 20
+DEFAULT_LEARNING_HINT_TEXT_LIMIT = 600
+DEFAULT_LEARNING_HINT_TITLE_LIMIT = 80
+
 
 class ConfigurationError(RuntimeError):
     """配置缺失或非法；启动/首次使用即失败，不做静默兜底。"""
@@ -118,6 +129,12 @@ class Settings:
     b3_authorization: str | None = field(default=None, repr=False)
     #: 沙箱工作区根。由 `evaluation_chain_settings` 保证与 `artifact_root` 是**不相交**的两棵树。
     workspace_root: Path | None = None
+    #: B4 的 API 源（协议 + 主机）。成绩导出经它读取**已授权**的课序名单来关联姓名/学号
+    #: （`grades.identity`）：B2 不读 `b4` schema、也不存第二份身份表。未配置时导出拒绝（503），
+    #: 而不是生成一份缺姓名的"成功"文件。
+    b4_base_url: str | None = None
+    #: 读取 B4 名单的超时（秒）。与 B3 取包、评语 provider 的超时各自独立：三者的故障域不同。
+    b4_timeout_seconds: float = 10.0
     #: 环境标签（`bindings.environment_digest` 的输入之一）。未配置时是 `unset`——一个诚实的
     #: "未声明"标记，不是"任何环境"的同义词（见 `integration.bindings` 的诚实边界）。
     environment_tag: str = UNSET_ENVIRONMENT_TAG
@@ -162,6 +179,10 @@ def settings_from_env(environ: Mapping[str, str] | None = None) -> Settings:
         ),
         workspace_root=Path(workspace_root) if workspace_root else None,
         environment_tag=(source.get("B2_ENVIRONMENT_TAG") or "").strip() or UNSET_ENVIRONMENT_TAG,
+        b4_base_url=(source.get("B2_B4_BASE_URL") or "").strip() or None,
+        b4_timeout_seconds=_positive_float(
+            source, "B2_B4_TIMEOUT_SECONDS", DEFAULT_B4_TIMEOUT_SECONDS
+        ),
     )
 
 
@@ -301,6 +322,55 @@ def load_commentary_settings(
 def _commentary_reason(missing: tuple[str, ...]) -> str:
     """给运维读的一句话：指名缺哪些变量（不回显任何取值）。"""
     return "评语轨未配置：需要 " + "、".join(missing)
+
+
+@dataclass(frozen=True, slots=True)
+class LearningHintsSettings:
+    """学生分层提示的部署预算与输出长度（AI-FLOW-01B）。
+
+    `context_path` 是**可选**的 B3 公开题目上下文路径模板（含 `{question_version_id}`）。默认未配置：
+    B3 的 `learning-context` 安全视图由成员三负责，尚未在 `b3.yaml` 声明；在它上线之前，B2 只使用
+    已落库的评测证据（少读是严格更安全的），并在 `context_scope` 里如实写明读了什么。
+    """
+
+    window_hours: int
+    max_generations_per_window: int
+    text_limit: int
+    title_limit: int
+    context_path: str | None
+
+
+def load_learning_hints_settings(
+    environ: Mapping[str, str] | None = None,
+) -> LearningHintsSettings:
+    """读取提示轨的预算配置；**全部有界**，没有隐藏的"无限额"默认。
+
+    预算按**已认证学生**在一个滚动窗口内的生成次数计数（`evaluation_learning_hints.requested_at`），
+    客户端不维护配额，也不能通过换 `Idempotency-Key` 绕过（同一 run 的成功结果只存一行）。
+    """
+    source = os.environ if environ is None else environ
+    context_path = (source.get("B2_LEARNING_CONTEXT_PATH") or "").strip() or None
+    if context_path is not None and "{question_version_id}" not in context_path:
+        raise ConfigurationError(
+            "B2_LEARNING_CONTEXT_PATH must contain the {question_version_id} placeholder"
+        )
+    return LearningHintsSettings(
+        window_hours=_positive_int(
+            source, "B2_LEARNING_HINTS_WINDOW_HOURS", DEFAULT_LEARNING_HINTS_WINDOW_HOURS
+        ),
+        max_generations_per_window=_positive_int(
+            source,
+            "B2_LEARNING_HINTS_MAX_PER_WINDOW",
+            DEFAULT_LEARNING_HINTS_MAX_PER_WINDOW,
+        ),
+        text_limit=_positive_int(
+            source, "B2_LEARNING_HINT_TEXT_LIMIT", DEFAULT_LEARNING_HINT_TEXT_LIMIT
+        ),
+        title_limit=_positive_int(
+            source, "B2_LEARNING_HINT_TITLE_LIMIT", DEFAULT_LEARNING_HINT_TITLE_LIMIT
+        ),
+        context_path=context_path,
+    )
 
 
 def _optional_secret(source: Mapping[str, str], inline_name: str, file_name: str) -> str | None:

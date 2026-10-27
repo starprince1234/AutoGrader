@@ -247,3 +247,17 @@ B2 侧的四条纪律（每条都有测试，见 [../testing/cases.md](../testin
   **该陈述已过期**：它们已注册并有真实依赖测试（见第 1 节状态列与
   [../phases/active/phase-05-quarantine-and-quality-surfaces.md](../phases/active/phase-05-quarantine-and-quality-surfaces.md)）。
   任何"已可用"的声称都必须有对应契约测试与阶段证据。需求级状态见 [../requirements/traceability.md](../requirements/traceability.md)。
+
+## 0.19.0 增量（CHG-0030）
+
+- `listGrades` / `exportGrades`：新增 `from` / `to`（RFC 3339，含两端，作用在提交时刻）与
+  `evaluation_run_id`；`exportGrades` 新增 `columns`（未知字段 422；必需列始终存在）。
+- `GradeRow.security_status`：三态安全结论（可空），只用于展示/可选导出列。
+- 新增 `GET/POST /api/v1/evaluation-runs/{evaluation_run_id}/learning-hints`：
+  - 仅 run owner 学生可读写；教师/助教/管理员 403（无教师查看学生提示的接口）。
+  - `POST` 无请求体，`Idempotency-Key` 必填；未完成/被安全拒绝/基础设施失败 409；
+    无失败证据 200 `not_applicable`；预算 429；provider 未配置/传输失败 503；输出非法 200 `failed`。
+  - 姓名/学号/源码/参考答案/隐藏用例均不在响应中；`context_scope` 可审计。
+- 导出身份关联经 B4 `listEnrollments`（转交调用者 token），B2 不读 `b4` schema；未配置/失败/缺行时
+  拒绝生成文件（503/409）。
+

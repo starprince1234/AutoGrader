@@ -224,6 +224,24 @@ export type CommentaryProvenance = NonNullable<EvaluationCommentary["provenance"
  */
 export type AdvisoryScore = B2Schemas["AdvisoryScore"];
 
+/* --------------------------------------------- B2（学生分层学习提示，AI-FLOW-01B） */
+
+/**
+ * 学生分层学习提示（`getLearningHints` / `requestLearningHints`）。
+ *
+ * 只有 **run owner 学生**可读写；契约里没有教师逐条查看学生提示的接口。响应**不含**分数、
+ * 逐项证据或参考分——提示永远不是第二个评分来源。`status` 六态：`not_requested`（还没生成）、
+ * `not_applicable`（已完成但没有可讲的失败证据）、`pending`、`ready`、`failed`、`unavailable`
+ * （本部署未配置 provider 且没有既有结果）。
+ */
+export type LearningHintsResponse = B2Schemas["LearningHintsResponse"];
+export type LearningHintStep = B2Schemas["LearningHintStep"];
+export type LearningHintStatus = LearningHintsResponse["status"];
+export type LearningHintLevel = LearningHintStep["level"];
+
+/** 成绩行的三态安全结论（`null` = 没走到安全判定阶段，与 `not_checked` 不同）。 */
+export type SecurityStatus = NonNullable<GradeRow["security_status"]>;
+
 /* ------------------------------------------- B2（隔离区 / 证据包 / 质量聚合，CHG-0014/0015） */
 
 /**

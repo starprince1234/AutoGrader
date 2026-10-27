@@ -33,16 +33,17 @@ B2 只使用 `b2` schema。禁止跨 schema 外键/SQL/视图/ORM；运行 login
 | `static_findings` | 0006 | 静态检查发现（规则 ID/severity/位置） | 每条规则必须在规则目录内登记；区分"未发现"与"未检查" | 静态阶段写；随 run 级联删除，而 B2 没有删除 run 的路径 |
 | `security_findings` | 0006 | 安全性发现（静态判定结论 + **执行期**沙箱违规，`detected_in ∈ {static, runtime}`） | 区分"未发现"与"未检查"；严重度与阻断判定一致；`char_length(message) <= 1000` | 安全判定与编排层（执行期违规）写；随 run 级联删除，而 B2 没有删除 run 的路径 |
 | `evaluation_commentaries` | 0010（0014 加参考分四列） | **教学评语轨**（`RQ-T-20` / `ADR-0009`）：一次运行一条模型评语 + 状态 + provenance（含 `input_scope` 白名单）；**0014 起**另含模型的顾问性参考分（`RQ-T-30` / `ADR-0014`）：`advisory_score` / `advisory_max_score` / `advisory_rationale` / `advisory_confidence` | 每 run 唯一（重新生成＝覆盖）；`ck_evaluation_commentaries_shape` 强制状态与字段配对（`pending` 无文本无时间且无参考分 / `ready` 有文本有时间、参考分**四列同空或同有** / `failed` 无文本有原因有时间且无参考分）；`input_scope` 必须是非空 JSON 数组（白名单必须可审计）；`ck_evaluation_commentaries_advisory_bounds` 把 `0 <= score <= max_score` 且 `max_score > 0` 钉在存储层（**越界值写不进来**，而不是被截断入库） | 评语生成时写；**删除本表不影响可重放性**——没有任何表引用它，评测链路也不读它 |
+| `evaluation_learning_hints` | 0015（`CHG-0030` / AI-FLOW-01B） | **学生分层学习提示**：一次 run 一行、`student_id` 为落库归属、1–3 条 `hint_steps`、provider/model/prompt/`context_scope`、幂等键与脱敏失败类别 | 每 run 唯一（`ready` 是终局，`failed` 可显式重试覆盖）；`ck_evaluation_learning_hints_shape` 强制状态与字段配对（`pending`/`failed` 无步骤、`ready` 1–3 条且有生成时间）；`context_scope` 非空 JSON 数组；**没有 `score`/`is_pass`/`result_digest`/`case_evidence`/源码列**——提示永远不能成为评分依据 | 学生 `POST .../learning-hints` 时写；**删除本表不影响权威分数与报告**；旧 run 的提示随 run 历史保留 |
 
-**表数一致性自检（可复算）**：`schema.py` 的 `sa.Table` 计数 **18** == 本表行数 **18** ==
-迁移 `0002`(5) + `0003`(2) + `0004`(1) + `0005`(1) + `0006`(8) + `0010`(1) 的和
+**表数一致性自检（可复算）**：`schema.py` 的 `sa.Table` 计数 **19** == 本表行数 **19** ==
+迁移 `0002`(5) + `0003`(2) + `0004`(1) + `0005`(1) + `0006`(8) + `0010`(1) + `0015`(1) 的和
 （`0011`/`0014` 只加列、`0012` 只改主键名与时间列精度、`0013` 只加三列，都不建表）。
 
 **`advisory_max_score` 的写入者只有一个**：`commentary/scope.py` 的 `collect_evidence`
 （对 `b2.case_evidence.weight` 求和，与 `evaluation/scoring.py` 的 `max_score += award.weight`
 同源同值）。它不是模型的输出——模型给出同名字段会让整次生成失败（`ADR-0014` 决策 2）。
 
-**表标准（`RQ-B-4-30`，迁移 0012 整改）**：18 张表的主键约束名必须是 `pk_<table>`
+**表标准（`RQ-B-4-30`，迁移 0012 整改）**：19 张表的主键约束名必须是 `pk_<table>`
 （Postgres 的隐式 `<table>_pkey` 不合标准），`created_at`/`updated_at` 必须是 `timestamptz(3)`。
 判据与 B4 的检查器同源，但 B2 侧有**独立读数**：`tests/test_migrations.py` 的三条用例直接查
 真实库的 `pg_constraint` 与 `information_schema.columns`，并在 upgrade/downgrade/upgrade 之间断言来回可逆。

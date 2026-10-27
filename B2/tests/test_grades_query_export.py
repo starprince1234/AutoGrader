@@ -41,12 +41,23 @@ from autograder_b2.auth.tokens import CourseScope, Principal
 from autograder_b2.db.schema import evaluation_results, evaluation_runs, submissions
 from autograder_b2.grades.export import (
     ESCAPE_PREFIX,
+    EXPORT_COLUMN_FIELDS,
     FORMULA_TRIGGERS,
     GRADE_EXPORT_COLUMNS,
+    REQUIRED_EXPORT_COLUMNS,
     GradesExportService,
+    UnsupportedExportColumn,
     escape_spreadsheet_cell,
     render_csv,
     render_xlsx,
+    resolve_export_columns,
+)
+from autograder_b2.grades.identity import (
+    EnrollmentIdentity,
+    IdentityLookup,
+    IdentityLookupError,
+    IdentityMissingForRows,
+    IdentityNotConfigured,
 )
 from autograder_b2.grades.query import (
     GradeQueryService,
@@ -85,9 +96,74 @@ def query(engine: Engine) -> GradeQueryService:
     return GradeQueryService(engine)
 
 
+class _FakeRoster:
+    """测试用 B4 名单替身（**不是生产降级路径**：生产只装配 HTTP 实现）。
+
+    它只读 `b2.submissions` 里出现过的 `(section_id, student_id)` 并给出**确定性**身份，因此：
+    - 导出可以在没有 B4 的环境里验证"姓名/学号确实写进文件"；
+    - `missing` 集合可以模拟"名单里没有这个学生"，用于证明导出**拒绝**生成缺身份文件。
+    """
+
+    def __init__(self, engine: Engine, *, missing: set[str] | None = None) -> None:
+        self._engine = engine
+        self._missing = set(missing or ())
+        self.authorizations: list[str] = []
+
+    def identities(
+        self, *, section_id: str, authorization: str, request_id: str | None = None
+    ) -> IdentityLookup:
+        if not authorization:
+            raise IdentityLookupError("roster lookup requires the caller token")
+        self.authorizations.append(authorization)
+        with self._engine.connect() as connection:
+            student_ids = (
+                connection.execute(
+                    select(submissions.c.student_id)
+                    .where(submissions.c.section_id == uuid.UUID(section_id))
+                    .distinct()
+                )
+                .scalars()
+                .all()
+            )
+        identities = {
+            str(student_id): _identity_for(str(student_id))
+            for student_id in student_ids
+            if str(student_id) not in self._missing
+        }
+        return IdentityLookup(identities=identities, pages=1)
+
+
+def _identity_for(student_id: str) -> EnrollmentIdentity:
+    """与 `_FakeRoster` 一致的确定性身份（测试用它构造期望行）。"""
+    short = student_id.replace("-", "")[:8]
+    return EnrollmentIdentity(
+        student_id=student_id, student_number=f"N-{short}", display_name=f"学生{short}"
+    )
+
+
+def _with_identity(row: GradeRow) -> GradeRow:
+    return replace(
+        row,
+        student_number=_identity_for(row.student_id).student_number,
+        display_name=_identity_for(row.student_id).display_name,
+    )
+
+
 @pytest.fixture()
-def exporter(engine: Engine) -> GradesExportService:
-    return GradesExportService(engine)
+def roster(engine: Engine) -> _FakeRoster:
+    return _FakeRoster(engine)
+
+
+@pytest.fixture()
+def exporter(engine: Engine, roster: _FakeRoster) -> GradesExportService:
+    """导出服务装配测试名单客户端：姓名/学号属于 B4，B2 只能经授权接口取得。"""
+    return GradesExportService(engine, directory=roster)
+
+
+def _export(exporter: GradesExportService, **kwargs: object):
+    """所有导出调用都转交调用者令牌（与路由层行为一致）。"""
+    kwargs.setdefault("authorization", "Bearer test-caller-token")
+    return exporter.export(**kwargs)  # type: ignore[arg-type]
 
 
 def _teacher(course: uuid.UUID, *, section: uuid.UUID | None = None) -> Principal:
@@ -375,16 +451,18 @@ def test_query_and_export_agree_field_by_field(
 
     page = query.list_grades(principal=teacher, course_id=str(course))
     assert len(page.items) == 3
-    expected = [grade_row_body(row) for row in page.items]
+    # 查询行里的姓名/学号仍为 null（B2 不读 b4）；导出合并 B4 名单后才有身份字段。
+    assert all(row.student_number is None for row in page.items)
+    expected = [grade_row_body(_with_identity(row)) for row in page.items]
 
     header, csv_records = _read_csv(
-        exporter.export(principal=teacher, course_id=str(course), fmt="csv").content
+        _export(exporter, principal=teacher, course_id=str(course), fmt="csv").content
     )
     assert header == [h for _, h in GRADE_EXPORT_COLUMNS]
     assert [_normalised(record) for record in csv_records] == expected
 
     header_xlsx, xlsx_records = _read_xlsx(
-        exporter.export(principal=teacher, course_id=str(course), fmt="xlsx").content
+        _export(exporter, principal=teacher, course_id=str(course), fmt="xlsx").content
     )
     assert header_xlsx == header
     assert [_normalised(record) for record in xlsx_records] == expected
@@ -411,31 +489,35 @@ def test_export_walks_every_cursor_page(
             submitted_at=BASE + timedelta(seconds=index),
             state="validated",
         )
-    exporter = GradesExportService(engine, batch_size=2)
+    exporter = GradesExportService(engine, directory=_FakeRoster(engine), batch_size=2)
     whole = query.list_grades(principal=teacher, course_id=str(course), limit=200)
     assert len(whole.items) == 5
-    _, records = _read_csv(exporter.export(principal=teacher, course_id=str(course), fmt="csv").content)
+    _, records = _read_csv(_export(exporter, principal=teacher, course_id=str(course), fmt="csv").content)
     assert [record[_HEADER["submission_id"]] for record in records] == [
         row.submission_id for row in whole.items
     ]
 
 
-def test_student_number_and_display_name_are_null_not_invented(
+def test_query_keeps_identity_null_and_export_merges_the_authorized_roster(
     engine: Engine, query: GradeQueryService, exporter: GradesExportService
 ) -> None:
-    """`student_number`/`display_name` 属 B4：B2 不读 `b4` schema，故恒为 `null`（不伪造、不拼凑）。
+    """查询行不读 b4（姓名/学号为 null）；导出经 B4 授权名单合并身份。
 
-    书面观察：契约 `GradeRow` 允许二者为 `null`，字段照常出现以保持行形状不变。若将来有人把
-    `b4.users` 的姓名/学号 join 进 B2 的成绩行，那就是跨 schema 读取（`AGENTS.md` 硬规则 2 禁止）；
-    正确做法是 B4 提供批量查询或由网关层补全。
+    这是本批变更的核心边界：**不跨 schema**。查询路径保持 `null`，由 B1 用同一个 B4 名单接口
+    在页面上关联；导出路径由 B2 转交调用者令牌读取名单，文件里因此有姓名/学号。
     """
-    course, section, question = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    course, section, question, student = (
+        uuid.uuid4(),
+        uuid.uuid4(),
+        uuid.uuid4(),
+        uuid.uuid4(),
+    )
     teacher = _teacher(course)
     _seed_submission(
         engine,
         course_id=course,
         section_id=section,
-        student_id=uuid.uuid4(),
+        student_id=student,
         question_version_id=question,
         submitted_at=BASE,
         state="validated",
@@ -448,10 +530,94 @@ def test_student_number_and_display_name_are_null_not_invented(
     assert body["student_number"] is None and body["display_name"] is None
 
     _, csv_records = _read_csv(
-        exporter.export(principal=teacher, course_id=str(course), fmt="csv").content
+        _export(exporter, principal=teacher, course_id=str(course), fmt="csv").content
     )
-    assert csv_records[0][_HEADER["student_number"]] == ""
-    assert csv_records[0][_HEADER["display_name"]] == ""
+    identity = _identity_for(str(student))
+    assert csv_records[0][_HEADER["student_number"]] == identity.student_number
+    assert csv_records[0][_HEADER["display_name"]] == identity.display_name
+
+
+def test_export_refuses_a_file_whose_identity_cannot_be_resolved(
+    engine: Engine, query: GradeQueryService
+) -> None:
+    """名单里缺某个 student_id → 导出失败（409 语义），不生成缺姓名的"成功"文件。"""
+    course, section, question, student = (
+        uuid.uuid4(),
+        uuid.uuid4(),
+        uuid.uuid4(),
+        uuid.uuid4(),
+    )
+    teacher = _teacher(course)
+    _seed_submission(
+        engine,
+        course_id=course,
+        section_id=section,
+        student_id=student,
+        question_version_id=question,
+        submitted_at=BASE,
+        state="validated",
+    )
+    exporter = GradesExportService(
+        engine, directory=_FakeRoster(engine, missing={str(student)})
+    )
+    with pytest.raises(IdentityMissingForRows):
+        _export(exporter, principal=teacher, course_id=str(course), fmt="csv")
+
+
+def test_export_requires_a_configured_enrollment_directory(
+    engine: Engine, query: GradeQueryService
+) -> None:
+    """没有装配 B4 名单客户端时导出拒绝（503 语义），而不是悄悄输出空姓名列。"""
+    course, section, question = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    teacher = _teacher(course)
+    _seed_submission(
+        engine,
+        course_id=course,
+        section_id=section,
+        student_id=uuid.uuid4(),
+        question_version_id=question,
+        submitted_at=BASE,
+        state="validated",
+    )
+    with pytest.raises(IdentityNotConfigured):
+        _export(GradesExportService(engine), principal=teacher, course_id=str(course), fmt="csv")
+
+
+def test_export_requires_the_callers_token_to_read_the_roster(
+    engine: Engine, exporter: GradesExportService
+) -> None:
+    """导出把调用者自己的 bearer 令牌转交 B4；没有令牌就没有授权名单，因此拒绝。"""
+    course, section, question = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    teacher = _teacher(course)
+    _seed_submission(
+        engine,
+        course_id=course,
+        section_id=section,
+        student_id=uuid.uuid4(),
+        question_version_id=question,
+        submitted_at=BASE,
+        state="validated",
+    )
+    with pytest.raises(IdentityMissingForRows):
+        exporter.export(
+            principal=teacher,
+            course_id=str(course),
+            authorization=None,
+            fmt="csv",
+        )
+
+
+def test_export_column_selection_keeps_required_columns_and_rejects_unknown() -> None:
+    """`columns` 只能**增选**可选列：必需列始终存在，未知字段 422（不静默忽略）。"""
+    selected = [field for field, _ in resolve_export_columns("state,is_pass")]
+    for required in REQUIRED_EXPORT_COLUMNS:
+        assert required in selected
+    assert "state" in selected and "is_pass" in selected
+    assert "student_number" in selected and "display_name" in selected
+    # 不带 columns = 全部列（与页面已保存的行为兼容）。
+    assert [field for field, _ in resolve_export_columns(None)] == list(EXPORT_COLUMN_FIELDS)
+    with pytest.raises(UnsupportedExportColumn):
+        resolve_export_columns("student_number,not_a_column")
 
 
 def test_export_filename_and_media_types(
@@ -460,15 +626,15 @@ def test_export_filename_and_media_types(
     """文件名与媒体类型（路由层据此设置 `Content-Disposition` / `Content-Type`）。"""
     course = uuid.uuid4()
     teacher = _teacher(course)
-    csv_file = exporter.export(principal=teacher, course_id=str(course), fmt="csv")
-    xlsx_file = exporter.export(principal=teacher, course_id=str(course), fmt="xlsx")
+    csv_file = _export(exporter, principal=teacher, course_id=str(course), fmt="csv")
+    xlsx_file = _export(exporter, principal=teacher, course_id=str(course), fmt="xlsx")
     assert csv_file.media_type == "text/csv"
     assert xlsx_file.media_type.endswith("spreadsheetml.sheet")
     assert csv_file.filename == f"grades-{course}.csv"
     assert csv_file.content_disposition == f'attachment; filename="grades-{course}.csv"'
     assert csv_file.row_count == 0
     with pytest.raises(ValueError, match="format must be one of"):
-        exporter.export(principal=teacher, course_id=str(course), fmt="pdf")
+        _export(exporter, principal=teacher, course_id=str(course), fmt="pdf")
 
 
 # --- 2. 公式注入 ---------------------------------------------------------------------------
@@ -687,7 +853,7 @@ def test_export_leaves_unfinished_score_cells_empty_not_zero(
     teacher = _teacher(course)
 
     _, csv_records = _read_csv(
-        exporter.export(principal=teacher, course_id=str(course), fmt="csv").content
+        _export(exporter, principal=teacher, course_id=str(course), fmt="csv").content
     )
     unfinished = _by_submission(csv_records)[str(identifiers["running"])]
     assert unfinished[_HEADER["score"]] == ""
@@ -699,7 +865,7 @@ def test_export_leaves_unfinished_score_cells_empty_not_zero(
     assert _by_submission(csv_records)[str(identifiers["completed"])][_HEADER["score"]] == "86.5"
 
     _, xlsx_records = _read_xlsx(
-        exporter.export(principal=teacher, course_id=str(course), fmt="xlsx").content
+        _export(exporter, principal=teacher, course_id=str(course), fmt="xlsx").content
     )
     xlsx_unfinished = _by_submission(xlsx_records)[str(identifiers["running"])]
     assert xlsx_unfinished[_HEADER["score"]] is None
@@ -755,7 +921,7 @@ def test_csv_starts_with_utf8_bom_and_chinese_is_intact(
     """CSV 以 UTF-8 BOM 开头；中文列名/中文值解析无乱码（缺 BOM 时 Excel 按 GBK 读会乱码）。"""
     course = uuid.uuid4()
     teacher = _teacher(course)
-    payload = exporter.export(principal=teacher, course_id=str(course), fmt="csv").content
+    payload = _export(exporter, principal=teacher, course_id=str(course), fmt="csv").content
 
     assert payload.startswith(codecs.BOM_UTF8), "CSV 必须带 UTF-8 BOM，否则中文在 Excel 里乱码"
     text = payload.decode("utf-8-sig")
@@ -820,11 +986,11 @@ def test_the_stored_instant_is_reported_identically_by_json_csv_and_xlsx(
     assert grade_row_body(row)["submitted_at"] == expected
 
     _, csv_records = _read_csv(
-        exporter.export(principal=teacher, course_id=str(course), fmt="csv").content
+        _export(exporter, principal=teacher, course_id=str(course), fmt="csv").content
     )
     assert csv_records[0][_HEADER["submitted_at"]] == expected
     _, xlsx_records = _read_xlsx(
-        exporter.export(principal=teacher, course_id=str(course), fmt="xlsx").content
+        _export(exporter, principal=teacher, course_id=str(course), fmt="xlsx").content
     )
     assert _as_timestamp(xlsx_records[0][_HEADER["submitted_at"]]) == expected
 
@@ -890,7 +1056,7 @@ def test_student_sees_only_own_records_and_naming_another_student_is_403(
     with pytest.raises(AuthorizationError, match="only read their own"):
         query.list_grades(principal=principal, course_id=str(course), student_id=str(intruder))
     with pytest.raises(AuthorizationError, match="only read their own"):
-        exporter.export(principal=principal, course_id=str(course), student_id=str(intruder))
+        _export(exporter, principal=principal, course_id=str(course), student_id=str(intruder))
 
 
 def test_student_in_another_course_is_403(engine: Engine, query: GradeQueryService) -> None:
@@ -932,7 +1098,7 @@ def test_teacher_course_scope_is_enforced(
     with pytest.raises(AuthorizationError, match="does not cover"):
         query.list_grades(principal=teacher, course_id=str(foreign))
     with pytest.raises(AuthorizationError, match="does not cover"):
-        exporter.export(principal=teacher, course_id=str(foreign))
+        _export(exporter, principal=teacher, course_id=str(foreign))
 
 
 def test_section_scoped_assistant_cannot_widen_to_the_whole_course(
@@ -1205,7 +1371,7 @@ def test_filters_narrow_the_export_too(
     )
     assert [row.submission_id for row in page.items] == [str(wanted)]
     _, records = _read_csv(
-        exporter.export(
+        _export(exporter, 
             principal=teacher,
             course_id=str(course),
             section_id=str(s1),
@@ -1258,13 +1424,13 @@ def test_export_never_leaks_report_or_hidden_cases(
         "hidden_cases",
     ]
 
-    csv_payload = exporter.export(principal=teacher, course_id=str(course), fmt="csv").content
+    csv_payload = _export(exporter, principal=teacher, course_id=str(course), fmt="csv").content
     csv_text = csv_payload.decode("utf-8-sig")
     for marker in markers:
         assert marker not in csv_text
 
     _, xlsx_records = _read_xlsx(
-        exporter.export(principal=teacher, course_id=str(course), fmt="xlsx").content
+        _export(exporter, principal=teacher, course_id=str(course), fmt="xlsx").content
     )
     joined = " ".join(str(value) for record in xlsx_records for value in record.values())
     for marker in markers:

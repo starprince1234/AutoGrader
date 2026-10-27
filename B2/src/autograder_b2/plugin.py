@@ -11,7 +11,7 @@
 | 具体路径 | 所属前缀 | 路由构建处 |
 |---|---|---|
 | `POST /api/v1/submissions`、`GET /api/v1/submissions/{id}` | `/api/v1/submissions` | `intake.api` |
-| `GET /api/v1/evaluation-runs/{id}`、`/events`、`/report`、`/appeal-pack`、`/commentary`、`POST .../commentary`、`GET /api/v1/evaluation-runs/quality-summary` | `/api/v1/evaluation-runs` | `api.evaluation_routes` |
+| `GET /api/v1/evaluation-runs/{id}`、`/events`、`/report`、`/appeal-pack`、`/commentary`、`POST .../commentary`、`GET /api/v1/evaluation-runs/quality-summary`、`GET/POST .../learning-hints`（AI-FLOW-01B） | `/api/v1/evaluation-runs` | `api.evaluation_routes` |
 | `GET /api/v1/grades`、`/api/v1/grades/export` | `/api/v1/grades` | `api.grades_routes` |
 | `GET /api/v1/intake/quarantines`、`POST .../{quarantine_id}/resolve`（CHG-0014） | `/api/v1/intake` | `intake.api`（两条读/写路径都由 `intake.quarantine` 判定） |
 | `POST /api/v1/reference-verifications`（`CHG-0019`） | `/api/v1/reference-verifications` | `api.reference_routes` |
@@ -49,7 +49,7 @@ from autograder_b2.runtime import B2Runtime, build_b2_runtime
 class B2Module:
     descriptor = ModuleDescriptor(
         module="B2",
-        contract_version="0.18.0",
+        contract_version="0.19.0",
         provides=("b2-submissions",),
         requires=("host", "b4-auth", "b3-questions"),
         routes=(
@@ -86,7 +86,7 @@ class B2Module:
         return self._runtime
 
     def router(self, context) -> APIRouter:
-        """四个路由族的唯一注册点：intake 4 条 + 评测 7 条 + 成绩 2 条 + 参考解答验证 1 条。"""
+        """四个路由族的唯一注册点：intake 4 条 + 评测 9 条 + 成绩 2 条 + 参考解答验证 1 条。"""
         runtime = self._runtime_for(context)
         router = APIRouter()
         router.include_router(build_intake_router(runtime.intake))
