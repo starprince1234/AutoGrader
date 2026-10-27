@@ -29,7 +29,8 @@
 
 | 文档/能力 | 状态 | 最后验证方式 |
 |---|---|---|
-| 应用壳（`src/main.tsx` + `src/app/**`） | `已完成`（入口与外壳本轮重做，无独立首页） | `vite build` 实跑通过；`AppShell.test.tsx`（10 用例）+ `navigation.test.ts` + `routerBasepath.test.ts` 覆盖会话恢复门、根入口重定向、角色导航、账户菜单、退出与 basepath 回跳 |
+| 应用壳（`src/main.tsx` + `src/app/**`） | `已完成`（导览页为第一视图） | `vite build` 实跑通过；`AppShell.test.tsx`（15 用例）+ `navigation.test.ts` + `routerBasepath.test.ts` 覆盖会话恢复门、导览页放行、门户意图守卫、角色导航、账户菜单、退出与 basepath 回跳 |
+| 导览页与登录记忆（P09） | `已完成`（真实浏览器视觉未验收） | `LandingPage.test.tsx`（6 用例）+ `portal.test.ts`（4 用例）+ `AppShell` 门户守卫：教师/学生双列各入口、已登录按角色直达、最近登录用户跳过登录、门户与角色不匹配时阻断且不串端；意图只存 `{portal, path}`，不存凭据 |
 | 契约锁 `contracts.lock` | `已完成` | 与 `../../MAIN/contracts` 摘要一致（**`0.22.0`**，摘要 `5ada1a87…`；含密码重置两条公开操作与 P13 的查询范围字段）；`generate-api-types.mjs --check` 实跑通过 |
 | 找回密码（P02 补充） | `部分`（B1 已完成；B4 集成测试未跑） | `ForgotPasswordPage.test.tsx`（6 用例）+ `LoginPage.test.tsx`（忘记入口、失败后密码显示按钮保留、重置成功提示）：字段校验、发码冷却、统一错误文案、成功后回登录；`uv run --project MAIN python -m autograder_host.checks` 通过。**B4 pytest 需要 PostgreSQL/NATS，本机未执行**；真实 SMTP 与线上改密未验证 |
 | 密码可见性 | `已完成` | `Field` 行内 `trailing` 控件 + 页面自维护显示/隐藏状态；`LoginPage.test.tsx` 固定"失败后仍可查看/隐藏密码" |
@@ -54,22 +55,26 @@
 | 题目质量热力图（CHG-0015） | `部分` | 已并入 `features/review/QualityReviewTab.tsx`（见上方"复核工作区 · 题目质量"行）；旧 `QualitySummaryPage.test.tsx` 随旧页面删除 |
 | 题库标签覆盖度（CHG-0020 + CHG-0022） | `部分` | `QuestionCoveragePanel.test.tsx`（13 用例）+ `QuestionListPage.test.tsx`（2 用例）：`tagged + untagged == total` 是唯一被展示与校验的恒等式（反向断言逐标签之和 21 不在页面上）、`untagged_questions` 单独一格、`tags` 按契约顺序原样渲染、点标签复用既有筛选（CHG-0022 后每个标签都可筛，防御分支已删除）、`404` → "尚未在 B3 实现"信息态（只请求一次、不客户端兜底）、`403` 原样带出 detail。**对着已声明契约构建、未经真实 B3 验证**（本批未对运行中的 host 发过请求） |
 | 「验证并发布」（CHG-0019 / ADR-0015） | `部分` | `ReferenceVerificationPanel.test.tsx`（15 用例）：两步显式动作（验证 ≠ 发布）+ 不自动重试/不自动发布；三态互不混淆（全通过可发布 / 未通过逐用例 `failure_category` / `503` 或全 `infrastructure_error` → "验证需要 Linux 沙箱环境"，文案不含"成功"也不含"验证失败"）；**全通过但 B3 未记录存证（`attestation_id: null`）→ 仍不可发布**；结论摘要与当前版本不一致 → 失效；换版本 → 结论不跨实例。**对着已声明契约构建、未经真实 B2 验证**（B2 尚未实现该端点） |
-| 测试框架（vitest） | `已完成` | `vitest run`：**46 文件 / 398 用例**全部通过（exit 0）；本批新增找回密码、密码显示与公开页外壳用例共 10 个 |
+| 测试框架（vitest） | `已完成` | `vitest run`：**48 文件 / 412 用例**全部通过（exit 0）；本批新增导览页、登录记忆与角色隔离用例 14 个 |
 | 真实 ESLint | `已完成` | `eslint . --max-warnings 0`：0 error / 0 warning |
 | API 类型生成（ADR-0002） | `已完成` | `node scripts/generate-api-types.mjs` / `--check`（契约 **`0.22.0`**，`API types match MAIN/contracts.`） |
 | 端到端（真实后端） | `部分`（覆盖度**已打通**；其余按页说明） | 真实 MAIN host `http://127.0.0.1:18000` + B2/B3/B4。**本轮真实浏览器复核**：`/app/questions` 的覆盖度面板渲染真实 B3 数据（`total=102 / tagged=4 / untagged=98`，逐标签与独立 SQL 一致）⇒ **覆盖度端到端成立**；旧隔离区与旧质量页当时正常渲染（空列表/筛选面板），但**已随 P13 合并删除，新 `/review` 尚未部署**；`/app/questions/<id>/edit` 的验证面板可用，但对**草稿**得到 B2 `422`（评测包只对已发布版本编译 → 该跨模块缺口已由 `CHG-0028` 处理，待 B3 落地后复测）。**证据包面板未在浏览器里打开**。**AI 参考分的非空渲染、`unavailable` 态、学生视图仍未做端到端**（原因见 phase-03 的"未验证项"） |
 
 > 归档门禁与完成定义见 `collaboration/definition-of-done.md` 与 `phases/archive/README.md`。
-> 当前阶段记录：`phases/active/phase-08-password-reset.md`（找回密码与密码可见性：B4 新增
-> 两条公开认证操作与迁移 `20261027_0004`，B1 新增 `/forgot-password`、登录入口与页面自维护的
-> 密码显示按钮；契约 0.22.0；含真实命令、门禁结果与未验证项）；上一阶段：
+> 当前阶段记录：`phases/active/phase-09-landing-portal.md`（导览页与登录记忆：根路径 `/`
+> 由重定向改为双列导览页，教师/学生各列各自入口，登录后直达所点功能；最近登录用户跳过登录；
+> 门户意图只存角色与目标路径，角色不匹配时阻断；含真实命令、门禁结果与未验证项）；上一阶段：
+> `phases/active/phase-08-password-reset.md`（找回密码与密码可见性：B4 新增
+> 两条公开认证操作与迁移 `20261027_0005`，B1 新增 `/forgot-password`、登录入口与页面自维护的
+> 密码显示按钮；契约 0.22.0；含真实命令、门禁结果与未验证项）；再上一阶段：
 > `phases/active/phase-07-review-workspace.md`（P13 复核工作区：旧隔离区/质量两页
 > 合并为 `/review?tab=mail|quality`，删除旧路由与旧测试；邮件标签带课程/课序筛选、详情与安全归属，
 > 质量标签由 P07 带版本、先经 B3 再拉 B2 聚合；B2 同时补齐行级课程范围，见 B2 的 phase-10；
 > 含真实执行命令与未验证项）；再上一阶段：
 > `phases/active/phase-06-entry-shell-and-auth-redesign.md`（根入口、登录、注册
-> 与应用外壳重做：删除独立首页，认证页独立布局，角色导航收敛到 2/4 项，深链回跳只接受
-> 站内路径；含真实命令与未做的浏览器视觉验收）；再上一阶段：
+> 与应用外壳重做：认证页独立布局，角色导航收敛到 2/4 项，深链回跳只接受
+> 站内路径；其中"删除独立首页、根入口重定向"已被 phase-09 的导览页取代；
+> 含真实命令与未做的浏览器视觉验收）；再上一阶段：
 > `phases/active/phase-05-authoring-publish-path-and-0-15-0.md`（出题发布路径打通
 > `CHG-0019`/`CHG-0023` + `CHG-0017`/`CHG-0021`/`CHG-0022`/`CHG-0024`，以及**验收后修正**：
 > 删除四条"断言对方实现进度"的常驻横幅、把过宽的 `503` 结论改为中性标题 + 原样 detail，

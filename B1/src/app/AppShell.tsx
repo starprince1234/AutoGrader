@@ -13,13 +13,19 @@ import {
   currentLocationTarget,
   safeRedirectTarget,
 } from "../auth/redirect";
+import {
+  clearPortalIntent,
+  portalAllows,
+  readPortalIntent,
+  type Portal,
+} from "../auth/portal";
 import { AccountMenu } from "./AccountMenu";
 import { AuthLayout } from "./AuthLayout";
 import { isMainNavActive, mainNavItems, type MainNavItem } from "./navigation";
 import { Drawer } from "../ui/components";
 
-/** 不需要登录的路径：登录、注册与忘记密码是三个公开入口。 */
-const PUBLIC_PATHS = new Set(["/login", "/register", "/forgot-password"]);
+/** 不需要登录的路径：导览页、登录、注册与忘记密码。 */
+const PUBLIC_PATHS = new Set(["/", "/login", "/register", "/forgot-password"]);
 
 /**
  * 应用外壳（全站唯一）。
@@ -27,9 +33,11 @@ const PUBLIC_PATHS = new Set(["/login", "/register", "/forgot-password"]);
  * 三层判断，顺序固定：
  * 1. **会话恢复完成前**不渲染任何业务内容（只显示骨架）——否则持有效 cookie 的用户会
  *    先看到一帧匿名外壳，或被误送到登录页。
- * 2. 公开页（登录/注册）使用独立认证布局；已登录用户访问公开页会被送回作业页，
- *    登录页上的 `?redirect=` 只接受 `safeRedirectTarget` 认可的站内路径。
- * 3. 受保护页：匿名用户带**原站内位置**去登录（深链不丢），登录后回到原处。
+ * 2. 公开页：`/` 是导览页（登录与否都先看到两栏），登录/注册/忘记密码使用认证布局；
+ *    已登录用户访问登录/注册会被送回作业页，登录页上的 `?redirect=` 只接受站内路径。
+ * 3. 受保护页：匿名用户带**原站内位置**去登录（深链不丢），登录后回到原处；
+ *    从导览页点入的入口还要校验"教师端/学生端"是否与当前角色匹配，避免用错身份
+ *    看到另一端的视图。
  *
  * 导航按角色过滤（见 `navigation.ts`）只是体验层；每个接口仍由服务端独立判权。
  */
@@ -41,12 +49,19 @@ export function AppShell() {
   const ready = useSyncExternalStore(subscribeSessionReady, isSessionReady, isSessionReady);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [signingOut, setSigningOut] = useState(false);
+  const [blockedPortal, setBlockedPortal] = useState<Portal | null>(null);
   /** 主动退出后不要保留 redirect：用户要的是干净地回到登录页。 */
   const signingOutRef = useRef(false);
   const previousStatus = useRef(session.status);
+  /**
+   * 同一次导航只判定一次入口端。React StrictMode 会重复执行 effect；
+   * 不用这个键的话，第一次读取意图后第二次会读到空，反而把遮挡面板清掉。
+   */
+  const portalCheckRef = useRef<string | null>(null);
 
   const authenticated = session.status === "authenticated";
   const isPublic = PUBLIC_PATHS.has(location.pathname);
+  const isLanding = location.pathname === "/";
   const redirectTarget = currentLocationTarget(location);
   const requestedRedirect = safeRedirectTarget(
     readRedirectSearch(location.search),
@@ -64,9 +79,25 @@ export function AppShell() {
     if (isPublic) signingOutRef.current = false;
   }, [isPublic]);
 
+  // 回到导览页就重新开始选择：清掉旧的入口判定键与遮挡面板。
+  useEffect(() => {
+    if (!isLanding) return;
+    portalCheckRef.current = null;
+    setBlockedPortal(null);
+  }, [isLanding]);
+
+  // 匿名态（退出/会话失效）不应保留上一次的入口判定，否则换账号登录后会被旧键挡住。
+  useEffect(() => {
+    if (authenticated) return;
+    portalCheckRef.current = null;
+    setBlockedPortal(null);
+  }, [authenticated]);
+
   useEffect(() => {
     if (!ready) return;
     if (isPublic) {
+      // 导览页对所有访客显示，不把已登录用户送走。
+      if (isLanding) return;
       // 已登录用户不该停在登录/注册表单：回到原深链或作业页。
       if (authenticated) {
         const target = requestedRedirect ?? DEFAULT_AUTHENTICATED_PATH;
@@ -85,11 +116,46 @@ export function AppShell() {
       search: { redirect: redirectTarget ?? undefined },
       replace: true,
     });
-  }, [ready, isPublic, authenticated, requestedRedirect, redirectTarget, navigate]);
+  }, [ready, isPublic, isLanding, authenticated, requestedRedirect, redirectTarget, navigate]);
+
+  /**
+   * 导览页入口的"这一端是否允许当前角色"。只有一次性地读取意图：
+   * - 角色匹配 → 清掉意图，正常渲染；
+   * - 角色不匹配 → 保留意图并显示说明，刷新也不会绕过；
+   * - 用户离开目标路径 → 旧意图失效，不阻塞其它页面。
+   */
+  useEffect(() => {
+    if (!ready || isPublic || !authenticated) return;
+    const key = `${location.pathname}${location.searchStr}`;
+    if (portalCheckRef.current === key) return;
+    portalCheckRef.current = key;
+
+    const intent = readPortalIntent();
+    if (!intent || intent.path !== location.pathname) {
+      if (intent) clearPortalIntent();
+      setBlockedPortal(null);
+      return;
+    }
+    if (portalAllows(session, intent.portal)) {
+      clearPortalIntent();
+      setBlockedPortal(null);
+      return;
+    }
+    setBlockedPortal(intent.portal);
+  }, [
+    ready,
+    isPublic,
+    authenticated,
+    location.pathname,
+    location.searchStr,
+    session,
+  ]);
 
   if (!ready) return <BootScreen />;
 
   if (isPublic) {
+    // 导览页自带两栏布局与页头；认证页使用独立认证布局。
+    if (isLanding) return <Outlet />;
     // 已登录用户在跳走的那一帧仍能看到产品标识与「返回作业」出口，而不是第二套登录表单。
     if (authenticated) {
       return (
@@ -111,6 +177,18 @@ export function AppShell() {
   if (!authenticated) return <BootScreen />;
 
   const items = mainNavItems(session);
+
+  /**
+   * 切换账号：先回导览页再清会话，避免 AppShell 在受保护路径上把匿名用户又送去登录页。
+   * 导览页会自行清掉上一次的入口意图。
+   */
+  const switchAccount = () => {
+    if (signingOut) return;
+    setSigningOut(true);
+    void navigate({ to: "/", replace: true })
+      .then(() => signOut())
+      .finally(() => setSigningOut(false));
+  };
 
   return (
     <div className="app-shell">
@@ -153,7 +231,15 @@ export function AppShell() {
         </aside>
         <main className="app-main">
           <div className="app-content">
-            <Outlet />
+            {blockedPortal ? (
+              <PortalMismatch
+                portal={blockedPortal}
+                signingOut={signingOut}
+                onSwitch={switchAccount}
+              />
+            ) : (
+              <Outlet />
+            )}
           </div>
         </main>
       </div>
@@ -223,6 +309,48 @@ function BootScreen() {
       <span className="boot__bar" aria-hidden="true" />
       <span className="boot__text muted">{t("boot.loading")}</span>
     </div>
+  );
+}
+
+/**
+ * 从导览页进入的入口端与当前账号角色不符时的说明页。
+ *
+ * 这里刻意不渲染目标页（否则教师账号会看到学生视图或反过来），只提供两个真实出口：
+ * 回导览重新选择，或退出后换用对应身份的账号登录。
+ */
+function PortalMismatch({
+  portal,
+  signingOut,
+  onSwitch,
+}: {
+  portal: Portal;
+  signingOut: boolean;
+  onSwitch: () => void;
+}) {
+  return (
+    <section className="panel" role="alert" data-testid="portal-mismatch">
+      <h1 className="panel__title">{t("portal.mismatch.title")}</h1>
+      <p className="muted">
+        {portal === "teacher"
+          ? t("portal.mismatch.teacher")
+          : t("portal.mismatch.student")}
+      </p>
+      <p className="muted">{t("portal.mismatch.hint")}</p>
+      <div className="inline">
+        <Link className="button button--ghost" to="/" data-testid="portal-mismatch-back">
+          {t("portal.mismatch.back")}
+        </Link>
+        <button
+          type="button"
+          className="button"
+          data-testid="portal-mismatch-switch"
+          disabled={signingOut}
+          onClick={onSwitch}
+        >
+          {signingOut ? t("nav.loggingOut") : t("portal.mismatch.switch")}
+        </button>
+      </div>
+    </section>
   );
 }
 

@@ -3,10 +3,10 @@
 本表是"需求能否被证明满足"的检查单。`层次` 取值：单元 / 组件 / 契约 / 安全 / 端到端。
 `当前状态` 取值：`存在`（有真实测试且通过）／`部分`（B1 侧已覆盖，另一半须由提供方断言或需真实后端）／`待建`。
 
-测试实跑结果：**46 个测试文件 / 398 个用例全部通过**（`vitest run`，见
-`../phases/active/phase-08-password-reset.md` 的"真实执行的命令与结果"一节；
-上一阶段 P13 为 43 文件 / 374 用例，本批新增找回密码与密码可见性用例）。
-浏览器视觉验收（1440/768/390px 截图、深色模式与真实账号）**本轮未执行**，见 phase-08 的未验证项。
+测试实跑结果：**48 个测试文件 / 412 个用例全部通过**（`vitest run`，见
+`../phases/active/phase-09-landing-portal.md` 的"真实执行的命令与结果"一节；
+上一阶段找回密码为 46 文件 / 398 用例，本批新增导览页、登录记忆与门户隔离用例 14 个）。
+浏览器视觉验收（1440/768/390px 截图、深色模式与真实账号）**本轮未执行**，见 phase-09 的未验证项。
 
 | 用例 ID | 目标 RQ | 层次 | 前置 | 步骤要点 | 期望 | 当前状态 | 测试位置 |
 |---|---|---|---|---|---|---|---|
@@ -115,7 +115,7 @@
 | TC-B1-103 | P13-B | 组件+诚实性 | `static_rule_hits` 含 `count=0`；`attempt_count=0`；`infrastructure_error` 存在 | 打开 `/review?tab=quality` | **0 命中行不被过滤**（`STAT-PY-013` 在场且为 `0`）；`attempt_count=0` 显示"没有评测记录"且**不**再叠"样本较少"；`infrastructure_error` 单列"系统问题"；三态安全与 `unmeasured_runs` 不合并、不转 0 | 存在 | `src/features/review/QualityReviewTab.test.tsx` |
 
 | TC-B1-104 | P01 | 组件 | 匿名打开受保护深链 | 等待会话恢复 | 先显示骨架、不渲染受保护内容；去登录页并在 `?redirect=` 保留原站内路径（含筛选） | 存在 | `src/app/AppShell.test.tsx` |
-| TC-B1-105 | P01 | 组件 | 已登录打开 `/` | 观察导航与页头 | 直接进入 `/assignments`；侧栏只出现角色允许的入口；页头没有契约版本、欢迎语或课程作用域 UUID | 存在 | `src/app/AppShell.test.tsx`、`src/app/navigation.test.ts` |
+| TC-B1-105 | P01 | 组件 | 已登录打开 `/` | 观察导览页与页头 | 仍显示双列导览页（不自动跳作业页），已登录身份与退出按钮可见；导览页不渲染应用侧栏；页头没有契约版本、欢迎语或课程作用域 UUID | 存在 | `src/app/AppShell.test.tsx`、`LandingPage.test.tsx`、`src/app/navigation.test.ts` |
 | TC-B1-106 | P02 | 组件 | 空字段 / 错误凭据 / 有效凭据 | 提交登录 | 空字段就地报错且不发请求并聚焦；401 统一文案；成功后回原深链或作业页；提交中只发一次 | 存在 | `src/features/auth/LoginPage.test.tsx` |
 | TC-B1-107 | P01/P02 | 组件+安全 | `//host`、绝对 URL、反斜线/多层编码、`/login`、根路径 | 登录回跳 | 一律拒绝并落到站内默认页；basepath 下最终 URL 为 `/app/...` | 存在 | `src/auth/redirect.test.ts`、`LoginPage.test.tsx`、`src/app/routerBasepath.test.ts` |
 | TC-B1-108 | P03 | 组件 | 学号格式错误 / 名单外身份 / 验证码错误 / 用户名冲突 / 注册成功 | 发码与创建账号 | 格式错误不发请求；服务端 409/422 映射到字段；失败保留身份字段、清空密码与验证码；成功后去登录并显示「账号已创建，请登录。」 | 存在 | `src/features/auth/RegisterPage.test.tsx`、`registrationValidation.test.ts`、`registrationErrors.test.ts` |
@@ -127,6 +127,9 @@
 | TC-B1-114 | P02 | 组件 | 邮箱格式错误 / 邮箱合法 | 点击「发送验证码」 | 格式错误就地报错且零请求；合法邮箱显示通用提示「如果该邮箱已注册…」并进入冷却 | 存在 | `src/features/auth/ForgotPasswordPage.test.tsx` |
 | TC-B1-115 | P02 | 组件+安全 | 验证码错误 / 新密码过短 / 两次不一致 | 提交重置 | 验证码错误落到验证码字段；密码规则在本地拦截；不把服务端细节或账号存在性暴露给用户 | 存在 | `src/features/auth/ForgotPasswordPage.test.tsx` |
 | TC-B1-116 | P02 | 组件 | 完整重置成功 | 邮箱 + 验证码 + 新密码提交 | 只发一次 `password-reset` 请求；成功后回 `/login?reset=done`，登录页显示「密码已重置，请使用新密码登录。」 | 存在 | `src/features/auth/ForgotPasswordPage.test.tsx`、`LoginPage.test.tsx` |
+| TC-B1-117 | P01 | 组件 | 匿名访客打开 `/` | 看第一视图 | 左教师、右学生两栏；教师端只有作业管理/题库/班级成绩/课程与名单/复核工作区，学生端只有我的作业/我的成绩；两栏互不串功能；页面没有欢迎语、功能磁贴、版本号或开发者文案 | 存在 | `src/features/home/LandingPage.test.tsx`（6 个用例）、`src/features/home/LandingPage.tsx` |
+| TC-B1-118 | P01/P02 | 组件+契约 | 匿名点教师端/学生端入口；随后登录；或会话仍有效（最近登录） | 观察跳转、登录回跳与会话恢复 | 点击时只记 `{portal, path}`（不写令牌/用户名）；会话仍有效则**跳过登录页**直接进入目标功能，匹配后清除一次性意图；匿名则先登录再回目标页；学生入口被点后意图是 `student`，不会带成 `teacher` | 存在 | `LandingPage.test.tsx`、`src/app/AppShell.test.tsx`、`src/auth/portal.test.ts` |
+| TC-B1-119 | P01/P02 | 组件+安全 | 学生账号带教师端意图 / 教师账号带学生端意图 / 混合角色 / 角色未知 | 打开目标页并刷新 | 角色与门户不匹配时显示阻断面板，**不渲染错误一端的功能视图**；刷新仍阻断；可返回导览页重选；已登录时错误一端的入口禁用并说明；教师侧角色与学生的混合账号只走教师端；角色未知时两端都 fail-closed | 存在 | `src/app/AppShell.test.tsx`、`LandingPage.test.tsx`、`src/auth/portal.test.ts` |
 
 ## 夹具政策（必须遵守）
 
@@ -156,8 +159,10 @@
   而它当时正在渲染 B2 按**冻结目录**逐条给出的 15 条记录（**15 条 `count=0`**，真机 `GET` 读到）。
   TC-B1-087 里"规则表说明「从未命中」的清单不在本页"那半句随之删除。**未选择过滤**，理由见
   `../phases/active/phase-03-contract-surface-completion.md` 的"追加（0.16.0 复核）"。
-- 状态分布（实测统计本表 103 行）：`存在` 87 条、`部分` 11 条、`待建` 5 条。`待建` 全部是**只能由提供方断言**
+- 状态分布（实测统计本表 119 行）：`存在` 103 条、`部分` 11 条、`待建` 5 条。`待建` 全部是**只能由提供方断言**
   或**被契约缺口阻塞**的场景，原因逐条写在表内，未用夹具冒充。
+- **本批（P01 导览页）新增 → TC-117…119**：双列导览、登录记忆（会话仍有效则直达）与门户隔离。
+  它们属于入口体验回归，不新造 `RQ` 编号；真实浏览器视觉验收未执行，只有组件与路由证据。
 - **"能力有界面 ≠ 已端到端验证"的记录（本批已按真实浏览器读数改写）**：TC-075…077、TC-081/082、
   TC-083…087、TC-103、TC-088…094、TC-095…102 的夹具是契约形状；**2026-09-20 的真实浏览器复核**把其中两条
   变成了真实读数：**TC-088…094（覆盖度）已真实联通**（`total=102 / tagged=4 / untagged=98`，

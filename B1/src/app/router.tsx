@@ -2,10 +2,10 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
-  redirect,
 } from "@tanstack/react-router";
 import { AppShell } from "./AppShell";
 import { ForgotPasswordPage } from "../features/auth/ForgotPasswordPage";
+import { LandingPage } from "../features/home/LandingPage";
 import { LoginPage } from "../features/auth/LoginPage";
 import { NotFoundPage } from "./NotFoundPage";
 import { RegisterPage } from "../features/auth/RegisterPage";
@@ -33,15 +33,13 @@ import {
 const rootRoute = createRootRoute({ component: AppShell, notFoundComponent: NotFoundPage });
 
 /**
- * `/` 不是页面，只是一个入口：登录后一律进入作业页（P01）。
- * 在 `beforeLoad` 里重定向，避免先渲染一颗"首页卡片"再跳走。
+ * `/` 是面向所有访客的导览页：左侧教师端、右侧学生端，各自只列本端功能。
+ * 登录与否都在这里先看到两栏；已登录用户直接点入口即可，未登录用户登录后回到目标页。
  */
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
-  beforeLoad: () => {
-    throw redirect({ to: "/assignments", replace: true });
-  },
+  component: LandingPage,
 });
 
 /**

@@ -1571,9 +1571,243 @@ samp {
   white-space: nowrap;
 }
 
+/* ---------------------------------------------------------------- 导览页 */
+
+/*
+ * 第一眼就是两栏：左侧教师端、右侧学生端。两栏都是简单标题 + 链接列表，
+ * 不做功能磁贴或欢迎语；登录记忆与入口端校验由 AppShell 负责。
+ */
+.landing {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: 0 max(var(--space-5), calc((100% - 1200px) / 2 + var(--space-5)));
+  background: var(--color-bg);
+}
+
+.landing__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: 72px;
+}
+
+.landing__brand {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.landing__account {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.landing__identity {
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.landing__main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-5);
+  align-items: stretch;
+  padding: var(--space-4) 0 48px;
+}
+
+.landing__column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: 28px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+/* 两端各一条细色线区分类别，不靠图标堆叠。 */
+.landing__column--teacher {
+  border-top: 3px solid var(--color-accent);
+}
+
+.landing__column--student {
+  border-top: 3px solid var(--color-ok);
+}
+
+.landing__column-head {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.landing__eyebrow {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+}
+
+.landing__column--teacher .landing__eyebrow {
+  color: var(--color-accent);
+}
+
+.landing__column--student .landing__eyebrow {
+  color: var(--color-ok);
+}
+
+.landing__title {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.landing__lead {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.landing__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--color-border);
+}
+
+.landing__list li {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.landing__link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: 64px;
+  padding: 12px 4px;
+  color: var(--color-text);
+  text-decoration: none;
+  transition: background 0.15s var(--ease), padding 0.15s var(--ease);
+}
+
+.landing__link:hover {
+  background: var(--color-surface-2);
+  opacity: 1;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+.landing__link:focus-visible {
+  outline: none;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-focus);
+}
+
+.landing__link-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.landing__link-label {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.landing__link-hint {
+  color: var(--color-text-muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.landing__link-arrow {
+  flex: none;
+  color: var(--color-text-faint);
+  font-size: 20px;
+  line-height: 1;
+}
+
+.landing__link--disabled {
+  color: var(--color-text-faint);
+  cursor: not-allowed;
+}
+
+.landing__link--disabled:hover {
+  background: transparent;
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+.landing__link--disabled .landing__link-hint {
+  color: var(--color-text-faint);
+}
+
+.landing__note {
+  margin: auto 0 0;
+  color: var(--color-text-faint);
+  font-size: 12.5px;
+}
+
+.landing__footer {
+  padding: 8px 0 0;
+  text-align: center;
+  font-size: 13px;
+}
+
 /* ---------------------------------------------------------------- 响应式 */
 
 @media (max-width: 767px) {
+  .landing {
+    padding: 0 var(--space-4) 32px;
+  }
+
+  .landing__head {
+    min-height: 64px;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .landing__account {
+    gap: var(--space-2);
+  }
+
+  .landing__identity {
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .landing__main {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-4);
+    padding: var(--space-3) 0 32px;
+  }
+
+  .landing__column {
+    padding: var(--space-5);
+    border-radius: var(--radius-md);
+  }
+
+  .landing__title {
+    font-size: 22px;
+  }
+
+  .landing__link {
+    min-height: 56px;
+  }
+
   .app-header {
     gap: var(--space-3);
     padding: 0 var(--space-4);
