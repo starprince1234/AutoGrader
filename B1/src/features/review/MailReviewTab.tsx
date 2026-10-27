@@ -52,6 +52,11 @@ function truncate(value: string, limit: number): string {
   return value.length <= limit ? value : `${value.slice(0, limit)}…`;
 }
 
+/** 邮件的 Message-ID 很长；表格里只显示可辨认的前缀，完整值留在 `title` 与详情里。 */
+function shortenMessageId(value: string): string {
+  return value.length <= 24 ? value : `${value.slice(0, 22)}…`;
+}
+
 function scopeText(
   row: IntakeQuarantineView,
   courseMap: Map<string, { course_code: string; title: string }>,
@@ -65,9 +70,8 @@ function scopeText(
     return t("review.mail.scopeUnscoped");
   }
   const course = courseMap.get(row.scope_course_id);
-  const courseText = course
-    ? `${course.course_code} · ${course.title}`
-    : shortenId(row.scope_course_id);
+  // 表格里用课程代码（短、可扫读）；完整标题留给 hover 与筛选下拉。
+  const courseText = course ? course.course_code : shortenId(row.scope_course_id);
   const sectionText =
     row.scope_section_id === null
       ? t("review.mail.notProvided")
@@ -79,7 +83,7 @@ function scopeText(
 function CopyToken({ label, value }: { label: string; value: string }) {
   const [state, setState] = useState<"idle" | "ok" | "manual">("idle");
   return (
-    <span className="inline">
+    <span className="row-actions">
       <span className="mono-id" title={value}>
         {value}
       </span>
@@ -258,85 +262,89 @@ export function MailReviewTab({
       <h2>{t("review.mail.title")}</h2>
 
       <Panel title={t("review.mail.filter")}>
-        <div className="form-grid">
-          <Field label={t("review.mail.course")} htmlFor="review-mail-course">
-            <select
-              id="review-mail-course"
-              data-testid="review-mail-course"
-              value={effectiveCourseId ?? ""}
-              onChange={(event) => changeFilter({ courseId: event.target.value || null, sectionId: null })}
-            >
-              {isAdmin ? <option value="">{t("review.mail.allCourses")}</option> : null}
-              {!isAdmin && courseOptions.length === 0 ? (
-                <option value="">{t("review.mail.noCourse")}</option>
-              ) : null}
-              {courseOptions.map((course) => (
-                <option key={course.course_id} value={course.course_id}>
-                  {course.course_code} · {course.title}
-                </option>
-              ))}
-            </select>
-          </Field>
+        <div className="stack">
+          <div className="form-grid">
+            <Field label={t("review.mail.course")} htmlFor="review-mail-course">
+              <select
+                id="review-mail-course"
+                data-testid="review-mail-course"
+                value={effectiveCourseId ?? ""}
+                onChange={(event) =>
+                  changeFilter({ courseId: event.target.value || null, sectionId: null })
+                }
+              >
+                {isAdmin ? <option value="">{t("review.mail.allCourses")}</option> : null}
+                {!isAdmin && courseOptions.length === 0 ? (
+                  <option value="">{t("review.mail.noCourse")}</option>
+                ) : null}
+                {courseOptions.map((course) => (
+                  <option key={course.course_id} value={course.course_id}>
+                    {course.course_code} · {course.title}
+                  </option>
+                ))}
+              </select>
+            </Field>
 
-          <Field label={t("review.mail.section")} htmlFor="review-mail-section">
-            <select
-              id="review-mail-section"
-              data-testid="review-mail-section"
-              value={filter.sectionId ?? ""}
-              disabled={effectiveCourseId === null}
-              onChange={(event) => changeFilter({ sectionId: event.target.value || null })}
-            >
-              <option value="">{t("review.mail.allSections")}</option>
-              {(sections.data ?? []).map((section) => (
-                <option key={section.sectionId} value={section.sectionId}>
-                  {section.label}
-                </option>
-              ))}
-            </select>
-          </Field>
+            <Field label={t("review.mail.section")} htmlFor="review-mail-section">
+              <select
+                id="review-mail-section"
+                data-testid="review-mail-section"
+                value={filter.sectionId ?? ""}
+                disabled={effectiveCourseId === null}
+                onChange={(event) => changeFilter({ sectionId: event.target.value || null })}
+              >
+                <option value="">{t("review.mail.allSections")}</option>
+                {(sections.data ?? []).map((section) => (
+                  <option key={section.sectionId} value={section.sectionId}>
+                    {section.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
 
-          <Field label={t("review.mail.resolved")} htmlFor="review-mail-resolved">
-            <select
-              id="review-mail-resolved"
-              data-testid="review-mail-resolved"
-              value={filter.resolved === null ? "all" : filter.resolved ? "true" : "false"}
-              onChange={(event) =>
-                changeFilter({
-                  resolved:
-                    event.target.value === "all" ? null : event.target.value === "true",
-                })
-              }
-            >
-              <option value="false">{t("review.mail.unresolved")}</option>
-              <option value="true">{t("review.mail.resolvedState")}</option>
-              <option value="all">{t("review.mail.allStates")}</option>
-            </select>
-          </Field>
+            <Field label={t("review.mail.resolved")} htmlFor="review-mail-resolved">
+              <select
+                id="review-mail-resolved"
+                data-testid="review-mail-resolved"
+                value={filter.resolved === null ? "all" : filter.resolved ? "true" : "false"}
+                onChange={(event) =>
+                  changeFilter({
+                    resolved:
+                      event.target.value === "all" ? null : event.target.value === "true",
+                  })
+                }
+              >
+                <option value="false">{t("review.mail.unresolved")}</option>
+                <option value="true">{t("review.mail.resolvedState")}</option>
+                <option value="all">{t("review.mail.allStates")}</option>
+              </select>
+            </Field>
 
-          <Field label={t("review.mail.reason")} htmlFor="review-mail-reason">
-            <select
-              id="review-mail-reason"
-              data-testid="review-mail-reason"
-              value={filter.reasonCode ?? ""}
-              onChange={(event) => changeFilter({ reasonCode: event.target.value || null })}
-            >
-              <option value="">{t("review.mail.allReasons")}</option>
-              {REASON_CODES.map((code) => (
-                <option key={code} value={code}>
-                  {reasonLabel(code)}
-                </option>
-              ))}
-            </select>
-          </Field>
+            <Field label={t("review.mail.reason")} htmlFor="review-mail-reason">
+              <select
+                id="review-mail-reason"
+                data-testid="review-mail-reason"
+                value={filter.reasonCode ?? ""}
+                onChange={(event) => changeFilter({ reasonCode: event.target.value || null })}
+              >
+                <option value="">{t("review.mail.allReasons")}</option>
+                {REASON_CODES.map((code) => (
+                  <option key={code} value={code}>
+                    {reasonLabel(code)}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+          {courses.isError ? <ErrorState error={courses.error} /> : null}
+          {sections.isError ? <ErrorState error={sections.error} /> : null}
+          <p className="muted">{t("review.mail.scopeNote")}</p>
+          {success ? (
+            <Banner tone="success" testId="review-mail-resolved-ok">
+              {success}
+            </Banner>
+          ) : null}
         </div>
-        {courses.isError ? <ErrorState error={courses.error} /> : null}
-        {sections.isError ? <ErrorState error={sections.error} /> : null}
-        <p className="muted">{t("review.mail.scopeNote")}</p>
-        {success ? (
-          <Banner tone="success" testId="review-mail-resolved-ok">
-            {success}
-          </Banner>
-        ) : null}
       </Panel>
 
       <Panel
@@ -383,7 +391,9 @@ export function MailReviewTab({
               {
                 key: "recorded_at",
                 header: t("review.mail.recordedAt"),
-                render: (row) => formatDateTime(row.recorded_at, t("common.none")),
+                render: (row) =>
+                  // 列表里到分钟即可；秒没有区分意义，还会把操作列挤出可视区。
+                  formatDateTime(row.recorded_at, t("common.none")).slice(0, 16),
               },
               {
                 key: "scope",
@@ -391,31 +401,28 @@ export function MailReviewTab({
                 render: (row) => <span title={row.scope_course_id ?? ""}>{scopeText(row, courseMap, sectionMap)}</span>,
               },
               {
-                key: "mailbox",
-                header: t("review.mail.mailbox"),
-                render: (row) =>
-                  row.mailbox === "" ? t("review.mail.notProvided") : row.mailbox,
-              },
-              {
-                key: "locator",
-                header: t("review.mail.locator"),
+                key: "source",
+                header: t("review.mail.source"),
                 render: (row) => (
-                  <span className="mono-id">
-                    {row.message_id ? shortenId(row.message_id) : t("review.mail.notProvided")}
-                    {row.uid === null ? "" : ` · UID ${row.uid}`}
-                  </span>
+                  <div>
+                    <div>{row.mailbox === "" ? t("review.mail.notProvided") : row.mailbox}</div>
+                    <div className="muted mono-id" title={row.message_id ?? undefined}>
+                      {row.message_id ? shortenMessageId(row.message_id) : t("review.mail.notProvided")}
+                      {typeof row.uid === "number" ? ` · UID ${row.uid}` : ""}
+                    </div>
+                  </div>
                 ),
               },
               {
                 key: "reason",
                 header: t("review.mail.reason"),
-                render: (row) => reasonLabel(row.reason_code),
-              },
-              {
-                key: "detail",
-                header: t("review.mail.detail"),
                 render: (row) => (
-                  <span title={row.detail}>{truncate(row.detail, 80)}</span>
+                  <div>
+                    <div>{reasonLabel(row.reason_code)}</div>
+                    <div className="muted" title={row.detail}>
+                      {truncate(row.detail, 8)}
+                    </div>
+                  </div>
                 ),
               },
               {
@@ -431,7 +438,7 @@ export function MailReviewTab({
                 key: "action",
                 header: t("review.mail.action"),
                 render: (row) => (
-                  <span className="inline">
+                  <div className="row-actions">
                     <button
                       type="button"
                       className="button button--ghost"
@@ -450,7 +457,7 @@ export function MailReviewTab({
                         {t("review.mail.resolveAction")}
                       </button>
                     )}
-                  </span>
+                  </div>
                 ),
               },
             ]}
@@ -474,22 +481,22 @@ export function MailReviewTab({
               {t("review.mail.mailbox")}：
               {detailTarget.mailbox === "" ? t("review.mail.notProvided") : detailTarget.mailbox}
             </p>
-            <p>
-              {t("review.mail.messageId")}：
+            <div className="row-actions">
+              <span>{t("review.mail.messageId")}：</span>
               {detailTarget.message_id ? (
                 <CopyToken label={t("review.mail.messageId")} value={detailTarget.message_id} />
               ) : (
-                t("review.mail.notProvided")
+                <span className="muted">{t("review.mail.notProvided")}</span>
               )}
-            </p>
-            <p>
-              {t("review.mail.uid")}：
+            </div>
+            <div className="row-actions">
+              <span>{t("review.mail.uid")}：</span>
               {typeof detailTarget.uid === "number" ? (
                 <CopyToken label={t("review.mail.uid")} value={String(detailTarget.uid)} />
               ) : (
-                t("review.mail.notProvided")
+                <span className="muted">{t("review.mail.notProvided")}</span>
               )}
-            </p>
+            </div>
             <p>
               {t("review.mail.reason")}：{reasonLabel(detailTarget.reason_code)}
             </p>
