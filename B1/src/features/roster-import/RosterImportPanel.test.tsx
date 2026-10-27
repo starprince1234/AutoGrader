@@ -102,7 +102,7 @@ describe("名单导入向导（RQ-B-1-10）", () => {
     const file = new File(["roster"], "roster.xlsx", {
       type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     });
-    await user.upload(screen.getByLabelText("名单文件（PDF / XLSX）"), file);
+    await user.upload(screen.getByLabelText("名单文件（CSV / XLSX）"), file);
     await user.click(screen.getByTestId("upload-submit"));
 
     // 预览：通过行与拒绝行都在
@@ -154,7 +154,7 @@ describe("名单导入向导（RQ-B-1-10）", () => {
 
     renderPanel();
     await user.upload(
-      screen.getByLabelText("名单文件（PDF / XLSX）"),
+      screen.getByLabelText("名单文件（CSV / XLSX）"),
       new File(["roster"], "roster.xlsx", {
         type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       }),
@@ -185,8 +185,8 @@ describe("名单导入向导（RQ-B-1-10）", () => {
 
     renderPanel();
     await user.upload(
-      screen.getByLabelText("名单文件（PDF / XLSX）"),
-      new File(["x"], "roster.pdf", { type: "application/pdf" }),
+      screen.getByLabelText("名单文件（CSV / XLSX）"),
+      new File(["x"], "roster.csv", { type: "text/csv" }),
     );
     await user.click(screen.getByTestId("upload-submit"));
 
@@ -227,8 +227,8 @@ describe("名单导入向导（RQ-B-1-10）", () => {
 
     renderPanel();
     await user.upload(
-      screen.getByLabelText("名单文件（PDF / XLSX）"),
-      new File(["x"], "broken.pdf", { type: "application/pdf" }),
+      screen.getByLabelText("名单文件（CSV / XLSX）"),
+      new File(["x"], "broken.csv", { type: "text/csv" }),
     );
     await user.click(screen.getByTestId("upload-submit"));
 

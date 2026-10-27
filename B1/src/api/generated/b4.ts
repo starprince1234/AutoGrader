@@ -315,7 +315,7 @@ export interface paths {
         put?: never;
         /**
          * Upload a roster file and start parsing (RQ-B-1-10)
-         * @description Accepts a PDF or XLSX roster. Parsing never guesses: when a column cannot be
+         * @description Accepts a CSV or XLSX roster. Parsing never guesses: when a column cannot be
          *     mapped unambiguously the import stops in `mapping_required` and waits for a
          *     human decision. No roster row is persisted before confirmation.
          */

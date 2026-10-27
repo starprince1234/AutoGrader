@@ -38,7 +38,7 @@ logger = get_logger("plugin")
 
 DESCRIPTOR = ModuleDescriptor(
     module="B4",
-    contract_version="0.19.0",
+    contract_version="0.20.0",
     provides=("b4-auth", "b4-course", "postgres", "nats"),
     requires=("host",),
     routes=(

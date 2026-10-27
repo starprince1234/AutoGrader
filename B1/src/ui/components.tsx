@@ -556,11 +556,14 @@ export function Drawer({
   onClose,
   children,
   testId,
+  hideCloseButton = false,
 }: {
   title: ReactNode;
   onClose: () => void;
   children: ReactNode;
   testId?: string;
+  /** 抽屉内不再重复导航的关闭控件时置 true；Esc 与遮罩点击仍可关闭。 */
+  hideCloseButton?: boolean;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
@@ -629,9 +632,11 @@ export function Drawer({
           <h2 className="drawer__title" id={titleId}>
             {title}
           </h2>
-          <button type="button" className="button button--ghost" onClick={onClose}>
-            {t("nav.close")}
-          </button>
+          {hideCloseButton ? null : (
+            <button type="button" className="button button--ghost" onClick={onClose}>
+              {t("nav.close")}
+            </button>
+          )}
         </header>
         <div className="drawer__body">{children}</div>
       </div>

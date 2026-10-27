@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AutoGrader B4 Platform API
-  version: 0.19.0
+  version: 0.20.0
   description: |
     Identity, courses, sections, enrollments, roster import, audit and the runtime
     module registry. Owned by B4 (RQ-B-4-10/20/30/40/50/99).
@@ -629,7 +629,7 @@ paths:
       operationId: createRosterImport
       summary: Upload a roster file and start parsing (RQ-B-1-10)
       description: |
-        Accepts a PDF or XLSX roster. Parsing never guesses: when a column cannot be
+        Accepts a CSV or XLSX roster. Parsing never guesses: when a column cannot be
         mapped unambiguously the import stops in `mapping_required` and waits for a
         human decision. No roster row is persisted before confirmation.
       tags: [roster]

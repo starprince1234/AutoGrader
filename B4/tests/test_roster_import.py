@@ -7,7 +7,7 @@ The two properties that carry the most risk are asserted directly and repeatedly
 * **a rejected row is never dropped silently** -- it appears in `rejected_rows` with its
   row number and a reason.
 
-Both PDF and XLSX are exercised as real documents through the real readers, and the
+Both CSV and XLSX are exercised as real documents through the real readers, and the
 confirmation is atomic, idempotent and digest-checked.
 """
 
@@ -26,7 +26,7 @@ from autograder_b4.db.tables import (
     roster_import_rows,
     roster_imports,
 )
-from tests.documents import PDF_HEADER, roster_pdf_bytes, simple_pdf_bytes, xlsx_bytes
+from tests.documents import xlsx_bytes
 
 PASSWORD = "correct horse battery staple"
 CHINESE_HEADER = ["学号", "姓名", "课程编号", "课序号"]
@@ -328,22 +328,27 @@ def test_an_unknown_target_field_is_rejected(client, course, sign_in_as):
     assert "ssn" in response.json()["detail"]
 
 
-# --------------------------------------------------------------------------------- PDF
+# --------------------------------------------------------------------------------- CSV
 
 
-def test_pdf_roster_round_trips(client, course, sign_in_as, factory):
-    """A text-based PDF is parsed by the real reader and can be committed."""
+def test_csv_roster_round_trips(client, course, sign_in_as, factory):
+    """A real CSV (GB18030-encoded, as Chinese exports are) previews and then commits."""
     headers = sign_in_as("teacher").headers
-    content = roster_pdf_bytes(
+    content = _csv_bytes(
         [("20230001", "Alice"), ("20230002", "Bob")],
-        course_code="CS101",
-        section_code="01",
+        header=("student_number", "display_name", "course_code", "section_code"),
+        encoding="utf-8",
     )
-    created = _upload(client, headers, None, content, "roster.pdf", course)
+    created = _upload(client, headers, None, content, "roster.csv", course)
     assert created.status_code == 202, created.text
     body = created.json()
     assert body["status"] == "previewed", body
-    assert body["detected_columns"] == PDF_HEADER.split("  ")
+    assert body["detected_columns"] == [
+        "student_number",
+        "display_name",
+        "course_code",
+        "section_code",
+    ]
     numbers = [row["values"]["student_number"] for row in body["accepted_rows"]]
     assert numbers == ["20230001", "20230002"]
     assert factory.enrollment_count() == 0
@@ -352,25 +357,23 @@ def test_pdf_roster_round_trips(client, course, sign_in_as, factory):
     assert factory.enrollment_count() == 2
 
 
-def test_pdf_without_a_recognisable_header_stops_for_a_mapping(client, course, sign_in_as):
+def test_csv_without_known_columns_stops_for_a_mapping(client, course, sign_in_as):
     headers = sign_in_as("teacher").headers
-    content = simple_pdf_bytes(["Some unrelated title", "more prose", "no table here"])
-    created = _upload(client, headers, None, content, "roster.pdf", course)
+    content = _csv_bytes([("a", "b")], header=("unrelated", "prose"), encoding="utf-8")
+    created = _upload(client, headers, None, content, "roster.csv", course)
     assert created.status_code == 202, created.text
     body = created.json()
     assert body["status"] == "mapping_required"
-    assert body["detected_columns"] == []
     assert body["proposed_mapping"] == {}
     assert body["accepted_rows"] == []
 
 
-def test_a_pdf_without_text_fails_the_parse_explicitly(client, course, sign_in_as, engine):
-    """A scanned PDF is not OCR'd, and the import says so instead of importing nothing."""
+def test_an_empty_csv_fails_the_parse_explicitly(client, course, sign_in_as, engine):
+    """An empty file is not an empty roster: it is a failed parse, and it says so."""
     headers = sign_in_as("teacher").headers
-    content = _empty_text_pdf()
-    created = _upload(client, headers, None, content, "scan.pdf", course)
+    created = _upload(client, headers, None, b"", "empty.csv", course)
     assert created.status_code == 422
-    assert "text" in created.json()["detail"].lower()
+    assert "empty" in created.json()["detail"].lower()
     with engine.connect() as connection:
         statuses = [
             row[0] for row in connection.execute(select(roster_imports.c.status)).fetchall()
@@ -378,28 +381,36 @@ def test_a_pdf_without_text_fails_the_parse_explicitly(client, course, sign_in_a
     assert statuses == ["failed_parse"]
 
 
-def _empty_text_pdf() -> bytes:
-    """A PDF whose content stream draws nothing: a stand-in for a scanned page."""
-    return simple_pdf_bytes([" ", " ", " "])
+def _csv_bytes(
+    rows: list[tuple[str, ...]],
+    *,
+    header: tuple[str, ...],
+    encoding: str,
+) -> bytes:
+    """Build a real CSV payload with the given encoding (no quoting: the cells are simple)."""
+    lines = [",".join(header), *[",".join(row) for row in rows]]
+    return ("\n".join(lines) + "\n").encode(encoding)
 
 
 # --------------------------------------------------------------------------- rejections
 
 
-def test_a_non_pdf_or_xlsx_upload_is_rejected(client, course, sign_in_as, factory):
+def test_a_pdf_upload_is_rejected(client, course, sign_in_as, factory):
+    """PDF rosters were dropped: the reader used to guess columns from spacing."""
     headers = sign_in_as("teacher").headers
-    response = _upload(client, headers, None, b"student,grade\n1,2\n", "roster.csv", course)
+    response = _upload(client, headers, None, b"%PDF-1.4\n%not a roster\n", "roster.pdf", course)
     assert response.status_code == 422
-    assert "PDF" in response.json()["detail"] or "XLSX" in response.json()["detail"]
+    assert "CSV" in response.json()["detail"] and "XLSX" in response.json()["detail"]
     assert factory.enrollment_count() == 0
 
 
 def test_mismatched_extension_and_content_is_rejected(client, course, sign_in_as):
-    """The parser is chosen from the bytes; a lying filename must not select it."""
+    """A plain-text body named .xlsx is not a spreadsheet, and is not parsed as one."""
     headers = sign_in_as("teacher").headers
-    content = roster_pdf_bytes([("20230001", "Alice")], course_code="CS101", section_code="01")
+    content = b"student_number,display_name\n20230001,Alice\n"
     response = _upload(client, headers, None, content, "roster.xlsx", course)
     assert response.status_code == 422
+    assert "XLSX" in response.json()["detail"] or "zip" in response.json()["detail"].lower()
 
 
 def test_an_oversized_upload_is_rejected(client, course, sign_in_as, settings):

@@ -24,7 +24,6 @@ import {
   loadedCourses,
   useCourses,
   useCreateCourse,
-  useCreateSection,
   useSections,
 } from "../../api/directory";
 import { RosterImportPanel } from "../roster-import/RosterImportPanel";
@@ -74,7 +73,6 @@ export function RosterPage() {
   const [edit, setEdit] = useState<EditState | null>(null);
   const [removing, setRemoving] = useState<RemoveState | null>(null);
   const [courseDrawer, setCourseDrawer] = useState(false);
-  const [sectionDrawer, setSectionDrawer] = useState(false);
 
   const rows = useMemo(
     () => (enrollments.data?.pages ?? []).flatMap((page) => page.items),
@@ -254,15 +252,6 @@ export function RosterPage() {
             >
               {t("roster.createCourse.entry")}
             </button>
-            <button
-              type="button"
-              className="button button--ghost"
-              data-testid="create-section-entry"
-              disabled={courseId === ""}
-              onClick={() => setSectionDrawer(true)}
-            >
-              {t("roster.createSection.entry")}
-            </button>
           </>
         ) : null}
       </div>
@@ -343,17 +332,6 @@ export function RosterPage() {
           onCreated={(course) => {
             setCourseDrawer(false);
             setScope({ course_id: course.course_id, section_id: "" });
-          }}
-        />
-      ) : null}
-
-      {sectionDrawer ? (
-        <CreateSectionDrawer
-          courseId={courseId}
-          onClose={() => setSectionDrawer(false)}
-          onCreated={(section) => {
-            setSectionDrawer(false);
-            setScope({ section_id: section.section_id });
           }}
         />
       ) : null}
@@ -502,7 +480,12 @@ function CreateCourseDrawer({
   const create = useCreateCourse();
 
   return (
-    <Drawer title={t("roster.createCourse.entry")} onClose={onClose} testId="create-course">
+    <Drawer
+      title={t("roster.createCourse.entry")}
+      onClose={onClose}
+      testId="create-course"
+      hideCloseButton
+    >
       <form
         className="stack"
         onSubmit={(event) => {
@@ -531,20 +514,20 @@ function CreateCourseDrawer({
           );
         }}
       >
-        <Field label={t("roster.createCourse.code")} htmlFor="course-code">
-          <input
-            id="course-code"
-            value={code}
-            maxLength={64}
-            onChange={(event) => setCode(event.target.value)}
-          />
-        </Field>
         <Field label={t("roster.createCourse.title")} htmlFor="course-title">
           <input
             id="course-title"
             value={title}
             maxLength={200}
             onChange={(event) => setTitle(event.target.value)}
+          />
+        </Field>
+        <Field label={t("roster.createCourse.code")} htmlFor="course-code">
+          <input
+            id="course-code"
+            value={code}
+            maxLength={64}
+            onChange={(event) => setCode(event.target.value)}
           />
         </Field>
         {error ? (
@@ -564,80 +547,3 @@ function CreateCourseDrawer({
     </Drawer>
   );
 }
-
-function CreateSectionDrawer({
-  courseId,
-  onClose,
-  onCreated,
-}: {
-  courseId: string;
-  onClose: () => void;
-  onCreated: (section: { section_id: string }) => void;
-}) {
-  const [code, setCode] = useState("");
-  const [term, setTerm] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const create = useCreateSection(courseId);
-
-  return (
-    <Drawer title={t("roster.createSection.entry")} onClose={onClose} testId="create-section">
-      <form
-        className="stack"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (code.trim() === "") {
-            setError(t("roster.createSection.codeRequired"));
-            return;
-          }
-          setError(null);
-          create.mutate(
-            { section_code: code.trim(), term: term.trim() === "" ? null : term.trim() },
-            {
-              onSuccess: (created) => onCreated(created),
-              onError: (failure) => {
-                if (isApiError(failure) && failure.status === 409) {
-                  setError(t("roster.createSection.duplicate"));
-                  return;
-                }
-                setError(t("common.requestFailed"));
-              },
-            },
-          );
-        }}
-      >
-        <Field label={t("roster.createSection.code")} htmlFor="section-code">
-          <input
-            id="section-code"
-            value={code}
-            maxLength={64}
-            onChange={(event) => setCode(event.target.value)}
-          />
-        </Field>
-        <Field label={t("roster.createSection.term")} htmlFor="section-term">
-          <input
-            id="section-term"
-            value={term}
-            maxLength={64}
-            onChange={(event) => setTerm(event.target.value)}
-          />
-        </Field>
-        {error ? (
-          <Banner tone="error" testId="create-section-error">
-            {error}
-          </Banner>
-        ) : null}
-        <div className="inline">
-          <button type="submit" className="button" disabled={create.isPending}>
-            {create.isPending
-              ? t("roster.createSection.saving")
-              : t("roster.createSection.submit")}
-          </button>
-          <button type="button" className="button button--ghost" onClick={onClose}>
-            {t("common.cancel")}
-          </button>
-        </div>
-      </form>
-    </Drawer>
-  );
-}
-

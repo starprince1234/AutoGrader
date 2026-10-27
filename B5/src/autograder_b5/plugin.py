@@ -28,7 +28,7 @@ from .errors import B5Error
 class B5Module:
     descriptor = ModuleDescriptor(
         module="B5",
-        contract_version="0.19.0",
+        contract_version="0.20.0",
         provides=("b5-conformance",),
         # `b4-auth` because the contract's endpoint is bearer-protected and B5 verifies the
         # token locally. `b2-submissions` / `b3-questions` because the report is *about* the

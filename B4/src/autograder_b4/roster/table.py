@@ -1,4 +1,4 @@
-"""The intermediate representation of a parsed roster, shared by the PDF and XLSX readers.
+"""The intermediate representation of a parsed roster, shared by the CSV and XLSX readers.
 
 Both readers must produce the same shape so that mapping, validation, previewing and
 committing are format-independent. Row numbers are 1-based positions inside the detected

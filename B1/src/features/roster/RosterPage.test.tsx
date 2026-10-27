@@ -233,7 +233,7 @@ describe("课程与名单工作区（P12）", () => {
 
     await user.click(await screen.findByTestId("create-course-entry"));
     const drawer = await screen.findByTestId("create-course");
-    await user.type(within(drawer).getByLabelText("课程编号"), "CS9");
+    await user.type(within(drawer).getByLabelText("课程序号"), "CS9");
     await user.type(within(drawer).getByLabelText("课程名称"), "新课程");
     await user.click(within(drawer).getByRole("button", { name: "创建课程" }));
 
@@ -276,57 +276,14 @@ describe("课程与名单工作区（P12）", () => {
 
     await user.click(await screen.findByTestId("create-course-entry"));
     const drawer = await screen.findByTestId("create-course");
-    await user.type(within(drawer).getByLabelText("课程编号"), "CS9");
+    await user.type(within(drawer).getByLabelText("课程序号"), "CS9");
     await user.type(within(drawer).getByLabelText("课程名称"), "新课程");
     await user.click(within(drawer).getByRole("button", { name: "创建课程" }));
 
     expect(await screen.findByTestId("create-course-error")).toHaveTextContent(
-      "该课程编号已存在。",
+      "该课程序号已存在。",
     );
-    expect(within(drawer).getByLabelText("课程编号")).toHaveValue("CS9");
-    stub.restore();
-  });
-
-  it("新建课序写入课序号，学期留空时发送 null", async () => {
-    const stub = installFetchStub([
-      {
-        method: "POST",
-        path: `/api/v1/courses/${UUID_A}/sections`,
-        respond: () =>
-          jsonResponse(
-            {
-              section_id: UUID_B,
-              course_id: UUID_A,
-              section_code: "02",
-              term: null,
-              created_at: null,
-            },
-            201,
-          ),
-      },
-      ...rosterRoutes({ role: "teacher" }),
-    ]);
-    const user = await openRoster("teacher");
-    await user.click(await screen.findByTestId("create-section-entry"));
-    const drawer = await screen.findByTestId("create-section");
-    await user.type(within(drawer).getByLabelText("课序号"), "02");
-    await user.click(within(drawer).getByRole("button", { name: "创建课序" }));
-
-    await waitFor(() =>
-      expect(
-        stub.requests.some(
-          (candidate) =>
-            candidate.method === "POST" &&
-            candidate.url.pathname === `/api/v1/courses/${UUID_A}/sections`,
-        ),
-      ).toBe(true),
-    );
-    const request = stub.requests.find(
-      (candidate) =>
-        candidate.method === "POST" &&
-        candidate.url.pathname === `/api/v1/courses/${UUID_A}/sections`,
-    );
-    expect(request?.body).toEqual({ section_code: "02", term: null });
+    expect(within(drawer).getByLabelText("课程序号")).toHaveValue("CS9");
     stub.restore();
   });
 

@@ -285,14 +285,6 @@ export function RosterImportPanel({
   return (
     <div className="stack">
       <Panel title={t("import.uploadTitle")}>
-        <ol className="steps muted">
-          <li>{t("import.step.upload")}</li>
-          <li>{t("import.step.preview")}</li>
-          <li>{t("import.step.mapping")}</li>
-          <li>{t("import.step.confirm")}</li>
-          <li>{t("import.step.result")}</li>
-        </ol>
-
         {ready ? null : (
           <Banner tone="warn" testId="import-needs-scope">
             {t("import.needsScope")}
@@ -319,11 +311,10 @@ export function RosterImportPanel({
             <input
               id="import-file"
               type="file"
-              accept=".pdf,.xlsx,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
               onChange={(event) => setFile(event.target.files?.[0] ?? null)}
             />
           </Field>
-          <p className="muted">{t("import.fileHint")}</p>
 
           <div className="inline">
             <button
@@ -357,7 +348,6 @@ export function RosterImportPanel({
             <p>{describeApiError(uploadError)}</p>
           </Banner>
         ) : null}
-        <p className="muted">{t("import.noWriteBeforeConfirm")}</p>
       </Panel>
 
       {importId === null ? null : previewQuery.isPending ? (
