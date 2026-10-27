@@ -2,15 +2,21 @@
 
 B1 是 AutoGrader 的**静态 Web 客户端**（TypeScript + React 19 + Vite 7），生产拓扑由 Vercel 从 `B1/` 构建并托管在 `https://www.91idc.me/app/`。面向学生 / 教师 / 助教 / 管理员，提供名单导入与编辑、富文本题目展示、代码提交与实时评测进度、成绩查询与导出的**交互界面**。B1 **没有后端、没有权威数据库**，所有权威数据都来自 B4（身份/课程/名单）、B3（题目）、B2（提交/评测/成绩），API origin 为 `https://api.91idc.me`。
 
-> 当前状态：业务界面与端到端 `已完成`；**本批为找回密码与密码可见性**——
-> 登录页增加「忘记密码？」入口与 `/forgot-password` 页面（注册邮箱 → 邮件验证码 → 设置新密码，
-> 成功后撤销该账号全部 refresh 会话），并修复登录失败后密码"小眼睛"消失的问题（改为页面
-> 自维护的显示/隐藏按钮）。契约随之升到 `0.22.0`，B4 新增两条公开认证操作与迁移
-> `20261027_0005`。验证：ESLint、`tsc -b`、`api:check`、Vitest（**46 文件 / 398 用例**）、
-> `vite build` 实跑通过；MAIN 契约/清单/迁移头/文档门禁通过。**B4 pytest 需要 PostgreSQL/NATS，
+> 当前状态：业务界面与端到端 `已完成`；**本批为导览页与登录记忆**——
+> 根路径 `/` 不再直接跳作业页，改为**双列导览页**：左列教师入口（作业、题库、成绩、课程、复核），
+> 右列学生入口（作业、成绩），两端功能各归各列。点入口后：已登录用户按角色直达；**最近登录用户
+> 跳过登录页**直接进入；其余先登录再回到所点功能。门户意图只保存 `{portal, path}`（不存凭据），
+> 角色与门户不匹配时阻断并给出切换说明，避免教师/学生视图混淆。验证：ESLint、`tsc -b`、
+> `api:check`、Vitest（**48 文件 / 412 用例**）、`vite build` 实跑通过；MAIN 契约/清单/迁移头/文档门禁通过。
+> 线上 `https://www.91idc.me/app/` 已切换到本次构建（bundle 含导览页文案），
+> `https://api.91idc.me/health/ready` 四个模块均 healthy。
+> 上一批为**找回密码与密码可见性**：登录页「忘记密码？」与 `/forgot-password`（注册邮箱 → 邮件验证码
+> → 设置新密码，成功后撤销该账号全部 refresh 会话），登录失败后密码"小眼睛"仍可用；契约随之升到
+> `0.22.0`，B4 新增两条公开认证操作与迁移 `20261027_0005`。**B4 pytest 需要 PostgreSQL/NATS，
 > 本机未执行；真实 SMTP 与线上改密未验证**（见
+> [`phase-09-landing-portal.md`](docs/phases/active/phase-09-landing-portal.md) 与
 > [`phase-08-password-reset.md`](docs/phases/active/phase-08-password-reset.md) 的未验证项）。
-> 上一轮为 **P13 复核工作区**：旧隔离区/质量两页合并为 `/review?tab=mail|quality`，
+> 再上一轮为 **P13 复核工作区**：旧隔离区/质量两页合并为 `/review?tab=mail|quality`，
 > 旧路由与旧测试删除；邮件标签带课程/课序筛选、详情与安全归属（候选来自 B4 现取名单），
 > 质量标签由 P07 带版本、先经 B3 校验再拉 B2 聚合（见
 > [`phase-07-review-workspace.md`](docs/phases/active/phase-07-review-workspace.md)）。
@@ -30,6 +36,7 @@ B1 是 AutoGrader 的**静态 Web 客户端**（TypeScript + React 19 + Vite 7�
 > 端点上线后与实时数据自相矛盾）；`503` 的结论改为中性标题 + **原样保留服务端 detail**。
 >
 > 真实命令、结果、未执行项与契约缺口见
+> [`docs/phases/active/phase-09-landing-portal.md`](docs/phases/active/phase-09-landing-portal.md)、
 > [`docs/phases/active/phase-08-password-reset.md`](docs/phases/active/phase-08-password-reset.md)、
 > [`docs/phases/active/phase-07-review-workspace.md`](docs/phases/active/phase-07-review-workspace.md)、
 > [`docs/phases/active/phase-06-entry-shell-and-auth-redesign.md`](docs/phases/active/phase-06-entry-shell-and-auth-redesign.md)、
@@ -44,7 +51,7 @@ B1 是 AutoGrader 的**静态 Web 客户端**（TypeScript + React 19 + Vite 7�
 
 ## 已实现能力
 
-- **应用壳与路由**：`@tanstack/react-router` 代码式路由表 + 认证/角色可见性守卫（fail-closed）；`@tanstack/react-query` 数据层。页头只保留产品名与账户菜单；导航按角色过滤（学生作业/成绩，教师侧作业/题库/成绩/课程；用户管理在管理员账户菜单），小屏使用可键盘操作的抽屉；会话恢复完成前只渲染骨架；`/` 直接进入作业页，未登录深链先登录再回原页（只接受站内路径）。
+- **应用壳与导览页**：`@tanstack/react-router` 代码式路由表 + 认证/角色可见性守卫（fail-closed）；`@tanstack/react-query` 数据层。`/` 是教师/学生双列导览页（点入口 → 登录 → 直达该功能；最近登录用户跳过登录；门户与角色不匹配时阻断）；页头只保留产品名与账户菜单；导航按角色过滤（学生作业/成绩，教师侧作业/题库/成绩/课程，复核入口在题库/课程页；用户管理在管理员账户菜单），小屏使用可键盘操作的抽屉；会话恢复完成前只渲染骨架；匿名访问受保护深链先登录再回原页（只接受站内路径）。
 - **名单与权限（`RQ-B-1-10/20`）**：PDF/XLSX 导入向导（上传 → 解析预览 → **人工列映射（不自动猜测）** → 逐行错误 → 幂等确认 → 结果报告，被拒行不丢弃、敏感列脱敏）；名单编辑表格（动态列 + 并发冲突 409 提示）；用户/角色管理页。
 - **题目、出题与提交（`RQ-B-1-40/50`、`RQ-T-10`）**：安全 Markdown 子集渲染器（无 `innerHTML`、URL 白名单、公开 DTO 受保护字段双重校验）；**出题写路径**（新建草稿 `POST /questions?course_id=`、修改草稿 `PATCH /questions/{id}`，已发布版本走 `as_new_version` + `revision_note`），受保护字段（参考答案/用例/适配器细节）**读不回来**因此每次保存都必须重新声明；题目列表的标签列与标签筛选、版本结构差异；Monaco 编辑器（可注入加载器 + 文本降级）；提交前校验与契约信封构造（SHA-256 + base64 + 幂等键）；SSE 进度（`sequence`/事件 id 去重、`Last-Event-ID` 退避重连、终态三态分开展示）；本地草稿恢复。
 - **成绩、导出与日志（`RQ-B-1-30/60/99`）**：成绩筛选与**已加载行**汇总、分数分布、逐项证据下钻（学生/教师视图，学生视图不下发期望输出与期望摘要）；**逐用例证据卡片**（资源峰值 / 文件改动 / 确定性说明，`null` 一律渲染"未测量"而不是 0）；调 B2 导出端点下载（**不重新拼接成绩数据**）；结构化 JSON 日志（含 `request_id`、拒绝清单脱敏、上报失败静默丢弃）。
@@ -55,7 +62,7 @@ B1 是 AutoGrader 的**静态 Web 客户端**（TypeScript + React 19 + Vite 7�
 - **验证并发布（`CHG-0019` / `ADR-0015`）**：出题页与题目详情页的未发布版本上，`ReferenceVerificationPanel` 请求平台验证参考解答（`POST /reference-verifications`：**B2 执行、B3 记录**，教师用普通令牌触发——这不是自我声明），并把结论分三态呈现：**全通过且存证已记录 → 出现发布按钮**（发布是独立的第二个显式动作，从不自动串起来）；**未通过 → 逐用例失败类别**；**`503` 或逐用例全是 `infrastructure_error` → "验证需要 Linux 沙箱环境"**（本机 Windows 的常态，既不写成"验证失败"也不伪装成功）。**全通过但 `attestation_id` 为 `null`（B3 没记下存证）仍然不可发布**——执行者与记录者分离正是这条门禁的意义。响应里没有期望输出、隐藏用例输入与参考解源码，界面也不提供这类入口。点击都会真的起一次沙箱作业，因此不自动重试。
 - **草稿省略语义（`CHG-0017`）**：`cases` 与 `reference_answer` **留空 = 不声明该字段**（请求体里不发这两个键，服务端保留已存值）；填了才覆盖，提交用例会**整体替换**该版本的集合，因此在读不到服务端现值时必须显式确认一次。`title`/`stem_markdown`/`language`/`adapter` 是契约的 `required`，每次照发。
 - **契约类型生成**：`node scripts/generate-api-types.mjs` 从 `MAIN/contracts/openapi/*.yaml` 生成 `src/api/generated/*.ts`，`--check` 拦截漂移（ADR-0002，禁止手写 DTO）。
-- 契约锁 `contracts.lock`（`contract_version: 0.16.0`，`status: baseline`）与模块清单 `module.yaml`（`provides: [web-ui]`、`entry_point: static:dist`、`routes: []`）。
+- 契约锁 `contracts.lock`（`contract_version: 0.22.0`，`status: baseline`）与模块清单 `module.yaml`（`provides: [web-ui]`、`entry_point: static:dist`、`routes: []`）。
 
 ## 明确非目标（B1 不做）
 

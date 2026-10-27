@@ -7,10 +7,10 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
-  redirect,
 } from "@tanstack/react-router";
 import { AppShell } from "./AppShell";
 import { NotFoundPage } from "./NotFoundPage";
+import { readPortalIntent, rememberPortalIntent } from "../auth/portal";
 import {
   getSessionState,
   installSessionAuth,
@@ -35,12 +35,14 @@ let stub: FetchStub | null = null;
 
 beforeEach(() => {
   installSessionAuth();
+  sessionStorage.clear();
 });
 
 afterEach(() => {
   stub?.restore();
   stub = null;
   resetSessionForTests();
+  sessionStorage.clear();
 });
 
 function tokenFor(roles: string[]): string {
@@ -91,9 +93,7 @@ function renderApp(initialEntry: string) {
   const indexRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/",
-    beforeLoad: () => {
-      throw redirect({ to: "/assignments", replace: true });
-    },
+    component: () => <Placeholder label="导览页" />,
   });
   const loginRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -171,13 +171,20 @@ describe("P01 根入口与会话恢复", () => {
     );
   });
 
-  it("匿名打开根路径：进入作业页的登录回跳，而不是欢迎页", async () => {
+  it("匿名打开根路径：显示教师端/学生端导览，不强制去登录", async () => {
     await establishSession("anonymous");
     const router = renderApp("/");
 
-    await waitFor(() => expect(router.state.location.pathname).toBe("/login"));
-    expect((router.state.location.search as { redirect?: string }).redirect).toBe("/assignments");
-    expect(screen.queryByText(/欢迎/)).not.toBeInTheDocument();
+    expect(await screen.findByText("导览页")).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/");
+  });
+
+  it("已登录打开根路径：仍先显示导览，可直接点入口", async () => {
+    await establishSession("student");
+    const router = renderApp("/");
+
+    expect(await screen.findByText("导览页")).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/");
   });
 
   it("匿名打开忘记密码页：保留公开页，不被送回登录页", async () => {
@@ -186,14 +193,6 @@ describe("P01 根入口与会话恢复", () => {
 
     expect(await screen.findByText("忘记密码页")).toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/forgot-password");
-  });
-
-  it("已登录打开根路径直接进入作业页", async () => {
-    await establishSession("student");
-    const router = renderApp("/");
-
-    await waitFor(() => expect(router.state.location.pathname).toBe("/assignments"));
-    expect(await screen.findByText("作业页")).toBeInTheDocument();
   });
 
   it("已登录用户打开登录页会被送回作业页，不出现第二套表单", async () => {
@@ -254,6 +253,48 @@ describe("角色导航与账户菜单", () => {
     await user.click(await screen.findByTestId("account-menu-button"));
     expect(screen.queryByTestId("account-users-link")).toBeNull();
     expect(screen.getByTestId("account-logout")).toBeInTheDocument();
+  });
+
+  it("学生通过教师端入口登录回来时被拦下，不渲染教师视图", async () => {
+    await establishSession("student");
+    rememberPortalIntent("teacher", "/assignments");
+    renderApp("/assignments");
+
+    const mismatch = await screen.findByTestId("portal-mismatch");
+    expect(mismatch).toHaveTextContent("教师端");
+    expect(screen.queryByText("作业页")).toBeNull();
+    // 意图保留：刷新同一路径仍然会被拦下，不会因为刷新就进入错误的一侧。
+    expect(readPortalIntent()).toMatchObject({ portal: "teacher", path: "/assignments" });
+  });
+
+  it("教师通过教师端入口直接进入，并清除一次性意图", async () => {
+    await establishSession("teacher");
+    rememberPortalIntent("teacher", "/assignments");
+    renderApp("/assignments");
+
+    expect(await screen.findByText("作业页")).toBeInTheDocument();
+    expect(readPortalIntent()).toBeNull();
+  });
+
+  it("学生通过学生端入口直接进入", async () => {
+    await establishSession("student");
+    rememberPortalIntent("student", "/grades");
+    renderApp("/grades");
+
+    expect(await screen.findByText("成绩页")).toBeInTheDocument();
+    expect(readPortalIntent()).toBeNull();
+  });
+
+  it("入口端不匹配时可返回导览页重新选择", async () => {
+    const user = userEvent.setup();
+    await establishSession("student");
+    rememberPortalIntent("teacher", "/assignments");
+    const router = renderApp("/assignments");
+
+    await screen.findByTestId("portal-mismatch");
+    await user.click(screen.getByTestId("portal-mismatch-back"));
+
+    await waitFor(() => expect(router.state.location.pathname).toBe("/"));
   });
 
   it("退出登录清空会话并回到干净的登录页（不保留 redirect）", async () => {
