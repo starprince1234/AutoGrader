@@ -345,7 +345,20 @@ export function RosterImportPanel({
         {uploadError ? (
           <Banner tone="error" testId="upload-error">
             <strong>{t("import.parseFailed")}</strong>
+            {/* 网络层失败与 4xx 是两回事：前者说明"请求根本没到服务端"（部署未更新、代理拦截、
+                网关超时），后者才是文件或参数被拒。把状态码与 request id 一起显示，用户才能判断该
+                改文件还是该找运维，而不是只看到一句 could not be completed。 */}
             <p>{describeApiError(uploadError)}</p>
+            {isApiError(uploadError) ? (
+              <p className="muted" data-testid="upload-error-status">
+                HTTP {uploadError.status}
+                {uploadError.problem?.instance ? ` · ${uploadError.problem.instance}` : ""}
+              </p>
+            ) : (
+              <p className="muted" data-testid="upload-error-network">
+                {t("import.uploadNetworkHint")}
+              </p>
+            )}
           </Banner>
         ) : null}
       </Panel>
