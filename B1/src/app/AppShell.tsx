@@ -1,5 +1,6 @@
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Link, Outlet, useNavigate, useRouterState } from "@tanstack/react-router";
+import { useQueryClient } from "@tanstack/react-query";
 import { t } from "../i18n";
 import { useSession } from "../auth/sessionContext";
 import {
@@ -8,123 +9,225 @@ import {
   subscribeSessionReady,
 } from "../auth/sessionStore";
 import {
-  canAuthorQuestions,
-  canImportRoster,
-  canManageUsers,
-  canReviewQuarantine,
-  canViewQuestionQuality,
-  canViewRoster,
-} from "../auth/visibility";
-import { CONTRACT_VERSION } from "./contractVersion";
+  DEFAULT_AUTHENTICATED_PATH,
+  currentLocationTarget,
+  safeRedirectTarget,
+} from "../auth/redirect";
+import { AccountMenu } from "./AccountMenu";
+import { AuthLayout } from "./AuthLayout";
+import { isMainNavActive, mainNavItems, type MainNavItem } from "./navigation";
+import { Drawer } from "../ui/components";
 
-type NavItem = { to: string; label: string; visible: boolean };
-
-/** 不需要登录的路径：登录页与注册页是唯一的两个公开入口。 */
+/** 不需要登录的路径：登录页与注册页是两个公开入口。 */
 const PUBLIC_PATHS = new Set(["/login", "/register"]);
 
 /**
- * 应用外壳：导航按**角色可见性**过滤（体验层，不是授权层）。
+ * 应用外壳（全站唯一）。
  *
- * 未登录**强制**跳转 `/login`（需求：只能从登录界面进入功能界面）。三条纪律：
- * 1. 只在会话恢复结束后判断，避免把持有有效 cookie 的用户误判为匿名；
- * 2. 跳转时带上 `redirect`，登录成功后回到原页，深链不丢失；
- * 3. 跳转期间**不渲染** `Outlet`，否则未授权页面会闪一帧。
+ * 三层判断，顺序固定：
+ * 1. **会话恢复完成前**不渲染任何业务内容（只显示骨架）——否则持有效 cookie 的用户会
+ *    先看到一帧匿名外壳，或被误送到登录页。
+ * 2. 公开页（登录/注册）使用独立认证布局；已登录用户访问公开页会被送回作业页，
+ *    登录页上的 `?redirect=` 只接受 `safeRedirectTarget` 认可的站内路径。
+ * 3. 受保护页：匿名用户带**原站内位置**去登录（深链不丢），登录后回到原处。
  *
- * 这仍然不是安全边界：每个页面背后的 API 都会独立返回 401/403。
+ * 导航按角色过滤（见 `navigation.ts`）只是体验层；每个接口仍由服务端独立判权。
  */
 export function AppShell() {
   const session = useSession();
-  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const location = useRouterState({ select: (state) => state.location });
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const ready = useSyncExternalStore(subscribeSessionReady, isSessionReady, isSessionReady);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [signingOut, setSigningOut] = useState(false);
+  /** 主动退出后不要保留 redirect：用户要的是干净地回到登录页。 */
+  const signingOutRef = useRef(false);
+  const previousStatus = useRef(session.status);
 
-  const isPublic = PUBLIC_PATHS.has(pathname);
-  const blocked = !isPublic && ready && session.status !== "authenticated";
+  const authenticated = session.status === "authenticated";
+  const isPublic = PUBLIC_PATHS.has(location.pathname);
+  const redirectTarget = currentLocationTarget(location);
+  const requestedRedirect = safeRedirectTarget(
+    readRedirectSearch(location.search),
+  );
+
+  // 退出或会话失效后清空业务缓存：共用机器上不能把上一位用户的数据留给下一位。
+  useEffect(() => {
+    if (previousStatus.current === "authenticated" && session.status !== "authenticated") {
+      queryClient.clear();
+    }
+    previousStatus.current = session.status;
+  }, [session.status, queryClient]);
 
   useEffect(() => {
-    if (!blocked) return;
-    void navigate({ to: "/login", search: { redirect: pathname }, replace: true });
-  }, [blocked, pathname, navigate]);
+    if (isPublic) signingOutRef.current = false;
+  }, [isPublic]);
 
-  const items: NavItem[] = [
-    { to: "/", label: t("nav.home"), visible: true },
-    { to: "/assignments", label: t("nav.assignments"), visible: true },
-    { to: "/questions", label: t("nav.questions"), visible: true },
-    { to: "/questions/new", label: t("nav.authoring"), visible: canAuthorQuestions(session) },
-    { to: "/grades", label: t("nav.grades"), visible: true },
-    { to: "/roster", label: t("nav.roster"), visible: canViewRoster(session) },
-    { to: "/roster/import", label: t("nav.rosterImport"), visible: canImportRoster(session) },
-    {
-      to: "/intake/quarantines",
-      label: t("nav.quarantine"),
-      visible: canReviewQuarantine(session),
-    },
-    { to: "/quality", label: t("nav.quality"), visible: canViewQuestionQuality(session) },
-    // 用户管理与注册名单是同一个管理员工作区（P14）的两个标签，因此只有一个导航入口：
-    // 独立的 /admin/registration-allowlist 已被移除，不保留别名或隐藏路由。
-    { to: "/admin/users", label: t("nav.users"), visible: canManageUsers(session) },
-  ];
+  useEffect(() => {
+    if (!ready) return;
+    if (isPublic) {
+      // 已登录用户不该停在登录/注册表单：回到原深链或作业页。
+      if (authenticated) {
+        const target = requestedRedirect ?? DEFAULT_AUTHENTICATED_PATH;
+        void navigate({ href: target, replace: true });
+      }
+      return;
+    }
+    if (authenticated) return;
+    // 主动退出：去一个干净的登录页，不把刚离开的受保护地址塞回 redirect。
+    if (signingOutRef.current) {
+      void navigate({ to: "/login", replace: true });
+      return;
+    }
+    void navigate({
+      to: "/login",
+      search: { redirect: redirectTarget ?? undefined },
+      replace: true,
+    });
+  }, [ready, isPublic, authenticated, requestedRedirect, redirectTarget, navigate]);
+
+  if (!ready) return <BootScreen />;
+
+  if (isPublic) {
+    // 已登录用户在跳走的那一帧仍能看到产品标识与「返回作业」出口，而不是第二套登录表单。
+    if (authenticated) {
+      return (
+        <AuthLayout>
+          <p className="auth-redirect muted" role="status" data-testid="auth-redirecting">
+            {t("nav.returningToAssignments")}
+          </p>
+        </AuthLayout>
+      );
+    }
+    return (
+      <AuthLayout>
+        <Outlet />
+      </AuthLayout>
+    );
+  }
+
+  // 匿名用户：effect 正在把浏览器带到登录页；这里不渲染受保护 Outlet，避免闪一帧。
+  if (!authenticated) return <BootScreen />;
+
+  const items = mainNavItems(session);
 
   return (
-    <div className="app">
-      <header className="topbar">
-        <span className="topbar__brand">{t("app.title")}</span>
-        {isPublic ? null : (
-          <nav className="topbar__nav" aria-label="主导航">
-            {items
-              .filter((item) => item.visible)
-              .map((item) => (
-                <Link
-                  key={item.to}
-                  to={item.to}
-                  className={pathname === item.to ? "is-active" : undefined}
-                >
-                  {item.label}
-                </Link>
-              ))}
-          </nav>
-        )}
-        <span className="topbar__spacer" />
-        <span className="topbar__identity" data-testid="session-identity">
-          {session.status === "authenticated" ? (
-            <>
-              {t("nav.signedInAs", { name: session.username ?? "-" })}
-              {" · "}
-              {session.rolesKnown
-                ? session.roles.map((role) => t(`role.${role}`)).join("/")
-                : t("common.none")}
-              {" · "}
-            </>
-          ) : (
-            <>
-              {t("nav.anonymous")}
-              {" · "}
-            </>
-          )}
-          {t("app.contract", { version: CONTRACT_VERSION })}
-        </span>
-        {session.status === "authenticated" ? (
-          <button
-            type="button"
-            className="button button--ghost"
-            onClick={() => {
-              void signOut();
-            }}
-          >
-            {t("nav.logout")}
-          </button>
-        ) : null}
+    <div className="app-shell">
+      <header className="app-header">
+        <button
+          type="button"
+          className="icon-button app-header__menu"
+          aria-label={t("nav.open")}
+          aria-expanded={drawerOpen}
+          aria-controls="main-nav-drawer"
+          data-testid="nav-drawer-open"
+          onClick={() => setDrawerOpen(true)}
+        >
+          <span className="menu-glyph" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </span>
+        </button>
+        <Link to="/assignments" className="app-brand">
+          {t("app.brand")}
+        </Link>
+        <div className="app-header__spacer" />
+        <AccountMenu
+          signingOut={signingOut}
+          onSignOut={() => {
+            if (signingOutRef.current) return;
+            signingOutRef.current = true;
+            setSigningOut(true);
+            void signOut().finally(() => setSigningOut(false));
+          }}
+        />
       </header>
-      <main className="content">
-        {blocked ? (
-          <section className="panel" role="alert" data-testid="guard-redirecting">
-            <h2 className="panel__title">{t("login.requiredTitle")}</h2>
-            <p className="muted">{t("login.redirecting")}</p>
-          </section>
-        ) : (
-          <Outlet />
-        )}
-      </main>
+
+      <div className="app-body">
+        <aside className="app-sidebar">
+          <nav className="app-nav" aria-label={t("nav.mainLabel")}>
+            <NavLinks items={items} pathname={location.pathname} testIdPrefix="nav" />
+          </nav>
+        </aside>
+        <main className="app-main">
+          <div className="app-content">
+            <Outlet />
+          </div>
+        </main>
+      </div>
+
+      {drawerOpen ? (
+        <Drawer
+          title={t("app.brand")}
+          testId="nav-drawer"
+          onClose={() => setDrawerOpen(false)}
+        >
+          <nav
+            className="app-nav app-nav--drawer"
+            aria-label={t("nav.mainLabel")}
+            id="main-nav-drawer"
+          >
+            <NavLinks
+              items={items}
+              pathname={location.pathname}
+              testIdPrefix="drawer-nav"
+              onSelect={() => setDrawerOpen(false)}
+            />
+          </nav>
+        </Drawer>
+      ) : null}
     </div>
   );
+}
+
+function NavLinks({
+  items,
+  pathname,
+  testIdPrefix,
+  onSelect,
+}: {
+  items: MainNavItem[];
+  pathname: string;
+  testIdPrefix: string;
+  onSelect?: () => void;
+}) {
+  return (
+    <ul className="app-nav__list">
+      {items.map((item) => {
+        const active = isMainNavActive(pathname, item.to);
+        return (
+          <li key={item.to}>
+            <Link
+              to={item.to}
+              className={active ? "app-nav__link is-active" : "app-nav__link"}
+              aria-current={active ? "page" : undefined}
+              data-testid={`${testIdPrefix}-${item.to.slice(1)}`}
+              onClick={onSelect}
+            >
+              {t(item.labelKey)}
+            </Link>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** 会话恢复期间的骨架：不渲染任何导航、身份或业务内容。 */
+function BootScreen() {
+  return (
+    <div className="boot" role="status" aria-live="polite" data-testid="boot-screen">
+      <span className="boot__brand">{t("app.brand")}</span>
+      <span className="boot__bar" aria-hidden="true" />
+      <span className="boot__text muted">{t("boot.loading")}</span>
+    </div>
+  );
+}
+
+/** `location.search` 是已校验的查询对象；只取字符串 `redirect`，其余一律忽略。 */
+function readRedirectSearch(search: unknown): unknown {
+  if (typeof search !== "object" || search === null) return undefined;
+  return (search as Record<string, unknown>).redirect;
 }

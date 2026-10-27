@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders } from "../../testing/renderWithProviders";
+import { renderWithProviders, renderWithRouter } from "../../testing/renderWithProviders";
 import {
   installFetchStub,
   jsonResponse,
@@ -86,7 +86,7 @@ function rosterRoutes(options: {
 async function openRoster(role: "teacher" | "student" = "teacher") {
   const user = userEvent.setup();
   await signIn(`${role}1`, "pw");
-  renderWithProviders(<RosterPage />);
+  renderWithRouter(<RosterPage />, { path: "/roster", linkTargets: ["/roster/import"] });
   const courseSelect = await screen.findByLabelText("课程");
   await waitFor(() => expect(within(courseSelect).getAllByRole("option")).toHaveLength(2));
   await user.selectOptions(courseSelect, UUID_A);

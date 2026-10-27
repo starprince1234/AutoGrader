@@ -32,6 +32,12 @@ export type Language = CommonSchemas["Language"];
 
 export type SessionCreated = JsonBody<B4Operations["createSession"], 200>;
 export type SessionRefreshed = JsonBody<B4Operations["refreshSession"], 200>;
+export type RegistrationCodeRequest =
+  B4Operations["requestRegistrationCode"]["requestBody"]["content"]["application/json"];
+export type RegistrationCodeAccepted = JsonBody<B4Operations["requestRegistrationCode"], 202>;
+export type RegistrationCompleteRequest =
+  B4Operations["createRegistration"]["requestBody"]["content"]["application/json"];
+export type RegistrationCreated = JsonBody<B4Operations["createRegistration"], 201>;
 export type UserSummary = B4Schemas["UserSummary"];
 export type CourseSummary = B4Schemas["CourseSummary"];
 export type EnrollmentPublic = B4Schemas["EnrollmentPublic"];

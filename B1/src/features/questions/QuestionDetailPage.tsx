@@ -88,7 +88,7 @@ export function QuestionDetailPage({
                   search={{ question_version_id: effectiveId, from: undefined, to: undefined }}
                   data-testid="question-quality-link"
                 >
-                  {t("nav.quality")}
+                  {t("questions.qualityLink")}
                 </Link>
               ) : null}
             </div>

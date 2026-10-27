@@ -1,4 +1,13 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import {
+  cloneElement,
+  isValidElement,
+  useEffect,
+  useId,
+  useRef,
+  useState,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import { t } from "../i18n";
 import { describeApiError, isApiError } from "../api/problem";
 import { CONTRACT_VERSION } from "../app/contractVersion";
@@ -279,23 +288,55 @@ export function Table<T>({
   );
 }
 
+/**
+ * 字段外壳：label 与控件显式关联，错误/提示通过 `aria-describedby` 挂到控件上，
+ * 而不是只在视觉上贴近。这样读屏与键盘用户都能知道"这条错误属于哪个输入"。
+ * 控件由调用方提供（input/select/textarea）；本组件只补充可访问性关系，不改写控件行为。
+ */
 export function Field({
   label,
   htmlFor,
   error,
+  hint,
   children,
 }: {
   label: ReactNode;
   htmlFor: string;
   error?: string | null;
+  /** 常驻说明（例如"学号需与课程名单一致"）。只放真正需要一直可见的规则。 */
+  hint?: ReactNode;
   children: ReactNode;
 }) {
+  const errorId = `${htmlFor}-error`;
+  const hintId = `${htmlFor}-hint`;
+  const describedBy = [hint ? hintId : null, error ? errorId : null]
+    .filter((value): value is string => value !== null)
+    .join(" ");
+
+  const control = isValidElement(children)
+    ? (() => {
+        const props = children.props as Record<string, unknown>;
+        const described = [props["aria-describedby"], describedBy]
+          .filter((value) => typeof value === "string" && value !== "")
+          .join(" ");
+        const accessibility: Record<string, unknown> = {};
+        if (error) accessibility["aria-invalid"] = true;
+        if (described !== "") accessibility["aria-describedby"] = described;
+        return cloneElement(children as ReactElement<Record<string, unknown>>, accessibility);
+      })()
+    : children;
+
   return (
     <div className="field">
       <label htmlFor={htmlFor}>{label}</label>
-      {children}
+      {control}
+      {hint ? (
+        <p className="field__hint" id={hintId}>
+          {hint}
+        </p>
+      ) : null}
       {error ? (
-        <p className="field__error" role="alert">
+        <p className="field__error" id={errorId} role="alert">
           {error}
         </p>
       ) : null}
@@ -498,6 +539,101 @@ export function Modal({
           </button>
         </header>
         <div className="modal__body">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 抽屉（小屏导航）。与弹窗同一套可访问性最小集：
+ * 打开时焦点进入抽屉、Escape 关闭、`Tab` 在抽屉内循环、关闭后焦点归还触发按钮；
+ * 另外打开时锁定背景滚动，避免"内容还在下面滑"。
+ *
+ * 三种关闭方式都有真实行为：Escape、点击遮罩、抽屉里的导航项（由调用方在选页后关闭）。
+ */
+export function Drawer({
+  title,
+  onClose,
+  children,
+  testId,
+}: {
+  title: ReactNode;
+  onClose: () => void;
+  children: ReactNode;
+  testId?: string;
+}) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+  const titleId = useId();
+
+  useEffect(() => {
+    returnFocusRef.current =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    panelRef.current?.focus();
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      returnFocusRef.current?.focus();
+    };
+  }, []);
+
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      onClose();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const panel = panelRef.current;
+    if (!panel) return;
+    const items = focusableWithin(panel);
+    if (items.length === 0) {
+      event.preventDefault();
+      return;
+    }
+    const first = items[0];
+    const last = items[items.length - 1];
+    const active = document.activeElement;
+    if (event.shiftKey && (active === first || active === panel)) {
+      event.preventDefault();
+      last.focus();
+      return;
+    }
+    if (!event.shiftKey && active === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
+
+  return (
+    <div
+      className="drawer__backdrop"
+      role="presentation"
+      data-testid={testId ? `${testId}-backdrop` : undefined}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <div
+        className="drawer"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        ref={panelRef}
+        data-testid={testId}
+        onKeyDown={handleKeyDown}
+      >
+        <header className="drawer__head">
+          <h2 className="drawer__title" id={titleId}>
+            {title}
+          </h2>
+          <button type="button" className="button button--ghost" onClick={onClose}>
+            {t("nav.close")}
+          </button>
+        </header>
+        <div className="drawer__body">{children}</div>
       </div>
     </div>
   );

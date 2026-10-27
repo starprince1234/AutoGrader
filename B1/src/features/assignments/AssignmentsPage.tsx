@@ -4,7 +4,7 @@ import { t } from "../../i18n";
 import { MAX_AUTO_PAGES } from "../../api/pagination";
 import type { AssignmentPublic, GradeRow } from "../../api/types";
 import { useSession } from "../../auth/sessionContext";
-import { canViewCohortGrades } from "../../auth/visibility";
+import { canReviewQuarantine, canViewCohortGrades } from "../../auth/visibility";
 import { formatDateTime, shortenId } from "../../ui/format";
 import {
   Banner,
@@ -522,7 +522,19 @@ export function AssignmentsPage() {
 
   return (
     <div className="stack">
-      <PageTitle>{t("nav.assignments")}</PageTitle>
+      {/* 邮件隔离复核不占主导航：它从作业上下文进入，权限仍是教师侧。 */}
+      <div className="inline">
+        <PageTitle>{t("nav.assignments")}</PageTitle>
+        {canReviewQuarantine(session) ? (
+          <Link
+            to="/intake/quarantines"
+            className="button button--ghost"
+            data-testid="assignments-quarantine-link"
+          >
+            {t("quarantine.title")}
+          </Link>
+        ) : null}
+      </div>
 
       {!cohortView && scope === null ? (
         <Panel title={t("assignments.title")}>

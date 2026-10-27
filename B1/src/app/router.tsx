@@ -1,14 +1,20 @@
-import { createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
+import {
+  createRootRoute,
+  createRoute,
+  createRouter,
+  redirect,
+} from "@tanstack/react-router";
 import { AppShell } from "./AppShell";
 import { LoginPage } from "../features/auth/LoginPage";
+import { NotFoundPage } from "./NotFoundPage";
 import { RegisterPage } from "../features/auth/RegisterPage";
+import { safeRedirectTarget } from "../auth/redirect";
 import {
   AssignmentDetailRoute,
   AssignmentsRoute,
   AuthoringEditRoute,
   AuthoringNewRoute,
   GradesRoute,
-  HomeRoute,
   QuarantineRoute,
   QualityRoute,
   QuestionDetailRoute,
@@ -24,32 +30,37 @@ import {
  * 本文件只组装路由；页面与守卫在 `routeComponents.tsx`。
  */
 
-const rootRoute = createRootRoute({ component: AppShell });
+const rootRoute = createRootRoute({ component: AppShell, notFoundComponent: NotFoundPage });
 
+/**
+ * `/` 不是页面，只是一个入口：登录后一律进入作业页（P01）。
+ * 在 `beforeLoad` 里重定向，避免先渲染一颗"首页卡片"再跳走。
+ */
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
-  component: HomeRoute,
+  beforeLoad: () => {
+    throw redirect({ to: "/assignments", replace: true });
+  },
 });
 
 /**
- * `/login` 的查询串。**两个键都必须可选**：多数入口是裸的 `/login`（首页提示、注册页链接），
+ * `/login` 的查询串。**两个键都必须可选**：多数入口是裸的 `/login`，
  * 若把键推成"必填但可为 undefined"，那些 `Link` 会全部报类型错。
  */
 type LoginSearch = { redirect?: string; registered?: string };
 
 function validateLoginSearch(search: Record<string, unknown>): LoginSearch {
   const parsed: LoginSearch = {};
-  // `redirect` 只接受站内相对路径；`//host` 会被浏览器当成外站，必须排除（开放重定向）。
-  if (
-    typeof search.redirect === "string" &&
-    search.redirect.startsWith("/") &&
-    !search.redirect.startsWith("//")
-  ) {
-    parsed.redirect = search.redirect;
-  }
+  // `redirect` 是用户可控的：只有 `safeRedirectTarget` 认可的站内路径才进入会话。
+  const redirectTarget = safeRedirectTarget(search.redirect);
+  if (redirectTarget) parsed.redirect = redirectTarget;
+  // `registered` 只是一个标记。查询串解析器会把 `?registered=1` 读成数字 1，
+  // 因此数字/布尔值同样按"已注册"处理，而不是让成功提示悄悄消失。
   if (typeof search.registered === "string" && search.registered !== "") {
     parsed.registered = search.registered;
+  } else if (search.registered === true || typeof search.registered === "number") {
+    parsed.registered = "created";
   }
   return parsed;
 }

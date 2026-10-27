@@ -3,9 +3,10 @@
 本表是"需求能否被证明满足"的检查单。`层次` 取值：单元 / 组件 / 契约 / 安全 / 端到端。
 `当前状态` 取值：`存在`（有真实测试且通过）／`部分`（B1 侧已覆盖，另一半须由提供方断言或需真实后端）／`待建`。
 
-测试实跑结果：**32 个测试文件 / 265 个用例全部通过**（`vitest run`，见
-`../phases/active/phase-03-contract-surface-completion.md` 的"追加（0.16.0 复核）"一节；
-上一阶段为 31 文件 / 240 用例，本批 +2 为 TC-B1-103 的静态规则目录语义与一条七性质回归）。
+测试实跑结果：**42 个测试文件 / 360 个用例全部通过**（`vitest run`，见
+`../phases/active/phase-06-entry-shell-and-auth-redesign.md` 的"真实执行的命令与结果"一节；
+上一阶段为 32 文件 / 265 用例，本轮新增入口/外壳/登录/注册/回跳安全与控件可访问性用例）。
+浏览器视觉验收（1440/768/390px 截图、深色模式与真实账号）**本轮未执行**，见 phase-06 的未验证项。
 
 | 用例 ID | 目标 RQ | 层次 | 前置 | 步骤要点 | 期望 | 当前状态 | 测试位置 |
 |---|---|---|---|---|---|---|---|
@@ -112,6 +113,16 @@
 | TC-B1-101 | CHG-0017 | 组件+安全 | 编辑已有题目并提交用例（服务端那集合读不回来） | 勾选/不勾选整体替换确认后保存 | 未确认 ⇒ 报"会整体替换…本页读不到那份集合"且**不发请求**；确认后才发 PATCH；编辑路径以**零个用例**开场（不凭空渲染用例行），新建路径给一行邀请 | 存在 | `draft.test.ts`、`AuthoringPage.test.tsx` |
 | TC-B1-102 | CHG-0021 | 组件+诚实性 | `resolved` 的省略语义 / 可归属与不可归属的原因码 | 打开隔离区 | **每一次列表请求都带 `resolved`**（反向断言；省略现在等于"全部"）；可归属（`not_uniquely_matched`/`ambiguous_match`）显示归属按钮，不可归属（如 `archive_bomb`）**不显示**并说明会 422；已归属与不可归属必须能被分开断言 | 存在 | `src/features/intake/QuarantinePage.test.tsx` |
 | TC-B1-103 | CHG-0015 | 组件+诚实性 | `static_rule_hits` = 冻结目录逐条（含 `count=0` 的目录内规则）+ 目录之外追加的 `rule_id`；另有一次 `static_rule_hits: []` | 打开质量页 | **0 命中行不被过滤**：`STAT-PY-013` 那一行在场且计数列恰为 `0`；标题与说明与渲染出来的形状一致（"冻结的规则目录"/"一次都没有命中过"/"不过滤"/"追加在目录之后"）；目录之外的 `ZZ-LEGACY-001` 也呈现；契约的用意（never-firing 规则"要么没用，要么写错了"）留在页面上；数组为空时给空态而不是编造条目 | 存在 | `src/features/quality/QualitySummaryPage.test.tsx` |
+
+| TC-B1-104 | P01 | 组件 | 匿名打开受保护深链 | 等待会话恢复 | 先显示骨架、不渲染受保护内容；去登录页并在 `?redirect=` 保留原站内路径（含筛选） | 存在 | `src/app/AppShell.test.tsx` |
+| TC-B1-105 | P01 | 组件 | 已登录打开 `/` | 观察导航与页头 | 直接进入 `/assignments`；侧栏只出现角色允许的入口；页头没有契约版本、欢迎语或课程作用域 UUID | 存在 | `src/app/AppShell.test.tsx`、`src/app/navigation.test.ts` |
+| TC-B1-106 | P02 | 组件 | 空字段 / 错误凭据 / 有效凭据 | 提交登录 | 空字段就地报错且不发请求并聚焦；401 统一文案；成功后回原深链或作业页；提交中只发一次 | 存在 | `src/features/auth/LoginPage.test.tsx` |
+| TC-B1-107 | P01/P02 | 组件+安全 | `//host`、绝对 URL、反斜线/多层编码、`/login`、根路径 | 登录回跳 | 一律拒绝并落到站内默认页；basepath 下最终 URL 为 `/app/...` | 存在 | `src/auth/redirect.test.ts`、`LoginPage.test.tsx`、`src/app/routerBasepath.test.ts` |
+| TC-B1-108 | P03 | 组件 | 学号格式错误 / 名单外身份 / 验证码错误 / 用户名冲突 / 注册成功 | 发码与创建账号 | 格式错误不发请求；服务端 409/422 映射到字段；失败保留身份字段、清空密码与验证码；成功后去登录并显示「账号已创建，请登录。」 | 存在 | `src/features/auth/RegisterPage.test.tsx`、`registrationValidation.test.ts`、`registrationErrors.test.ts` |
+| TC-B1-109 | P01 | 组件 | 学生 / 教师 / 管理员 / 角色未知 | 打开应用外壳 | 学生 2 项、教师与管理员 4 项；角色未知 fail-closed；「用户管理」只在管理员账户菜单 | 存在 | `src/app/navigation.test.ts`、`AppShell.test.tsx` |
+| TC-B1-110 | P01 | 组件+安全 | 抽屉打开/选页、主动退出登录 | 小屏导航与账户菜单 | 焦点进入抽屉，Escape/遮罩/选页都能关闭并归还焦点；退出只发一次 logout、清空本地查询缓存并进入不带 redirect 的登录页 | 存在 | `src/ui/components.test.tsx`、`AppShell.test.tsx` |
+| TC-B1-111 | — | 组件 | `Field` 带 hint 与错误 / 无错误 | 读屏属性检查 | hint 与 error 经 `aria-describedby` 关联到控件；`aria-invalid` 只在出错时出现 | 存在 | `src/ui/components.test.tsx` |
+| TC-B1-112 | P02/P03 | 组件 | 已登录用户访问 `/login` 或 `/register` | 直接打开 | 被送回作业页；不渲染第二套认证表单，也不显示已登录身份/退出按钮 | 存在 | `src/app/AppShell.test.tsx` |
 
 ## 夹具政策（必须遵守）
 

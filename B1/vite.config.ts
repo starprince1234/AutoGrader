@@ -4,7 +4,7 @@ import react from "@vitejs/plugin-react";
 
 /**
  * 契约版本的唯一真源是 `contracts.lock`（`docs/README.md` 的权威表）。
- * 构建期读一次并注入 `__CONTRACT_VERSION__`：顶栏与"复制诊断信息"都用它，
+ * 构建期读一次并注入 `__CONTRACT_VERSION__`："复制诊断信息"用它，
  * 于是契约升版后不可能漏改某一处字面量。
  */
 function contractVersion(): string {

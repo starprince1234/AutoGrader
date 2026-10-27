@@ -2,12 +2,18 @@
 
 B1 是 AutoGrader 的**静态 Web 客户端**（TypeScript + React 19 + Vite 7），生产拓扑由 Vercel 从 `B1/` 构建并托管在 `https://www.91idc.me/app/`。面向学生 / 教师 / 助教 / 管理员，提供名单导入与编辑、富文本题目展示、代码提交与实时评测进度、成绩查询与导出的**交互界面**。B1 **没有后端、没有权威数据库**，所有权威数据都来自 B4（身份/课程/名单）、B3（题目）、B2（提交/评测/成绩），API origin 为 `https://api.91idc.me`。
 
-> 当前状态：业务界面与端到端 `已完成`；上一轮新增题库标签覆盖度视图（`CHG-0020`）；
-> **本轮（`0.15.0` → `0.16.0`）打通了出题的最后一段：出题页的「验证并发布」入口**——
+> 当前状态：业务界面与端到端 `已完成`；**本轮重做了入口与全局外壳（P01–P03）**——
+> 删除独立首页（`/` 直接进入作业页）、登录/注册改为独立认证布局、导航按角色收敛为学生 2 项 /
+> 教学侧 4 项、管理员「用户管理」移入账户菜单、小屏导航改为可键盘操作的抽屉，登录回跳只接受
+> 站内路径。验证：ESLint、`tsc -b`、Vitest（**42 文件 / 360 用例**）、`vite build` 实跑通过；
+> **未做真实浏览器视觉验收**（见
+> [`phase-06-entry-shell-and-auth-redesign.md`](docs/phases/active/phase-06-entry-shell-and-auth-redesign.md)
+> 的未验证项）。
+> 上一轮（`0.15.0` → `0.16.0`）打通了出题的最后一段：出题页的「验证并发布」入口——
 > `CHG-0019`/`ADR-0015` 的"B2 执行、B3 记录、教师一键触发"，并同时落地 `CHG-0017` 的草稿省略语义
 > （`cases`/`reference_answer` 留空即不发该键，服务端保留已存值）、`CHG-0021` 的隔离区语义修复
 > （`?resolved=false` 显式、不可归属不显示按钮）与 `CHG-0022`（标签形态约束补齐后删除了对应防御分支）。
-> 工具链已实跑：ESLint、`tsc -b`、`api:check`、
+> 上一轮的当时的工具链读数：ESLint、`tsc -b`、`api:check`、
 > Vitest（32 文件 / 263 用例，exit 0）、`vite build`。
 > **真实浏览器复核（宿主 18000 + 真实 B2/B3）**：覆盖度**端到端成立**（`total=102 / tagged=4 /
 > untagged=98`，逐标签与独立 SQL 一致）；隔离区与质量两页正常渲染；`/commentary` 此前已真机联通。
@@ -19,7 +25,8 @@ B1 是 AutoGrader 的**静态 Web 客户端**（TypeScript + React 19 + Vite 7�
 > 端点上线后与实时数据自相矛盾）；`503` 的结论改为中性标题 + **原样保留服务端 detail**。
 >
 > 真实命令、结果、未执行项与契约缺口见
-> [`docs/phases/active/phase-05-authoring-publish-path-and-0-15-0.md`](docs/phases/active/phase-05-authoring-publish-path-and-0-15-0.md)、
+> [`docs/phases/active/phase-06-entry-shell-and-auth-redesign.md`](docs/phases/active/phase-06-entry-shell-and-auth-redesign.md)、
+> [`phase-05-authoring-publish-path-and-0-15-0.md`](docs/phases/active/phase-05-authoring-publish-path-and-0-15-0.md)、
 > [`phase-04-question-tag-coverage.md`](docs/phases/active/phase-04-question-tag-coverage.md)、
 > [`phase-03-contract-surface-completion.md`](docs/phases/active/phase-03-contract-surface-completion.md)
 > 与 [`phase-02-apple-redesign-and-e2e.md`](docs/phases/active/phase-02-apple-redesign-and-e2e.md)。
@@ -30,7 +37,7 @@ B1 是 AutoGrader 的**静态 Web 客户端**（TypeScript + React 19 + Vite 7�
 
 ## 已实现能力
 
-- **应用壳与路由**：`@tanstack/react-router` 代码式路由表 + 认证/角色可见性守卫（fail-closed）；`@tanstack/react-query` 数据层。
+- **应用壳与路由**：`@tanstack/react-router` 代码式路由表 + 认证/角色可见性守卫（fail-closed）；`@tanstack/react-query` 数据层。页头只保留产品名与账户菜单；导航按角色过滤（学生作业/成绩，教师侧作业/题库/成绩/课程；用户管理在管理员账户菜单），小屏使用可键盘操作的抽屉；会话恢复完成前只渲染骨架；`/` 直接进入作业页，未登录深链先登录再回原页（只接受站内路径）。
 - **名单与权限（`RQ-B-1-10/20`）**：PDF/XLSX 导入向导（上传 → 解析预览 → **人工列映射（不自动猜测）** → 逐行错误 → 幂等确认 → 结果报告，被拒行不丢弃、敏感列脱敏）；名单编辑表格（动态列 + 并发冲突 409 提示）；用户/角色管理页。
 - **题目、出题与提交（`RQ-B-1-40/50`、`RQ-T-10`）**：安全 Markdown 子集渲染器（无 `innerHTML`、URL 白名单、公开 DTO 受保护字段双重校验）；**出题写路径**（新建草稿 `POST /questions?course_id=`、修改草稿 `PATCH /questions/{id}`，已发布版本走 `as_new_version` + `revision_note`），受保护字段（参考答案/用例/适配器细节）**读不回来**因此每次保存都必须重新声明；题目列表的标签列与标签筛选、版本结构差异；Monaco 编辑器（可注入加载器 + 文本降级）；提交前校验与契约信封构造（SHA-256 + base64 + 幂等键）；SSE 进度（`sequence`/事件 id 去重、`Last-Event-ID` 退避重连、终态三态分开展示）；本地草稿恢复。
 - **成绩、导出与日志（`RQ-B-1-30/60/99`）**：成绩筛选与**已加载行**汇总、分数分布、逐项证据下钻（学生/教师视图，学生视图不下发期望输出与期望摘要）；**逐用例证据卡片**（资源峰值 / 文件改动 / 确定性说明，`null` 一律渲染"未测量"而不是 0）；调 B2 导出端点下载（**不重新拼接成绩数据**）；结构化 JSON 日志（含 `request_id`、拒绝清单脱敏、上报失败静默丢弃）。

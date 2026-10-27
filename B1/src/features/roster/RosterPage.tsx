@@ -1,7 +1,10 @@
 import { useMemo, useState } from "react";
+import { Link } from "@tanstack/react-router";
 import { t } from "../../i18n";
 import type { EnrollmentPublic } from "../../api/types";
 import { describeApiError, isApiError } from "../../api/problem";
+import { useSession } from "../../auth/sessionContext";
+import { canImportRoster } from "../../auth/visibility";
 import { formatDateTime, shortenId } from "../../ui/format";
 import {
   Banner,
@@ -41,6 +44,7 @@ type EditState = {
  * 未到末页时给出「加载更多」——只显示第一页会让后面的学生**静默消失**。
  */
 export function RosterPage() {
+  const session = useSession();
   const courses = useCourses();
   const courseOptions = loadedCourses(courses.data?.pages);
   const [courseId, setCourseId] = useState("");
@@ -58,7 +62,19 @@ export function RosterPage() {
 
   return (
     <div className="stack">
-      <PageTitle>{t("nav.roster")}</PageTitle>
+      {/* 名单导入是课程页的次级动作：它不再占用主导航，但仍必须有真实入口。 */}
+      <div className="inline">
+        <PageTitle>{t("nav.roster")}</PageTitle>
+        {canImportRoster(session) ? (
+          <Link
+            to="/roster/import"
+            className="button button--ghost"
+            data-testid="roster-import-link"
+          >
+            {t("import.title")}
+          </Link>
+        ) : null}
+      </div>
 
       <Panel title={t("roster.filter")}>
         <div className="form-grid">

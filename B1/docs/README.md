@@ -29,8 +29,8 @@
 
 | 文档/能力 | 状态 | 最后验证方式 |
 |---|---|---|
-| 应用壳（`src/main.tsx` + `src/app/**`） | `已完成` | `vite build` 实跑通过（`dist/index.html` 生成） |
-| 契约锁 `contracts.lock` | `已完成` | 与 `../../MAIN/contracts` 摘要一致（`0.16.0`，摘要 `372cfcab…`；含 `CHG-0027` 的 `reason_code` 枚举与 `CHG-0028` 的草稿评测包语义）；`generate-api-types.mjs --check` 实跑通过 |
+| 应用壳（`src/main.tsx` + `src/app/**`） | `已完成`（入口与外壳本轮重做，无独立首页） | `vite build` 实跑通过；`AppShell.test.tsx`（10 用例）+ `navigation.test.ts` + `routerBasepath.test.ts` 覆盖会话恢复门、根入口重定向、角色导航、账户菜单、退出与 basepath 回跳 |
+| 契约锁 `contracts.lock` | `已完成` | 与 `../../MAIN/contracts` 摘要一致（`0.16.0`，摘要 `372cfcab…`；含 `CHG-0027` 的 `reason_code` 枚举与 `CHG-0028` 的草稿评测包语义）；`generate-api-types.mjs --check` 在 LF 生成物上实跑通过（CRLF 工作区会误报漂移，见 phase-06） |
 | `module.yaml` | `已完成` | 与 MAIN `manifest.schema.json` 一致 |
 | 业务路由/角色守卫 | `已完成` | `src/app/router.tsx` + `src/auth/guards.tsx`；可见性单测通过 |
 | 名单导入/编辑（RQ-B-1-10/20） | `已完成` | `pnpm test`：`RosterImportPage.test.tsx`、`RosterPage.test.tsx`、`mapping.test.ts`；确认幂等键按导入任务复用（`RosterImportPage.test.tsx` 固定"重试复用同一键"） |
@@ -51,16 +51,19 @@
 | 题目质量热力图（CHG-0015） | `部分` | `QualitySummaryPage.test.tsx`（15 用例）：`security_not_checked` 与 `unmeasured_runs` 分开呈现（含"合并值 41 不存在"的反向断言）、小样本提示、`infrastructure_error` 单列、**静态规则按冻结目录逐条呈现且 0 命中行不被过滤**、七条诚实性标注钉成断言。**已真实联通**：真机 `200`，`attempt_count=0`、15 条规则全为 `count=0`；**非空数据分支**仍只有夹具证据 |
 | 题库标签覆盖度（CHG-0020 + CHG-0022） | `部分` | `QuestionCoveragePanel.test.tsx`（13 用例）+ `QuestionListPage.test.tsx`（2 用例）：`tagged + untagged == total` 是唯一被展示与校验的恒等式（反向断言逐标签之和 21 不在页面上）、`untagged_questions` 单独一格、`tags` 按契约顺序原样渲染、点标签复用既有筛选（CHG-0022 后每个标签都可筛，防御分支已删除）、`404` → "尚未在 B3 实现"信息态（只请求一次、不客户端兜底）、`403` 原样带出 detail。**对着已声明契约构建、未经真实 B3 验证**（本批未对运行中的 host 发过请求） |
 | 「验证并发布」（CHG-0019 / ADR-0015） | `部分` | `ReferenceVerificationPanel.test.tsx`（15 用例）：两步显式动作（验证 ≠ 发布）+ 不自动重试/不自动发布；三态互不混淆（全通过可发布 / 未通过逐用例 `failure_category` / `503` 或全 `infrastructure_error` → "验证需要 Linux 沙箱环境"，文案不含"成功"也不含"验证失败"）；**全通过但 B3 未记录存证（`attestation_id: null`）→ 仍不可发布**；结论摘要与当前版本不一致 → 失效；换版本 → 结论不跨实例。**对着已声明契约构建、未经真实 B2 验证**（B2 尚未实现该端点） |
-| 测试框架（vitest） | `已完成` | `vitest run`：32 文件 / **265** 用例全部通过（exit 0）；上一阶段为 31 文件 / 240 用例 |
+| 测试框架（vitest） | `已完成` | `vitest run`：42 文件 / **360** 用例全部通过（exit 0）；本轮新增入口/外壳/登录/注册/回跳安全与控件可访问性用例 |
 | 真实 ESLint | `已完成` | `eslint . --max-warnings 0`：0 error / 0 warning |
 | API 类型生成（ADR-0002） | `已完成` | `node scripts/generate-api-types.mjs` / `--check`（契约 `0.16.0`；`reason_code` 现在是 19 项字面量联合，B1 的 `ReasonCode` 别名由此派生、可归属的那对值因此受编译期核对） |
 | 端到端（真实后端） | `部分`（覆盖度**已打通**；其余按页说明） | 真实 MAIN host `http://127.0.0.1:18000` + B2/B3/B4。**本轮真实浏览器复核**：`/app/questions` 的覆盖度面板渲染真实 B3 数据（`total=102 / tagged=4 / untagged=98`，逐标签与独立 SQL 一致）⇒ **覆盖度端到端成立**；隔离区与质量两页正常渲染（空列表/筛选面板），**不再是 404**；`/app/questions/<id>/edit` 的验证面板可用，但对**草稿**得到 B2 `422`（评测包只对已发布版本编译 → 该跨模块缺口已由 `CHG-0028` 处理，待 B3 落地后复测）。**证据包面板未在浏览器里打开**。**AI 参考分的非空渲染、`unavailable` 态、学生视图仍未做端到端**（原因见 phase-03 的"未验证项"） |
 
 > 归档门禁与完成定义见 `collaboration/definition-of-done.md` 与 `phases/archive/README.md`。
-> 当前阶段记录：`phases/active/phase-05-authoring-publish-path-and-0-15-0.md`（出题发布路径打通
+> 当前阶段记录：`phases/active/phase-06-entry-shell-and-auth-redesign.md`（根入口、登录、注册
+> 与应用外壳重做：删除独立首页，认证页独立布局，角色导航收敛到 2/4 项，深链回跳只接受
+> 站内路径；含真实命令与未做的浏览器视觉验收）；上一阶段：
+> `phases/active/phase-05-authoring-publish-path-and-0-15-0.md`（出题发布路径打通
 > `CHG-0019`/`CHG-0023` + `CHG-0017`/`CHG-0021`/`CHG-0022`/`CHG-0024`，以及**验收后修正**：
 > 删除四条"断言对方实现进度"的常驻横幅、把过宽的 `503` 结论改为中性标题 + 原样 detail，
-> 含真实浏览器读数与缺口 10/11/12 的收口；上一阶段：
+> 含真实浏览器读数与缺口 10/11/12 的收口；再上一阶段：
 > `phases/active/phase-04-question-tag-coverage.md`（题库标签覆盖度视图，CHG-0020）；
 > 再上一阶段：`phases/active/phase-03-contract-surface-completion.md`（教学评语轨、AI 参考分、
 > 隔离区、证据包、题目质量））。

@@ -4,7 +4,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ApiError } from "../api/problem";
 import { CONTRACT_VERSION } from "../app/contractVersion";
-import { ErrorState, Modal, Panel, Table } from "./components";
+import { ErrorState, Drawer, Field, Modal, Panel, Table } from "./components";
 
 /**
  * UI 原语的行为测试（WCAG 2.2 AA 的最小可验证集 + 诊断信息复制）。
@@ -132,6 +132,108 @@ describe("面板与表格的可访问性", () => {
       "ascending",
     );
     expect(screen.getByRole("columnheader", { name: "ID" })).toHaveAttribute("aria-sort", "none");
+  });
+});
+
+describe("字段的可访问性关系", () => {
+  it("hint 与错误都通过 aria-describedby 关联到控件，错误带 aria-invalid", () => {
+    render(
+      <Field label="学号" htmlFor="student-number" hint="学号需与课程名单一致。" error="请输入 13 位数字学号。">
+        <input id="student-number" />
+      </Field>,
+    );
+
+    const input = screen.getByLabelText("学号");
+    expect(input).toHaveAttribute("aria-invalid", "true");
+    const describedBy = input.getAttribute("aria-describedby") ?? "";
+    expect(describedBy.split(" ")).toHaveLength(2);
+    expect(document.getElementById(describedBy.split(" ")[0])).toHaveTextContent(
+      "学号需与课程名单一致。",
+    );
+    expect(document.getElementById(describedBy.split(" ")[1])).toHaveTextContent(
+      "请输入 13 位数字学号。",
+    );
+    expect(screen.getByRole("alert")).toHaveTextContent("请输入 13 位数字学号。");
+  });
+
+  it("没有错误时不声明 aria-invalid（不把正常输入标成错误）", () => {
+    render(
+      <Field label="用户名" htmlFor="username">
+        <input id="username" />
+      </Field>,
+    );
+    expect(screen.getByLabelText("用户名")).not.toHaveAttribute("aria-invalid");
+    expect(screen.getByLabelText("用户名")).not.toHaveAttribute("aria-describedby");
+  });
+});
+
+describe("抽屉导航（小屏）的可访问性", () => {
+  function TriggerAndDrawer({ onClose }: { onClose: () => void }) {
+    const [open, setOpen] = useState(false);
+    return (
+      <div>
+        <button type="button" data-testid="open-drawer" onClick={() => setOpen(true)}>
+          打开导航
+        </button>
+        {open ? (
+          <Drawer
+            title="AutoGrader"
+            testId="drawer"
+            onClose={() => {
+              setOpen(false);
+              onClose();
+            }}
+          >
+            <a href="#assignments">作业</a>
+          </Drawer>
+        ) : null}
+      </div>
+    );
+  }
+
+  it("打开后焦点进入抽屉，Escape 关闭并把焦点还给触发按钮", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(<TriggerAndDrawer onClose={onClose} />);
+
+    const trigger = screen.getByTestId("open-drawer");
+    await user.click(trigger);
+    await waitFor(() => expect(screen.getByTestId("drawer")).toHaveFocus());
+    expect(screen.getByTestId("drawer")).toHaveAttribute("aria-modal", "true");
+    expect(screen.getByTestId("drawer")).toHaveAccessibleName("AutoGrader");
+
+    await user.keyboard("{Escape}");
+    expect(onClose).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it("点击遮罩关闭抽屉，Tab 不会跑到背景内容", async () => {
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(<TriggerAndDrawer onClose={onClose} />);
+
+    await user.click(screen.getByTestId("open-drawer"));
+    const drawer = await screen.findByTestId("drawer");
+    await waitFor(() => expect(drawer).toHaveFocus());
+
+    drawer.focus();
+    await user.tab({ shift: true });
+    // 抽屉内最后一个可聚焦元素是导航链接
+    expect(screen.getByRole("link", { name: "作业" })).toHaveFocus();
+    expect(screen.getByTestId("open-drawer")).not.toHaveFocus();
+
+    await user.click(screen.getByTestId("drawer-backdrop"));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("打开时锁定背景滚动，关闭后恢复", async () => {
+    const user = userEvent.setup();
+    render(<TriggerAndDrawer onClose={() => {}} />);
+
+    await user.click(screen.getByTestId("open-drawer"));
+    expect(document.body.style.overflow).toBe("hidden");
+    await user.keyboard("{Escape}");
+    expect(document.body.style.overflow).toBe("");
   });
 });
 

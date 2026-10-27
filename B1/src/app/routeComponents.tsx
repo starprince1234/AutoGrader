@@ -1,5 +1,4 @@
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
-import { HomePage } from "../features/home/HomePage";
 import { AssignmentDetailPage } from "../features/assignments/AssignmentDetailPage";
 import { AssignmentsPage } from "../features/assignments/AssignmentsPage";
 import { AuthoringPage } from "../features/authoring/AuthoringPage";
@@ -33,10 +32,6 @@ import {
  * - `RequirePermission`：按角色隐藏页面主体。**这仍然不是安全边界**：
  *   每个被隐藏的入口都对应一个服务端 403，页面会把 403 原样展示出来。
  */
-
-export function HomeRoute() {
-  return <HomePage />;
-}
 
 export function QuestionListRoute() {
   return (
