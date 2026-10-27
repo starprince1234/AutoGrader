@@ -437,7 +437,7 @@ export function questionDraftGeneration(
       ],
     },
     warnings: [
-      { field: "cases[1].weight", message: "权重必须是大于 0 的有限数字；已留空。", severity: "warning" },
+      { field: "cases[1].weight", message: "分值要大于 0，已留空，请填写。", severity: "warning" },
     ],
     provenance: {
       provider: "example-provider",

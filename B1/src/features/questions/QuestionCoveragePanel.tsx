@@ -1,42 +1,13 @@
 import { t } from "../../i18n";
 import { isApiError } from "../../api/problem";
 import type { QuestionTagCoverage, TagCoverageRow } from "../../api/types";
-import {
-  Banner,
-  ErrorState,
-  Panel,
-  Spinner,
-  StatusPill,
-  Table,
-} from "../../ui/components";
+import { Banner, Panel, Spinner, StatusPill, Table } from "../../ui/components";
 import { useQuestionCoverage } from "./useQuestions";
 
 /**
- * 题库标签覆盖度（`getQuestionTagCoverage`，CHG-0020）。
+ * 标签覆盖度：这门课有哪些知识点、各有多少道题、多少道还没打标签。
  *
- * 它回答的是"这批题覆盖了哪些知识点、每个知识点有多少题、有多少题还没打标签"。
- * 契约把这件事的三条读法写死在 schema 的 description 里，本组件逐条落实：
- *
- * 1. **可校验的恒等式只有 `tagged_questions + untagged_questions == total_questions`**。
- *    `sum(tags[].question_count)` **不等于** `total_questions`：一道题最多可带 20 个标签，
- *    逐标签计数按设计重叠。因此页面上**不存在**任何"标签合计"，也不拿它做校验——那会渲染出
- *    一个不成立的数，而它看起来完全正常。
- * 2. `untagged_questions` **单独一格**：没有它，"没有标签"会被静默读成"没有题目"
- *    （与质量热力图里 `unmeasured_runs` 同一条纪律）。
- * 3. 标签顺序**原样**渲染（服务端已按 `question_count` 降序、同数按 `tag` 升序给出）。
- *    本组件不再排一次：再排一次就可能悄悄改变契约承诺的顺序。
- *
- * 另外两处诚实性：条形长度只在标签之间相互比较（不是"占题目总数的比例"），
- * 以及"点标签 → 列表筛选"复用列表既有的 `tags` 参数。
- *
- * **标签形态（CHG-0022，契约 `0.15.0`）**：`QuestionTagCoverage.tags[].tag` 现在声明了
- * `pattern: '^[a-z0-9][a-z0-9-]*$'`（长度 1–40），与 `listQuestions.tags` / `QuestionDraftInput.tags`
- * 完全一致。本组件此前有一段"这个标签可能不是列表筛选取值"的防御分支（当时契约对该输出字段
- * 什么都没说），它**按其自身逻辑不可达**，已随本批删除：
- * - 删它的理由不是"更短"，而是**契约现在是唯一权威**：保留一个不信任刚拿到的契约的分支，
- *   等于把"字段定义只在 contracts 里"这条规则打折；
- * - 删它**不会**制造静默失败：万一服务端真的返回违反契约的标签，列表页既有的标签校验会把它
- *   归入 `invalid` 并显示"以下标签不符合契约形状"，那一条路径本来就在。
+ * 只给教师看（题库管理视角）；计数按设计可重叠——一道题可以有多个标签，所以各标签题数不能相加。
  */
 
 /** 单个计数的展示件：值用 `data-testid` 固定，避免"哪一格显示了哪个数"只靠排版判断。 */
@@ -88,9 +59,6 @@ function CoverageTags({
   return (
     <div data-testid="coverage-tags">
       <h3>{t("questions.coverageTags")}</h3>
-      <p className="muted" data-testid="coverage-tag-order">
-        {t("questions.coverageTagOrder")}
-      </p>
       <Table<TagCoverageRow>
         testId="coverage-tag-table"
         label={t("questions.coverageTags")}
@@ -158,9 +126,6 @@ function CoverageBody({
   coverage: QuestionTagCoverage;
   onSelectTag: (tag: string) => void;
 }) {
-  const taggedAndUntagged = coverage.tagged_questions + coverage.untagged_questions;
-  const identityHolds = taggedAndUntagged === coverage.total_questions;
-
   return (
     <div className="stack" data-testid="coverage-body">
       <div className="count-grid">
@@ -184,25 +149,6 @@ function CoverageBody({
           tone="warn"
         />
       </div>
-
-      {/* 唯一可校验的恒等式。不自洽时**如实报告**，不挑一个数当真、也不悄悄改成一致。 */}
-      <p
-        className={identityHolds ? "muted" : "identity-broken"}
-        data-testid="coverage-identity"
-      >
-        {identityHolds
-          ? t("questions.coverageIdentityOk", {
-              tagged: coverage.tagged_questions,
-              untagged: coverage.untagged_questions,
-              total: coverage.total_questions,
-            })
-          : t("questions.coverageIdentityBroken", {
-              tagged: coverage.tagged_questions,
-              untagged: coverage.untagged_questions,
-              sum: taggedAndUntagged,
-              total: coverage.total_questions,
-            })}
-      </p>
 
       <p className="muted" data-testid="coverage-overlap-note">
         {t("questions.coverageOverlapNote")}
@@ -232,12 +178,6 @@ export function QuestionCoveragePanel({
     <Panel title={t("questions.coverageTitle")} testId="question-coverage">
       <p className="muted">{t("questions.coverageIntro")}</p>
 
-      {/* 这里**没有**"本页只是对着契约构建的"之类常驻横幅。
-          它曾经有过一条（"B3 尚未实现该端点"），而那条**由静态文案断言另一个模块的实现进度**：
-          端点一旦上线，横幅就会与它旁边的实时数字直接矛盾，而且没有任何机制会让它过期。
-          "对方实现到哪一步"不是界面能知道、也不是界面该说的话；端点不可用时由下面的
-          数据驱动分支按**服务端实际返回**说明本部署的响应。证据边界写在文档里（见 phase-05）。 */}
-
       {courseId === null ? (
         <Banner tone="info" testId="coverage-no-course">
           {t("questions.coverageNoCourse")}
@@ -245,22 +185,13 @@ export function QuestionCoveragePanel({
       ) : coverage.isPending ? (
         <Spinner />
       ) : isApiError(error) && error.isForbidden ? (
-        // 403 是服务端的授权结论：原样呈现它的 detail，**不**渲染成空态。
-        // 把它读成"这个课程没有题目"会让一次越权拒绝看起来像一份数据。
         <Banner tone="error" testId="coverage-forbidden">
-          {t("questions.coverageForbidden", {
-            detail: error.problem?.detail ?? t("common.forbiddenAction"),
-          })}
-        </Banner>
-      ) : isApiError(error) && error.isNotFound ? (
-        // 契约**没有**为这个端点声明 404（路径里也没有资源标识符），所以这里的 404 只描述
-        // **本部署的响应**：这条路由取不到。它是"数据驱动"的分支——只有服务端真的这么说时才出现，
-        // 且措辞不涉及任何模块的实现进度。
-        <Banner tone="info" testId="coverage-endpoint-absent">
-          {t("questions.coverageEndpointAbsent")}
+          {t("questions.coverageForbidden")}
         </Banner>
       ) : coverage.isError ? (
-        <ErrorState error={error} testId="coverage-error" />
+        <Banner tone="error" testId="coverage-error">
+          {t("questions.coverageFailed")}
+        </Banner>
       ) : coverage.data ? (
         <CoverageBody coverage={coverage.data} onSelectTag={onSelectTag} />
       ) : null}

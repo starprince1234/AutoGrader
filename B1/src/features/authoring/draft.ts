@@ -610,3 +610,76 @@ export function insertIntoStem(stem: string, snippet: string): string {
 export function isDirty(current: DraftForm, baseline: DraftForm): boolean {
   return JSON.stringify(current) !== JSON.stringify(baseline);
 }
+
+/* ------------------------------------------------------------ 面向教师的字段位置名 */
+
+const FIELD_LABELS: Record<string, string> = {
+  title: "标题",
+  stem_markdown: "题干",
+  tags: "标签",
+  cases: "测试用例",
+  fixtures: "测试文件",
+  examples: "示例",
+  notes: "说明",
+  difficulty: "难度",
+  adapter: "题型设置",
+  "adapter.args": "命令参数",
+  "adapter.stdin": "标准输入",
+  "adapter.expect_exit_code": "期望退出码",
+  "adapter.comparison.stdout": "输出比较方式",
+  "adapter.comparison.stderr": "错误输出比较方式",
+  "adapter.comparison.numeric_tolerance": "数值容差",
+  "adapter.callable.module": "函数所在文件",
+  "adapter.callable.attribute": "函数名",
+  "adapter.callable.arguments_json": "函数参数",
+};
+
+const CASE_SUB_LABELS: Record<string, string> = {
+  name: "的名称",
+  weight: "的分值",
+  stdin: "的输入",
+  args: "的命令参数",
+  expected_stdout: "的期望输出",
+  expected_stderr: "的错误输出",
+  expected_exit_code: "的退出码",
+  visible_to_student: "的可见性",
+};
+
+const FIXTURE_SUB_LABELS: Record<string, string> = {
+  path: "的位置",
+  mount: "的用途",
+  content_text: "的内容",
+  content_base64: "的内容",
+  content_sha256: "的校验信息",
+};
+
+/**
+ * 把 `cases[2].weight`、`stem_markdown` 这类内部定位翻成教师读得懂的位置说明。
+ *
+ * 用途只有一个：AI 草稿的"需要你检查的地方"要指向具体控件，但**不能把内部字段路径贴到界面上**。
+ * 未知字段统一回落到「本页内容」——绝不回显原始路径：那既是内部命名，也读不懂。
+ */
+export function fieldLabel(field: string): string {
+  const direct = FIELD_LABELS[field];
+  if (direct) return direct;
+
+  const indexed = /^([a-z_]+)\[(\d+)\](?:\.([A-Za-z_]+))?$/.exec(field);
+  if (indexed) {
+    const [, group, index, sub] = indexed;
+    const ordinal = Number(index) + 1;
+    if (group === "cases") {
+      return sub && CASE_SUB_LABELS[sub]
+        ? `第 ${ordinal} 个用例${CASE_SUB_LABELS[sub]}`
+        : `第 ${ordinal} 个用例`;
+    }
+    if (group === "tags") return `第 ${ordinal} 个标签`;
+    if (group === "fixtures") {
+      return sub && FIXTURE_SUB_LABELS[sub]
+        ? `第 ${ordinal} 个文件${FIXTURE_SUB_LABELS[sub]}`
+        : `第 ${ordinal} 个文件`;
+    }
+    if (group === "examples") return `第 ${ordinal} 个示例`;
+  }
+
+  return "本页内容";
+}

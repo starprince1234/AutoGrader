@@ -1,6 +1,5 @@
 import { useRef, useState } from "react";
 import { t } from "../../i18n";
-import { isApiError } from "../../api/problem";
 import { Banner, Field } from "../../ui/components";
 import {
   MAX_FIXTURE_BYTES,
@@ -15,11 +14,6 @@ function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
   return `${(bytes / 1024 / 1024).toFixed(1)} MiB`;
-}
-
-/** 摘要的短码：完整值仍在 `title` 与可选中文本里，表格不被 64 字符撑开。 */
-function shortenDigest(digest: string): string {
-  return digest.length > 12 ? `${digest.slice(0, 12)}…` : digest;
 }
 
 /**
@@ -146,8 +140,10 @@ export function FixtureEditor({
             value={mount}
             onChange={(event) => setMount(event.target.value as FixtureMount)}
           >
-            <option value="input">input</option>
-            {onlyInputMounts ? null : <option value="expected_output">expected_output</option>}
+            <option value="input">{t("authoring.fixture.mountInput")}</option>
+            {onlyInputMounts ? null : (
+              <option value="expected_output">{t("authoring.fixture.mountExpected")}</option>
+            )}
           </select>
         </Field>
       </div>
@@ -166,7 +162,6 @@ export function FixtureEditor({
           <span className="muted">{t("authoring.fixture.uploading")}</span>
         ) : null}
       </div>
-      <p className="muted">{t("authoring.fixture.digestHint")}</p>
 
       {error ? (
         <Banner tone="error" testId="fixture-error">
@@ -180,9 +175,7 @@ export function FixtureEditor({
       ) : null}
       {upload.isError ? (
         <Banner tone="error" testId="fixture-upload-error">
-          {isApiError(upload.error) && upload.error.problem?.detail
-            ? upload.error.problem.detail
-            : t("authoring.fixture.uploadFailed")}
+          {t("authoring.fixture.uploadFailed")}
         </Banner>
       ) : null}
 
@@ -197,7 +190,6 @@ export function FixtureEditor({
               <th scope="col">{t("authoring.fixture.path")}</th>
               <th scope="col">{t("authoring.fixture.mount")}</th>
               <th scope="col">{t("authoring.fixture.size")}</th>
-              <th scope="col">{t("authoring.fixture.digest")}</th>
               <th scope="col">{t("authoring.fixture.actions")}</th>
             </tr>
           </thead>
@@ -208,13 +200,12 @@ export function FixtureEditor({
                   <code>{fixture.path}</code>
                   <div className="muted">{fixture.fileName}</div>
                 </td>
-                <td>{fixture.mount}</td>
-                <td>{formatBytes(fixture.sizeBytes)}</td>
                 <td>
-                  <span className="mono-id" title={fixture.contentSha256}>
-                    {shortenDigest(fixture.contentSha256)}
-                  </span>
+                  {fixture.mount === "input"
+                    ? t("authoring.fixture.mountInput")
+                    : t("authoring.fixture.mountExpected")}
                 </td>
+                <td>{formatBytes(fixture.sizeBytes)}</td>
                 <td>
                   <button
                     type="button"

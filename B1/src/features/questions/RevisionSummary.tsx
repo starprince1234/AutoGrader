@@ -1,20 +1,18 @@
 import { t } from "../../i18n";
 import type { RevisionDiff } from "../../api/types";
-import { shortenId } from "../../ui/format";
 
 /**
- * 版本说明与结构差异（`QuestionVersionPublic.revision_note` / `revision_diff`，CHG-0013）。
+ * 版本说明与"和上一版比改了什么"。
  *
- * 契约对 `revision_diff` 的承诺是"只有计数、摘要与存在性标志"：它**不含任何受保护内容**，
- * 因此可以在版本面板上直接渲染。这里只渲染服务端真的给了值的条目——缺字段时留白，
- * 不用 0 或"无变化"填充：`null` 表示"没这一项"，不是"没有变化"。
+ * 只渲染服务端真的给了值的条目：缺项就留白，不用 0 或"无变化"填充。界面上不出现任何摘要、
+ * 编号或内部字段名——教师要看的是用例多了几个、题干长度变了没有这类能判断的事。
  */
 
 function Pair({ before, after }: { before: number | null | undefined; after: number | null | undefined }) {
   if (before === null || before === undefined || after === null || after === undefined) return null;
   return (
     <span>
-      {t("questions.revisionDiff.before")} {before} → {t("questions.revisionDiff.after")} {after}
+      {before} → {after}
     </span>
   );
 }
@@ -24,36 +22,6 @@ function Flag({ value }: { value: boolean | null | undefined }) {
   return <span>{value ? t("questions.revisionDiff.yes") : t("questions.revisionDiff.no")}</span>;
 }
 
-function DigestPair({
-  before,
-  after,
-}: {
-  before: string | null | undefined;
-  after: string | null | undefined;
-}) {
-  // 只是摘要，不是答案本身：契约明确它属于可公开的结构差异。
-  if (!before && !after) return null;
-  return (
-    <span className="inline">
-      {before ? (
-        <span className="mono-id" title={before}>
-          {shortenId(before)}
-        </span>
-      ) : (
-        <span className="muted">{t("common.none")}</span>
-      )}
-      {" → "}
-      {after ? (
-        <span className="mono-id" title={after}>
-          {shortenId(after)}
-        </span>
-      ) : (
-        <span className="muted">{t("common.none")}</span>
-      )}
-    </span>
-  );
-}
-
 export function RevisionSummary({
   revisionNote,
   revisionDiff,
@@ -61,7 +29,7 @@ export function RevisionSummary({
 }: {
   revisionNote: string | null | undefined;
   revisionDiff: RevisionDiff | null | undefined;
-  /** 首个版本没有可比对象（`revision_diff` 为 null 是正常的，不是缺数据）。 */
+  /** 第一个版本没有可比对象，这不是缺数据。 */
   isFirstVersion: boolean;
 }) {
   return (
@@ -71,7 +39,7 @@ export function RevisionSummary({
         {revisionNote ? (
           <p data-testid="revision-note">{revisionNote}</p>
         ) : (
-          <p className="muted">{t("common.none")}</p>
+          <p className="muted">—</p>
         )}
       </div>
 
@@ -122,15 +90,6 @@ export function RevisionSummary({
               <dt>{t("questions.revisionDiff.sizeLimits")}</dt>
               <dd>
                 <Flag value={revisionDiff.size_limits_changed} />
-              </dd>
-            </div>
-            <div className="facts__row">
-              <dt>{t("questions.revisionDiff.answerDigest")}</dt>
-              <dd>
-                <DigestPair
-                  before={revisionDiff.reference_answer_digest_before}
-                  after={revisionDiff.reference_answer_digest_after}
-                />
               </dd>
             </div>
           </dl>

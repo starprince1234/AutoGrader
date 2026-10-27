@@ -76,7 +76,7 @@ export function AuthoringPage({
   const updateQuestion = useUpdateQuestionDraft();
   const navigate = useNavigate();
 
-  // 课程刻意**不预选**：新建题目会写进某个课程作用域，而下拉默认值会让"点错一下"
+  // 课程刻意**不预选**：新建题目会写进某个课程，而下拉默认值会让"点错一下"
   // 变成"在另一门课里建了一道题"。编辑路径用题目自己的课程（服务端会再次校验）。
   const [courseId, setCourseId] = useState("");
   const [form, setForm] = useState<DraftForm>(() => emptyDraftForm());
@@ -84,6 +84,11 @@ export function AuthoringPage({
   const [issues, setIssues] = useState<DraftIssue[]>([]);
   const [savedVersionId, setSavedVersionId] = useState<string | null>(null);
   const [leaveConfirm, setLeaveConfirm] = useState(false);
+  // AI 面板默认收起，但入口按钮始终在顶部。URL 里带候选 id 时（刷新恢复）自动展开。
+  const [aiOpen, setAiOpen] = useState(Boolean(generationId));
+  useEffect(() => {
+    if (generationId) setAiOpen(true);
+  }, [generationId]);
 
   // 预填只发生一次：数据到齐后填入公开 DTO 里**真的存在**的字段，之后不再覆盖用户的编辑。
   const [seeded, setSeeded] = useState(false);
@@ -108,6 +113,9 @@ export function AuthoringPage({
   const parsed = parseTags(form.tags);
   const publishVersion = savedVersion.data ?? createdVersion.data ?? newestVersion.data ?? null;
   const dirty = useMemo(() => isDirty(form, baseline), [form, baseline]);
+  // 教师读"哪门课"，不是内部编号：能查到就显示代码与名称，查不到留白。
+  const currentCourse = courseOptions.find((course) => course.course_id === courseId);
+  const courseLabel = currentCourse ? `${currentCourse.course_code} · ${currentCourse.title}` : "—";
 
   // 浏览器级离开提示：只对"表单已改动"的页面生效，且只在真正可能丢失内容时出现。
   useEffect(() => {
@@ -204,6 +212,18 @@ export function AuthoringPage({
         title={t("authoring.actions")}
         actions={
           <div className="inline">
+            {/* AI 出题入口：放在标题栏，第一屏就能看到；不依赖是否已选课程。 */}
+            {questionId === null ? (
+              <button
+                type="button"
+                className="button button--ghost"
+                data-testid="authoring-ai"
+                aria-expanded={aiOpen}
+                onClick={() => setAiOpen((open) => !open)}
+              >
+                {aiOpen ? t("authoring.ai.hide") : t("authoring.ai.action")}
+              </button>
+            ) : null}
             <button
               type="button"
               className="button button--ghost"
@@ -303,6 +323,17 @@ export function AuthoringPage({
         ) : null}
       </Panel>
 
+      {/* AI 出题：由标题栏按钮展开，展开后就在第一屏，不用滚到表单底部。 */}
+      {questionId === null && aiOpen ? (
+        <GenerationPanel
+          courseId={courseId === "" ? null : courseId}
+          form={form}
+          generationId={generationId}
+          onGenerationId={onGenerationId}
+          onApply={applyProposalToForm}
+        />
+      ) : null}
+
       {/* 1. 基本信息 */}
       <Panel title={t("authoring.basic")}>
         <div className="form-grid">
@@ -323,12 +354,7 @@ export function AuthoringPage({
             </Field>
           ) : (
             <Field label={t("authoring.course")} htmlFor="authoring-course-readonly">
-              <input
-                id="authoring-course-readonly"
-                value={question.data?.course_id ?? ""}
-                readOnly
-                className="mono-id"
-              />
+              <input id="authoring-course-readonly" value={courseLabel} readOnly />
             </Field>
           )}
           <Field label={t("authoring.title")} htmlFor="authoring-title">
@@ -704,18 +730,7 @@ export function AuthoringPage({
         </Panel>
       ) : null}
 
-      {/* 8. AI 草稿：只在新建题目时提供"按教学目标生成题目"。 */}
-      {questionId === null ? (
-        <GenerationPanel
-          courseId={courseId === "" ? null : courseId}
-          form={form}
-          generationId={generationId}
-          onGenerationId={onGenerationId}
-          onApply={applyProposalToForm}
-        />
-      ) : null}
-
-      {/* 9. 信号：确定性诊断、模型建议（P09 才有对象可检查）。 */}
+      {/* 8. 信号：题目自查、AI 建议（P09 才有对象可检查）。 */}
       {targetQuestionId ? (
         <>
           <ComparisonDiagnosticsPanel questionId={targetQuestionId} />
@@ -723,7 +738,7 @@ export function AuthoringPage({
         </>
       ) : null}
 
-      {/* 10. 验证并发布：只有已保存的草稿才谈得上验证。 */}
+      {/* 9. 检验并发布：只有已保存的草稿才谈得上检验。 */}
       {publishVersion ? (
         <ReferenceVerificationPanel version={publishVersion} questionId={targetQuestionId} />
       ) : null}

@@ -2,28 +2,16 @@ import { useState } from "react";
 import { t } from "../../i18n";
 import { isApiError } from "../../api/problem";
 import type { AuthoringAssistance, ComparisonFinding } from "../../api/types";
-import { shortenId } from "../../ui/format";
-import {
-  Banner,
-  ErrorState,
-  Panel,
-  Spinner,
-  StatusPill,
-  Table,
-} from "../../ui/components";
+import { Banner, Panel, Spinner, StatusPill, Table } from "../../ui/components";
 import { useAuthoringAssistance, useQuestionDiagnostics } from "./useAuthoring";
 
 /**
- * 出题期的两类"信号"，**刻意做成两个外表不同的面板**：
+ * 出题期的两个面板，刻意分开：
  *
- * - `ComparisonDiagnosticsPanel`：确定性的 `CMP-*` 规则命中。同一份声明永远得到同一份结论，
- *   属于题目质量记录，可以直接据此改题。
- * - `AuthoringAssistancePanel`：模型生成的**建议**。契约把它标为 `confidence: advisory`，
- *   ADR-0009 明确要求它与确定性结论可区分——因此这里用不同标题、不同说明、不同外框，
- *   而不是把两种文字混进同一张表。
+ * - 「题目自查」：按固定规则检查判分设置，同一份内容永远得到同一份结论，据此改题即可；
+ * - 「让 AI 看看这道题」：模型给的建议，仅供参考，采纳与否由教师决定。
  *
- * 两种"空"也必须看起来不同：`findings` 为空是"检查过、无问题"；`409`/`status=unavailable`
- * 是"未启用"（provider 没配）。前者是结论，后者是没做这件事。
+ * 两者都不改题，也不会替教师做决定。
  */
 
 const SEVERITY_TONE: Record<ComparisonFinding["severity"], "bad" | "warn" | "idle"> = {
@@ -41,7 +29,9 @@ export function ComparisonDiagnosticsPanel({ questionId }: { questionId: string 
       {diagnostics.isPending ? (
         <Spinner />
       ) : diagnostics.isError ? (
-        <ErrorState error={diagnostics.error} />
+        <Banner tone="error" testId="diagnostics-error">
+          {t("authoring.diagnostics.failed")}
+        </Banner>
       ) : (diagnostics.data?.findings.length ?? 0) === 0 ? (
         <Banner tone="success" testId="diagnostics-clean">
           {t("authoring.diagnostics.clean")}
@@ -53,11 +43,6 @@ export function ComparisonDiagnosticsPanel({ questionId }: { questionId: string 
           rows={diagnostics.data?.findings ?? []}
           getRowKey={(row, index) => `${row.rule_id}-${index}`}
           columns={[
-            {
-              key: "rule_id",
-              header: t("authoring.diagnostics.rule"),
-              render: (row) => <span className="mono-id">{row.rule_id}</span>,
-            },
             {
               key: "severity",
               header: t("authoring.diagnostics.severity"),
@@ -72,12 +57,12 @@ export function ComparisonDiagnosticsPanel({ questionId }: { questionId: string 
               header: t("authoring.diagnostics.case"),
               render: (row) =>
                 row.ordinal === null || row.ordinal === undefined ? (
-                  <span className="muted">{t("common.none")}</span>
+                  <span className="muted">{t("authoring.diagnostics.wholeQuestion")}</span>
                 ) : (
                   t("authoring.diagnostics.caseSpecific", { ordinal: row.ordinal + 1 })
                 ),
             },
-            { key: "message", header: "message", render: (row) => row.message },
+            { key: "message", header: t("authoring.diagnostics.finding"), render: (row) => row.message },
           ]}
         />
       )}
@@ -113,35 +98,24 @@ function SuggestionList({ assistance }: { assistance: AuthoringAssistance }) {
               header: t("authoring.assign.topic"),
               render: (row) => t(`authoring.assign.topic.${row.topic}`),
             },
-            { key: "message", header: "message", render: (row) => row.message },
-            {
-              key: "confidence",
-              header: t("authoring.assign.confidence"),
-              render: (row) => (
-                <StatusPill tone="idle">{row.confidence ?? t("common.none")}</StatusPill>
-              ),
-            },
+            { key: "message", header: t("authoring.assign.suggestion"), render: (row) => row.message },
           ]}
         />
       )}
       {assistance.provenance ? (
-        <p className="muted" data-testid="assistance-provenance">
-          {t("authoring.assign.provenance", {
-            provider: assistance.provenance.provider,
-            model: assistance.provenance.model,
-            promptVersion: assistance.provenance.prompt_version,
-          })}
-        </p>
+        <details data-testid="assistance-provenance">
+          <summary>{t("authoring.assign.provenanceLabel")}</summary>
+          <ul className="muted">
+            <li>{t("authoring.assign.provenanceModel", { model: assistance.provenance.model })}</li>
+          </ul>
+        </details>
       ) : null}
-      {/* 契约要求：`disclaimers` 非空，且必须与建议一起展示。原文照录，不改写、不折叠。 */}
-      <div data-testid="assistance-disclaimers">
-        <p className="muted">{t("authoring.assign.disclaimers")}</p>
-        <ul className="muted">
-          {assistance.disclaimers.map((line, index) => (
-            <li key={index}>{line}</li>
-          ))}
-        </ul>
-      </div>
+      {/* 契约要求 `disclaimers` 非空并与建议一起展示：原文照录，不改写、不折叠。 */}
+      <ul className="muted" data-testid="assistance-disclaimers">
+        {assistance.disclaimers.map((line, index) => (
+          <li key={index}>{line}</li>
+        ))}
+      </ul>
     </>
   );
 }
@@ -159,10 +133,7 @@ export function AuthoringAssistancePanel({ questionId }: { questionId: string })
 
   return (
     <Panel title={t("authoring.assign.title")} testId="authoring-assistance" className="panel--advisory">
-      <Banner tone="warn" testId="assistance-advisory">
-        {t("authoring.assign.warning")}
-      </Banner>
-      <p className="muted">{t("authoring.assign.neverWrites")}</p>
+      <p className="muted">{t("authoring.assign.warning")}</p>
 
       <fieldset className="case-card">
         <legend className="case-card__legend">{t("authoring.assign.topics")}</legend>
@@ -199,7 +170,7 @@ export function AuthoringAssistancePanel({ questionId }: { questionId: string })
           type="button"
           className="button"
           data-testid="request-assistance"
-          // 契约 `topics` 是 `minItems: 1`：一个都不选就不该发请求。
+          // 至少选一个方面才发请求（服务端也要求至少一项）。
           disabled={topics.length === 0 || assistance.isPending}
           onClick={() =>
             assistance.mutate({ topics, notes: notes.trim() === "" ? null : notes.trim() })
@@ -212,12 +183,11 @@ export function AuthoringAssistancePanel({ questionId }: { questionId: string })
       {notEnabled ? (
         <Banner tone="info" testId="assistance-unavailable">
           {t("authoring.assign.status.unavailable")}
-          {disabledByError && isApiError(assistance.error) && assistance.error.problem?.detail ? (
-            <span className="muted"> {assistance.error.problem.detail}</span>
-          ) : null}
         </Banner>
       ) : assistance.isError ? (
-        <ErrorState error={assistance.error} />
+        <Banner tone="error" testId="assistance-error">
+          {t("authoring.assign.requestFailed")}
+        </Banner>
       ) : null}
 
       {assistance.data ? (
@@ -235,7 +205,6 @@ export function AuthoringAssistancePanel({ questionId }: { questionId: string })
             </p>
           ) : null}
           <SuggestionList assistance={assistance.data} />
-          <p className="muted mono-id">question_id: {shortenId(assistance.data.question_id)}</p>
         </div>
       ) : null}
     </Panel>

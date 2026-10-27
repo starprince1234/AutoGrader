@@ -5,8 +5,8 @@ import type {
   ReferenceVerification,
   ReferenceVerificationCase,
 } from "../../api/types";
-import { formatDateTime, shortenId } from "../../ui/format";
-import { Banner, ErrorState, Panel, Spinner, Table } from "../../ui/components";
+import { formatDateTime } from "../../ui/format";
+import { Banner, Panel, Spinner, Table } from "../../ui/components";
 import { usePublishQuestionVersion, useVerifyReferenceAnswer } from "./useAuthoring";
 
 /**
@@ -144,24 +144,9 @@ function VerificationBody({
     >
       <p className="muted">{t("authoring.verify.intro")}</p>
 
-      {/* 证据边界与"这个端点不给什么"必须**总是**可见：它描述的正是"还没验证过"的时刻。 */}
-      <p className="muted" data-testid="reference-no-protected-content">
-        {t("authoring.verify.noProtected")}
-      </p>
       <p className="muted" data-testid="reference-gate">
         {t("authoring.verify.gate")}
       </p>
-
-      <p className="muted">
-        {t("authoring.contentDigest", {
-          digest: version.content_digest ?? t("common.none"),
-        })}
-      </p>
-      {version.content_digest ? (
-        <p className="muted mono-id" data-testid="reference-version-digest">
-          {version.content_digest}
-        </p>
-      ) : null}
 
       <div className="inline">
         <button
@@ -170,7 +155,7 @@ function VerificationBody({
           data-testid="reference-verify"
           disabled={verification.isPending}
           onClick={() => {
-            // 每次点击都是一次新的沙箱作业：先清掉上一次的结论，页面不会同时显示两份。
+            // 每次点击都是一次新的检验：先清掉上一次的结论，页面不会同时显示两份。
             publish.reset();
             verification.mutate({ question_version_id: versionId });
           }}
@@ -200,33 +185,22 @@ function VerificationBody({
 
       {verificationError !== null && verificationError !== undefined ? (
         isApiError(verificationError) && verificationError.isForbidden ? (
-          // 403 是服务端的授权结论（该题目的课程写权限）：原样带出 detail，不当成"没验证过"。
           <Banner tone="error" testId="reference-verify-forbidden">
-            {t("authoring.verify.forbidden", {
-              detail: verificationError.problem?.detail ?? t("common.forbiddenAction"),
-            })}
+            {t("authoring.verify.forbidden")}
           </Banner>
         ) : isApiError(verificationError) && verificationError.status === 503 ? (
-          // 契约：依赖不可用的平台返回 503 且不记录任何东西。
-          // **不**从状态码推断是哪一类依赖（它同时覆盖"本平台没有沙箱"与"某个上游调用失败"，
-          // 两者从 503 上无法区分）——标题保持中性，原因**照原样**由 `detail` 呈现。
+          // 依赖不可用：这次没跑起来，既不能说题目合格，也不能说不合格。
           <Banner tone="warn" testId="reference-verify-environment">
-            <p>{t("authoring.verify.environment")}</p>
-            <p className="muted" data-testid="reference-verify-environment-detail">
-              {t("authoring.verify.environmentDetail", {
-                detail: verificationError.problem?.detail ?? t("common.none"),
-              })}
-            </p>
-            <p className="muted">{t("authoring.verify.environmentCause")}</p>
+            {t("authoring.verify.environment")}
           </Banner>
         ) : isApiError(verificationError) && verificationError.isNotFound ? (
-          // 404 在这里有两种无法区分的含义（该版本不存在 / 本部署没有提供这条路由），
-          // 因此如实列出两种读法，不替服务端选一个，也不断言任何模块的实现进度。
           <Banner tone="info" testId="reference-verify-notfound">
             {t("authoring.verify.notFound")}
           </Banner>
         ) : (
-          <ErrorState error={verificationError} testId="reference-verify-error" />
+          <Banner tone="error" testId="reference-verify-error">
+            {t("authoring.verify.failed")}
+          </Banner>
         )
       ) : null}
 
@@ -244,23 +218,19 @@ function VerificationBody({
             </p>
             <p className="muted">
               {t("authoring.verify.verifiedAt", {
-                time: formatDateTime(data.verified_at, t("common.none")),
+                time: formatDateTime(data.verified_at, "—"),
               })}
               {" · "}
-              {t("authoring.verify.adapter", {
-                language: data.language,
-                adapter: data.adapter_kind,
-              })}
+              {t(`questions.language.${data.language}`)}
+              {" · "}
+              {t(`questions.adapter.${data.adapter_kind}`)}
             </p>
           </Banner>
 
           {!allPassed && environmentOnly ? (
-            // 全部失败都是基础设施错误：这是**平台**结论（依赖不可用），不是题目结论。
-            // 标题同样保持中性：`infrastructure_error` 也不足以断定缺的是哪一类依赖。
+            // 全部失败都是"没跑起来"：这是环境结论，不是题目结论。
             <Banner tone="warn" testId="reference-verify-environment">
-              <p>{t("authoring.verify.environment")}</p>
-              <p className="muted">{t("authoring.verify.environmentFromCases")}</p>
-              <p className="muted">{t("authoring.verify.environmentCause")}</p>
+              {t("authoring.verify.environmentFromCases")}
             </Banner>
           ) : null}
 
@@ -304,11 +274,7 @@ function VerificationBody({
           )}
 
           <p className="muted" data-testid="reference-attestation">
-            {attested
-              ? t("authoring.verify.attestation", {
-                  id: shortenId(data.attestation_id as string),
-                })
-              : t("authoring.verify.attestationMissing")}
+            {attested ? t("authoring.verify.attestation") : t("authoring.verify.attestationMissing")}
           </p>
 
           {publishable ? (
@@ -336,15 +302,13 @@ function VerificationBody({
       ) : null}
 
       {publish.isError ? (
-        // 服务端拒绝（例如 422：门禁不认这份存证）→ 原样展示，不由前端改写成"成功"。
-        <ErrorState error={publish.error} testId="reference-publish-error" />
+        <Banner tone="error" testId="reference-publish-error">
+          {t("authoring.verify.publishFailed")}
+        </Banner>
       ) : null}
       {publish.data ? (
         <Banner tone="success" testId="reference-publish-done">
-          {t("authoring.verify.publishDone", {
-            version: publish.data.version,
-            status: t(`questions.status.${publish.data.status}`),
-          })}
+          {t("authoring.verify.publishDone", { version: publish.data.version })}
         </Banner>
       ) : null}
 

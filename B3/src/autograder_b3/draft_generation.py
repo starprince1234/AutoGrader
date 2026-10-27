@@ -56,9 +56,9 @@ DRAFT_PROMPT_VERSION = "b3-draft-generation-v1"
 #: render it next to the proposal: a generated draft that looks like a finished question
 #: eventually gets published as one.
 DRAFT_DISCLAIMERS: tuple[str, ...] = (
-    "模型生成的是候选草稿，不是正确答案；每个字段都由你审阅并确认。",
-    "生成不会创建题目、版本或用例，只有你点击“保存草稿”才会写入题库。",
-    "参考解答仍需通过平台的沙箱验证，隐藏用例仍需由确定性校验与人工复核。",
+    "AI 给出的只是草稿，不是标准答案，请逐项检查。",
+    "保存前不会写进题库；点「保存草稿」才会保存。",
+    "发布前还需要用你的参考答案把测试用例跑一遍。",
 )
 
 #: The only two questions the model is asked to answer about each case.
@@ -620,7 +620,7 @@ def normalize_proposal(
         # answer: inventing one would attribute prose to the teacher that they never wrote.
         warnings.add(
             "stem_markdown",
-            "模型没有给出可读的题干，无法形成可编辑的草稿；请补充教学目标后重新生成。",
+            "AI 没有给出题干，这次没法生成草稿；可以换个说法再试。",
             severity="error",
         )
         return ProposalOutcome(status="failed", proposal=None, warnings=tuple(warnings.items))
@@ -629,17 +629,16 @@ def normalize_proposal(
         # the exercise depends on, and the write path refuses a stem over the same limit anyway.
         warnings.add(
             "stem_markdown",
-            f"题干超过 {limits.max_stem_chars} 字符（本部署的题干上限），已截短；"
-            "请把丢失的要求补回来再保存。",
+            f"题干太长，已截短到 {limits.max_stem_chars} 字；请检查有没有漏掉要求。",
         )
 
     title = _text(raw.get("title"), limit=_MAX_TITLE_CHARS)
     if title is None or not title.strip():
-        warnings.add("title", "模型没有给出题目标题，请自己填写。")
+        warnings.add("title", "AI 没有给出标题，请自己填写。")
         title = ""
     elif isinstance(raw.get("title"), str) and len(raw["title"]) > _MAX_TITLE_CHARS:
         warnings.add(
-            "title", f"题目标题超过 {_MAX_TITLE_CHARS} 字符，已缩短；请确认措辞。", severity="info"
+            "title", "标题太长，已缩短；请确认措辞。", severity="info"
         )
 
     tags = _normalise_tags(raw.get("tags"), warnings)
@@ -690,12 +689,12 @@ def _normalise_tags(value: Any, warnings: _Warnings) -> tuple[str, ...]:
     if value is None:
         return ()
     if not isinstance(value, (list, tuple)):
-        warnings.add("tags", "模型给出的标签不是数组，已忽略。")
+        warnings.add("tags", "AI 给的标签格式不对，已忽略。")
         return ()
     accepted: list[str] = []
     for index, item in enumerate(value):
         if not isinstance(item, str):
-            warnings.add(f"tags[{index}]", "这个标签不是字符串，已忽略。")
+            warnings.add(f"tags[{index}]", "这个标签格式不对，已忽略。")
             continue
         candidate = item.strip()
         valid = (
@@ -707,14 +706,14 @@ def _normalise_tags(value: Any, warnings: _Warnings) -> tuple[str, ...]:
         if not valid:
             warnings.add(
                 f"tags[{index}]",
-                "这个标签不符合小写字母-短横线形式，已忽略；请改用课程里已有的标签。",
+                "这个标签格式不对，已忽略；请改用课程里已有的标签。",
             )
             continue
         if candidate in accepted:
             continue
         accepted.append(candidate)
     if len(accepted) > _MAX_TAGS:
-        warnings.add("tags", f"标签超过 {_MAX_TAGS} 个，只保留前 {_MAX_TAGS} 个。")
+        warnings.add("tags", f"标签太多，只保留前 {_MAX_TAGS} 个。")
         accepted = accepted[:_MAX_TAGS]
     return tuple(accepted)
 
@@ -725,27 +724,27 @@ def _normalise_cases(
     if value is None:
         return ()
     if not isinstance(value, (list, tuple)):
-        warnings.add("cases", "模型给出的测试用例不是数组，已忽略。")
+        warnings.add("cases", "AI 给的测试用例格式不对，已忽略。")
         return ()
     cases: list[DraftCaseProposal] = []
     for index, entry in enumerate(value[: limits.draft_generation_max_proposal_cases]):
         if not isinstance(entry, Mapping):
-            warnings.add(f"cases[{index}]", "这个测试用例不是对象，已忽略。")
+            warnings.add(f"cases[{index}]", "这个测试用例格式不对，已忽略。")
             continue
         name = _text(entry.get("name"), limit=_MAX_CASE_NAME_CHARS) or ""
         if not name.strip():
-            warnings.add(f"cases[{index}].name", "这个用例没有名称，请填写。")
+            warnings.add(f"cases[{index}].name", "这个用例还没有名称，请填写。")
         weight = _finite_positive(entry.get("weight"))
         if entry.get("weight") is not None and weight is None:
             warnings.add(
                 f"cases[{index}].weight",
-                "权重必须是大于 0 的有限数字；已留空，请填写后再保存。",
+                "分值要大于 0，已留空，请填写。",
             )
         expected_exit_code = _exit_code(entry.get("expected_exit_code"))
         if entry.get("expected_exit_code") is not None and expected_exit_code is None:
             warnings.add(
                 f"cases[{index}].expected_exit_code",
-                f"退出码必须是 {_MIN_EXIT_CODE} 到 {_MAX_EXIT_CODE} 之间的整数；已留空。",
+                f"退出码要是 {_MIN_EXIT_CODE} 到 {_MAX_EXIT_CODE} 之间的整数，已留空。",
             )
         stdin = _text(entry.get("stdin"), limit=limits.draft_generation_max_text_chars)
         cases.append(
@@ -768,8 +767,7 @@ def _normalise_cases(
     if len(value) > limits.draft_generation_max_proposal_cases:
         warnings.add(
             "cases",
-            f"用例超过 {limits.draft_generation_max_proposal_cases} 个，只保留前 "
-            f"{limits.draft_generation_max_proposal_cases} 个。",
+            f"用例太多，只保留前 {limits.draft_generation_max_proposal_cases} 个。",
         )
     return tuple(cases)
 
@@ -781,46 +779,49 @@ def _normalise_fixtures(
     if value is None:
         return ()
     if not isinstance(value, (list, tuple)):
-        warnings.add("fixtures", "模型给出的夹具不是数组，已忽略。")
+        warnings.add("fixtures", "AI 给的文件信息格式不对，已忽略。")
         return ()
     fixtures: list[DraftFixtureProposal] = []
     seen: set[tuple[str, str]] = set()
     for index, entry in enumerate(value):
         if not isinstance(entry, Mapping):
-            warnings.add(f"fixtures[{index}]", "这个夹具不是对象，已忽略。")
+            warnings.add(f"fixtures[{index}]", "这个文件信息格式不对，已忽略。")
             continue
         if "content_base64" in entry or "binary" in entry:
             warnings.add(
                 f"fixtures[{index}]",
-                "模型不提供二进制字节，这段已忽略；请用教师上传接口提供真实文件。",
+                "AI 不提供二进制文件，这一段已忽略；请自己上传真实文件。",
                 severity="info",
             )
             continue
         if entry.get("content_sha256") is not None:
             warnings.add(
                 f"fixtures[{index}].content_sha256",
-                "摘要由服务端在上传后计算，候选里的摘要已忽略。",
+                "文件校验信息会由系统生成，这里已忽略。",
                 severity="info",
             )
         try:
             path = validate_workspace_path(entry.get("path"), field=f"fixtures[{index}].path")
-        except ManifestInvalid as error:
-            warnings.add(f"fixtures[{index}].path", error.detail)
+        except ManifestInvalid:
+            warnings.add(
+                f"fixtures[{index}].path",
+                "这个文件位置不合法（要相对路径，不能含 ..），已忽略。",
+            )
             continue
         mount = entry.get("mount", "input")
         if mount not in _MOUNTS:
             warnings.add(
-                f"fixtures[{index}].mount", "挂载点只能是 input 或 expected_output，已忽略。"
+                f"fixtures[{index}].mount", "文件用途只能选「输入文件」或「期望输出」，已忽略。"
             )
             continue
         if (path, mount) in seen:
-            warnings.add(f"fixtures[{index}].path", "重复的夹具路径与挂载点，已忽略。")
+            warnings.add(f"fixtures[{index}].path", "同一个位置已经有同类文件，已忽略。")
             continue
         content_text = _text(entry.get("content_text"), limit=limits.draft_generation_max_text_chars)
         if content_text is None:
             warnings.add(
                 f"fixtures[{index}].content_text",
-                "这个夹具没有文本内容；二进制文件请用教师上传接口提供。",
+                "这个文件没有文本内容；二进制文件请自己上传。",
             )
             continue
         seen.add((path, mount))
@@ -844,12 +845,12 @@ def _normalise_adapter(value: Any, *, warnings: _Warnings) -> DraftAdapterPropos
         args = validate_args(value.get("args"))
         if args:
             kwargs["args"] = args
-    except ManifestInvalid as error:
-        warnings.add("adapter.args", error.detail)
+    except ManifestInvalid:
+        warnings.add("adapter.args", "AI 给的命令参数格式不对，已忽略。")
     try:
         stdin = validate_bounded_text(value.get("stdin"), field="adapter.stdin", limit=65_536)
-    except ManifestInvalid as error:
-        warnings.add("adapter.stdin", error.detail)
+    except ManifestInvalid:
+        warnings.add("adapter.stdin", "AI 给的标准输入不合法，已忽略。")
         stdin = None
     if stdin is not None:
         kwargs["stdin"] = stdin
@@ -862,29 +863,29 @@ def _normalise_adapter(value: Any, *, warnings: _Warnings) -> DraftAdapterPropos
         if isinstance(stdout, str) and stdout in _STDOUT_MODES:
             kwargs["comparison_stdout"] = stdout
         elif stdout is not None:
-            warnings.add("adapter.comparison.stdout", "不支持的输出比较方式，已忽略。")
+            warnings.add("adapter.comparison.stdout", "这个输出比较方式不支持，已忽略。")
         stderr = comparison.get("stderr")
         if isinstance(stderr, str) and stderr in _STDERR_MODES:
             kwargs["comparison_stderr"] = stderr
         elif stderr is not None:
-            warnings.add("adapter.comparison.stderr", "不支持的标准错误比较方式，已忽略。")
+            warnings.add("adapter.comparison.stderr", "这个错误输出比较方式不支持，已忽略。")
         tolerance = _finite_positive(comparison.get("numeric_tolerance"))
         if tolerance is not None:
             kwargs["numeric_tolerance"] = tolerance
         elif comparison.get("numeric_tolerance") is not None:
-            warnings.add("adapter.comparison.numeric_tolerance", "容差必须是正数，已忽略。")
+            warnings.add("adapter.comparison.numeric_tolerance", "容差要大于 0，已忽略。")
     callable_target = value.get("callable")
     if isinstance(callable_target, Mapping):
         try:
             module = validate_module_identifier(callable_target.get("module"))
             kwargs["callable_module"] = module
-        except ManifestInvalid as error:
-            warnings.add("adapter.callable.module", error.detail)
+        except ManifestInvalid:
+            warnings.add("adapter.callable.module", "AI 给的函数位置格式不对，已忽略。")
         try:
             attribute = validate_attribute_identifier(callable_target.get("attribute"))
             kwargs["callable_attribute"] = attribute
-        except ManifestInvalid as error:
-            warnings.add("adapter.callable.attribute", error.detail)
+        except ManifestInvalid:
+            warnings.add("adapter.callable.attribute", "AI 给的函数名格式不对，已忽略。")
         arguments_json = validate_arguments_json(callable_target.get("arguments_json"))
         if arguments_json is not None:
             kwargs["callable_arguments_json"] = arguments_json
@@ -893,7 +894,7 @@ def _normalise_adapter(value: Any, *, warnings: _Warnings) -> DraftAdapterPropos
         # Declared digests are ignored on purpose; the hint belongs to the fixture area.
         warnings.add(
             "fixtures",
-            "模型给出的夹具声明只作建议：文件请在编辑器里上传，摘要由服务端计算。",
+            "AI 给的文件说明只作参考：文件请自己上传。",
             severity="info",
         )
     return DraftAdapterProposal(**kwargs)
@@ -905,12 +906,12 @@ def _normalise_examples(
     if value is None:
         return ()
     if not isinstance(value, (list, tuple)):
-        warnings.add("examples", "模型给出的示例不是数组，已忽略。")
+        warnings.add("examples", "AI 给的示例格式不对，已忽略。")
         return ()
     examples: list[DraftExampleProposal] = []
     for index, entry in enumerate(value[:10]):
         if not isinstance(entry, Mapping):
-            warnings.add(f"examples[{index}]", "这个示例不是对象，已忽略。")
+            warnings.add(f"examples[{index}]", "这个示例格式不对，已忽略。")
             continue
         examples.append(
             DraftExampleProposal(
@@ -922,5 +923,5 @@ def _normalise_examples(
             )
         )
     if len(value) > 10:
-        warnings.add("examples", "示例超过 10 个，只保留前 10 个。", severity="info")
+        warnings.add("examples", "示例太多，只保留前 10 个。", severity="info")
     return tuple(examples)

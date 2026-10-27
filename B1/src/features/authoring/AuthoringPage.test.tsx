@@ -376,7 +376,7 @@ describe("新建题目（POST /api/v1/questions）", () => {
 
     // 没有输入夹具的 file 题编译不出 package，所以在本地就先拒绝，不发请求。
     expect(await screen.findByTestId("authoring-issues")).toHaveTextContent(
-      "至少要上传一个输入夹具",
+      "请至少上传一个输入文件",
     );
     expect(stub.requests.filter((item) => item.url.pathname === "/api/v1/questions")).toHaveLength(
       0,
@@ -503,7 +503,7 @@ describe("修改草稿（PATCH /api/v1/questions/{question_id}）", () => {
     renderAuthoring(QUESTION_ID);
 
     expect(await screen.findByTestId("authoring-version-mode")).toHaveTextContent(
-      "as_new_version=true",
+      "另存为一个新版本",
     );
     await user.type(await screen.findByLabelText("参考答案"), "print(2)");
     await addCaseAndConfirm(user);
@@ -629,12 +629,9 @@ describe("验证并发布入口（CHG-0019 / ADR-0015）", () => {
     const panel = await screen.findByTestId("reference-verification");
     // 入口在：这是 ADR-0015 解掉的死结（此前这一版只能找运维跑脚本）。
     expect(within(panel).getByTestId("reference-verify")).toBeInTheDocument();
-    // 门禁说明与"这个端点不给受保护内容"必须可见。
-    expect(within(panel).getByTestId("reference-gate")).toHaveTextContent("attestation_id");
-    expect(within(panel).getByTestId("reference-no-protected-content")).toHaveTextContent(
-      "不含期望输出",
-    );
-    expect(within(panel).getByTestId("reference-version-digest")).toHaveTextContent(SHA_A);
+    // 发布条件必须可见，且只说人话。
+    expect(within(panel).getByTestId("reference-gate")).toHaveTextContent("检验有记录");
+
     // 未验证 → 没有可点的发布动作，且没有任何验证结论。
     expect(within(panel).queryByTestId("reference-publish")).toBeNull();
     expect(within(panel).queryByTestId("reference-verification-result")).toBeNull();
@@ -667,7 +664,7 @@ describe("两类信号（确定性规则 vs 模型建议）", () => {
     renderAuthoring(QUESTION_ID);
 
     const clean = await screen.findByTestId("diagnostics-clean");
-    expect(clean).toHaveTextContent("检查过、未命中任何规则");
+    expect(clean).toHaveTextContent("没发现问题");
     // 「未启用」属于另一张卡（模型辅助）：诊断面板不显示它——两种"空"必须长得不一样。
     expect(screen.queryByTestId("assistance-unavailable")).toBeNull();
     // 辅助面板是另一张卡：在请求之前不显示任何"结果"。
@@ -713,8 +710,8 @@ describe("两类信号（确定性规则 vs 模型建议）", () => {
     await user.click(screen.getByTestId("request-assistance"));
 
     const unavailable = await screen.findByTestId("assistance-unavailable");
-    expect(unavailable).toHaveTextContent("未启用");
-    expect(unavailable).toHaveTextContent("no model provider is configured");
+    expect(unavailable).toHaveTextContent("暂未开通");
+
     expect(screen.queryByTestId("assistance-suggestions")).toBeNull();
   });
 
@@ -758,7 +755,7 @@ describe("两类信号（确定性规则 vs 模型建议）", () => {
     const disclaimers = screen.getByTestId("assistance-disclaimers");
     expect(disclaimers).toHaveTextContent("由模型生成，非确定性结论。");
     expect(disclaimers).toHaveTextContent("不参与判分，不作为申诉依据。");
-    expect(screen.getByTestId("assistance-advisory")).toHaveTextContent("不构成权威判定");
+    expect(screen.getByTestId("authoring-assistance")).toHaveTextContent("AI 给的是参考意见");
 
     const request = stub.requests.find(
       (item) => item.url.pathname === `/api/v1/questions/${QUESTION_ID}/authoring-assistance`,
@@ -766,7 +763,7 @@ describe("两类信号（确定性规则 vs 模型建议）", () => {
     expect(request?.body).toEqual({ topics: ["quality"], notes: null });
   });
 
-  it("诊断命中规则时按 rule_id 与严重级别展示（确定性那一条轨）", async () => {
+  it("自查命中时按级别与用例位置展示（只说人话，不显示规则编号）", async () => {
     stub = installFetchStub(
       baseRoutes([
         {
@@ -795,11 +792,16 @@ describe("两类信号（确定性规则 vs 模型建议）", () => {
     renderAuthoring(QUESTION_ID);
 
     const table = await screen.findByTestId("diagnostics-table");
-    expect(within(table).getByText("CMP-001")).toBeInTheDocument();
-    expect(within(table).getByText("警告")).toBeInTheDocument();
+    expect(within(table).getByText("建议检查")).toBeInTheDocument();
     expect(table).toHaveTextContent("第 2 个用例");
   });
 });
+
+async function openAi(user: ReturnType<typeof userEvent.setup>) {
+  // AI 面板默认收起：入口在标题栏，先点开再操作面板。
+  await user.click(await screen.findByTestId("authoring-ai"));
+  await screen.findByTestId("generation-panel");
+}
 
 describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
   const GENERATION_ID = UUID_A;
@@ -832,6 +834,51 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
     ];
   }
 
+  it("AI 入口就在标题栏：还没选课程也能看到，点开后有按钮并说明先选课程", async () => {
+    stub = installFetchStub(baseRoutes(generationRoutes()));
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+
+    // 第一屏（未选课程）就能看到入口，不需要滚到表单底部。
+    const entry = await screen.findByTestId("authoring-ai");
+    expect(entry).toHaveTextContent("让 AI 帮你出题");
+
+    await user.click(entry);
+    // 面板里「生成草稿」始终存在：禁用 + 说明原因，而不是整块消失。
+    const generate = await screen.findByTestId("generation-generate");
+    expect(generate).toBeDisabled();
+    expect(screen.getByTestId("generation-reason")).toHaveTextContent("请先选择课程");
+    expect(screen.getByTestId("generation-no-course")).toBeInTheDocument();
+  });
+
+  it("没有出题权限时 AI 面板说清楚，不显示技术错误", async () => {
+    stub = installFetchStub(
+      baseRoutes([
+        {
+          path: "/api/v1/question-draft-generations/capabilities",
+          respond: () =>
+            problemResponse({
+              status: 403,
+              title: "Forbidden",
+              detail: "Role or course scope does not permit this operation.",
+            }),
+        },
+      ]),
+    );
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+    await user.click(await screen.findByTestId("authoring-ai"));
+    await selectCourse(user);
+
+    expect(await screen.findByTestId("generation-forbidden")).toHaveTextContent("没有出题权限");
+    expect(screen.getByTestId("generation-generate")).toBeDisabled();
+    // 不把服务端原文贴到教师界面上。
+    const panel = screen.getByTestId("generation-panel");
+    expect(panel.textContent ?? "").not.toContain("Role or course scope");
+  });
+
   it("未配置 provider 时如实显示「未启用」，且生成按钮不可用、不发 POST", async () => {
     stub = installFetchStub(
       baseRoutes(generationRoutes({ provider_status: "unavailable", provider: null, model: null })),
@@ -841,7 +888,8 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
     renderAuthoring(null);
     await selectCourse(user);
 
-    expect(await screen.findByTestId("generation-unavailable")).toHaveTextContent("仍可手动创建");
+    await openAi(user);
+    expect(await screen.findByTestId("generation-unavailable")).toHaveTextContent("暂未开通");
     expect(screen.getByTestId("generation-generate")).toBeDisabled();
     expect(
       stub.requests.filter(
@@ -856,12 +904,13 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
     const user = userEvent.setup();
     await signIn("teacher1", "pw");
     renderAuthoring(null);
+    await openAi(user);
     await selectCourse(user);
 
     const generate = await screen.findByTestId("generation-generate");
     expect(generate).toBeDisabled(); // 空目标不消耗任何 provider 调用
 
-    await user.type(screen.getByLabelText("你希望学生学会什么"), "让学生学会读标准输入");
+    await user.type(screen.getByLabelText("教学目标"), "让学生学会读标准输入");
     await user.click(screen.getByTestId("generation-generate"));
 
     const request = await waitFor(() => {
@@ -894,17 +943,18 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
     const user = userEvent.setup();
     await signIn("teacher1", "pw");
     renderAuthoring(null);
+    await openAi(user);
     await selectCourse(user);
 
-    await user.type(screen.getByLabelText("你希望学生学会什么"), "统计行数");
+    await user.type(screen.getByLabelText("教学目标"), "统计行数");
     await user.click(screen.getByTestId("generation-generate"));
 
     // 状态是 needs_review：可编辑，但有字段要补。
     expect(await screen.findByTestId("generation-status")).toHaveTextContent("需要你");
     // 字段问题指出具体控件（不是一句泛泛的说明）。
     const warnings = screen.getByTestId("generation-warnings");
-    expect(warnings).toHaveTextContent("cases[1].weight");
-    expect(screen.getByTestId("generation-provenance")).toHaveTextContent("b3-draft-generation-v1");
+    expect(warnings).toHaveTextContent("第 2 个用例的分值");
+    expect(screen.getByTestId("generation-provenance")).toHaveTextContent("example-model-v1");
     expect(screen.getByTestId("generation-expiry")).toBeInTheDocument();
     expect(screen.getByTestId("generation-disclaimers")).toHaveTextContent(
       "模型生成的是候选草稿",
@@ -927,6 +977,7 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
     renderAuthoring(null, GENERATION_ID);
     await selectCourse(userEvent.setup());
 
+    // URL 带候选 id 时面板自动展开，不需要再点入口。
     expect(await screen.findByTestId("generation-result")).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByLabelText("题目标题")).toHaveValue("统计标准输入的行数"),
@@ -949,7 +1000,7 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
 
     await user.click(await screen.findByTestId("generation-discard"));
     // 关闭预览不等于删除：必须再确认一次。
-    expect(await screen.findByText("丢弃这份候选？")).toBeInTheDocument();
+    expect(await screen.findByText("丢弃这份 AI 草稿？")).toBeInTheDocument();
     await user.click(screen.getByTestId("generation-discard-confirm"));
 
     await waitFor(() => {
@@ -982,9 +1033,10 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
     const user = userEvent.setup();
     await signIn("teacher1", "pw");
     renderAuthoring(null);
+    await openAi(user);
     await selectCourse(user);
 
-    await user.type(await screen.findByLabelText("你希望学生学会什么"), "生成一道题");
+    await user.type(await screen.findByLabelText("教学目标"), "生成一道题");
     await user.click(screen.getByTestId("generation-generate"));
 
     const banner = await screen.findByTestId("generation-budget-exhausted");

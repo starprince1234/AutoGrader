@@ -242,10 +242,10 @@ describe("题目详情与版本机制（RQ-B-1-40）", () => {
     expect(within(summary).getByTestId("revision-note")).toHaveTextContent(
       "例题里的截止时间写错了",
     );
-    expect(summary).toHaveTextContent("改前 2 → 改后 3");
+    expect(summary).toHaveTextContent("2 → 3");
     expect(summary).toHaveTextContent("有变化");
     // `null` 的条目表示"没这一项"：渲染成空，而不是"无变化"。
-    const fixturesRow = within(summary).getByText("夹具").closest(".facts__row") as HTMLElement;
+    const fixturesRow = within(summary).getByText("文件有改动").closest(".facts__row") as HTMLElement;
     expect(fixturesRow.querySelector("dd")?.textContent).toBe("");
     // 只有摘要（digest），没有参考答案本身。
     expect(summary).not.toHaveTextContent("print(");
@@ -274,7 +274,7 @@ describe("题目详情与版本机制（RQ-B-1-40）", () => {
     renderQuestionDetail();
 
     const summary = await screen.findByTestId("revision-summary");
-    expect(summary).toHaveTextContent("首个版本没有可比较的上一版");
+    expect(summary).toHaveTextContent("这是第一个版本");
   });
 
   it("出题角色看到编辑入口；学生看不到，出题入口不会指向死路", async () => {
@@ -331,7 +331,7 @@ describe("题目详情与版本机制（RQ-B-1-40）", () => {
     const panel = await screen.findByTestId("reference-verification");
     expect(within(panel).getByTestId("reference-verify")).toBeInTheDocument();
     // 门禁的语义写在这里：可发布 = 全通过 ∧ 存证已记录 ∧ 摘要未变。
-    expect(within(panel).getByTestId("reference-gate")).toHaveTextContent("attestation_id");
+    expect(within(panel).getByTestId("reference-gate")).toHaveTextContent("这次检验有记录");
     // 未验证 → 没有发布动作。
     expect(within(panel).queryByTestId("reference-publish")).toBeNull();
     // 编辑入口在位：写路径不再是"看得到改不了"。

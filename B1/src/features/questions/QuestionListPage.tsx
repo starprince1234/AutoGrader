@@ -16,7 +16,6 @@ import {
   StatusPill,
   Table,
 } from "../../ui/components";
-import { shortenId } from "../../ui/format";
 import type { QuestionPublic } from "../../api/types";
 import { parseTags } from "../authoring/draft";
 import { QuestionCoveragePanel } from "./QuestionCoveragePanel";
@@ -73,9 +72,10 @@ export function QuestionListPage() {
     [questions.data],
   );
 
+  // 课程显示"代码 · 名称"；查不到就留白，绝不把内部编号贴到界面上。
   const courseLabel = (id: string): string => {
     const match = courseOptions.find((course) => course.course_id === id);
-    return match ? `${match.course_code} · ${match.title}` : shortenId(id);
+    return match ? `${match.course_code} · ${match.title}` : "—";
   };
 
   if (!author) {

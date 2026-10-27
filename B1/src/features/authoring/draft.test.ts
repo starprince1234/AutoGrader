@@ -9,6 +9,7 @@ import {
   buildDraftInput,
   draftFormFrom,
   emptyDraftForm,
+  fieldLabel,
   insertIntoStem,
   isDirty,
   isValidFixturePath,
@@ -439,5 +440,29 @@ describe("从公开 DTO 预填", () => {
     const form = emptyDraftForm();
     expect(form.cases).toHaveLength(1);
     expect(form.referenceAnswer).toBe("");
+  });
+});
+
+describe("界面上的字段位置用中文说清楚（不暴露内部字段名）", () => {
+  it("常见字段映射成教师能读的位置", () => {
+    expect(fieldLabel("title")).toBe("标题");
+    expect(fieldLabel("stem_markdown")).toBe("题干");
+    expect(fieldLabel("cases")).toBe("测试用例");
+    expect(fieldLabel("fixtures")).toBe("测试文件");
+    expect(fieldLabel("adapter.comparison.stdout")).toBe("输出比较方式");
+  });
+
+  it("带下标的字段说清是第几个用例/标签/文件", () => {
+    expect(fieldLabel("cases[2].weight")).toBe("第 3 个用例的分值");
+    expect(fieldLabel("cases[0].name")).toBe("第 1 个用例的名称");
+    expect(fieldLabel("cases[1]")).toBe("第 2 个用例");
+    expect(fieldLabel("tags[0]")).toBe("第 1 个标签");
+    expect(fieldLabel("fixtures[1].path")).toBe("第 2 个文件的位置");
+    expect(fieldLabel("examples[4]")).toBe("第 5 个示例");
+  });
+
+  it("不认识的字段回落成一句人话，绝不回显原始路径", () => {
+    expect(fieldLabel("weird.internal[0].thing")).toBe("本页内容");
+    expect(fieldLabel("")).toBe("本页内容");
   });
 });

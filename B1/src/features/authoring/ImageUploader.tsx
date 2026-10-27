@@ -1,6 +1,5 @@
 import { useRef, useState } from "react";
 import { t } from "../../i18n";
-import { isApiError } from "../../api/problem";
 import { Banner, Field } from "../../ui/components";
 import { IMAGE_CONTENT_TYPES, MAX_IMAGE_BYTES, assetMarkdown } from "./draft";
 import { useUploadQuestionAsset } from "./useAuthoring";
@@ -111,9 +110,7 @@ export function ImageUploader({
       ) : null}
       {upload.isError ? (
         <Banner tone="error" testId="image-upload-error">
-          {isApiError(upload.error) && upload.error.problem?.detail
-            ? upload.error.problem.detail
-            : t("authoring.image.uploadFailed")}
+          {t("authoring.image.uploadFailed")}
         </Banner>
       ) : null}
     </div>
