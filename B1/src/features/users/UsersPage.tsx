@@ -391,8 +391,6 @@ export function UsersPage({
                 ))}
               </select>
             </Field>
-            <p className="muted">{t("users.roleReplaceHint")}</p>
-            <p className="muted">{t("users.concurrencyHint")}</p>
 
             {concurrencyStamp(roleTarget) === null ? (
               <Banner tone="error" testId="role-change-missing-stamp">
@@ -466,7 +464,6 @@ export function UsersPage({
                 name: deactivateTarget.display_name,
               })}
             </p>
-            <p className="muted">{t("users.deactivateKeepsData")}</p>
             {deactivate.isError ? (
               isApiError(deactivate.error) && deactivate.error.isConflict ? (
                 <Banner tone="error" testId="deactivate-conflict">
@@ -515,7 +512,6 @@ export function UsersPage({
                 name: activateTarget.display_name,
               })}
             </p>
-            <p className="muted">{t("users.activateKeepsData")}</p>
             {activate.isError ? (
               isApiError(activate.error) && activate.error.isConflict ? (
                 <Banner tone="error" testId="activate-conflict">
@@ -604,7 +600,6 @@ export function UsersPage({
                 </dd>
               </div>
             </dl>
-            <p className="muted">{t("users.detailHint")}</p>
             <CopyUserId userId={detailTarget.user_id} />
           </div>
         </Modal>

@@ -280,6 +280,10 @@ describe("用户标签：角色修改（并发保护）", () => {
     const modal = await screen.findByTestId("role-change-modal");
     expect(within(modal).getByTestId("role-change-target")).toHaveTextContent("alice");
     expect(within(modal).getByTestId("role-change-pair")).toHaveTextContent("旧角色 学生 → 新角色 学生");
+    // 静态灰色说明已删除；对象、旧/新角色、选择框与按钮仍在。
+    expect(within(modal).queryByText(/保存后该账号的平台角色集合会被替换/)).toBeNull();
+    expect(within(modal).queryByText(/提交时会带上该行读到的更新时间/)).toBeNull();
+    expect(within(modal).getByTestId("role-change-select")).toBeInTheDocument();
     // 打开确认框不发写请求。
     expect(stub.requests.filter((request) => request.method === "PATCH")).toHaveLength(0);
 
@@ -430,6 +434,7 @@ describe("用户标签：停用账号", () => {
     const modal = await screen.findByTestId("deactivate-modal");
     expect(within(modal).getByText("停用账号", { selector: "h3" })).toBeInTheDocument();
     expect(within(modal).getByTestId("deactivate-target")).toHaveTextContent("alice");
+    expect(within(modal).queryByText(/这是软停用/)).toBeNull();
     expect(stub.requests.filter((request) => request.method === "DELETE")).toHaveLength(0);
 
     await user.click(within(modal).getByTestId("deactivate-confirm"));
@@ -502,7 +507,7 @@ describe("用户标签：停用账号", () => {
 });
 
 describe("用户标签：启用账号", () => {
-  it("确认弹窗写明对象与「软启用」；确认后只发一次 POST，状态刷新为启用", async () => {
+  it("确认弹窗写明对象；确认后只发一次 POST，状态刷新为启用", async () => {
     let active = false;
     stub = installFetchStub(
       withCommonRoutes([
@@ -543,7 +548,7 @@ describe("用户标签：启用账号", () => {
     expect(within(modal).getByTestId("activate-target")).toHaveTextContent(
       "确定启用账号 “alice”（爱丽丝）？启用后该账号恢复登录权限。",
     );
-    expect(within(modal).getByText("这是软启用，不会改动账号历史成绩与记录。")).toBeInTheDocument();
+    expect(within(modal).queryByText(/这是软启用/)).toBeNull();
     // 打开确认框不是启用。
     expect(activateRequests()).toHaveLength(0);
 
@@ -664,6 +669,8 @@ describe("用户标签：详情与复制 ID", () => {
     await user.click(screen.getByTestId(`detail-${USER_ID}`));
     const modal = await screen.findByTestId("user-detail-modal");
     expect(modal).toHaveTextContent("00000000…");
+    // 静态灰色说明已删除；字段、复制按钮与关闭按钮仍在。
+    expect(within(modal).queryByText(/列表默认不显示完整用户 ID/)).toBeNull();
 
     await user.click(within(modal).getByTestId("copy-user-id"));
     expect(await screen.findByTestId("user-id-copied")).toBeInTheDocument();
