@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AutoGrader common API conventions
-  version: 0.20.0
+  version: 0.21.0
   description: |
     Shared components for the AutoGrader Beta module APIs. Module contracts
     (b2.yaml, b3.yaml, b4.yaml) reference these via external $ref.

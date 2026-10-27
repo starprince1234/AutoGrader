@@ -612,6 +612,17 @@ uff、pytest、pnpm * 都无法运行。
 
 ---
 
+## 0.21.0 — 合并两条 0.20.0 分支：P13 复核范围 + 名单导入 CSV
+
+- **级别**：P1（**版本号冲突后的合并**，无新增字段）
+- **状态**：已生效
+- **动机**：两条分支各自以 `0.20.0` 发布了不同内容——P13 复核工作区的行级课程范围，与本次
+  名单导入改为 CSV/XLSX——合并后的工作树是两者并集，摘要与任何一侧都不同。同一个版本号对应
+  两份不同契约会让"锁摘要"失去意义，因此统一升为 `0.21.0`，内容为两侧并集。
+- **内容**：`b2.yaml` 的复核隔离行级范围（成员五）+ `roster-import.schema.json` 与 `b4.yaml`
+  的 CSV/XLSX 媒体类型（成员二）；其余文件仅版本号变化。
+- **影响模块**：B1–B5 的锁与描述符，B1 生成类型
+
 ## 0.20.0 — 名单导入改为 CSV + XLSX（去掉 PDF）
 
 - **级别**：P1 变更（媒体类型枚举收紧并替换）；无字段增删
@@ -683,6 +694,59 @@ uff、pytest、pnpm * 都无法运行。
 - **摘要**：见五份 `contracts.lock`（由 `relock_contracts.py` 计算，此处不复制）
 - **回滚方式**：还原本批契约文本与版本号，回退 B3 迁移 `20260915_0005`，移除 B1 生成面板与
   B3 的四个新操作，然后重跑 `relock_contracts.py`；版本回到 `0.17.0`。
+
+---
+
+## 0.20.0 — 隔离区行级课程范围（P13 越权修复）与复核工作区（无 CHG 编号）
+
+- **级别**：P1 增补 + P2 语义（新增两个响应字段与两个查询参数；把"按令牌不按行"改成行级授权）
+- **状态**：已生效
+- **动机**：P13 的强制验收门槛是"跨课程隔离真正成立"。现行契约在
+  `listIntakeQuarantines` 的 description 里明确写着 **"Scoping is per token, not per row"**，
+  而实现与测试也确实允许另一门课的教师读到本部署的全部隔离记录（`CHG-0021` 曾把它登记为
+  缺口）。只要记录没有可验证的课程关联，"拥有任意课程权限"就等于"能读全局邮件隔离数据"。
+  P13 需要把课程/课序变成可持久化、可查询的事实，并让 `resolve` 在写入前对**锁住的那一行**
+  重新授权。题目质量侧同时需要一个可分享的、不要求教师手填 UUID 的版本入口（由 P07 带入
+  `question_version_id`），因此本批也把该页面的筛选语义写进契约描述层。
+- **变更文件**：`openapi/b2.yaml`
+  - `IntakeQuarantineView`：新增**必需**的 `scope_course_id` / `scope_section_id`
+    （`anyOf: [Uuid, null]`，成对为空或非空）。description 写明唯一来源是**匹配规则候选共识**，
+    `not_matched`、跨课程/课序的 `ambiguous`、信封/附件拒绝一律 `null`，且不得从 mailbox、
+    发件人、附件名或请求参数推测。
+  - `listIntakeQuarantines`：新增可选 `course_id` / `section_id`（后者必须伴随前者）；
+    删除"Scoping is per token, not per row"整段，改成行级语义（staff 只看被令牌作用域覆盖的行、
+    未关联行只对管理员可见、query 只缩小范围且越界 403、SQL 谓词先于排序/limit/游标）；
+    补 `422` 响应（实现对非法 `limit`/游标/`resolved`/`reason_code`/UUID 早已返回它）。
+  - `resolveIntakeQuarantine`：description 增补"在行锁内按记录 scope 重新授权"；staff 对
+    未关联/跨课记录 403；管理员可处置未关联行，其显式课程/课序选择只用于加载候选、不写回
+    scope；并如实写明 B2 没有到 B4 名单的通道，因此不重跑名单成员关系校验。
+  - 六份契约文件 `info.version` 同步到 `0.20.0`（`0.19.0` 已由 P04/P05/P12 的批次占用）。
+- **受影响模块与需要做的改动**：
+  - **B2**：迁移 `20260915_0015`（`intake_quarantines` 两列 + 成对 CHECK + 索引）；
+    `intake/matching.py` 产出候选共识 `ScopeContext`；`intake/imap.py` 在同一事务持久化 scope；
+    `intake/quarantine.py` 行级谓词与 `resolve` 行锁重查；`auth/authorization.py` 新增
+    `require_quarantine_row_authority`；`EXPECTED_SCHEMA_REVISION`/`module.yaml` 推进到 0015；
+    相关 pytest 改写（跨 scope 矩阵、管理员未关联行、查询越界 403）。
+  - **B1**：重新生成类型；`/intake/quarantines` 与 `/quality` 合并为 `/review?tab=mail|quality`，
+    删除旧页面/旧路由/旧导航入口；隔离列表增加课程/课序筛选、详情与安全归属（候选来自 B4 名单）；
+    质量标签由 P07 带入 `question_version_id`，不再手填 UUID。
+  - **B3/B4/B5**：无代码改动，仅同步版本声明（本批不新增跨模块端点）。
+- **是否破坏兼容**：否（纯增量字段与参数）。需要写明两处**收紧**：① staff 不再能读未关联或
+  跨课程的行（这是本批的目的，旧行为是已登记的缺口）；② `IntakeQuarantineView` 的两个新字段是
+  `required`，任何自造该响应的生产者都必须补上（仓库内只有 B2 生产它）。
+- **迁移方式**：一次性切换，不保留兼容层。历史隔离行没有、也无法证明课程归属，迁移**只加列**、
+  把它们留成 NULL（保守：部署后仅管理员可见），不回填、不改写、不删除任何生产数据。
+- **示例变更**：
+  `GET /api/v1/intake/quarantines?resolved=false&course_id=…&section_id=…` →
+  `{"items":[{"intake_quarantine_id":"…","reason_code":"ambiguous_match","scope_course_id":"…","scope_section_id":"…","resolved":false,…}],"next_cursor":null}`；
+  未关联行 `{"scope_course_id":null,"scope_section_id":null}` 只出现在管理员响应里。
+- **验证**：见本批提交说明与 `B2/docs/phases/active/phase-10-quarantine-row-scope.md`、
+  `B1/docs/phases/active/phase-06-review-workspace.md` 的实际执行清单；本机无 Node/uv/PostgreSQL，
+  因此 B2 pytest、B1 `tsc/eslint/vitest`、`pnpm api:check` 与真实迁移的 upgrade/downgrade 未执行，
+  已逐条列出命令与风险。
+- **摘要**：见五份 `contracts.lock`（由 `contract_digest()` 计算，此处不复制）
+- **回滚方式**：还原本批契约文本与版本号、回退 B2 迁移 `20260915_0015`（会丢失 scope 关联）、
+  移除 B1 的 `/review` 页面并恢复旧路由，然后重跑 `relock_contracts.py`；版本回到 `0.19.0`。
 
 ---
 

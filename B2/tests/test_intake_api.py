@@ -34,6 +34,7 @@ from autograder_b2.db.schema import (
 )
 from autograder_b2.intake.api import build_router
 from autograder_b2.intake.imap import QuarantineStore
+from autograder_b2.intake.matching import ScopeContext
 from autograder_b2.intake.runtime import IntakeRuntime, build_runtime
 from tests.conftest import requires_postgres, run_alembic
 
@@ -807,18 +808,27 @@ def _staff_token(signer: _Signer, student: tuple[str, str, str, str]) -> str:
     )
 
 
+def _section_staff_token(signer: _Signer, *, course_id: str, section_id: str) -> str:
+    """只覆盖**一个课序**的 staff 令牌：用来验证课序级的行过滤。"""
+    return signer.token(
+        user_id=str(uuid.uuid4()),
+        roles=("teacher",),
+        scope=[{"course_id": course_id, "section_id": section_id}],
+    )
+
+
+def _admin_token(signer: _Signer) -> str:
+    """平台管理员：不受课程限制，是未关联记录的唯一处置者。"""
+    return signer.token(user_id=str(uuid.uuid4()), roles=("admin",), scope=[])
+
+
 def _scopeless_staff_token(signer: _Signer) -> str:
     """带 staff 角色但**没有任何课程作用域**的令牌（"不在任何课程作用域内"）。"""
     return signer.token(user_id=str(uuid.uuid4()), roles=("teacher",), scope=[])
 
 
 def _foreign_token(signer: _Signer) -> str:
-    """**另一门课**的教师（作用域不覆盖本课程）。
-
-    本端点的"按行课程作用域"判定**做不到**（`b2.intake_quarantines` 没有 course_id，匹配失败时也
-    不存在课程），因此这个令牌**会**通过——`test_quarantine_scope_gap_is_recorded_not_hidden`
-    把这个已知缺口钉成可执行的记录，而不是让读者以为它被判过。
-    """
+    """**另一门课**的教师（作用域不覆盖本用例的课程）。"""
     return signer.token(
         user_id=str(uuid.uuid4()),
         roles=("teacher",),
@@ -835,12 +845,18 @@ def _seed_quarantine(
     uid: int = 7,
     detail: str = "no rule matched (rules=3)",
     recorded_at: datetime | None = None,
+    scope_course_id: str | None = None,
+    scope_section_id: str | None = None,
 ) -> str:
     """用**生产写入路径**（`intake.imap.QuarantineStore`）落一条隔离记录，返回它的 id。
 
     为什么不用手写 INSERT：这条测试要证明"邮件入口写下的记录能被读出来"，因此写入必须走
-    `QuarantineStore.record`（与 `EmailIntakeService` 用的是同一个对象）。
+    `QuarantineStore.record`（与 `EmailIntakeService` 用的是同一个对象）。`scope_*` 不传即
+    "没有可验证的课程关联"，与 `not_matched`/跨 scope ambiguous 的真实写入一致。
     """
+    scope = None
+    if scope_course_id is not None and scope_section_id is not None:
+        scope = ScopeContext(course_id=scope_course_id, section_id=scope_section_id)
     store = QuarantineStore(engine)
     with engine.begin() as connection:
         return store.record(
@@ -852,6 +868,7 @@ def _seed_quarantine(
             uid=uid,
             message_id=message_id or f"<{uuid.uuid4()}@example.edu>",
             now=recorded_at or datetime.now(UTC),
+            scope=scope,
         )
 
 
@@ -913,7 +930,12 @@ def test_quarantine_list_exposes_what_the_email_path_recorded(
     """`CHG-0014` §6 第 4 条：未匹配的邮件**可被找到**，字段与写入侧一一对应，且不含邮件内容。"""
     message_id = f"<{uuid.uuid4()}@example.edu>"
     quarantine_id = _seed_quarantine(
-        engine, reason_code="not_uniquely_matched", message_id=message_id, uid=11
+        engine,
+        reason_code="not_uniquely_matched",
+        message_id=message_id,
+        uid=11,
+        scope_course_id=student[1],
+        scope_section_id=student[2],
     )
     response = client.get(QUARANTINES, headers=_auth(_staff_token(signer, student)))
 
@@ -935,6 +957,8 @@ def test_quarantine_list_exposes_what_the_email_path_recorded(
         "resolved",
         "resolved_student_id",
         "resolution_note",
+        "scope_course_id",
+        "scope_section_id",
     }
     assert item["intake_quarantine_id"] == quarantine_id
     assert item["intake"] == "email"
@@ -945,6 +969,9 @@ def test_quarantine_list_exposes_what_the_email_path_recorded(
     assert item["resolved"] is False
     assert item["resolved_student_id"] is None and item["resolution_note"] is None
     assert item["recorded_at"].endswith("Z")
+    # scope 来自写入侧（匹配规则共识），读取侧只做映射：两个字段必须如实带出。
+    assert item["scope_course_id"] == student[1]
+    assert item["scope_section_id"] == student[2]
     # 契约明说这条路径**不是第二个邮件仓库**：响应里不得出现正文/附件内容的字段。
     assert not {"body", "content", "attachments", "source"} & set(item)
 
@@ -954,9 +981,10 @@ def test_quarantine_list_filters_by_reason_and_resolved_state(
 ) -> None:
     """`reason_code` 与 `resolved` 两个过滤都真的生效（含"不过滤 = 全都要"的口径）。"""
     token = _auth(_staff_token(signer, student))
-    unresolved = _seed_quarantine(engine, reason_code="not_uniquely_matched", uid=1)
-    resolved = _seed_quarantine(engine, reason_code="ambiguous_match", uid=2)
-    other = _seed_quarantine(engine, reason_code="executable_attachment", uid=3)
+    scope = {"scope_course_id": student[1], "scope_section_id": student[2]}
+    unresolved = _seed_quarantine(engine, reason_code="not_uniquely_matched", uid=1, **scope)
+    resolved = _seed_quarantine(engine, reason_code="ambiguous_match", uid=2, **scope)
+    other = _seed_quarantine(engine, reason_code="executable_attachment", uid=3, **scope)
 
     def listed(**params: str) -> set[str]:
         response = client.get(QUARANTINES, params=params, headers=token)
@@ -991,7 +1019,13 @@ def test_quarantine_list_paginates_newest_first_without_gaps(
     """游标分页：**倒序**（契约要求 newest first）、不重不漏、坏游标是 422 而不是"回到第一页"。"""
     base = datetime(2026, 9, 16, 9, 0, 0, tzinfo=UTC)
     identifiers = [
-        _seed_quarantine(engine, uid=index + 1, recorded_at=base + timedelta(minutes=index))
+        _seed_quarantine(
+            engine,
+            uid=index + 1,
+            recorded_at=base + timedelta(minutes=index),
+            scope_course_id=student[1],
+            scope_section_id=student[2],
+        )
         for index in range(3)
     ]
     token = _auth(_staff_token(signer, student))
@@ -1016,7 +1050,9 @@ def test_quarantine_resolve_records_the_attribution_without_evaluating(
     client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
 ) -> None:
     """`CHG-0014` §2.2 第 2 条：归属**只记录**，不建提交、不发事件、不跑评测。"""
-    quarantine_id = _seed_quarantine(engine)
+    quarantine_id = _seed_quarantine(
+        engine, scope_course_id=student[1], scope_section_id=student[2]
+    )
     attributed = str(uuid.uuid4())
     before = _evaluation_footprint(engine)
 
@@ -1052,9 +1088,10 @@ def test_quarantine_resolve_reruns_the_checks_the_manual_path_must_not_skip(
     归属在这些情况下**一个字段都不写**（`resolved` 仍为 false）。
     """
     token = _auth(_staff_token(signer, student))
+    scope = {"scope_course_id": student[1], "scope_section_id": student[2]}
 
     for index, reason_code in enumerate(MATCH_FAILURES):
-        quarantined = _seed_quarantine(engine, reason_code=reason_code, uid=index + 1)
+        quarantined = _seed_quarantine(engine, reason_code=reason_code, uid=index + 1, **scope)
         response = client.post(
             RESOLVE.format(quarantine=quarantined),
             json={"student_id": str(uuid.uuid4())},
@@ -1062,7 +1099,7 @@ def test_quarantine_resolve_reruns_the_checks_the_manual_path_must_not_skip(
         )
         assert response.status_code == 200, (reason_code, response.text)
 
-    rejected = _seed_quarantine(engine, reason_code="executable_attachment", uid=99)
+    rejected = _seed_quarantine(engine, reason_code="executable_attachment", uid=99, **scope)
     refusal = client.post(
         RESOLVE.format(quarantine=rejected),
         json={"student_id": str(uuid.uuid4())},
@@ -1077,7 +1114,9 @@ def test_quarantine_resolve_is_conflict_for_an_already_resolved_record(
     client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
 ) -> None:
     """第二次归属 ⇒ 409：**不覆盖**前一个人的决定（归属是人的决定，不是可随意改写的字段）。"""
-    quarantine_id = _seed_quarantine(engine)
+    quarantine_id = _seed_quarantine(
+        engine, scope_course_id=student[1], scope_section_id=student[2]
+    )
     first_student = str(uuid.uuid4())
     token = _auth(_staff_token(signer, student))
     first = client.post(
@@ -1100,7 +1139,9 @@ def test_quarantine_resolve_validates_the_body_and_the_identifier(
     client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
 ) -> None:
     """请求体与路径标识的校验：未知字段/缺 `student_id`/非 UUID/超长 note ⇒ 422；未知记录 ⇒ 404。"""
-    quarantine_id = _seed_quarantine(engine)
+    quarantine_id = _seed_quarantine(
+        engine, scope_course_id=student[1], scope_section_id=student[2]
+    )
     token = _auth(_staff_token(signer, student))
     valid = {"student_id": str(uuid.uuid4())}
 
@@ -1151,7 +1192,13 @@ def test_quarantine_list_respects_the_contract_length_bounds(
     """
     token = _auth(_staff_token(signer, student))
     long_detail = "x" * 700
-    quarantined = _seed_quarantine(engine, detail=long_detail, uid=42)
+    quarantined = _seed_quarantine(
+        engine,
+        detail=long_detail,
+        uid=42,
+        scope_course_id=student[1],
+        scope_section_id=student[2],
+    )
     assert len(_quarantine_row(engine, quarantined).detail) == 700, "库列允许到 1000"
 
     body = client.get(QUARANTINES, headers=token).json()
@@ -1200,18 +1247,146 @@ def test_quarantine_routes_are_503_on_an_unmigrated_database(
         assert response.headers["content-type"].startswith("application/problem+json")
 
 
-def test_quarantine_scope_gap_is_recorded_not_hidden(
+def test_quarantine_list_is_filtered_by_row_scope_before_pagination(
     client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
 ) -> None:
-    """**已知缺口，如实记录**：另一门课的教师也能读到本部署的隔离记录。
+    """P13 的强制验收：staff 只看到作用域内的行，且过滤发生在分页/游标之前。
 
-    契约把鉴权写成"课程作用域内的 teacher/assistant/admin"，但 `b2.intake_quarantines` 里没有
-    `course_id`，而匹配失败时**不存在**课程（自动匹配正是没得出身份才隔离的）。硬造一个关联等于伪造
-    数据，因此实现只判到"staff 角色 + 令牌携带课程作用域"这一层，并把这条写成可执行的记录
-    （`docs/phases/active/phase-05-quarantine-and-quality-surfaces.md` 的契约缺口一节）：
-    这个用例一旦**失败**，说明有人真的加上了按行的课程判定——那时应当回来更新这条与契约。
+    三类记录：本课/本课序、另一门课、未关联。staff 令牌只覆盖本课序：
+    - 不带 query：只返回本课序那一行（未关联行**不可见**）；
+    - 带本课/本课序：同一行；
+    - 带另一门课：403（query 不是授权依据，越界必须失败而不是空列表）；
+    - 管理员：三类全见，未关联行带 `scope_*=null`。
     """
-    _seed_quarantine(engine)
-    response = client.get(QUARANTINES, headers=_auth(_foreign_token(signer)))
+    base = datetime(2026, 9, 17, 9, 0, 0, tzinfo=UTC)
+    mine = _seed_quarantine(
+        engine, uid=1, recorded_at=base, scope_course_id=student[1], scope_section_id=student[2]
+    )
+    foreign_course = str(uuid.uuid4())
+    foreign = _seed_quarantine(
+        engine,
+        uid=2,
+        recorded_at=base + timedelta(minutes=1),
+        scope_course_id=foreign_course,
+        scope_section_id=str(uuid.uuid4()),
+    )
+    unscoped = _seed_quarantine(engine, uid=3, recorded_at=base + timedelta(minutes=2))
+
+    staff = _auth(_section_staff_token(signer, course_id=student[1], section_id=student[2]))
+
+    def listed(token: str, **params: str) -> set[str]:
+        response = client.get(QUARANTINES, params=params, headers=token)
+        assert response.status_code == 200, response.text
+        return {item["intake_quarantine_id"] for item in response.json()["items"]}
+
+    assert listed(staff) == {mine}, "staff 既看不到别课行，也看不到未关联行"
+    assert listed(staff, course_id=student[1], section_id=student[2]) == {mine}
+    # 分页先过滤：limit=1 时第一页仍是本课序那一行（不是先取全局最新再过滤）。
+    page = client.get(QUARANTINES, params={"limit": 1}, headers=staff).json()
+    assert [item["intake_quarantine_id"] for item in page["items"]] == [mine]
+    assert page["next_cursor"] is None, "可见集合只有一行，不应出现下一页"
+
+    forbidden = client.get(
+        QUARANTINES,
+        params={"course_id": foreign_course, "section_id": str(uuid.uuid4())},
+        headers=staff,
+    )
+    assert forbidden.status_code == 403, forbidden.text
+    assert forbidden.headers["content-type"].startswith("application/problem+json")
+
+    admin = _auth(_admin_token(signer))
+    assert listed(admin) == {mine, foreign, unscoped}
+    assert listed(admin, course_id=student[1], section_id=student[2]) == {mine}
+    admin_items = client.get(QUARANTINES, headers=admin).json()["items"]
+    by_id = {item["intake_quarantine_id"]: item for item in admin_items}
+    assert by_id[unscoped]["scope_course_id"] is None
+    assert by_id[unscoped]["scope_section_id"] is None
+    assert by_id[mine]["scope_course_id"] == student[1]
+
+
+def test_quarantine_list_query_scope_validation(
+    client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
+) -> None:
+    """`course_id/section_id` 的请求校验：非 UUID 422、`section_id` 必须伴随 `course_id`。"""
+    _seed_quarantine(
+        engine, scope_course_id=student[1], scope_section_id=student[2], uid=1
+    )
+    token = _auth(_staff_token(signer, student))
+    for params in (
+        {"course_id": "not-a-uuid"},
+        {"section_id": "not-a-uuid", "course_id": student[1]},
+        {"section_id": student[2]},
+    ):
+        response = client.get(QUARANTINES, params=params, headers=token)
+        assert response.status_code == 422, (params, response.text)
+        assert response.headers["content-type"].startswith("application/problem+json")
+
+
+def test_quarantine_staff_cannot_resolve_unscoped_or_foreign_records(
+    client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
+) -> None:
+    """行级授权同样作用于归属：未关联/跨课记录对 staff 一律 403，且**一个字段都不写**。
+
+    这也钉住判定顺序：staff 对无权限记录不能通过"已处理"（409）或"不可归属"（422）的差异
+    探测它的状态——授权先于状态判定。
+    """
+    unscoped = _seed_quarantine(engine, uid=1)
+    foreign_course = str(uuid.uuid4())
+    foreign = _seed_quarantine(
+        engine,
+        uid=2,
+        scope_course_id=foreign_course,
+        scope_section_id=str(uuid.uuid4()),
+    )
+    # 越权记录即使已经处理过，也只应得到 403（不泄露"已处理"这一事实）。
+    unscoped_resolved = _seed_quarantine(engine, uid=3)
+    with engine.begin() as connection:
+        connection.execute(
+            sa.update(intake_quarantines)
+            .where(
+                intake_quarantines.c.intake_quarantine_id == uuid.UUID(unscoped_resolved)
+            )
+            .values(resolved=True, resolved_student_id=uuid.uuid4())
+        )
+
+    staff = _auth(_staff_token(signer, student))
+    for quarantine_id in (unscoped, foreign, unscoped_resolved):
+        response = client.post(
+            RESOLVE.format(quarantine=quarantine_id),
+            json={"student_id": str(uuid.uuid4())},
+            headers=staff,
+        )
+        assert response.status_code == 403, (quarantine_id, response.text)
+
+    # 越权归属不得改变任何记录的归属状态：先前已处理的那条保持原样，其余仍未处理。
+    assert _resolved_state(engine, unscoped)[0] is False
+    assert _resolved_state(engine, foreign)[0] is False
+    assert _resolved_state(engine, unscoped_resolved)[0] is True
+
+
+def test_quarantine_admin_may_resolve_unscoped_record(
+    client: TestClient, engine: Engine, signer: _Signer
+) -> None:
+    """无课程关联的记录**只能**由平台管理员处置（本轮的安全要求）。
+
+    归属体仍然只有 `student_id`/`note`：管理员在界面上选择的课程/课序只用于查找候选，
+    不回写为原始 scope，也不改变"未关联"这一事实。
+    """
+    quarantine_id = _seed_quarantine(engine, uid=1)
+    attributed = str(uuid.uuid4())
+    response = client.post(
+        RESOLVE.format(quarantine=quarantine_id),
+        json={"student_id": attributed, "note": "管理员核对后归属"},
+        headers=_auth(_admin_token(signer)),
+    )
     assert response.status_code == 200, response.text
-    assert len(response.json()["items"]) == 1
+    body = response.json()
+    assert body["resolved"] is True
+    assert body["resolved_student_id"] == attributed
+    assert body["scope_course_id"] is None, "归属不凭空补出课程关联"
+    assert body["scope_section_id"] is None
+    assert _resolved_state(engine, quarantine_id) == (
+        True,
+        attributed,
+        "管理员核对后归属",
+    )

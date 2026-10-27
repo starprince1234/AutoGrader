@@ -12,8 +12,8 @@
 | `GET/POST /api/v1/evaluation-runs/{evaluation_run_id}/commentary` | 读 / 生成教学评语（`RQ-T-20`）与顾问性参考分（`RQ-T-30`，同一次生成） | 是（JWT） | 读：同提交读权限；生成：**仅教师/助教/管理员** | 已实现（`tests/test_commentary_track.py`；见第 1b 节） |
 | `GET /api/v1/evaluation-runs/{evaluation_run_id}/appeal-pack` | 导出一个运行的**可移动证据包**（`CHG-0014`） | 是（JWT） | 教师/助教/管理员，**外加本人运行的学生**；`view=teacher` 仅 staff | 已实现（`tests/test_b2_routes.py`；见第 1c 节） |
 | `GET /api/v1/evaluation-runs/quality-summary` | 题目质量聚合（`CHG-0015`，**只有计数**） | 是（JWT） | 仅教师/助教/管理员 | 已实现（同上） |
-| `GET /api/v1/intake/quarantines` | 隔离区列表（`CHG-0014`）：教师能重新找到"没能变成提交"的邮件 | 是（JWT） | 教师/助教/管理员且令牌携带课程作用域（**按行课程判定做不到，见缺口**） | 已实现（`tests/test_intake_api.py`；见第 1d 节） |
-| `POST /api/v1/intake/quarantines/{intake_quarantine_id}/resolve` | 人工归属一条隔离记录（`CHG-0014`） | 是（JWT） | 同上 | 已实现（同上） |
+| `GET /api/v1/intake/quarantines` | 隔离区列表（`CHG-0014`）：教师能重新找到"没能变成提交"的邮件 | 是（JWT） | 教师/助教/管理员；staff 只返回**记录 scope 被令牌作用域覆盖**的行（NULL scope 仅管理员可见） | 已实现（`tests/test_intake_api.py`；见第 1d 节） |
+| `POST /api/v1/intake/quarantines/{intake_quarantine_id}/resolve` | 人工归属一条隔离记录（`CHG-0014`） | 是（JWT） | 同左；**行锁内**重查记录 scope：staff 对无 scope/跨课记录 403，管理员可处置未关联行 | 已实现（同上） |
 | `POST /api/v1/reference-verifications` | 在沙箱执行参考解答并逐用例比对（`CHG-0019`；发布门禁的执行入口） | 是（JWT） | 教师/助教/管理员且令牌携带课程作用域（**按题目的课程判定做不到，见缺口 ⑦**） | 已实现（`tests/test_reference_verification.py`；见第 1f 节） |
 
 补充（受 `module.yaml` routes 前缀 `/api/v1/evaluation-runs` 覆盖，契约已锁定，详见 `../../../MAIN/contracts/openapi/b2.yaml` 与 [../../../MAIN/docs/workstreams/B2.md](../../../MAIN/docs/workstreams/B2.md) 第 4 节）：
@@ -136,15 +136,23 @@ B2 侧的四条纪律（每条都有测试，见 [../testing/cases.md](../testin
    之一为数字）的运行数，`wall_seconds` 不算（那是 B2 自测的墙钟）；三态之和**完整划分**
    `attempt_count`（显式 `not_checked` 与"从未走到安全判定阶段"的 NULL 同属"我们没看过"）。
 
-## 1d. 隔离区复核（`CHG-0014` 的两条 intake 端点，2026-09-20 新增）
+## 1d. 隔离区复核（`CHG-0014` 的两条 intake 端点；P13 补行级课程范围）
 
 | 方法 + 路径 | 语义 | 认证 / 角色 | 边界与取舍 |
 |---|---|---|---|
-| `GET /api/v1/intake/quarantines` | 分页列出隔离记录（按记录时间倒序），可按 `reason_code`/`resolved` 过滤 | 是（JWT）；教师/助教/管理员，且令牌必须携带**至少一个**课程作用域 | `resolved` 缺省**不过滤**（契约没给它 `default`，见缺口 ④）；游标是 keyset，禁止 offset |
-| `POST .../{intake_quarantine_id}/resolve` | 人工归属；体 `{student_id, note?}`（`additionalProperties: false`） | 同上 | **只记录归属**：不建提交、不发事件、不评测 |
+| `GET /api/v1/intake/quarantines` | 分页列出**调用者可见**的隔离记录（按记录时间倒序），可按 `course_id`/`section_id`/`reason_code`/`resolved` 过滤 | 是（JWT）；教师/助教/管理员，且 staff 令牌必须携带**至少一个**课程作用域 | 行级谓词先于排序/limit/游标；`resolved` 缺省**不过滤**（契约没给它 `default`，见缺口 ④）；`course_id/section_id` 只缩小范围，越界 403；`section_id` 必须伴随 `course_id`（422） |
+| `POST .../{intake_quarantine_id}/resolve` | 人工归属；体 `{student_id, note?}`（`additionalProperties: false`） | 同上；行级判定在 `SELECT ... FOR UPDATE` 之后 | **只记录归属**：不建提交、不发事件、不评测；staff 对 NULL scope/跨课记录 403；管理员可处置未关联行（课程/课序选择只用于加载候选，不写回 scope） |
 
-1. **人工路径重跑哪些校验**（`intake/quarantine.py` 的模块文档逐条说明）：①角色与作用域；②**内容类
-   闸门**——只有 `reason_code ∈ {not_uniquely_matched, ambiguous_match}` 的记录可归属，其余一律 422
+**行的课程范围从哪来（P13 的核心）**：`b2.intake_quarantines.scope_course_id/scope_section_id`
+（迁移 `20260915_0015`，成对为空或非空）。写入侧只接受**匹配规则候选共识**——全部命中规则的
+`(course_id, section_id)` 完全一致时记录该对值；`not_matched`、跨课程/课序的 `ambiguous`、以及
+信封/附件拒绝一律 NULL。**不从 mailbox/发件人/附件名/请求参数推测**（那些是可伪造输入）。
+历史行没有、也无法证明课程归属，迁移把它们留成 NULL：部署后只对平台管理员可见（保守收紧，
+原始数据不动）。
+
+1. **人工路径重跑哪些校验**（`intake/quarantine.py` 的模块文档逐条说明）：①角色与作用域；②**行级
+   scope**（staff 只看被令牌覆盖的行；归属时在行锁内重查）；③**内容类闸门**——只有
+   `reason_code ∈ {not_uniquely_matched, ambiguous_match}` 的记录可归属，其余一律 422
    并指名原因码（报文本身被拒的信封，命名一个学生修不好它）。**可归属原因码全集就是这两项**；
    其余全部原因码见 `intake.attachments.EmailIntakeReason`（`message_too_large`/`missing_message_id`/
    `no_attachments`/`too_many_attachments`/`attachment_name_not_allowed`/`duplicate_attachment_name`/
@@ -154,6 +162,9 @@ B2 侧的四条纪律（每条都有测试，见 [../testing/cases.md](../testin
 2. **归属不触发评测是结构性的**：`resolve()` 的全部写入只有一条 `UPDATE b2.intake_quarantines`；
    用例以"提交/outbox/评测运行三张表计数逐条为零"把它钉住。
 3. **重复归属 ⇒ 409**（不覆盖前一个人的决定，也不静默返回旧值）；未知/非法标识 ⇒ 404；请求体违规 ⇒ 422。
+4. **名单成员关系不在 B2 复核**：B2 没有到 B4 名单的通道（无客户端、无 serviceToken 端点），
+   因此 resolve 不重查"该学生是否仍在该课序"。客户端每次从 B4 现取候选；服务端重查的是**记录行
+   scope + 调用者角色/作用域**，而不是信任客户端提交的候选列表。这是本轮登记在案的残留缺口。
 
 ## 1e. 已上报的契约缺口（`CHG-0014`/`CHG-0015` 落地时发现，**B2 不自行裁决**）
 
@@ -161,10 +172,10 @@ B2 侧的四条纪律（每条都有测试，见 [../testing/cases.md](../testin
 |---|---|---|
 | ① | `resolveIntakeQuarantine` 要求"重跑与自动路径相同的信封/摘要校验" | 隔离记录**不存报文与附件字节、不存任何摘要**（平台有意不做第二个邮件仓库），因此 resolve 阶段**没有可重算的摘要**。要真正做到只能让 resolve 回邮箱重取报文，而契约给它的响应集合是 401/403/404/409/422——**没有 503**——反证它不依赖外部邮箱 |
 | ② | 同上，"归属后交给正常提交路径评测" | 构造提交信封还需要 `course_id`/`section_id`/`question_version_id`，而自动路径正是从匹配规则取这三项；`not_matched` 时规则表没有给出任何身份。只给 `student_id` **不足以闭环**，且该 UID 的 checkpoint 已按 `quarantined` 落库、下次拉取会跳过。本模块**不发明**"归属即建提交"的路径 |
-| ③ | 两条隔离区端点与质量汇总的"课程作用域" | `b2.intake_quarantines` 没有 `course_id`（匹配失败时也不存在课程）；"题目→课程"是 B3 的事实（B2 不读 B3 schema）。因此实现只判到"staff 角色（+ 隔离区要求令牌携带课程作用域）"一层，**按行/按题目的课程过滤不实现**；另一门课的教师当前**可以**读到本部署的隔离记录，这条由 `tests/test_intake_api.py::test_quarantine_scope_gap_is_recorded_not_hidden` 钉成可执行的记录 |
-| ④ | `listIntakeQuarantines` 的 `resolved` 缺省语义 | 契约参数描述写"the default view a teacher wants"，但 schema **没有** `default`（同一份文件里 `Limit`/`view` 都显式写了默认值）。本实现取"缺省不过滤"，并把这条记为含糊项 |
+| ③ | 课程作用域（**隔离区已由 P13 修复；质量聚合仍只判角色**） | 隔离区已有可持久化的行级 scope（迁移 `0015`，来源是匹配规则候选共识），staff 的列表/归属都按行判定，`tests/test_intake_api.py` 用跨 scope 矩阵钉住。**质量汇总**仍只判"教师/助教/管理员"：`question_version_id → course_id` 是 B3 的事实，B2 不读 B3 schema；P13 的前端先用 B3 `GET /question-versions/{id}` 取标题/版本（B3 对无权版本 403），因此正常 UI 路径不会向 B2 拉无权版本的聚合，但**直接调用 B2 的 quality-summary 仍只受角色约束**——这是本轮登记、未跨模块新增通道的残留缺口 |
+| ④ | `listIntakeQuarantines` 的 `resolved` 缺省语义 | 契约参数描述写"the default view a teacher wants"，但 schema **没有** `default`（同一份文件里 `Limit`/`view` 都显式写了默认值）。本实现取"缺省不过滤"，并把这条记为含糊项。P13 页面把 URL 的 `resolved=all` 翻译成"省略该参数"，默认视图显式发送 `false` |
 | ⑤ | 未声明但被使用的状态码 | `quality-summary` 未声明 422（本模块按第 4 节统一约定对非法 `question_version_id`/`from`/`to` 返回 422，与 SSE 端点对坏 `Last-Event-ID` 的既有做法一致）；`quality-summary`/`exportGrades` 声明了 404，但 B2 **不拥有题目/课程**，"不存在"与"没有数据"在 `b2` schema 内不可区分，故实现从不返回 404；`appeal-pack`/`getEvaluationReport` 声明了 409 而实现用 404 + 如实的 `detail`（与报告端点记的 `G-API-1` 同一类） |
-| ⑥ | 视图上限与库列上限不一致 | 契约 `IntakeQuarantineView.detail` 的 `maxLength` 是 500，而库列（0002 的 CHECK）允许到 1000。视图侧按契约上限截断（结构以契约为准），未改历史迁移 |
+| ⑥ | 视图上限与库列上限不一致 | 契约 `IntakeQuarantineView.detail` 的 `maxLength` 是 **1000**（`CHG-0021` §2.4 已订正），库列 CHECK 也是 1000；服务层仍按 **500** 截断（`MAX_VIEW_DETAIL`），即视图比契约更保守。P13 未改动这一行为（不在授权范围内），此处更正旧表述 |
 
 ## 1f. 参考解答验证（`CHG-0019` + `CHG-0023`，2026-09-20 新增）
 

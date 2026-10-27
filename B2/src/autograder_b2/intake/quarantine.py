@@ -42,6 +42,25 @@
 `submission_state_transitions`、不进 outbox、不调用编排层。`tests/test_intake_api.py` 用
 "四张表与评估运行计数逐条为零"把这条钉住。
 
+## 行级课程范围（P13 的越权修复）
+
+隔离记录从迁移 `20260915_0015` 起带 `scope_course_id/scope_section_id`（成对为空或非空）。
+这两个字段的**唯一**来源是邮件匹配规则的候选共识（`intake.matching` 的模块文档），不是本模块
+从请求、邮箱或身份里推出来的。据此本模块把授权做到行级：
+
+- **列表**：`require_intake_quarantine_authority` 只判"角色 + staff 至少一个课程作用域"这一层；
+  真正的行级过滤是 `_scope_predicate(principal)` 翻译出的 SQL 条件：staff 只保留
+  `scope_course_id/scope_section_id` 被某个令牌作用域覆盖的行，NULL scope 行对 staff 不可见；
+  管理员不加限制（未关联行只出现在管理员视图）。谓词与用户的 `course_id/section_id` 筛选一起
+  施加在 `ORDER BY`/`LIMIT`/游标判定**之前**，因此分页、`next_cursor` 与响应都不会暗示
+  存在被隐藏的行。
+- **查询参数**：`course_id/section_id` 只缩小当前调用者可见的范围，不是授权依据。staff 传入
+  令牌作用域之外的课程/课序得到 `403`（而不是"空列表"）；不带筛选时仍然只看自己 scope 内的行。
+- **归属**：`resolve` 在 `SELECT ... FOR UPDATE` 锁住记录之后调用
+  `require_quarantine_row_authority`，对**这一行**再判一次：staff 对 NULL scope 或跨课记录
+  一律 `403`；管理员可处置未关联行。写入只发生在授权通过之后，不存在"先按旧值授权、再用新值
+  写入"的窗口。
+
 ## 分页
 
 契约的 `CursorPage` 明确禁止对大表用 offset 分页，本模块用 keyset 游标
@@ -65,7 +84,11 @@ import sqlalchemy as sa
 from sqlalchemy import Engine
 
 from autograder_b2.api.formatting import rfc3339_millis
-from autograder_b2.auth.authorization import require_intake_quarantine_authority
+from autograder_b2.auth.authorization import (
+    AuthorizationError,
+    require_intake_quarantine_authority,
+    require_quarantine_row_authority,
+)
 from autograder_b2.auth.tokens import Principal
 from autograder_b2.db.schema import intake_quarantines
 
@@ -125,6 +148,9 @@ class IntakeQuarantineView:
     resolved: bool
     resolved_student_id: str | None
     resolution_note: str | None
+    #: 匹配规则候选共识给出的课程/课序；成对为空（未关联）或非空。未关联行只对管理员可见。
+    scope_course_id: str | None = None
+    scope_section_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,6 +178,8 @@ def quarantine_view_body(view: IntakeQuarantineView) -> dict[str, Any]:
         "resolved": view.resolved,
         "resolved_student_id": view.resolved_student_id,
         "resolution_note": view.resolution_note,
+        "scope_course_id": view.scope_course_id,
+        "scope_section_id": view.scope_section_id,
     }
 
 
@@ -202,6 +230,30 @@ def parse_reason_code_filter(raw: str | None) -> str | None:
     if len(raw) > 64:
         raise InvalidQuarantineFilterError("reason_code must be at most 64 characters")
     return raw
+
+
+def parse_course_filter(raw: str | None) -> str | None:
+    """解析 `?course_id=`：空串=未提供；非 UUID → 422；返回规范化小写形式。
+
+    规范化是必须的：令牌侧已规范化，而请求侧合法写法不唯一（大写、花括号、32 位无连字符）。
+    直接按字符串比较会让一份完全合法的请求被误判为越权。
+    """
+    if raw is None or raw == "":
+        return None
+    try:
+        return str(uuid.UUID(raw))
+    except (AttributeError, TypeError, ValueError) as error:
+        raise InvalidQuarantineFilterError("course_id must be a UUID") from error
+
+
+def parse_section_filter(raw: str | None) -> str | None:
+    """解析 `?section_id=`：同 `parse_course_filter`；必须与 `course_id` 同时提供。"""
+    if raw is None or raw == "":
+        return None
+    try:
+        return str(uuid.UUID(raw))
+    except (AttributeError, TypeError, ValueError) as error:
+        raise InvalidQuarantineFilterError("section_id must be a UUID") from error
 
 
 def encode_cursor(*, recorded_at: datetime, intake_quarantine_id: str) -> str:
@@ -286,12 +338,18 @@ class IntakeQuarantineService:
         self,
         *,
         principal: Principal,
+        course_id: str | None = None,
+        section_id: str | None = None,
         reason_code: str | None = None,
         resolved: bool | None = None,
         limit: int = DEFAULT_LIMIT,
         cursor: str | None = None,
     ) -> IntakeQuarantinePage:
-        """按时间倒序取一页隔离记录。
+        """按时间倒序取一页**调用者可见**的隔离记录。
+
+        可见性由 SQL 谓词决定（管理员：全部；staff：scope 非空且被令牌作用域覆盖），
+        并且与 `course_id/section_id` 筛选一起施加在排序、`limit` 与游标判定**之前**——
+        分页与 `next_cursor` 只基于可见行。
 
         异常：`AuthorizationError` → 路由层 403；`InvalidQuarantineFilterError` /
         `InvalidQuarantineCursorError` → 422。`next_cursor` 非空即表示**还有下一页**。
@@ -299,10 +357,23 @@ class IntakeQuarantineService:
         require_intake_quarantine_authority(principal)
         size = _validated_limit(limit)
         reason = parse_reason_code_filter(reason_code)
+        wanted_course = parse_course_filter(course_id)
+        wanted_section = parse_section_filter(section_id)
+        if wanted_section is not None and wanted_course is None:
+            raise InvalidQuarantineFilterError("section_id requires course_id")
+        _require_query_scope_authority(principal, wanted_course, wanted_section)
         after = None if cursor is None else decode_cursor(cursor)
         with self._engine.connect() as connection:
             rows = connection.execute(
-                _page_statement(reason_code=reason, resolved=resolved, after=after, limit=size + 1)
+                _page_statement(
+                    principal=principal,
+                    course_id=wanted_course,
+                    section_id=wanted_section,
+                    reason_code=reason,
+                    resolved=resolved,
+                    after=after,
+                    limit=size + 1,
+                )
             ).fetchall()
         items = tuple(_view_of(row) for row in rows[:size])
         next_cursor: str | None = None
@@ -345,12 +416,23 @@ class IntakeQuarantineService:
                 sa.select(
                     intake_quarantines.c.reason_code,
                     intake_quarantines.c.resolved,
+                    intake_quarantines.c.scope_course_id,
+                    intake_quarantines.c.scope_section_id,
                 )
                 .where(intake_quarantines.c.intake_quarantine_id == identifier)
                 .with_for_update()
             ).fetchone()
             if row is None:
                 raise QuarantineNotFoundError(str(identifier))
+            # 授权在**锁住这一行之后**重判：记录 scope 是写入侧产生的事实，不能被调用者或
+            # 请求参数替代。staff 对未关联/跨课记录 403；管理员不受课程限制。
+            require_quarantine_row_authority(
+                principal,
+                scope_course_id=None if row.scope_course_id is None else str(row.scope_course_id),
+                scope_section_id=(
+                    None if row.scope_section_id is None else str(row.scope_section_id)
+                ),
+            )
             if bool(row.resolved):
                 raise QuarantineAlreadyResolvedError(str(identifier))
             reason_code = str(row.reason_code)
@@ -358,7 +440,13 @@ class IntakeQuarantineService:
                 raise QuarantineNotAttributableError(reason_code)
             connection.execute(
                 sa.update(intake_quarantines)
-                .where(intake_quarantines.c.intake_quarantine_id == identifier)
+                .where(
+                    sa.and_(
+                        intake_quarantines.c.intake_quarantine_id == identifier,
+                        # 兜底：即使锁语义在某些隔离级别下退化，也不会覆盖已有归属。
+                        intake_quarantines.c.resolved.is_(False),
+                    )
+                )
                 .values(
                     resolved=True,
                     resolved_student_id=uuid.UUID(canonical_student),
@@ -388,25 +476,71 @@ def _select_view() -> sa.Select[Any]:
         intake_quarantines.c.resolved,
         intake_quarantines.c.resolved_student_id,
         intake_quarantines.c.resolution_note,
+        intake_quarantines.c.scope_course_id,
+        intake_quarantines.c.scope_section_id,
     )
+
+
+def _scope_predicate(principal: Principal) -> sa.ColumnElement[bool]:
+    """行级可见性谓词（**必须在排序、limit 与游标之前施加**）。
+
+    - 管理员：`true`（全局，含未关联行——这正是管理员视图存在的理由）；
+    - staff：`scope_course_id` 非空且被某个令牌作用域覆盖。作用域条目未限定课序时覆盖该课程
+      的任意课序（与 `Principal.covers_course` 同一语义），限定课序时要求精确相等；
+    - 空作用域：`false`（fail-closed；入口层已拒绝这种 staff 令牌，这里再兜一次）。
+    """
+    if principal.is_admin:
+        return sa.true()
+    clauses: list[sa.ColumnElement[bool]] = []
+    for scope in principal.scopes:
+        condition: sa.ColumnElement[bool] = (
+            intake_quarantines.c.scope_course_id == uuid.UUID(scope.course_id)
+        )
+        if scope.section_id is not None:
+            condition = sa.and_(
+                condition,
+                intake_quarantines.c.scope_section_id == uuid.UUID(scope.section_id),
+            )
+        clauses.append(condition)
+    if not clauses:
+        return sa.false()
+    return sa.and_(intake_quarantines.c.scope_course_id.is_not(None), sa.or_(*clauses))
+
+
+def _require_query_scope_authority(
+    principal: Principal, course_id: str | None, section_id: str | None
+) -> None:
+    """`course_id/section_id` 只是筛选：staff 传了作用域之外的课程/课序 → 403。
+
+    不带课程筛选是合法的（此时仍由 `_scope_predicate` 把范围限制在令牌作用域内）；
+    显式指定课程时，显式越界必须失败，而不是静默返回空列表——"空结果"与"无权"是两件事。
+    """
+    if principal.is_admin or course_id is None:
+        return
+    if not principal.covers_course(course_id, section_id):
+        raise AuthorizationError("the requested course/section is outside the token scope")
 
 
 def _page_statement(
     *,
+    principal: Principal,
+    course_id: str | None,
+    section_id: str | None,
     reason_code: str | None,
     resolved: bool | None,
     after: tuple[datetime, uuid.UUID] | None,
     limit: int,
 ) -> sa.Select[Any]:
-    """页面查询：时间倒序 + 主键兜底（同毫秒的行必须有全序，keyset 判定才有唯一解）。"""
-    statement = (
-        _select_view()
-        .order_by(
-            intake_quarantines.c.created_at.desc(),
-            intake_quarantines.c.intake_quarantine_id.desc(),
-        )
-        .limit(limit)
-    )
+    """页面查询：**先过滤**（scope 谓词 + 用户筛选 + 游标）再排序取页。
+
+    时间倒序 + 主键兜底（同毫秒的行必须有全序，keyset 判定才有唯一解）。所有 `where` 都在
+    `.limit()` 之前组合，SQL 语义与"先过滤后分页"一致。
+    """
+    statement = _select_view().where(_scope_predicate(principal))
+    if course_id is not None:
+        statement = statement.where(intake_quarantines.c.scope_course_id == uuid.UUID(course_id))
+    if section_id is not None:
+        statement = statement.where(intake_quarantines.c.scope_section_id == uuid.UUID(section_id))
     if reason_code is not None:
         statement = statement.where(intake_quarantines.c.reason_code == reason_code)
     if resolved is not None:
@@ -422,7 +556,10 @@ def _page_statement(
                 ),
             )
         )
-    return statement
+    return statement.order_by(
+        intake_quarantines.c.created_at.desc(),
+        intake_quarantines.c.intake_quarantine_id.desc(),
+    ).limit(limit)
 
 
 def _view_of(row: Any) -> IntakeQuarantineView:
@@ -447,6 +584,8 @@ def _view_of(row: Any) -> IntakeQuarantineView:
             None if row.resolved_student_id is None else str(row.resolved_student_id)
         ),
         resolution_note=None if row.resolution_note is None else str(row.resolution_note),
+        scope_course_id=None if row.scope_course_id is None else str(row.scope_course_id),
+        scope_section_id=None if row.scope_section_id is None else str(row.scope_section_id),
     )
 
 
@@ -472,9 +611,11 @@ __all__ = [
     "QuarantineRequestError",
     "decode_cursor",
     "encode_cursor",
+    "parse_course_filter",
     "parse_limit",
     "parse_reason_code_filter",
     "parse_resolved_filter",
+    "parse_section_filter",
     "quarantine_page_body",
     "quarantine_view_body",
     "validate_resolution_request",

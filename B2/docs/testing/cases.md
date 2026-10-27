@@ -342,10 +342,14 @@ T-CMT-007（断言 `prompt_version` 等于 `b2-commentary/2` 且 prompt 含 JSON
 用例文件：[../../tests/test_intake_api.py](../../tests/test_intake_api.py)（两条 intake 端点：真实路由 + 真实
 PostgreSQL + 真实 Ed25519 验签；隔离记录由**生产写入路径** `intake.imap.QuarantineStore` 落库）与
 [../../tests/test_b2_routes.py](../../tests/test_b2_routes.py)（`appeal-pack` / `quality-summary`：真实编排器产出的
-报告 + 真实路由）。契约依据：`MAIN/contracts/openapi/b2.yaml` 的四个 operation 与
+报告 + 真实路由）。P13 的行级课程范围另有两份**不需要数据库**的用例：
+[../../tests/test_matching_scope.py](../../tests/test_matching_scope.py)（scope 只来自规则候选共识）与
+[../../tests/test_quarantine_scope_sql.py](../../tests/test_quarantine_scope_sql.py)（谓词在 SQL 里、且在
+`LIMIT` 之前）。契约依据：`MAIN/contracts/openapi/b2.yaml` 的四个 operation 与
 `IntakeQuarantineView`/`AppealPack`/`EvaluationQualitySummary`；变更
 [`CHG-0014`](../../../MAIN/docs/contracts/changes/CHG-0014-quarantine-and-appeal-pack.md) /
-[`CHG-0015`](../../../MAIN/docs/contracts/changes/CHG-0015-quality-heatmap.md)。口径缺口见
+[`CHG-0015`](../../../MAIN/docs/contracts/changes/CHG-0015-quality-heatmap.md) /
+`0.19.0`（隔离区行级 scope）。口径缺口见
 [../api/contract.md](../api/contract.md) 第 1e 节。
 
 | 用例 ID | 目标 | 层次 | 前置 | 步骤要点 | 期望结果 | 当前是否存在 |
@@ -359,8 +363,14 @@ PostgreSQL + 真实 Ed25519 验签；隔离记录由**生产写入路径** `inta
 | T-QUAR-007 | 幂等/冲突 | 集成 | 真实 PostgreSQL | 对同一条记录归属两次 | 第二次 409；第一次的决定与备注**逐字未变** | **存在**（`test_quarantine_resolve_is_conflict_for_an_already_resolved_record`） |
 | T-QUAR-008 | 请求校验 | 契约 | 真实路由 | 缺 `student_id`/非 UUID/超长 `note`/未知字段/未知或非法路径标识 | 前四种 422、后两种 404（**不**用 404 掩盖校验失败） | **存在**（`test_quarantine_resolve_validates_the_body_and_the_identifier`） |
 | T-QUAR-009 | 依赖不可用 | 集成 | 未迁移的库 | 两条端点各请求一次 | 503 + 可读原因（不是 500、也不是空页） | **存在**（`test_quarantine_routes_are_503_on_an_unmigrated_database`） |
-| T-QUAR-010 | **已知缺口（记录而非隐藏）** | 契约 | 真实 PostgreSQL | 另一门课的教师令牌列出隔离区 | **200**——按行课程判定在当前数据模型下做不到（`intake_quarantines` 无 `course_id`）；该用例失败即说明有人加上了按行判定，应回来更新契约 | **存在**（`test_quarantine_scope_gap_is_recorded_not_hidden`） |
-| T-QUAR-011 | 契约长度上限 | 契约 | 真实 PostgreSQL | 写入 700 字的 `detail`（库列允许到 1000）后列出；归属备注 500 字 | 视图里的 `detail` 落在契约 `maxLength: 500` 内；500 字的备注可写入（501 字在 T-QUAR-008 被 422 拒） | **存在**（`test_quarantine_list_respects_the_contract_length_bounds`） |
+| T-QUAR-010 | **跨课程隔离（P13 强制验收）** | 契约 | 真实 PostgreSQL | 三类记录（本课序 / 另一门课 / 未关联）+ 只覆盖本课序的 staff 令牌：不带 query、带本课序、带另一门课分别请求；管理员不带过滤请求 | staff 只看到本课序那一行（未关联不可见）；带另一门课 → 403；admin 三类全见，未关联行 `scope_*=null` | **存在**（`test_quarantine_list_is_filtered_by_row_scope_before_pagination`） |
+| T-QUAR-011 | 契约长度上限 | 契约 | 真实 PostgreSQL | 写入 700 字的 `detail`（库列允许到 1000）后列出；归属备注 500 字 | 视图里的 `detail` 落在服务端保守上限 500 内（契约 `maxLength` 为 1000）；500 字的备注可写入（501 字在 T-QUAR-008 被 422 拒） | **存在**（`test_quarantine_list_respects_the_contract_length_bounds`） |
+| T-QUAR-012 | 行级过滤先于分页 | 集成 | 真实 PostgreSQL | 未授权行比授权行更新，staff 以 `limit=1` 请求 | 第一页仍是授权行；`next_cursor` 为 null（可见集合只有一行）——证明过滤发生在排序/limit/cursor 之前 | **存在**（同 T-QUAR-010 的分页断言） |
+| T-QUAR-013 | 查询参数校验 | 契约 | 真实路由 | 非 UUID 的 `course_id`；非 UUID 的 `section_id`+合法课程；只有 `section_id` | 均 422（Problem Details），且不泄露任何记录 | **存在**（`test_quarantine_list_query_scope_validation`） |
+| T-QUAR-014 | 越权归属 | 安全 | 真实 PostgreSQL | staff 对未关联 / 另一门课 / 已处理的未关联记录直接 POST resolve | 三者都 403；未关联那条的 `resolved` 状态不被改写（不能靠 409/422 差异探测状态） | **存在**（`test_quarantine_staff_cannot_resolve_unscoped_or_foreign_records`） |
+| T-QUAR-015 | 管理员处置未关联记录 | 集成 | 真实 PostgreSQL | 管理员对未关联记录 POST resolve | 200；`resolved_student_id` 写入；`scope_*` 仍为 null（归属不凭空补课程关联） | **存在**（`test_quarantine_admin_may_resolve_unscoped_record`） |
+| T-QUAR-016 | scope 只来自规则候选共识 | 单元 | 无数据库 | 同一 course/section 的不同学生候选 / 跨课序候选 / 跨课程候选 / 未匹配 / 唯一命中 / 重复规则同身份 | 只有"全部候选同一对 `(course_id, section_id)`"才带出 scope；其余为 None；唯一命中如实带出供审计 | **存在**（`tests/test_matching_scope.py`，6 用例，已在本机以真实依赖执行） |
+| T-QUAR-017 | 谓词在 SQL 里且在 LIMIT 前 | 单元 | 无数据库（PostgreSQL 方言编译） | 编译 `_page_statement`：课序级 scope / 课程级 scope / 管理员 + 课程筛选 / 两个作用域 | staff 的 WHERE 含 `scope_course_id IS NOT NULL` 与行 scope 条件；课程级作用域不附加课序相等；管理员无 scope 谓词但筛选保留；多作用域并集；`WHERE` 在 `LIMIT` 之前 | **存在**（`tests/test_quarantine_scope_sql.py`，4 用例，已在本机执行） |
 | B2-QS-01 | CHG-0015 §6-1 | 契约 | 真实路由 | 直接请求 `quality-summary` | 200（聚合），而**不是**被 `{evaluation_run_id}` 吞掉后的 404/422 | **存在**（`test_quality_summary_is_not_swallowed_by_the_run_path_parameter`） |
 | B2-QS-02 | CHG-0015 §6-2 | 安全 | 真实 PostgreSQL | 跑完一次真实编排后读聚合 | 键集合逐字等于契约属性集；键名不含 student/submission/source/expected/user；**取值里除题目版本外没有任何 UUID**；`QualitySummary` 类型里没有其他 `*_id` | **存在**（`test_quality_summary_returns_counts_only`） |
 | B2-QS-03 | CHG-0015 §2 | 集成 | 真实 PostgreSQL | 一次真实运行 + 一条没跑过的运行（同题目版本） | `attempt_count=2`；逐用例失败率与失败类别正确；逐规则命中数与库内静态明细**逐条相等**（且未命中的规则以 0 出现） | **存在**（`test_quality_summary_aggregates_per_case_and_per_rule`） |
