@@ -34,11 +34,11 @@ from autograder_b3.draft_generation import (
     DraftGenerationProviderError,
     GenerationView,
     ProviderAnswer,
-    TokenUsage,
     build_generation_payload,
     normalize_proposal,
     provider_from_settings,
 )
+from autograder_b3.llm_client import TokenUsage
 from autograder_b3.dto.internal import PROTECTED_FIELD_NAMES
 from autograder_b3.dto.public import PUBLIC_DTO_TYPES, QuestionLearningContextPublic
 from autograder_b3.infra.models import AIGenerationUsage, QuestionDraftGeneration
@@ -529,8 +529,9 @@ def test_capabilities_report_the_deployment_limits_and_the_callers_budget(
     settings = {
         "draft_generation_max_objective_chars": 1234,
         "draft_generation_budget_requests": 5,
-        "authoring_provider_url": "https://model.invalid/v1/chat",
-        "authoring_model": "stub-model",
+        "llm_base_url": "https://model.invalid/v1",
+        "llm_model": "stub-model",
+        "llm_api_key": "test-key",
     }
     with generation_client(dependencies, provider=provider, **settings) as client:
         response = client.get(

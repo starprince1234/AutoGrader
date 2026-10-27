@@ -114,6 +114,26 @@ gh workflow run deploy-backend.yml --ref main -f operation=sync-mail-channel
 （`root:root 0600`）后 `systemctl restart autograder.service`；手工方式需自行保证引号与转义正确，
 写入前确认文件不是符号链接。
 
+### 模型 provider 变量（`operation=sync-llm-config`）
+
+同一条"只渲染一次"的约束也适用于模型 provider：`LLM_BASE_URL` / `LLM_MODEL_NAME` / `LLM_APIKEY`
+只写进首次 `bootstrap-host` 渲染的 `runtime.env`，日常发布不会重写它。已经存在的宿主因此需要一次显式同步：
+
+```bash
+gh workflow run deploy-backend.yml --ref main -f operation=sync-llm-config
+```
+
+它从 Doppler `autograder/prd` 取这三个键，用同一个 `MAIN/deploy/merge-env-keys.py` **只合并这三个键**
+进 `/etc/autograder/runtime.env`（原子写入，0600 root:root，日志只打印键名不打印值），然后重启
+`autograder.service` 并在 30 次轮询内等待 `/health/ready` 就绪。
+
+`LLM_BASE_URL` 是 **base**：B3 自己追加 `/v1/responses`（Responses API）。把完整端点写进 base 变量会
+得到一个"存在但永远失败"的 provider。三个键必须同时存在——只配一部分会让页面先显示"可用"、再在第一次
+生成时失败，那比缺少配置更难解释。缺任意一项时 B3 如实上报 `provider_status=unavailable`，页面显示
+"AI 出题暂未开通"，手动出题不受影响。
+
+**手工等价操作**：把三行追加到 `/etc/autograder/runtime.env` 后重启服务（同样需自行保证引号与转义）。
+
 
 ## 3. 空库重建与后续数据
 

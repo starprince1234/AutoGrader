@@ -746,8 +746,9 @@ def test_authoring_assistance_is_off_by_default_and_names_the_missing_configurat
     assert response.status_code == 409
     problem = response.json()
     assert problem["type"].endswith("/authoring-assistance-unavailable")
-    assert "B3_AUTHORING_PROVIDER_URL" in problem["detail"]
-    assert "B3_AUTHORING_MODEL" in problem["detail"]
+    assert "LLM_BASE_URL" in problem["detail"]
+    assert "LLM_MODEL_NAME" in problem["detail"]
+    assert "LLM_APIKEY" in problem["detail"]
 
 
 def test_authoring_assistance_requires_a_write_capable_role(client, auth_headers):
@@ -828,8 +829,9 @@ def test_authoring_payload_carries_no_protected_content_and_no_content_change(
         service_token=dependencies.settings.service_token,
         jwks_url=None,
         consumer_name="b3-authoring-test",
-        authoring_provider_url="http://provider.invalid/v1/chat/completions",
-        authoring_model="test-model",
+        llm_base_url="http://provider.invalid/v1",
+        llm_model="test-model",
+        llm_api_key="test-key",
     )
     from autograder_b3.auth import Principal
 

@@ -51,6 +51,7 @@ on:
         options:
           - bootstrap-host
           - sync-mail-channel
+          - sync-llm-config
           - preflight
           - diagnose
           - deploy
@@ -339,6 +340,64 @@ jobs:
       - name: Remove the local mail channel fragment
         if: always() && github.event_name == 'workflow_dispatch' && inputs.operation == 'sync-mail-channel'
         run: rm -f "$RUNNER_TEMP/mail.env"
+
+      # The model provider (LLM_BASE_URL / LLM_MODEL_NAME / LLM_APIKEY). The environment file
+      # is rendered once by `bootstrap-host` and never rewritten by an ordinary release, so a
+      # host that already exists needs exactly this merge to pick the block up.
+      - name: Render model provider variables
+        if: github.event_name == 'workflow_dispatch' && inputs.operation == 'sync-llm-config'
+        env:
+          LLM_BASE_URL: ${{ steps.doppler.outputs.LLM_BASE_URL }}
+          LLM_MODEL_NAME: ${{ steps.doppler.outputs.LLM_MODEL_NAME }}
+          LLM_APIKEY: ${{ steps.doppler.outputs.LLM_APIKEY }}
+        run: node MAIN/deploy/write-llm-env.mjs "$RUNNER_TEMP/llm.env"
+
+      - name: Install model provider variables on the host
+        if: github.event_name == 'workflow_dispatch' && inputs.operation == 'sync-llm-config'
+        env:
+          DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
+          DEPLOY_SSH_USER: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
+          DEPLOY_SSH_PASSWORD: ${{ steps.doppler.outputs.DEPLOY_SSH_PASSWORD }}
+          DEPLOY_SSH_PORT: ${{ steps.doppler.outputs.DEPLOY_SSH_PORT }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          staging="/tmp/autograder-llm-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          bash .github/scripts/deploy-ssh.sh ssh "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
+            install -d -o root -g root -m 0700 "$staging"
+          bash .github/scripts/deploy-ssh.sh scp "$RUNNER_TEMP/llm.env" MAIN/deploy/merge-env-keys.py \
+            "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST:$staging/"
+          bash .github/scripts/deploy-ssh.sh ssh "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
+            bash -s -- "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" <<'REMOTE'
+          set -euo pipefail
+          [[ "$1" =~ ^[0-9]+$ && "$2" =~ ^[1-9][0-9]*$ ]]
+          staging="/tmp/autograder-llm-$1-$2"
+          [[ -d "$staging" && ! -L "$staging" ]]
+          for name in llm.env merge-env-keys.py; do
+            [[ -f "$staging/$name" && ! -L "$staging/$name" && -s "$staging/$name" ]]
+          done
+          python3 "$staging/merge-env-keys.py" \
+            --target /etc/autograder/runtime.env --fragment "$staging/llm.env"
+          rm -f -- "$staging/llm.env" "$staging/merge-env-keys.py"
+          rmdir -- "$staging"
+          systemctl restart autograder.service
+          for attempt in $(seq 1 30); do
+            if curl -fsS --max-time 5 http://127.0.0.1:18000/health/ready 2>/dev/null \
+              | grep -q '"ready": *true'; then
+              printf 'service ready after %s attempt(s)\n' "$attempt"
+              exit 0
+            fi
+            sleep 2
+          done
+          printf 'service did not become ready; recent unit output:\n' >&2
+          journalctl -u autograder.service -n 40 --no-pager >&2
+          exit 1
+          REMOTE
+
+      - name: Remove the local model provider fragment
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.operation == 'sync-llm-config'
+        run: rm -f "$RUNNER_TEMP/llm.env"
 
       - name: Install current deployment scripts
         if: github.event_name == 'push' || inputs.operation == 'deploy' || inputs.operation == 'bootstrap-host'

@@ -212,7 +212,7 @@
 - 失败判定：调用使草稿内容或摘要发生变化。
 - **验证**：`tests/test_questions_api.py::test_authoring_assistance_writes_nothing`（调用前后 `GET /question-versions/{id}` 响应完全相同）。
 - **结果**：通过。
-- **未做（如实）**：`HttpAuthoringProvider` 的真实 HTTP 路径**未对任何真实模型端点发出过请求**；本环境用注入 provider 验证边界与形状。这一点不写成"端到端已验证"。
+- **未做（如实）**：`ResponsesAuthoringProvider` 的真实 HTTP 路径**未对任何真实模型端点发出过请求**；本环境用注入 provider 验证边界与形状；请求构造（`LLM_BASE_URL` -> `/v1/responses`、`instructions`/`input`/`reasoning.effort` 与响应 `output[].content[].output_text` 的解析）按 MiMo 官方 Responses 文档逐字段核对，并用本地 stub 服务做过验证。这一点不写成"端到端已验证"。
 
 **验收 3-20-4（发布事件）**
 

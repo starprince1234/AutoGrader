@@ -44,6 +44,7 @@ from ..draft_generation import (
 from ..dto.internal import QuestionDraftGenerationRequestModel
 from ..errors import Conflict, Forbidden, NotFound, TooManyRequests, UnprocessableEntity
 from ..infra.db import Database
+from ..llm_client import provider_name_for
 from ..logging import get_logger, log_event
 from .tags import validate_tags
 
@@ -141,8 +142,8 @@ def generation_capabilities(
         provider_status="enabled" if enabled else "unavailable",
         # Only the *provider kind* and model id are reported: no URL, no credential, and no
         # other teacher's usage.
-        provider=settings.authoring_provider_name if enabled else None,
-        model=settings.authoring_model if enabled else None,
+        provider=provider_name_for(settings.llm_base_url or "") if enabled else None,
+        model=settings.llm_model if enabled else None,
         learning_objective_max_chars=settings.draft_generation_max_objective_chars,
         constraints_max_chars=settings.draft_generation_max_constraints_chars,
         desired_case_count_max=settings.draft_generation_max_desired_cases,

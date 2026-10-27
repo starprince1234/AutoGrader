@@ -1,4 +1,5 @@
 import { chmodSync, writeFileSync } from "node:fs";
+import { llmEnvEntries } from "./llm-env.mjs";
 import { mailEnvEntries } from "./mail-env.mjs";
 
 const runtimeEnvPath = process.argv[2];
@@ -46,6 +47,10 @@ const apiUrl = "http://127.0.0.1:18000";
 // report the channel as unconfigured while Doppler held every value.
 const mailEntries = mailEnvEntries(process.env);
 
+// Same arrangement for the model provider: `sync-llm-config` renders the identical block for a
+// host whose environment file already exists, and this render covers a fresh one.
+const llmEntries = llmEnvEntries(process.env);
+
 const runtimeEntries = {
   B4_DATABASE_URL: "postgresql+psycopg://autograder_b4:" + b4Password + "@" + postgres,
   B4_NATS_URL: natsUrl,
@@ -74,6 +79,7 @@ const runtimeEntries = {
   JWT_PRIVATE_KEY_FILE: "/var/lib/autograder/jwt/jwt-ed25519.pem",
   B4_REFRESH_COOKIE_SECURE: "true",
   AUTOGRADER_CORS_ORIGINS: "https://www.91idc.me",
+  ...llmEntries,
   ...mailEntries,
 };
 
