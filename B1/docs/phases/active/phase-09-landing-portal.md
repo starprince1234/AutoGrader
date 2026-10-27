@@ -12,6 +12,7 @@
 
 - `/` 对匿名与已登录用户都显示两栏，不跳转、不先要求登录。
 - 页面不显示页脚提示、欢迎语、版本号或开发者文案；底部只保留两栏卡片本身。
+- 页头登录按钮与品牌文字在同一水平线上（按钮内部垂直居中），不再出现文字偏高。
 - 左栏教师端只列：作业管理、题库、班级成绩、课程与名单、复核工作区；
   右栏学生端只列：我的作业、我的成绩。两栏使用独立的数据数组，学生端不出现题库/课程/复核。
 - 未登录点击入口：记录"入口端 + 目标路径"后进入登录；登录成功回到目标页。
@@ -54,7 +55,7 @@
 | `node node_modules/eslint/bin/eslint.js . --max-warnings 0`（B1） | 通过（0 error / 0 warning） |
 | `node node_modules/vitest/vitest.mjs run`（B1 全量） | **48 个测试文件 / 412 个用例全部通过**（exit 0） |
 | `node node_modules/vite/bin/vite.js build`（B1） | 通过 |
-| 线上入口复核（提交 `b30e2b9`） | `https://www.91idc.me/app/` HTTP 200，页面引用 `/app/assets/index-CIBPK-9p.js`；该 bundle 含「教学管理」「学习任务」「当前账号没有教师端权限」与 `portal-mismatch`；`https://api.91idc.me/health/ready` 四个模块均 healthy，B4 迁移头 `20261027_0005` |
+| 线上入口复核（提交 `9c3e14a`） | `https://www.91idc.me/app/` HTTP 200，页面引用 `/app/assets/index-DWwU-G25.js` 与 `/app/assets/index-D_UAGaES.css`；bundle 含「教学管理」「学习任务」「当前账号没有教师端权限」与 `portal-mismatch`，**不含**页脚提示文案；DOM 中无 `<footer>`；`https://api.91idc.me/health/ready` 四个模块均 healthy，B4 迁移头 `20261027_0005` |
 
 契约没有变化（纯前端），`contracts.lock` 与后端无需更新。
 
