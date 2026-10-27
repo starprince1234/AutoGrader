@@ -226,7 +226,6 @@ export function UsersPage({
   return (
     <div className="stack">
       <Panel title={t("users.filter")}>
-        <p className="muted">{t("users.adminOnly")}</p>
         <div className="form-grid">
           <Field label={t("users.filterRole")} htmlFor="user-role-filter">
             <select

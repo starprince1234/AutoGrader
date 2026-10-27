@@ -197,7 +197,6 @@ export const messages = {
     "allowlist.upload": "替换注册名单",
     "allowlist.impact": "此操作会替换当前名单，文件中没有的学号将不能注册。",
     "allowlist.impactDetail": "全量替换在一个事务里完成：文件里只要有一行不合法（编码、表头、学号格式、重复学号、空名单），服务端就整体拒绝，当前生效名单保持不变。旧批次记录保留可追溯；已注册的账号、已有成绩与课程名单都不受替换影响。",
-    "allowlist.hint": "CSV 需包含“姓名”“学号”两列（也接受 name / student_number 表头），按表头名定位列、不按列序；学号为 13 位数字；编码支持 UTF-8（含 BOM）与 GBK/GB18030；一次最多 20000 行。",
     "allowlist.chooseFile": "选择 CSV 文件",
     "allowlist.wrongType": "注册名单使用 CSV 文件。",
     "allowlist.fileRequired": "请先选择 CSV 文件。",
@@ -1014,7 +1013,6 @@ export const messages = {
     "users.forbidden": "没有用户管理权限（403）：该页面仅对管理员开放，服务端拒绝了本次请求。",
     "users.unauthorized": "会话已过期（401）。重新登录后返回用户管理页面。",
     "users.signInAgain": "重新登录",
-    "users.adminOnly": "用户与角色管理仅管理员可用；其他角色即使直接调用接口也会得到 403。",
     "users.filterRole": "按角色筛选",
     "users.allRoles": "全部角色",
 

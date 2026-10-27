@@ -135,12 +135,6 @@ export function RegistrationAllowlistPanel() {
 
       <Panel title={t("allowlist.upload")}>
         <form className="stack" onSubmit={openConfirm} data-testid="allowlist-form">
-          <p className="muted" data-testid="allowlist-impact">
-            {t("allowlist.impact")}
-          </p>
-          <p className="muted">{t("allowlist.impactDetail")}</p>
-          <p className="muted">{t("allowlist.hint")}</p>
-
           <Field label={t("allowlist.chooseFile")} htmlFor="allowlist-file" error={fileError}>
             <input
               id="allowlist-file"
