@@ -173,7 +173,7 @@ describe("注册名单：全量替换确认", () => {
     expect(uploadCount()).toBe(0);
   });
 
-  it("确认框写明当前批次、文件名与替换影响；打开确认框不发请求", async () => {
+  it("确认框写明当前批次与文件名；打开确认框不发请求", async () => {
     stub = installFetchStub(
       withSession([
         { method: "GET", path: "/api/v1/registration-allowlists", respond: () => jsonResponse(allowlistState()) },
@@ -195,7 +195,12 @@ describe("注册名单：全量替换确认", () => {
     expect(within(modal).getByTestId("allowlist-confirm-file")).toHaveTextContent(
       "allowlist-new.csv",
     );
-    expect(within(modal).getByText(/文件中没有的学号将不能注册/)).toBeInTheDocument();
+    // 三段静态说明已删除；批次信息、文件信息与两个按钮仍在。
+    expect(within(modal).queryByText(/文件中没有的学号将不能注册/)).toBeNull();
+    expect(within(modal).queryByText(/全量替换在一个事务里完成/)).toBeNull();
+    expect(within(modal).queryByText(/确认后只发送一个替换请求/)).toBeNull();
+    expect(within(modal).getByTestId("allowlist-confirm")).toHaveTextContent("确认替换名单");
+    expect(within(modal).getByTestId("allowlist-cancel")).toHaveTextContent("取消");
     expect(uploadCount()).toBe(0);
   });
 

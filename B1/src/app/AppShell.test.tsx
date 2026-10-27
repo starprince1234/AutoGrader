@@ -222,35 +222,51 @@ describe("角色导航与账户菜单", () => {
     expect(screen.getByTestId("session-identity")).toHaveTextContent("student1");
   });
 
-  it("教师/管理员侧栏为作业、题库、成绩、课程", async () => {
+  it("教师侧栏为作业、题库、成绩、课程", async () => {
     await establishSession("teacher");
     renderApp("/assignments");
 
     for (const testId of ["nav-assignments", "nav-questions", "nav-grades", "nav-roster"]) {
       expect(await screen.findByTestId(testId)).toBeInTheDocument();
     }
+    expect(screen.queryByTestId("nav-admin-users")).toBeNull();
   });
 
-  it("用户管理只在管理员账户菜单里", async () => {
+  it("用户管理只在管理员侧栏可进入，且进入后保持高亮；账户菜单不再有该入口", async () => {
     const user = userEvent.setup();
     await establishSession("admin");
     const router = renderApp("/assignments");
 
-    await screen.findByTestId("account-menu-button");
-    expect(screen.queryByTestId("nav-admin-users")).toBeNull();
+    const navItem = await screen.findByTestId("nav-admin-users");
+    expect(navItem).toHaveTextContent("用户管理");
+    expect(navItem).not.toHaveAttribute("aria-current");
+
     await user.click(screen.getByTestId("account-menu-button"));
-    await user.click(screen.getByTestId("account-users-link"));
+    const menu = await screen.findByTestId("account-menu");
+    // 下拉菜单只剩身份（admin / 管理员）与退出登录。
+    expect(within(menu).getByText("admin1")).toBeInTheDocument();
+    expect(within(menu).getByText("管理员")).toBeInTheDocument();
+    expect(within(menu).getByTestId("account-logout")).toBeInTheDocument();
+    expect(within(menu).queryByText("用户管理")).toBeNull();
+    expect(screen.queryByTestId("account-users-link")).toBeNull();
+    await user.click(screen.getByTestId("account-menu-button"));
+
+    await user.click(navItem);
 
     await waitFor(() => expect(router.state.location.pathname).toBe("/admin/users"));
     expect(await screen.findByText("用户管理页")).toBeInTheDocument();
+    expect(screen.getByTestId("nav-admin-users")).toHaveAttribute("aria-current", "page");
   });
 
-  it("学生账户菜单没有用户管理", async () => {
+  it("学生账户菜单只有身份与退出登录", async () => {
     const user = userEvent.setup();
     await establishSession("student");
     renderApp("/assignments");
 
     await user.click(await screen.findByTestId("account-menu-button"));
+    const menu = await screen.findByTestId("account-menu");
+    expect(within(menu).getByText("student1")).toBeInTheDocument();
+    expect(within(menu).queryByText("用户管理")).toBeNull();
     expect(screen.queryByTestId("account-users-link")).toBeNull();
     expect(screen.getByTestId("account-logout")).toBeInTheDocument();
   });
@@ -328,6 +344,22 @@ describe("角色导航与账户菜单", () => {
     await user.click(screen.getByTestId("drawer-nav-assignments"));
 
     await waitFor(() => expect(router.state.location.pathname).toBe("/assignments"));
+    await waitFor(() => expect(screen.queryByTestId("nav-drawer")).toBeNull());
+  });
+
+  it("管理员在小屏抽屉里也能进入用户管理", async () => {
+    const user = userEvent.setup();
+    await establishSession("admin");
+    const router = renderApp("/grades");
+
+    await user.click(await screen.findByTestId("nav-drawer-open"));
+    const drawer = await screen.findByTestId("nav-drawer");
+    expect(within(drawer).getByRole("link", { name: "用户管理" })).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("drawer-nav-admin-users"));
+
+    await waitFor(() => expect(router.state.location.pathname).toBe("/admin/users"));
+    expect(await screen.findByText("用户管理页")).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByTestId("nav-drawer")).toBeNull());
   });
 });

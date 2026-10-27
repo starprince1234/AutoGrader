@@ -289,7 +289,7 @@ function NavLinks({
               to={item.to}
               className={active ? "app-nav__link is-active" : "app-nav__link"}
               aria-current={active ? "page" : undefined}
-              data-testid={`${testIdPrefix}-${item.to.slice(1)}`}
+              data-testid={`${testIdPrefix}-${item.to.slice(1).replaceAll("/", "-")}`}
               onClick={onSelect}
             >
               {t(item.labelKey)}

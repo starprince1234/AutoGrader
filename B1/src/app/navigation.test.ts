@@ -33,12 +33,13 @@ describe("按角色的主导航（体验层，服务端仍判权）", () => {
     expect(paths(session(["assistant"]))).toEqual(expected);
   });
 
-  it("管理员使用教学侧业务入口（用户管理在账户菜单，不在侧栏）", () => {
+  it("管理员在教学侧入口之后多一个用户管理", () => {
     expect(paths(session(["admin"]))).toEqual([
       "/assignments",
       "/questions",
       "/grades",
       "/roster",
+      "/admin/users",
     ]);
   });
 
@@ -67,11 +68,13 @@ describe("导航激活态", () => {
     expect(isMainNavActive("/questions/new", "/questions")).toBe(true);
     expect(isMainNavActive("/questions/abc/edit", "/questions")).toBe(true);
     expect(isMainNavActive("/roster/import", "/roster")).toBe(true);
+    expect(isMainNavActive("/admin/users", "/admin/users")).toBe(true);
   });
 
   it("同前缀的另一个词不会被误判", () => {
     expect(isMainNavActive("/roster-import", "/roster")).toBe(false);
     expect(isMainNavActive("/grades-export", "/grades")).toBe(false);
     expect(isMainNavActive("/questions", "/roster")).toBe(false);
+    expect(isMainNavActive("/admin", "/admin/users")).toBe(false);
   });
 });

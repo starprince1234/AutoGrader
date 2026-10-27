@@ -258,9 +258,6 @@ export function RegistrationAllowlistPanel() {
                 </dd>
               </div>
             </dl>
-            <Banner tone="warn">{t("allowlist.impact")}</Banner>
-            <p className="muted">{t("allowlist.impactDetail")}</p>
-            <p className="muted">{t("allowlist.confirmOnce")}</p>
 
             <div className="inline">
               <button

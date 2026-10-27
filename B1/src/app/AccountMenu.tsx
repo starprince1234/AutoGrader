@@ -1,18 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "@tanstack/react-router";
 import { t } from "../i18n";
 import { useSession } from "../auth/sessionContext";
 import type { SessionState } from "../auth/sessionStore";
-import { canManageUsers } from "../auth/visibility";
 
 /**
  * 右上角账户菜单。
  *
- * 它是身份区，不是第二个导航：普通入口（作业/题库/成绩/课程）在侧栏，这里只放
- * **账号级动作**——管理员多一个「用户管理」，所有角色都有「退出登录」。
- * 契约版本、课程作用域 UUID、欢迎语都不属于这里。
+ * 它是身份区，不是第二个导航：业务入口（作业/题库/成绩/课程，管理员另有用户管理）都在侧栏，
+ * 这里只保留身份与**账号级动作**——「退出登录」。契约版本、课程作用域 UUID、欢迎语都不属于这里。
  *
- * 这是一个 disclosure（按钮 + 面板），不是 ARIA menu：菜单项就是普通的链接和按钮，
+ * 这是一个 disclosure（按钮 + 面板），不是 ARIA menu：菜单项是普通按钮，
  * 因此 Tab 顺序天然正确，不需要为两三项再实现一套方向键语义。
  */
 export function AccountMenu({
@@ -71,16 +68,6 @@ export function AccountMenu({
             </span>
             <span className="account__identity-role">{roleText(session)}</span>
           </div>
-          {canManageUsers(session) ? (
-            <Link
-              to="/admin/users"
-              className="account__item"
-              data-testid="account-users-link"
-              onClick={() => setOpen(false)}
-            >
-              {t("nav.users")}
-            </Link>
-          ) : null}
           <button
             type="button"
             className="account__item"
