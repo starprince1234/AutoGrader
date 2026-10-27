@@ -399,6 +399,64 @@ jobs:
         if: always() && github.event_name == 'workflow_dispatch' && inputs.operation == 'sync-llm-config'
         run: rm -f "$RUNNER_TEMP/llm.env"
 
+      # Three layers can be wrong after a config change, and the teacher-facing panel cannot
+      # tell them apart. This prints one line per layer, without a credential or a model answer:
+      #   service_env=...        which LLM_* names the *running* service process actually has
+      #   provider_direct=...    credential + endpoint accepted with no proxy in the way
+      #   provider_proxy=...     the same call through the host proxy the unit configures
+      - name: Self-check the model provider from the host
+        if: github.event_name == 'workflow_dispatch' && inputs.operation == 'sync-llm-config'
+        env:
+          DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
+          DEPLOY_SSH_USER: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
+          DEPLOY_SSH_PASSWORD: ${{ steps.doppler.outputs.DEPLOY_SSH_PASSWORD }}
+          DEPLOY_SSH_PORT: ${{ steps.doppler.outputs.DEPLOY_SSH_PORT }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          staging="/tmp/autograder-llm-check-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          bash .github/scripts/deploy-ssh.sh ssh "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
+            install -d -o root -g root -m 0700 "$staging"
+          bash .github/scripts/deploy-ssh.sh scp MAIN/deploy/verify_provider.py \
+            "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST:$staging/"
+          bash .github/scripts/deploy-ssh.sh ssh "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
+            bash -s -- "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" <<'REMOTE'
+          set -euo pipefail
+          [[ "$1" =~ ^[0-9]+$ && "$2" =~ ^[1-9][0-9]*$ ]]
+          staging="/tmp/autograder-llm-check-$1-$2"
+          [[ -d "$staging" && ! -L "$staging" ]]
+          [[ -f "$staging/verify_provider.py" && ! -L "$staging/verify_provider.py" ]]
+          trap 'rm -f -- "$staging/verify_provider.py"; rmdir -- "$staging" 2>/dev/null || true' EXIT
+
+          pid="$(systemctl show autograder.service -p MainPID --value)"
+          if [[ "$pid" =~ ^[1-9][0-9]*$ && -r "/proc/$pid/environ" ]]; then
+            names="$(tr '\0' '\n' < "/proc/$pid/environ" \
+              | grep -E '^LLM_[A-Z_]+=' | cut -d= -f1 | sort | paste -sd, -)"
+            printf 'service_env=%s\n' "${names:-none}"
+          else
+            printf '%s\n' 'service_env=unreadable'
+          fi
+
+          set -a
+          source /etc/autograder/runtime.env
+          set +a
+          cd /opt/autograder/current/MAIN
+          python="$PWD/.venv/bin/python"
+          if [[ ! -x "$python" ]]; then
+            printf '%s\n' 'provider_direct=failed category=interpreter_missing'
+            exit 0
+          fi
+          env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
+            "$python" "$staging/verify_provider.py" direct \
+            || printf '%s\n' 'provider_direct=failed category=script_error'
+          HTTP_PROXY=http://127.0.0.1:7893 HTTPS_PROXY=http://127.0.0.1:7893 \
+          http_proxy=http://127.0.0.1:7893 https_proxy=http://127.0.0.1:7893 \
+          NO_PROXY=localhost,127.0.0.1,::1 no_proxy=localhost,127.0.0.1,::1 \
+            "$python" "$staging/verify_provider.py" proxy \
+            || printf '%s\n' 'provider_proxy=failed category=script_error'
+          REMOTE
+
       - name: Install current deployment scripts
         if: github.event_name == 'push' || inputs.operation == 'deploy' || inputs.operation == 'bootstrap-host'
         env:
