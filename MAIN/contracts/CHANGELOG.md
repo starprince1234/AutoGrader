@@ -612,6 +612,55 @@ uff、pytest、pnpm * 都无法运行。
 
 ---
 
+## 0.18.0 — 结构化题目草稿、教师令牌夹具上传、学习提示上下文
+
+- **级别**：P1 增补（新增操作与 schema；一处**收紧**并改正授权声明）
+- **状态**：已生效
+- **动机**：`RQ-T-10` 的扩展把"出题期辅助"从"给建议"扩到"按教学目标生成**结构化可编辑草稿**"，
+  而这条能力此前在契约里没有承载入口；同时两个真实阻塞被记录：
+  1. `POST /question-versions/{id}/fixtures` 被声明为 `internal` + `serviceToken`，而浏览器不可能
+     持有服务令牌，于是 **file 题型在结构上无法从浏览器创建**（教师能选题型，却永远补不上夹具）；
+  2. `AI-FLOW-01B` 需要 B2 在生成学生学习提示时读取**公开题目上下文**，而当时的契约里没有任何
+     "只给 title/stem/language/tags/adapter" 的窄读，任何实现都只能复用会带出受保护内容的版本 DTO。
+- **变更文件**：
+  - `openapi/b3.yaml`：新增 `POST/GET/DELETE /api/v1/question-draft-generations*`、
+    `GET /api/v1/question-draft-generations/capabilities`、
+    `GET /api/v1/question-versions/{id}/learning-context`；`createQuestion` 增加可选查询参数
+    `generation_id`；fixture 上传改为 `bearerAuth` + 课程写作用域。
+  - `openapi/b3.yaml` 新 schema：`QuestionDraftGenerationRequest`、`QuestionDraftGeneration`、
+    `QuestionDraftProposal`、`QuestionDraftProposalCase`、`QuestionDraftProposalFixture`、
+    `QuestionDraftProposalAdapter`、`DraftGenerationWarning`、
+    `QuestionDraftGenerationCapabilities`、`QuestionLearningContext`。
+  - `openapi/common.yaml`：新增公共 `BadGateway`（`502`）响应——"上游答了但不可用"与
+    "没有上游"（`503`）需要分开，否则配置缺失与模型乱答无法区分。
+  - 其余契约文件的 `info.version` 同步到 `0.18.0`（`sync_contract_version.py`），五份
+    `contracts.lock` 由 `relock_contracts.py` 重算。
+- **受影响模块与需要做的改动**：
+  - **B3**（生产者）：新增 `draft_generation`（模型边界与归一化）、`domain/draft_generations`
+    （授权、预算、持久化、接受/丢弃）、`domain/catalog.load_learning_context`；迁移
+    `20260915_0005`（`question_draft_generations` 受保护 + `ai_generation_usage` 去标识化账本）；
+    fixture 上传先鉴权后处理负载；file 题型的"至少一个输入夹具"从 manifest 校验移到编译期。
+  - **B1**（消费者）：重新生成 `src/api/generated/b3.ts`；P08/P09 增加生成面板、图片上传与夹具
+    上传；P06/P07 按角色收口；`contracts.lock` 随版本更新。
+  - **B2**（消费者）：学习提示改为调用 `learning-context` 取公开题目上下文（独立 schema，
+    不含参考解/用例/期望输出）。
+- **是否破坏兼容**：fixture 上传的**认证方式**变了（服务令牌 → 教师 bearer）。仓库内没有其他调用方
+  （唯一消费者是 B1 出题页，本轮同步改）；**没有**保留双认证、代理或浏览器服务令牌。
+- **迁移方式**：B3 `alembic upgrade head`；B1 重新生成类型。无数据迁移、不改已发布版本的冻结规则。
+- **示例变更**：`POST /api/v1/questions?course_id=…&generation_id=…` —— 请求体仍是教师确认后的
+  `QuestionDraftInput`，`generation_id` 只声明来源；B3 在同一事务里回填
+  `accepted_question_version_id` 并清空候选正文。
+- **验证**：`MAIN/host` 的契约/治理检查（`check_contract_parses_strictly`、
+  `check_route_declarations`、`check_shared_vocabularies`、`check_contract_examples`、
+  `check_requirement_baseline`、`check_document_encoding_and_links`）全部通过；
+  `relock_contracts.py` 重算五份锁；B1 `api:check` 报告生成物与契约一致；B1 `tsc`/`eslint`/`vitest`
+  全绿；B3 `ruff` 全绿，pytest 需 PostgreSQL（本地无实例，按任务书列为未验证）。
+- **摘要**：见五份 `contracts.lock`（由 `relock_contracts.py` 计算，此处不复制）
+- **回滚方式**：还原本批契约文本与版本号，回退 B3 迁移 `20260915_0005`，移除 B1 生成面板与
+  B3 的四个新操作，然后重跑 `relock_contracts.py`；版本回到 `0.17.0`。
+
+---
+
 ## 记录模板（后续变更复制此块）
 
 ```md

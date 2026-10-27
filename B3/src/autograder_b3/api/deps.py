@@ -40,6 +40,12 @@ class B3Dependencies:
     clock: Callable[[], datetime] = field(
         default_factory=lambda: lambda: datetime.now(UTC)
     )
+    #: Optional replacement for the **outbound model call** (AI-FLOW-01A). The same allowance
+    #: the B4 JWKS fetch gets: only the external HTTP endpoint is ever replaced, because a test
+    #: suite cannot call a real model provider. Authorization, the budget ledger, candidate
+    #: normalisation and persistence all run for real, so a test that passes here proves the
+    #: flow rather than the stub.
+    draft_provider: Any = None
 
     @property
     def now(self) -> datetime:

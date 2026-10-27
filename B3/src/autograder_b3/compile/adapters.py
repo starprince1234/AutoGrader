@@ -114,6 +114,16 @@ class FileIoAdapterCompiler:
     declared as ``mount=expected_output`` entries carrying a content digest, so
     existence and content-digest comparison are expressible while a text-diff
     mode is not (``CHG-B3-0001``).
+
+    **"At least one input fixture" is a package requirement, not a manifest requirement.**
+    A file question cannot be *saved* without first existing: the browser uploads fixture
+    bytes to ``POST /question-versions/{id}/fixtures``, which needs a ``question_version_id``,
+    which only exists after the draft is created. Demanding a declared fixture at draft time
+    therefore made a real file question impossible to author -- the write path refused the
+    very first save that would have produced the id the upload needs. The requirement lives in
+    :meth:`to_package_section` instead, where it is checked at compile time (so both
+    ``publish`` and the verification package refuse an incomplete file question), and an
+    ``expected_output`` entry still has to bind a digest as soon as it is declared.
     """
 
     kind = "file"
@@ -129,11 +139,6 @@ class FileIoAdapterCompiler:
             raise ManifestInvalid(
                 "adapter kind 'file' must not declare a callable entry point",
                 field="adapter.callable",
-            )
-        if not any(declared.mount == "input" for declared in manifest.files):
-            raise ManifestInvalid(
-                "adapter kind 'file' must declare at least one input fixture",
-                field="adapter.files",
             )
         for declared in manifest.files:
             if declared.mount == "expected_output" and not declared.content_sha256:
@@ -152,6 +157,12 @@ class FileIoAdapterCompiler:
         fixtures: Sequence[FixtureInternal],
     ) -> dict[str, Any]:
         _require_cases(cases)
+        if not any(declared.mount == "input" for declared in manifest.files):
+            raise ManifestInvalid(
+                "adapter kind 'file' must declare at least one input fixture before the "
+                "question can be compiled or published",
+                field="adapter.files",
+            )
         section = _common_section(manifest)
         section["files"] = _files_section(manifest)
         return section

@@ -94,9 +94,27 @@ const questionDetailRoute = createRoute({
   component: QuestionDetailRoute,
 });
 
+/**
+ * `/questions/new` 的查询串：`generation` 是 AI 候选 id（AI-FLOW-01A）。
+ *
+ * 放进 URL 而不是组件状态，是因为刷新后要能用它取回**服务端原始候选**——这正是
+ * `generation_id` 存在的理由（教师尚未保存的字段编辑不持久化，恢复的是模型给出的那一份）。
+ * 键可选：多数入口是裸的 `/questions/new`。
+ */
+type AuthoringNewSearch = { generation?: string };
+
+function validateAuthoringNewSearch(search: Record<string, unknown>): AuthoringNewSearch {
+  const parsed: AuthoringNewSearch = {};
+  if (typeof search.generation === "string" && search.generation !== "") {
+    parsed.generation = search.generation;
+  }
+  return parsed;
+}
+
 const questionNewRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/questions/new",
+  validateSearch: validateAuthoringNewSearch,
   component: AuthoringNewRoute,
 });
 

@@ -21,8 +21,9 @@
 | `blobs` | **受保护**：内容寻址的 fixture 字节（主键即 SHA-256） | `content_sha256` 正则 PK；`size_bytes > 0` | 上传即入库；被 `fixtures` 引用 |
 | `fixtures` | fixture 元数据：工作区相对路径、`mount`、内容摘要与大小 | `uq_fixtures_question_version_id_path_mount`；`mount IN (input, expected_output)`；路径正则 CHECK；`fk_fixtures_content_sha256 → blobs` | 上传仅限草稿；发布时摘要绑进 package |
 | `reference_attestations` | 外部验证器的**声明**：它跑过该版本的参考答案并观察到期望输出。**非**受保护表：只有摘要与计数，没有它所描述的内容 | 复合 PK `(question_version_id, content_digest)`（同一内容重复上报是替换，不是新增；内容改了旧凭证仍留档）；`uq_..._attestation_id`；`cases_total 1..1000`、`cases_passed ≤ cases_total`；`content_digest` 正则 CHECK；`fk → question_versions ON DELETE CASCADE` | 由服务间调用写入（仅草稿版本）；`publish` 要求存在与**重算摘要**一致的凭证；无凭证/不匹配即拒发 |
-| `assignments` | 作业集合（课程 × 课序） | `status IN (open, archived)`；`course_id`/`section_id` 普通 UUID 列 | 教师创建 |
-| `assignment_items` | assignment ↔ **已发布**版本的关联 | `uq_assignment_items_assignment_id_question_version_id`、`uq_..._ordinal` | "只引用已发布版本"由领域层保证（跨行条件不适合做 CHECK） |
+| `question_draft_generations` | **受保护**：一份**未被接受**的 AI 候选（AI-FLOW-01A）。它不属于任何题目/版本，因此单独一张表 | `owner_subject`（JWT `sub`，文本而非 UUID：issuer 不保证形式）；`status IN (ready, needs_review, failed)`；`warnings` 为数组、`proposal` 为对象或 NULL；`accepted_at ⇒ proposal IS NULL ∧ accepted_question_version_id 非空`；`discarded_at ⇒ proposal IS NULL`；`expires_at > created_at`；`fk → question_versions ON DELETE SET NULL` | 生成时写入候选正文与 `expires_at`；教师保存时**在同一事务**里回填 `accepted_question_version_id` 并置 `proposal = NULL`；显式丢弃只清正文、留 `discarded_at`；过期后读取被拒并删除该行（用量账本不受影响） |
+| `ai_generation_usage` | **非**受保护：付费调用的去标识化账本。**没有任何列**能放 prompt、目标、响应正文或候选 | `status IN (ready, needs_review, failed)`；`duration_ms >= 0`；三组 token 计数 `>= 0` 或 NULL；索引 `(owner_subject, requested_at)` 服务预算窗口统计 | 每次**出网调用**写一条（含失败）；接受候选时回填 `accepted_question_version_id`；永不随候选一起删除 |
+| `assignments` | 作业集合（课程 × 课序） | `status IN (open, archived)`；`course_id`/`section_id` 普通 UUID 列 | 教师创建 || `assignment_items` | assignment ↔ **已发布**版本的关联 | `uq_assignment_items_assignment_id_question_version_id`、`uq_..._ordinal` | "只引用已发布版本"由领域层保证（跨行条件不适合做 CHECK） |
 | `event_inbox` | 事件去重 inbox（durable） | `event_id` PK；`uq_event_inbox_evaluation_run_id`；`producer='B2'` CHECK；`payload` 仅存**白名单校验后**的去标识化字段；复合索引 `(question_version_id, occurred_at, event_id)` 服务于窗口的 keyset 分页 | 消费器写入；重放的唯一数据源 |
 | `event_outbox` | 发布侧 outbox（与业务变更同事务） | `uq_event_outbox_event_id`；`producer='B3'` CHECK；`attempts`/`last_error`/`published_at` | 发布事务写入；投递器标记已发布；失败保留待重试 |
 | `consumption_counters` | 按投递结果（accepted / duplicate_event / duplicate_run / rejected）计数 + 最后发生时间 | `outcome` PK + 取值 CHECK；`delivery_count >= 0` | 消费器**每条路径**递增；供健康面区分"没有事件"与"事件被拒收"。被拒事件从不进 inbox，这是它唯一的落库痕迹 |
@@ -37,7 +38,7 @@
 | 角色 | 授权 | 用途 |
 |---|---|---|
 | `autograder_b3`（schema owner） | DDL；仅迁移使用 | `alembic upgrade head` |
-| `autograder_b3_app`（最小权限） | 对业务表 **SELECT**；对 `event_inbox`、`consumption_counters` 与三张统计表 SELECT+INSERT+UPDATE+DELETE；对 `event_outbox` SELECT+UPDATE；对 `reference_attestations` 仅 SELECT | 公开读、统计消费、健康面、outbox 投递。**对 `reference_answers`/`test_suites`/`test_cases`/`blobs`/`fixtures` 已 `REVOKE ALL`** |
+| `autograder_b3_app`（最小权限） | 对业务表 **SELECT**；对 `event_inbox`、`consumption_counters` 与三张统计表 SELECT+INSERT+UPDATE+DELETE；对 `event_outbox` SELECT+UPDATE；对 `reference_attestations` 仅 SELECT | 公开读、统计消费、健康面、outbox 投递。**对 `reference_answers`/`test_suites`/`test_cases`/`blobs`/`fixtures`/`question_draft_generations` 已 `REVOKE ALL`**（候选可能含参考答案与隐藏用例，因此和它们同一档） |
 | `autograder_b3_internal` | 对 `b3` 全部表 SELECT+INSERT+UPDATE+DELETE | 草稿写入（携带参考答案与用例）、发布/编译、package 重编译、**凭证写入**（写它需要读受保护内容来重算摘要） |
 
 - 角色由 `infra/postgres/init.sql` 创建（模块本地库由 compose 自动执行；平台库上的角色供给属 B4）；迁移中的授权块在角色不存在时**跳过而非失败**，因此同一迁移也能跑在平台库上。
@@ -54,6 +55,8 @@
 | 题干图片（`question_assets`） | 受控 | 课程作用域 + 仅已发布题目对学生可见；响应带 `nosniff`/CSP/`ETag` |
 | 凭证（`reference_attestations`） | 公开（教师可见） | 只有摘要、条数与计数，**没有**它所描述的内容；因此不列入受保护表，但只有内部角色能写 |
 | 修订差异（`question_versions.revision_diff`） | 公开（教师可见） | 结构性差异（计数、长度、摘要、存在性），**键集合 = 契约 `RevisionDiff` 的 11 个键**（落库形状与公开形状同一个），由测试直接读契约文件断言；不含题干正文、参考答案或期望输出 |
+| AI 候选（`question_draft_generations.proposal`） | **受保护** | 教师专用：可含参考答案与候选隐藏用例。只听调用方自己的 `generation_id`（另一个账号得到 403），只在该课程写权限内可读，按配置的保留期过期，接受/丢弃后正文即被清空 |
+| AI 用量（`ai_generation_usage`） | 运维（去标识化） | 只有 actor/course、provider/model/prompt_version、时间、耗时、token 计数、状态与已接受版本；**表里没有可放 prompt 或响应正文的列** |
 | 统计聚合 | 去标识化 | 只含聚合计数；无身份、无分数原值 |
 | 消费计数（`consumption_counters`） | 运维 | 只有 outcome 计数与时间，无 payload |
 

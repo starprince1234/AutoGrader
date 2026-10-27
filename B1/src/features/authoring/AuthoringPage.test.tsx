@@ -23,6 +23,8 @@ import {
   comparisonDiagnostics,
   coursePage,
   courseSummary,
+  generationCapabilities,
+  questionDraftGeneration,
   questionPublic,
   questionVersionPublic,
   sessionCreated,
@@ -97,9 +99,11 @@ function baseRoutes(extra: StubbedRoute[] = []): StubbedRoute[] {
   ];
 }
 
-function renderAuthoring(questionId: string | null) {
+function renderAuthoring(questionId: string | null, generationId: string | null = null) {
   const rootRoute = createRootRoute({
-    component: () => <AuthoringPage questionId={questionId} />,
+    component: () => (
+      <AuthoringPage questionId={questionId} generationId={generationId} />
+    ),
   });
   const detailRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -125,7 +129,7 @@ async function selectCourse(user: ReturnType<typeof userEvent.setup>) {
   await user.selectOptions(courseSelect, UUID_A);
 }
 
-/** 填满一次合法的新建表单（PATCH 与 POST 都要求这四个必需字段，因此测试里都要填）。 */
+/** 填满一次合法的新建表单（POST 与 PATCH 都要求这四个必需字段，因此测试里都要填）。 */
 async function fillCreateForm(user: ReturnType<typeof userEvent.setup>) {
   await selectCourse(user);
   await user.type(screen.getByLabelText("题目标题"), "统计文件行数");
@@ -134,6 +138,9 @@ async function fillCreateForm(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByLabelText("参考答案"), "print(2)");
   await user.type(screen.getByLabelText("用例名"), "基本用例");
   await user.type(screen.getByLabelText("标准输入"), "a\nb\n");
+  // `stdin` 题型必须在 manifest 上声明 args / stdin / 命令退出码之一（B3 的适配器校验），
+  // 因此这里填退出码——只填用例级 stdin 会被服务端 422 拒绝。
+  await user.type(screen.getByLabelText("命令期望退出码"), "0");
   await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
 }
 
@@ -145,6 +152,11 @@ async function addCaseAndConfirm(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByTestId("case-add"));
   await user.type(screen.getByLabelText("用例名"), "用例一");
   await user.click(screen.getByLabelText(/我确认/));
+}
+
+/** `stdin` 题型的 manifest 必须声明 args / stdin / 退出码之一，编辑路径也要补上。 */
+async function fillAdapterExitCode(user: ReturnType<typeof userEvent.setup>) {
+  await user.type(screen.getByLabelText("命令期望退出码"), "0");
 }
 
 describe("新建题目（POST /api/v1/questions）", () => {
@@ -216,7 +228,7 @@ describe("新建题目（POST /api/v1/questions）", () => {
     expect((body.adapter as Record<string, unknown>).comparison).toEqual({ stdout: "exact" });
 
     expect(await screen.findByTestId("authoring-created")).toBeInTheDocument();
-    expect(screen.getByText(/published_only/)).toBeInTheDocument();
+    expect(screen.getByText(/包含草稿/)).toBeInTheDocument();
   });
 
   it("受保护字段留空时不发这两个键（CHG-0017：省略 = 服务端保留已存值）", async () => {
@@ -261,6 +273,7 @@ describe("新建题目（POST /api/v1/questions）", () => {
     await selectCourse(user);
     await user.type(screen.getByLabelText("题目标题"), "只有标题");
     await user.type(screen.getByLabelText("题干"), "题干");
+    await user.type(screen.getByLabelText("命令期望退出码"), "0");
     await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
     // 参考答案留空、用例留空（把新建时那一行邀请删掉）。
     await user.click(screen.getByTestId("case-remove-0"));
@@ -286,14 +299,72 @@ describe("新建题目（POST /api/v1/questions）", () => {
     expect(await screen.findByTestId("authoring-created")).toBeInTheDocument();
   });
 
-  it("该版本使用 kind=file 时明确拒绝保存（夹具摘要只能由服务端计算）", async () => {
+  it("保存成功后不再允许重复创建（第二次点保存不会产生第二道题）", async () => {
+    stub = installFetchStub(
+      baseRoutes([
+        {
+          method: "POST",
+          path: "/api/v1/questions",
+          respond: () =>
+            jsonResponse(
+              questionPublic({
+                status: "draft",
+                versions: [
+                  {
+                    question_version_id: NEW_VERSION,
+                    version: 1,
+                    status: "draft",
+                    published_at: "2026-09-15T07:20:00.000Z",
+                  },
+                ],
+              }),
+            ),
+        },
+        {
+          path: `/api/v1/question-versions/${NEW_VERSION}`,
+          respond: () =>
+            jsonResponse(
+              questionVersionPublic({
+                question_version_id: NEW_VERSION,
+                version: 1,
+                status: "draft",
+                content_digest: SHA_A,
+              }),
+            ),
+        },
+      ]),
+    );
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+
+    await fillCreateForm(user);
+    await user.click(screen.getByTestId("authoring-save"));
+    await screen.findByTestId("authoring-created");
+
+    // 这一页仍是 P08（questionId 为 null）：再点一次就会 POST 出第二道题，因此按钮停用，
+    // 并明确告诉教师下一步该走「继续编辑」。
+    expect(screen.getByTestId("authoring-save")).toBeDisabled();
+    expect(screen.getByTestId("authoring-created-next")).toHaveTextContent("继续编辑");
+    // 图片与夹具上传同样停用：本页的插入/声明不会被保存，去 P09 才能写进题目。
+    expect(screen.getByTestId("image-disabled")).toHaveTextContent("继续编辑");
+    const posts = stub.requests.filter(
+      (item) => item.method === "POST" && item.url.pathname === "/api/v1/questions",
+    );
+    expect(posts).toHaveLength(1);
+  });
+
+  it("file 题型可选：夹具区出现，且没有上传输入夹具时拒绝保存", async () => {
     stub = installFetchStub(baseRoutes());
     const user = userEvent.setup();
     await signIn("teacher1", "pw");
     renderAuthoring(null);
 
+    // file 不再是"不可选"的题型：夹具端点改用教师自己的令牌后，浏览器可以完整创建它。
     await user.selectOptions(await screen.findByLabelText("测试框架"), "file");
-    expect(await screen.findByTestId("adapter-file-locked")).toHaveTextContent("serviceToken");
+    expect(await screen.findByTestId("fixture-editor")).toBeInTheDocument();
+    // 未保存草稿前没有版本 id，因此上传控件是禁用的并说明原因（不假装上传成功）。
+    expect(await screen.findByTestId("fixture-disabled")).toHaveTextContent("先保存草稿");
 
     await selectCourse(user);
     await user.type(screen.getByLabelText("题目标题"), "文件题");
@@ -303,8 +374,9 @@ describe("新建题目（POST /api/v1/questions）", () => {
     await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
     await user.click(screen.getByTestId("authoring-save"));
 
+    // 没有输入夹具的 file 题编译不出 package，所以在本地就先拒绝，不发请求。
     expect(await screen.findByTestId("authoring-issues")).toHaveTextContent(
-      "本页无法声明 `content_sha256`",
+      "至少要上传一个输入夹具",
     );
     expect(stub.requests.filter((item) => item.url.pathname === "/api/v1/questions")).toHaveLength(
       0,
@@ -359,10 +431,12 @@ describe("修改草稿（PATCH /api/v1/questions/{question_id}）", () => {
     expect(screen.getByLabelText("标签")).toHaveValue("unix");
     expect(screen.getByLabelText("参考答案")).toHaveValue("");
     expect(screen.getByTestId("authoring-protected-unknown")).toBeInTheDocument();
-    expect(screen.queryByLabelText("修订说明")).toBeNull();
+    // 草稿就地修改时不显示「版本说明」：它只属于"另存为新版本"那一次写入。
+    expect(screen.queryByLabelText("版本说明")).toBeNull();
 
     await user.type(screen.getByLabelText("参考答案"), "print(2)");
     await addCaseAndConfirm(user);
+    await fillAdapterExitCode(user);
     await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
     await user.click(screen.getByTestId("authoring-save"));
 
@@ -433,8 +507,9 @@ describe("修改草稿（PATCH /api/v1/questions/{question_id}）", () => {
     );
     await user.type(await screen.findByLabelText("参考答案"), "print(2)");
     await addCaseAndConfirm(user);
+    await fillAdapterExitCode(user);
     await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
-    await user.type(screen.getByLabelText("修订说明"), "例题的截止时间写错了");
+    await user.type(screen.getByLabelText("版本说明"), "例题的截止时间写错了");
     await user.click(screen.getByTestId("authoring-save"));
 
     const request = await waitFor(() => {
@@ -448,9 +523,7 @@ describe("修改草稿（PATCH /api/v1/questions/{question_id}）", () => {
     );
     // 保存结果展示的是**服务端返回的**新版本标识：先由 PATCH 的 `versions[0]` 得到，
     // 再取回版本 DTO 渲染"待验证后才能发布"。断言它等于 versions[0]，而不是"调用成功"。
-    expect(await screen.findByTestId("authoring-saved")).toHaveTextContent(
-      `question_version_id = ${NEW_VERSION}`,
-    );
+    expect(await screen.findByTestId("authoring-saved")).toHaveTextContent("版本 3");
     const versionRequest = stub.requests.find(
       (item) => item.url.pathname === `/api/v1/question-versions/${NEW_VERSION}`,
     );
@@ -509,6 +582,7 @@ describe("修改草稿（PATCH /api/v1/questions/{question_id}）", () => {
 
       await user.type(await screen.findByLabelText("参考答案"), "print(2)");
       await addCaseAndConfirm(user);
+      await fillAdapterExitCode(user);
       await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
       await user.click(screen.getByTestId("authoring-save"));
       await screen.findByTestId("authoring-saved");
@@ -727,8 +801,199 @@ describe("两类信号（确定性规则 vs 模型建议）", () => {
   });
 });
 
-describe("出题页的可见性前提", () => {
-  it("编辑页会取最新版本以决定「就地改」还是「新建版本」", async () => {
+describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
+  const GENERATION_ID = UUID_A;
+
+  /** 生成相关三个端点：能力、创建、读取/丢弃。 */
+  function generationRoutes(
+    capabilities: Partial<ReturnType<typeof generationCapabilities>> = {},
+    generation = questionDraftGeneration({ generation_id: GENERATION_ID }),
+  ): StubbedRoute[] {
+    return [
+      {
+        path: "/api/v1/question-draft-generations/capabilities",
+        respond: () => jsonResponse(generationCapabilities(capabilities)),
+      },
+      {
+        method: "POST",
+        path: "/api/v1/question-draft-generations",
+        respond: () => jsonResponse(generation),
+      },
+      {
+        method: "GET",
+        path: `/api/v1/question-draft-generations/${GENERATION_ID}`,
+        respond: () => jsonResponse(generation),
+      },
+      {
+        method: "DELETE",
+        path: `/api/v1/question-draft-generations/${GENERATION_ID}`,
+        respond: () => jsonResponse({}),
+      },
+    ];
+  }
+
+  it("未配置 provider 时如实显示「未启用」，且生成按钮不可用、不发 POST", async () => {
+    stub = installFetchStub(
+      baseRoutes(generationRoutes({ provider_status: "unavailable", provider: null, model: null })),
+    );
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+    await selectCourse(user);
+
+    expect(await screen.findByTestId("generation-unavailable")).toHaveTextContent("仍可手动创建");
+    expect(screen.getByTestId("generation-generate")).toBeDisabled();
+    expect(
+      stub.requests.filter(
+        (item) =>
+          item.method === "POST" && item.url.pathname === "/api/v1/question-draft-generations",
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("显式点击才请求模型：目标为空时按钮禁用，请求体只带公开约束", async () => {
+    stub = installFetchStub(baseRoutes(generationRoutes()));
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+    await selectCourse(user);
+
+    const generate = await screen.findByTestId("generation-generate");
+    expect(generate).toBeDisabled(); // 空目标不消耗任何 provider 调用
+
+    await user.type(screen.getByLabelText("你希望学生学会什么"), "让学生学会读标准输入");
+    await user.click(screen.getByTestId("generation-generate"));
+
+    const request = await waitFor(() => {
+      const found = stub?.requests.find(
+        (item) =>
+          item.method === "POST" && item.url.pathname === "/api/v1/question-draft-generations",
+      );
+      if (!found) throw new Error("尚未发出生成请求");
+      return found;
+    });
+    // course_id 是查询参数；body 里只有目标与约束，没有参考答案、用例或学生数据。
+    expect(request.url.searchParams.get("course_id")).toBe(UUID_A);
+    const body = request.body as Record<string, unknown>;
+    expect(body.learning_objective).toBe("让学生学会读标准输入");
+    expect(body.language).toBe("python");
+    expect(body.adapter_kind).toBe("stdin");
+    for (const forbidden of [
+      "reference_answer",
+      "cases",
+      "student_id",
+      "source_code",
+      "expected_stdout",
+    ]) {
+      expect(body).not.toHaveProperty(forbidden);
+    }
+  });
+
+  it("候选会填入编辑器，字段问题、来源与免责声明同时显示（候选不是成品）", async () => {
+    stub = installFetchStub(baseRoutes(generationRoutes()));
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+    await selectCourse(user);
+
+    await user.type(screen.getByLabelText("你希望学生学会什么"), "统计行数");
+    await user.click(screen.getByTestId("generation-generate"));
+
+    // 状态是 needs_review：可编辑，但有字段要补。
+    expect(await screen.findByTestId("generation-status")).toHaveTextContent("需要你");
+    // 字段问题指出具体控件（不是一句泛泛的说明）。
+    const warnings = screen.getByTestId("generation-warnings");
+    expect(warnings).toHaveTextContent("cases[1].weight");
+    expect(screen.getByTestId("generation-provenance")).toHaveTextContent("b3-draft-generation-v1");
+    expect(screen.getByTestId("generation-expiry")).toBeInTheDocument();
+    expect(screen.getByTestId("generation-disclaimers")).toHaveTextContent(
+      "模型生成的是候选草稿",
+    );
+
+    // 候选被填进同一张表单：标题、题干、参考答案、用例都到位，权重为 null 的那个留空。
+    expect(screen.getByLabelText("题目标题")).toHaveValue("统计标准输入的行数");
+    expect(screen.getByLabelText("参考答案")).toHaveValue(
+      "import sys\nprint(len(sys.stdin.read().splitlines()))\n",
+    );
+    expect(screen.getByTestId("case-1")).toBeInTheDocument();
+    // 受保护内容只在教师侧展开区里出现，并明确标注学生看不到。
+    expect(screen.getByText("学生看不到")).toBeInTheDocument();
+    expect(screen.getByTestId("generation-protected")).toHaveTextContent("参考答案");
+  });
+
+  it("刷新后用 generation_id 恢复服务端原始候选", async () => {
+    stub = installFetchStub(baseRoutes(generationRoutes()));
+    await signIn("teacher1", "pw");
+    renderAuthoring(null, GENERATION_ID);
+    await selectCourse(userEvent.setup());
+
+    expect(await screen.findByTestId("generation-result")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByLabelText("题目标题")).toHaveValue("统计标准输入的行数"),
+    );
+    expect(
+      stub.requests.filter(
+        (item) =>
+          item.method === "GET" &&
+          item.url.pathname === `/api/v1/question-draft-generations/${GENERATION_ID}`,
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("丢弃候选需要确认，确认后调用 DELETE", async () => {
+    stub = installFetchStub(baseRoutes(generationRoutes()));
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null, GENERATION_ID);
+    await selectCourse(user);
+
+    await user.click(await screen.findByTestId("generation-discard"));
+    // 关闭预览不等于删除：必须再确认一次。
+    expect(await screen.findByText("丢弃这份候选？")).toBeInTheDocument();
+    await user.click(screen.getByTestId("generation-discard-confirm"));
+
+    await waitFor(() => {
+      const deleted = stub?.requests.find((item) => item.method === "DELETE");
+      expect(deleted?.url.pathname).toBe(
+        `/api/v1/question-draft-generations/${GENERATION_ID}`,
+      );
+    });
+  });
+
+  it("预算用尽（429）时显示可重试说明，而不是把异常当成成功", async () => {
+    stub = installFetchStub(
+      baseRoutes([
+        {
+          path: "/api/v1/question-draft-generations/capabilities",
+          respond: () => jsonResponse(generationCapabilities({ requests_remaining: 0 })),
+        },
+        {
+          method: "POST",
+          path: "/api/v1/question-draft-generations",
+          respond: () =>
+            problemResponse({
+              status: 429,
+              title: "Too Many Requests",
+              detail: "generation budget exhausted; the window frees up in 600 seconds",
+            }),
+        },
+      ]),
+    );
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+    await selectCourse(user);
+
+    await user.type(await screen.findByLabelText("你希望学生学会什么"), "生成一道题");
+    await user.click(screen.getByTestId("generation-generate"));
+
+    const banner = await screen.findByTestId("generation-budget-exhausted");
+    expect(banner).toHaveTextContent("稍后再试");
+    expect(screen.queryByTestId("generation-result")).toBeNull();
+  });
+});
+
+describe("出题页的可见性前提", () => {  it("编辑页会取最新版本以决定「就地改」还是「新建版本」", async () => {
     stub = installFetchStub(
       baseRoutes([
         {

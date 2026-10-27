@@ -58,6 +58,7 @@ from ..infra.models import Question, QuestionVersion
 from ..infra.repositories import ProtectedContentRepository, QuestionBankRepository
 from ..logging import get_logger, log_event
 from .content import validate_stem_markdown
+from .draft_generations import accept_generation
 from .revisions import compute_revision_diff, revision_note, snapshot_content
 from .tags import validate_tags
 from .version_content import VersionContent, load_version_content, refresh_content_digest
@@ -345,6 +346,7 @@ def create_question(
     payload: QuestionDraftInputModel,
     revision_note_supplied: bool | None = None,
     cases_supplied: bool | None = None,
+    generation_id: uuid.UUID | None = None,
     now: datetime,
 ) -> tuple[Question, QuestionVersion]:
     """Create a question and its first draft version.
@@ -354,6 +356,12 @@ def create_question(
     without cases cannot be evaluated) until they are supplied. That is the only way to
     reach a version with no cases, and it is a starting state rather than a transition -
     no write can take a version that has cases down to zero (``CHG-0017`` §3).
+
+    ``generation_id`` is the AI-FLOW-01A acceptance link. It is **not** a shortcut: the
+    payload above is the teacher's own edited content and is validated exactly as any other
+    write. The id only says "this draft came from that candidate", which is recorded on the
+    generation row -- and the candidate content is removed -- **in this transaction**, so a
+    generation can never be marked accepted for a version that was rolled back.
     """
     actor = require_course_write(principal, course_id)
     # The first version supersedes nothing, so it can carry neither a note nor a diff;
@@ -400,6 +408,18 @@ def create_question(
             now=now,
         )
         refresh_content_digest(session, version)
+        if generation_id is not None:
+            # Same transaction, on purpose: either the version and the acceptance both
+            # exist, or neither does. The candidate content is dropped inside the same
+            # commit, so an accepted generation cannot be re-read and saved twice.
+            accept_generation(
+                session,
+                principal=principal,
+                generation_id=generation_id,
+                course_id=course_id,
+                question_version_id=version.question_version_id,
+                now=now,
+            )
         log_event(
             get_logger("domain.questions"),
             "question.created",
@@ -407,6 +427,7 @@ def create_question(
             question_version_id=str(version.question_version_id),
             course_id=str(course_id),
             adapter_kind=manifest.kind,
+            generation_id=None if generation_id is None else str(generation_id),
         )
         session.flush()
         session.expunge(question)

@@ -1,14 +1,18 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "../../api/client";
 import type {
+  AssetUploadInput,
   AuthoringAssistance,
   AuthoringAssistanceRequest,
   ComparisonDiagnostics,
+  FixtureUploadInput,
+  FixtureUploadResult,
   QuestionDraftInput,
   QuestionPublic,
   QuestionVersionPublic,
   ReferenceVerification,
   ReferenceVerificationRequest,
+  StemAssetUploadResult,
 } from "../../api/types";
 import { queryKeys } from "../../app/queryClient";
 import { log, newRequestId } from "../../logging/logger";
@@ -24,6 +28,10 @@ import { log, newRequestId } from "../../logging/logger";
 /**
  * 新建题目。`course_id` 是**查询参数**：`QuestionDraftInput` 是闭合对象
  * （`additionalProperties: false`），课程作用域只能与请求体并列传递。
+ *
+ * `generationId`（AI-FLOW-01A）同样是查询参数，而且同样不是题目内容：请求体是**教师改过**的
+ * 草稿，服务端照普通写入完整校验；这个 id 只声明"本次草稿来自那份候选"，服务端会在写入的同一个
+ * 事务里把它标为已接受并删除候选正文。因此"已接受"与"版本存在"要么一起成立，要么都不成立。
  */
 export function useCreateQuestion() {
   const queryClient = useQueryClient();
@@ -31,11 +39,15 @@ export function useCreateQuestion() {
     mutationFn: async (args: {
       courseId: string;
       input: QuestionDraftInput;
+      generationId?: string | null;
     }): Promise<QuestionPublic> => {
       const requestId = newRequestId();
       const question = await apiRequest<QuestionPublic>("/api/v1/questions", {
         method: "POST",
-        query: { course_id: args.courseId },
+        query: {
+          course_id: args.courseId,
+          generation_id: args.generationId ?? undefined,
+        },
         body: args.input,
         requestId,
       });
@@ -46,11 +58,16 @@ export function useCreateQuestion() {
         course_id: args.courseId,
         status: question.status,
         version_count: question.versions?.length ?? 0,
+        from_generation: Boolean(args.generationId),
       });
       return question;
     },
-    onSuccess: async () => {
+    onSuccess: async (question, args) => {
       await queryClient.invalidateQueries({ queryKey: ["questions"] });
+      if (args.generationId) {
+        // 接受后候选正文已删除：缓存里那份不能继续当作可用的候选展示。
+        await queryClient.invalidateQueries({ queryKey: queryKeys.generation(args.generationId) });
+      }
     },
   });
 }
@@ -218,6 +235,75 @@ export function usePublishQuestionVersion() {
       });
       await queryClient.invalidateQueries({ queryKey: queryKeys.question(args.questionId) });
       await queryClient.invalidateQueries({ queryKey: ["questions"] });
+    },
+  });
+}
+
+/**
+ * 上传题干图片（`uploadQuestionAsset`，RQ-B-3-10）。
+ *
+ * 为什么调用方必须先保存草稿：资源挂在**题目**上，而题干里要插入的受控地址需要题目 id。
+ * 因此 P08 的图片控件在题目尚未保存时是禁用的，并说明"先保存草稿"——不假装上传成功。
+ *
+ * 请求体里**没有摘要字段**：摘要由 B3 从字节算出（契约 `AssetUploadInput`），客户端提供的摘要
+ * 永远不会被当成权威值。这里也不回显字节，只显示服务端返回的元数据。
+ */
+export function useUploadQuestionAsset(questionId: string | null) {
+  return useMutation({
+    mutationFn: async (input: AssetUploadInput): Promise<StemAssetUploadResult> => {
+      const requestId = newRequestId();
+      const asset = await apiRequest<StemAssetUploadResult>(
+        `/api/v1/questions/${encodeURIComponent(questionId as string)}/assets`,
+        { method: "POST", body: input, requestId },
+      );
+      log({
+        event: "question_asset_uploaded",
+        request_id: requestId,
+        question_id: questionId,
+        asset_id: asset.asset_id,
+        content_type: asset.content_type,
+        size_bytes: asset.size_bytes,
+      });
+      return asset;
+    },
+  });
+}
+
+/**
+ * 上传夹具（`uploadVersionFixture`，RQ-B-3-50）。
+ *
+ * 这条路径此前在契约里是 `internal` + serviceToken，浏览器无法使用，于是 file 题型在编辑器里根本
+ * 存不下来。现在它用**教师自己的 bearer JWT** + 草稿所属课程授权，摘要仍由 B3 计算：既没有把服务
+ * 令牌放进浏览器，也没有让客户端声明摘要。
+ *
+ * 调用方必须已有 `question_version_id`（即草稿已保存）；上传成功后才能把返回的摘要写进
+ * `adapter.files[]`。上传失败时只能提示"草稿已保存，附件未完成"，不能说成保存成功。
+ */
+export function useUploadFixture(versionId: string | null, questionId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: FixtureUploadInput): Promise<FixtureUploadResult> => {
+      const requestId = newRequestId();
+      const fixture = await apiRequest<FixtureUploadResult>(
+        `/api/v1/question-versions/${encodeURIComponent(versionId as string)}/fixtures`,
+        { method: "POST", body: input, requestId },
+      );
+      log({
+        event: "question_fixture_uploaded",
+        request_id: requestId,
+        question_version_id: versionId,
+        fixture_id: fixture.fixture_id,
+        size_bytes: fixture.size_bytes,
+      });
+      return fixture;
+    },
+    onSuccess: async () => {
+      if (versionId) {
+        await queryClient.invalidateQueries({ queryKey: queryKeys.questionVersion(versionId) });
+      }
+      if (questionId) {
+        await queryClient.invalidateQueries({ queryKey: queryKeys.question(questionId) });
+      }
     },
   });
 }

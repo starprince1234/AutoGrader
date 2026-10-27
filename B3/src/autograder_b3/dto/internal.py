@@ -79,7 +79,10 @@ class ComparisonInput(BaseModel):
 
     stdout: CompareMode = "exact"
     stderr: StderrCompareMode = "ignored"
-    numeric_tolerance: float | None = Field(default=None, ge=0)
+    #: ``allow_inf_nan=False`` is not decoration: ``nan > 0`` is false so a plain ``ge=0``
+    #: lets ``nan`` through some checks, and ``inf`` passes ``ge=0`` outright. Either would
+    #: reach a comparison policy where it means "never equal" or "always within tolerance".
+    numeric_tolerance: float | None = Field(default=None, ge=0, allow_inf_nan=False)
 
 
 class CallableTargetInput(BaseModel):
@@ -119,7 +122,7 @@ class TestCaseInputModel(BaseModel):
 
     name: str = Field(min_length=1, max_length=200)
     ordinal: int = Field(ge=0)
-    weight: float = Field(default=1.0, gt=0)
+    weight: float = Field(default=1.0, gt=0, allow_inf_nan=False)
     visible_to_student: bool = False
     stdin: str | None = None
     args: tuple[str, ...] = ()
@@ -236,6 +239,32 @@ class FixtureUploadInputModel(BaseModel):
     path: str = Field(min_length=1, max_length=200)
     mount: FixtureMount = "input"
     content_base64: str
+
+
+class QuestionDraftGenerationRequestModel(BaseModel):
+    """The contract's ``QuestionDraftGenerationRequest`` (AI-FLOW-01A).
+
+    ``learning_objective`` and ``constraints`` carry **no fixed maximum here** on purpose:
+    the accepted length is a deployment decision (provider context window, cost per token)
+    and the contract must not freeze one environment's number into every other one. The
+    configured limit is enforced in :func:`autograder_b3.draft_generation.build_generation_payload`
+    and reported to clients by the capabilities read, so a client can show the real limit
+    instead of guessing.
+
+    ``language`` and ``adapter_kind`` are **teacher-chosen constraints**, not model output:
+    they are what the exercise has to be runnable as, so they travel in the request and are
+    echoed unchanged into the candidate. The model never widens them.
+    """
+
+    model_config = _STRICT
+
+    learning_objective: str = Field(min_length=1)
+    language: Language
+    adapter_kind: AdapterKind
+    difficulty: str | None = Field(default=None, max_length=200)
+    tags: tuple[str, ...] = Field(default=(), max_length=20)
+    desired_case_count: int | None = Field(default=None, ge=1, le=100)
+    constraints: str | None = None
 
 
 # ==========================================================================

@@ -37,6 +37,7 @@ from ..dto.public import (
     QuestionTagCoveragePublic,
     QuestionVersionPublic,
     QuestionVersionSummary,
+    QuestionLearningContextPublic,
     ReferenceAttestationPublic,
     RevisionDiffPublic,
     StemAssetPublic,
@@ -215,8 +216,24 @@ def coverage_to_public(result: TagCoverage) -> QuestionTagCoveragePublic:
     )
 
 
-def statistics_to_public(result: StatisticsResult) -> QuestionStatisticsPublic:
-    return QuestionStatisticsPublic(
+def learning_context_to_public(context: Any) -> QuestionLearningContextPublic:
+    """Project the public half of a version for B2's hint generation (``AI-FLOW-01B``).
+
+    Explicit field by field rather than ``**vars``: a field added to the domain record must
+    not become a response key by accident, which is exactly the mistake that would widen what
+    a model gets to see.
+    """
+    return QuestionLearningContextPublic(
+        question_version_id=context.question_version_id,
+        title=context.title,
+        stem_markdown=context.stem_markdown,
+        language=context.language,
+        tags=context.tags,
+        adapter_kind=context.adapter_kind,
+    )
+
+
+def statistics_to_public(result: StatisticsResult) -> QuestionStatisticsPublic:    return QuestionStatisticsPublic(
         question_id=result.question_id,
         attempt_count=result.attempt_count,
         pass_rate=result.pass_rate,

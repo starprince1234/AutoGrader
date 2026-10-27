@@ -239,9 +239,32 @@ def test_file_adapter_binds_fixture_digests_into_the_package():
         assert entry["content_sha256"] in {item.content_sha256 for item in fixtures}
 
 
-def test_file_adapter_requires_an_input_fixture():
-    with pytest.raises(ManifestInvalid):
-        validate_adapter_manifest({"kind": "file", "comparison": {"stdout": "exact"}})
+def test_file_adapter_requires_an_input_fixture_at_compile_time():
+    """A file question may be *drafted* without fixtures, but never compiled without them.
+
+    The requirement used to live in ``validate``, which runs on every draft write. That made
+    the real authoring order impossible: fixture bytes are uploaded to
+    ``POST /question-versions/{id}/fixtures``, which needs the ``question_version_id`` that
+    only exists *after* the draft is saved, so the first save was refused for missing the
+    very fixture the upload it enables would have supplied. The check therefore belongs to
+    package compilation, which runs on publish and on verification -- exactly the moments an
+    incomplete file question must not slip through.
+    """
+    draft_manifest = validate_adapter_manifest({"kind": "file", "comparison": {"stdout": "exact"}})
+    assert draft_manifest.kind == "file"
+    assert draft_manifest.files == ()
+
+    version_id = uuid.uuid4()
+    cases = build_cases(version_id, [{"name": "process", "ordinal": 0, "expected_stdout": "ok\n"}])
+    with pytest.raises(ManifestInvalid) as error:
+        compile_evaluation_package(
+            snapshot(version_id, draft_manifest),
+            draft_manifest,
+            cases,
+            (),
+            created_at=PUBLISHED_AT,
+        )
+    assert "input fixture" in str(error.value)
 
 
 def test_file_adapter_declared_digest_must_match_stored_content():

@@ -2,7 +2,7 @@
 
 **契约权威**：`../../../MAIN/contracts/`（本地集成时，B3 与 MAIN 同级）；版本与摘要见根 [contracts.lock](../../contracts.lock)。**本文件不抄字段表**——字段/请求体/响应体一律打开契约文件。
 
-状态（2026-09-18）：下表**全部端点已实现**并有真实 HTTP 契约测试（`tests/test_questions_api.py` 80 例、`tests/test_auth.py` 23 例）。带 `未成文` 标记的三个操作在 `b3.yaml` 中尚无条目，属 [CHG-B3-0002](../contracts/changes/CHG-B3-0002-asset-and-fixture-endpoints.md)。
+状态（2026-10-24，契约 0.18.0）：下表**全部端点已实现**并有真实 HTTP 契约测试。此前的"三个未成文操作"（题干图片上传/受控读取、fixture 上传）已经写进 `b3.yaml`，本轮把最后一条也从 `internal + serviceToken` 改成教师 bearer JWT。
 
 ## 我提供的端点
 
@@ -15,21 +15,31 @@
 | GET | `/api/v1/questions/{question_id}/statistics` | 去标识化答题统计（消费 `evaluation.completed`） | 是 | 教师/助教，课程作用域 | 已成文 |
 | GET | `/api/v1/questions/{question_id}/diagnostics` | 比较策略的**确定性**诊断（`CMP-001..004`）；不含任何期望输出 | 是 | 教师/助教，课程作用域 | 已成文（CHG-0013） |
 | POST | `/api/v1/questions/{question_id}/authoring-assistance` | 出题期模型建议（`RQ-T-10`）；**只读，从不改题** | 是 | 教师/助教，课程作用域 | 已成文（CHG-0011） |
-| POST | `/api/v1/questions/{question_id}/assets` | 上传题干图片（返回内容摘要） | 是 | 教师；仅当前草稿版本 | **未成文** |
-| GET | `/api/v1/questions/{question_id}/assets/{asset_id}` | 受控读取题干图片（未授权 `403`） | 是 | 作用域内；学生仅已发布题目 | **未成文** |
+| POST | `/api/v1/questions/{question_id}/assets` | 上传题干图片（返回内容摘要；客户端声明的摘要从不被采信） | 是 | 教师；仅当前草稿版本 | 已成文；SVG 不在白名单 |
+| GET | `/api/v1/questions/{question_id}/assets/{asset_id}` | 受控读取题干图片（未授权 `403`；带 `nosniff`/CSP/`ETag`） | 是 | 作用域内；学生仅已发布题目 | 已成文 |
+| GET | `/api/v1/question-draft-generations/capabilities` | provider 状态、部署配置的输入上限、**调用者自己的**剩余预算 | 是 | 教师/管理员，课程写权限 | 已成文（0.18.0，AI-FLOW-01A） |
+| POST | `/api/v1/question-draft-generations?course_id=` | 按教学目标生成**可编辑候选**（教师专用 DTO；不写题库） | 是 | 教师/管理员，课程写权限 | 已成文（0.18.0） |
+| GET | `/api/v1/question-draft-generations/{generation_id}` | 刷新后恢复**服务端原始候选**（不是教师的未保存编辑） | 是 | 仅生成者且仍有课程写权限 | 已成文（0.18.0） |
+| DELETE | `/api/v1/question-draft-generations/{generation_id}` | 丢弃未被接受的候选（清正文、留去内容化用量记录） | 是 | 仅生成者 | 已成文（0.18.0） |
 | GET | `/api/v1/question-versions/{question_version_id}` | 版本详情（公开 DTO；草稿也带 `content_digest`，另带 `revision_note`/`revision_diff`） | 是 | 课程作用域 | 已成文；两个修订字段由 CHG-0013 成文 |
 | POST | `/api/v1/question-versions/{id}/publish` | 发布并冻结版本（完整性 + **凭证**校验后不可变） | 是 | 教师 | 已成文 |
 | POST | `/api/v1/question-versions/{id}/archive` | 归档（被评测引用时不可删，仅可归档） | 是 | 教师 | 已成文 |
-| POST | `/api/v1/question-versions/{id}/fixtures` | 上传 fixture（返回 B3 计算的摘要） | 是 | 教师；仅草稿版本 | **未成文** |
+| POST | `/api/v1/question-versions/{id}/fixtures` | 上传 fixture（返回 B3 计算的摘要）。**教师 bearer JWT + 草稿所属课程写权限**：浏览器可以完整创建 file 题型 | 是 | 教师；仅草稿版本 | 已成文；0.18.0 从 `internal + serviceToken` 改为教师令牌 |
 | POST | `/api/v1/question-versions/{id}/attestations` | **内部**：记录"外部验证器跑过该版本参考答案"的凭证（**只接受草稿**，契约已写明） | **服务间认证** | 仅服务；仅草稿版本 | 已成文（CHG-0008；"仅草稿"由 CHG-0028 写明） |
 | GET | `/api/v1/question-versions/{id}/evaluation-package` | **内部**：可执行输入（隐藏用例/适配器/比较策略/沙箱策略）。**草稿与已发布都服务**；包内**不含**参考解答（它有自己的通道） | 服务间认证 | 仅 B2 | 已成文；草稿可服务由 CHG-0028 成文 |
 | GET | `/api/v1/question-versions/{id}/reference-answer` | **内部**：该版本**声明语言**的参考解答正文 + 存证口径的 `content_digest`（`CHG-0019` 的必需输入） | 服务间认证 | 仅 B2；教师/学生一律 `403` | 已成文（CHG-0023） |
+| GET | `/api/v1/question-versions/{id}/learning-context` | **内部**：供 B2 生成学生学习提示的**公开题目上下文**（title/stem/language/tags/adapter_kind），独立 schema | 服务间认证 | 仅 B2 service identity；教师/学生 `403`；草稿 `409` | 已成文（0.18.0，AI-FLOW-01B） |
 | GET | `/api/v1/assignments` | assignment 列表 | 是 | 课程/课序作用域 | 已成文 |
 | POST | `/api/v1/assignments` | 创建 assignment（只能引用已发布版本，草稿 → `409`） | 是 | 教师 | 已成文 |
 
-> `module.yaml` 声明三个路由前缀：`/api/v1/questions`、`/api/v1/question-versions`、`/api/v1/assignments`。**每个路由路径都落在其中一个前缀之下**（`tests/test_plugin.py::test_every_route_path_is_under_a_declared_prefix` 对全部 19 条路由断言），因此未引入新前缀。
+> `module.yaml` 声明四个路由前缀：`/api/v1/questions`、`/api/v1/question-versions`、
+> `/api/v1/question-draft-generations`、`/api/v1/assignments`。**每个路由路径都落在其中一个前缀之下**
+> （`MAIN/host/src/autograder_host/checks.py::check_route_declarations` 双向断言），因此没有引入孤立前缀。
 >
-> **未成文的三个操作**：在 MAIN 裁决前，**其他模块不得依赖**。它们的存在理由是需求侧的硬要求（`RQ-B-3-10` 验收 1/5 的题干图片、`RQ-B-3-50` 验收 1/2 的 fixture 字节），而冻结契约没有承载入口——B3 选择"实现 + 上报"，而不是"不实现"或"私改契约"。
+> 0.18.0 的契约变化、以及它们为什么不是"新增隐藏入口"：(a) 草稿生成三个操作 + 能力查询，写的是
+> **候选**而不是题目；(b) fixture 上传从服务令牌改为教师令牌——此前那条声明让浏览器在结构上无法
+> 完成 file 题型，而摘要权威仍留在服务端；(c) `learning-context` 是给 B2 服务身份的**窄读**，
+> 用独立 schema 排除全部受保护内容。
 
 ## 发布前置：参考答案凭证（CHG-0008）
 
@@ -97,6 +107,53 @@
   这正是该字段存在的理由。
 - 记录的限制（`ADR-0009` 后果段）：模型仍可能在措辞上引用它被展示过的内容。结构性事实是
   "B3 从不发送受保护内容、从不存储模型输出、从不把建议变成写入"，不是"模型保证不复述"。
+
+## 结构化草稿生成（AI-FLOW-01A / 契约 0.18.0）
+
+`RQ-T-10` 现在有两轨，刻意是**两个端点、两种响应类型**，不混成一段聊天记录：
+
+| 操作 | 何时用 | 产出 |
+|---|---|---|
+| `POST /api/v1/question-draft-generations?course_id=` | 新建题目：教师有教学目标但还没有题面/用例 | **可编辑候选字段**（`QuestionDraftGeneration.proposal`），教师专用 DTO |
+| `POST /api/v1/questions/{id}/authoring-assistance` | 编辑已保存的草稿 | **建议**（`confidence: advisory`），没有可应用的字段 |
+
+**状态与状态码**（`status` 是唯一的结论位，`unavailable` 也是它的一部分）：
+
+| status | 含义 | 存储 |
+|---|---|---|
+| `ready` | 解析干净、可进入编辑器 | 保存私有候选（`expires_at`） |
+| `needs_review` | 可读但有字段问题，`warnings[].field` 指向控件 | 同上 |
+| `failed` | 没能形成编辑器（例如没有题干） | 保存记录但 `proposal = NULL`，教师刷新后仍能看到原因 |
+| `unavailable` | 本部署没配 provider，**没有出网、没有计费** | 不落记录（没有可恢复的东西），`generation_id`/`provenance`/`expires_at` 全为 `null` |
+
+`unavailable` 用 200 表达而不是 `503`：它是一句部署事实，需要和"生成失败"分开显示在按钮旁；
+**配置了** provider 却失败才是 `502`（`draft-generation-provider-failed`），预算用尽才是 `429`。
+
+**边界（每条都能被测试断言）**：
+
+1. 只写候选，不写题库：生成路径不创建 question/question_version/test_case。
+2. 候选是教师专用：`proposal` 可含参考答案与候选隐藏用例，因此走独立 schema（不进 `dto/public.py`），
+   读取要求**同一个 actor** 且仍持有该课程写权限；另一个账号拿同一个 id 得到 `403`。
+3. 保存即接受：`createQuestion?generation_id=` 在**同一事务**里回填 `accepted_question_version_id`
+   并把候选正文置空；回滚则两者都不发生。同一份候选不能产生第二个版本（`409`）。
+4. 过期即拒绝：`expires_at` 之后读取返回 `404` 并删除该行；用量账本（`ai_generation_usage`）保留，
+   它**没有**能放 prompt 或响应的列。
+5. 预算是 actor 级、从账本计数：换课程不能重置；到限返回 `429` 并在 `Retry-After` 给出窗口释放时间，
+   **不调用 provider**。
+6. 上限来自部署配置：契约**不写死**字符数，客户端从
+   `GET /api/v1/question-draft-generations/capabilities` 读取并在控件旁显示。
+7. 生成不是发布：候选仍需 CMP 诊断、B2 参考解答验证与教师显式发布。
+
+## 学习提示所需的题目上下文（AI-FLOW-01B / 契约 0.18.0）
+
+`GET /api/v1/question-versions/{id}/learning-context` 是 B2 生成学生学习提示时**唯一**可读的题目内容：
+`title`、`stem_markdown`、`language`、`tags`、`adapter_kind`。
+
+- 独立 schema（不是从 `QuestionVersionPublic` 过滤），因此参考答案、用例、期望输出、夹具、教师备注
+  与学生数据都在结构上不可能出现。
+- 仅服务身份（`serviceToken`）；教师与学生调用得到 `403`，无凭据 `401`，且都在读取版本**之前**判定。
+- 只服务已发布（或已归档）的版本；草稿返回 `409`——评测运行只会引用已发布版本，这里不为未发布内容
+  开第二条读路径。
 
 ## 执行输入（evaluation package）：草稿也可取（CHG-0028）
 

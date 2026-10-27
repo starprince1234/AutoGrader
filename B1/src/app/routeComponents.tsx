@@ -64,13 +64,25 @@ export function QuestionDetailRoute() {
 }
 
 export function AuthoringNewRoute() {
+  const { generation } = useSearch({ from: "/questions/new" });
+  const navigate = useNavigate();
   return (
     <RequireAuth>
       <RequirePermission
         allow={canAuthorQuestions}
         allowedRoles={["teacher", "assistant", "admin"]}
       >
-        <AuthoringPage questionId={null} />
+        <AuthoringPage
+          questionId={null}
+          generationId={generation ?? null}
+          onGenerationId={(next) => {
+            // 候选 id 写回 URL：刷新后能恢复同一份原始候选，分享出去的链接也不会丢上下文。
+            void navigate({
+              to: "/questions/new",
+              search: { generation: next ?? undefined },
+            });
+          }}
+        />
       </RequirePermission>
     </RequireAuth>
   );

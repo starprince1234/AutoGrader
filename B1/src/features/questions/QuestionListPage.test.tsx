@@ -194,7 +194,7 @@ describe("题目列表的游标分页", () => {
     stub = installFetchStub(routes({ "": pageOf(["q-1"], null) }));
     const user = await open(userEvent.setup());
 
-    await user.type(screen.getByLabelText("标签筛选（逗号分隔）"), "Process Scheduling, unix");
+    await user.type(screen.getByLabelText("标签"), "Process Scheduling, unix");
 
     await waitFor(() => {
       const last = stub?.requests
@@ -223,7 +223,7 @@ describe("题目列表的游标分页", () => {
     expect(screen.getByTestId("edit-q-1")).toBeInTheDocument();
   });
 
-  it("学生看不到出题入口与草稿开关（服务端仍独立判定）", async () => {
+  it("学生看不到题库列表、出题入口、草稿开关与覆盖度（且不发题库请求）", async () => {
     stub = installFetchStub(
       routes({ "": pageOf(["q-1"], null) }).map((route) =>
         route.path === "/api/v1/auth/session"
@@ -237,11 +237,25 @@ describe("题目列表的游标分页", () => {
     );
     await signIn("student1", "pw");
     renderQuestionList();
-    await screen.findByTestId("question-table");
 
+    // 学生由作业进入题目，不浏览全量题库：这一页对他只说明去哪里看题。
+    expect(await screen.findByTestId("question-list-staff-only")).toBeInTheDocument();
+    expect(screen.queryByTestId("question-table")).toBeNull();
     expect(screen.queryByText("新建题目")).toBeNull();
     expect(screen.queryByTestId("edit-q-1")).toBeNull();
     expect(screen.queryByLabelText("包含草稿")).toBeNull();
+    // 覆盖度同样不存在（它既不该显示，也不该被请求）。
+    expect(screen.queryByTestId("question-coverage")).toBeNull();
+    await waitFor(() => {
+      const questionRequests = stub?.requests.filter((request) =>
+        request.url.pathname.endsWith("/api/v1/questions"),
+      );
+      expect(questionRequests).toHaveLength(0);
+      const coverageRequests = stub?.requests.filter((request) =>
+        request.url.pathname.endsWith("/coverage"),
+      );
+      expect(coverageRequests).toHaveLength(0);
+    });
   });
 });
 
@@ -288,7 +302,7 @@ describe("题目列表上的标签覆盖度（CHG-0020）", () => {
     await user.click(await screen.findByTestId("coverage-tag-unix"));
 
     // 填进的是既有的标签筛选输入框，请求走既有的 `tags` 重复参数（explode=true）。
-    expect(screen.getByLabelText("标签筛选（逗号分隔）")).toHaveValue("unix");
+    expect(screen.getByLabelText("标签")).toHaveValue("unix");
     await waitFor(() => {
       const last = stub?.requests
         .filter((request) => request.url.pathname.endsWith("/api/v1/questions"))

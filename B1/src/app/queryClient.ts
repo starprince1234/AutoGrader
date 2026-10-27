@@ -68,4 +68,13 @@ export const queryKeys = {
   }) => ["evaluation-quality-summary", filter] as const,
   /** 申诉证据包。`view` 进键：学生视图与教师视图是两份不同的内容。 */
   appealPack: (runId: string, view: string) => ["appeal-pack", runId, view] as const,
+  /**
+   * AI 草稿生成（AI-FLOW-01A）。按课程进键：provider 状态与请求预算都是部署配置的结果，
+   * 而"另一门课的剩余次数"对当前页面没有意义。
+   */
+  generationCapabilities: (courseId: string) =>
+    ["question-draft-generation-capabilities", courseId] as const,
+  /** 单份候选。候选不可变，按 id 缓存不会展示陈旧内容。 */
+  generation: (generationId: string) =>
+    ["question-draft-generation", generationId] as const,
 };

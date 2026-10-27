@@ -133,6 +133,51 @@ export type AuthoringAssistanceRequest =
 export type ComparisonDiagnostics = B3Schemas["ComparisonDiagnostics"];
 export type ComparisonFinding = ComparisonDiagnostics["findings"][number];
 
+/* ------------------------------ B3（AI 结构化草稿生成，AI-FLOW-01A） */
+
+/**
+ * 一次生成请求（`createQuestionDraftGeneration`）。
+ *
+ * `learning_objective` 与 `constraints` **在契约里没有写死上限**：上限是部署配置（provider
+ * 上下文/成本），由 `getQuestionDraftGenerationCapabilities` 报告当前值。因此本模块不在客户端
+ * 猜一个数字去校验，而是照服务端返回的上限展示与拦截。
+ *
+ * `language` 与 `adapter_kind` 是**教师的约束**，不是模型的建议：候选必须与之相同，否则那道题
+ * 在平台里跑不起来。
+ */
+export type QuestionDraftGenerationRequest =
+  B3Operations["createQuestionDraftGeneration"]["requestBody"]["content"]["application/json"];
+
+/** 服务端声明的生成约束（上限、预算、provider 状态）。只读，不含凭据或他人用量。 */
+export type QuestionDraftGenerationCapabilities =
+  B3Schemas["QuestionDraftGenerationCapabilities"];
+
+/**
+ * 一份 AI 候选（`QuestionDraftGeneration`）。
+ *
+ * 这是**教师专用** DTO：`proposal` 里可以带参考答案与候选隐藏用例，因此它既不是
+ * `QuestionPublic` 也不是 `QuestionVersionPublic`，也不得被学生端读取。
+ *
+ * `status` 是唯一的结论位：`ready`/`needs_review` 都表示"可编辑但必须人工审核"，
+ * `failed` 表示没能形成编辑器（`proposal` 为空），`unavailable` 表示本部署没有配 provider
+ * （没有出网、没有计费、也没有记录可恢复）。
+ */
+export type QuestionDraftGeneration = B3Schemas["QuestionDraftGeneration"];
+export type QuestionDraftProposal = NonNullable<QuestionDraftGeneration["proposal"]>;
+export type QuestionDraftProposalCase = NonNullable<QuestionDraftProposal["cases"]>[number];
+export type QuestionDraftProposalFixture = NonNullable<QuestionDraftProposal["fixtures"]>[number];
+export type DraftGenerationWarning = QuestionDraftGeneration["warnings"][number];
+
+/** 教师上传夹具（`uploadVersionFixture`）：摘要由服务端计算，请求里没有摘要字段。 */
+export type FixtureUploadInput =
+  B3Operations["uploadVersionFixture"]["requestBody"]["content"]["application/json"];
+export type FixtureUploadResult = JsonBody<B3Operations["uploadVersionFixture"], 201>;
+
+/** 题干图片上传（`uploadQuestionAsset`）：同样不信任客户端摘要。 */
+export type AssetUploadInput =
+  B3Operations["uploadQuestionAsset"]["requestBody"]["content"]["application/json"];
+export type StemAssetUploadResult = JsonBody<B3Operations["uploadQuestionAsset"], 201>;
+
 /* ------------------------------------------------------------------- B2（提交/成绩） */
 
 export type SubmissionAccepted = B2Schemas["SubmissionAccepted"];

@@ -1,13 +1,13 @@
 schema_version: 1
 module: B3
-contract_version: 0.17.0
+contract_version: 0.18.0
 entry_point: autograder_b3.plugin:create_module
 provides: [b3-questions]
 requires: [host, b4-course]
-routes: [/api/v1/questions, /api/v1/question-versions, /api/v1/assignments]
+routes: [/api/v1/questions, /api/v1/question-versions, /api/v1/question-draft-generations, /api/v1/assignments]
 events:
   publishes: [autograder.v1.question.version.published]
   subscribes: [autograder.v1.evaluation.completed]
 database:
   schema: b3
-  migration_head: "20260915_0004"
+  migration_head: "20260915_0005"

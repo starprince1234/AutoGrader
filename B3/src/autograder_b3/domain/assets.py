@@ -96,10 +96,19 @@ def upload_fixture(
     payload: FixtureUploadInputModel,
     now: datetime,
 ) -> FixtureInternal:
-    path = validate_workspace_path(payload.path, field="path")
-    content = decode_base64(payload.content_base64)
-    content_sha256, _size = validated_fixture_bytes(content=content, settings=settings)
+    """Store fixture bytes for a draft version, on the **teacher's own** bearer token.
 
+    Authorization comes first and the payload is inspected afterwards: a caller outside the
+    course must be refused because of the course, not because their base64 happened to be
+    malformed -- otherwise the status code would tell an unauthorized caller something about
+    the bytes it sent.
+
+    The digest is computed here from the decoded bytes and returned to the caller so it can
+    declare it in ``adapter.files[]``; a digest the caller declares is only ever *compared*
+    (``compile.manifest.assert_fixture_binding``). This is why the browser needs no service
+    token: the operation is scoped to a course the teacher can already write, and B3 still
+    keeps the digest authority.
+    """
     with database.protected_session() as session:
         bank = QuestionBankRepository(session)
         version = bank.get_version(question_version_id)
@@ -115,7 +124,16 @@ def upload_fixture(
                 f"this version is {version.status}. Create a new version instead."
             )
 
+        path = validate_workspace_path(payload.path, field="path")
+        content = decode_base64(payload.content_base64)
+        content_sha256, _size = validated_fixture_bytes(content=content, settings=settings)
         protected = ProtectedContentRepository(session)
+        if len(protected.list_fixtures(question_version_id)) >= settings.max_fixtures_per_version:
+            raise PayloadTooLarge(
+                "a version may carry at most "
+                f"{settings.max_fixtures_per_version} fixtures"
+            )
+
         row = protected.upsert_fixture(
             question_version_id=question_version_id,
             path=path,

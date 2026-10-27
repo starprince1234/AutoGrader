@@ -31,6 +31,7 @@ from ..dto.internal import (
 )
 from ..errors import StatisticsWindowTooLarge
 from .models import (
+    AIGenerationUsage,
     Assignment,
     AssignmentItem,
     Blob,
@@ -40,6 +41,7 @@ from .models import (
     Fixture,
     Question,
     QuestionAsset,
+    QuestionDraftGeneration,
     QuestionVersion,
     QuestionVersionFailureCategory,
     QuestionVersionScoreBucket,
@@ -827,9 +829,158 @@ class ProtectedContentRepository:
         ]
 
 
+class DraftGenerationRepository:
+    """Private generation records and the paid-call ledger (AI-FLOW-01A).
+
+    Both live on the **protected** connection: the candidate may carry a reference answer
+    and proposed hidden cases, and a record that holds protected content is never read on
+    the least-privilege role -- not even for a status check.
+    """
+
+    def __init__(self, session: Session) -> None:
+        self.session = session
+
+    # --- candidates -------------------------------------------------------
+
+    def create_generation(
+        self,
+        *,
+        course_id: uuid.UUID,
+        owner_subject: str,
+        status: str,
+        language: str,
+        adapter_kind: str,
+        provider: str,
+        model: str,
+        prompt_version: str,
+        proposal: dict[str, Any] | None,
+        warnings: list[dict[str, Any]],
+        created_at: datetime,
+        expires_at: datetime,
+    ) -> QuestionDraftGeneration:
+        row = QuestionDraftGeneration(
+            generation_id=new_id(),
+            course_id=course_id,
+            owner_subject=owner_subject,
+            status=status,
+            language=language,
+            adapter_kind=adapter_kind,
+            provider=provider,
+            model=model,
+            prompt_version=prompt_version,
+            proposal=proposal,
+            warnings=list(warnings),
+            created_at=created_at,
+            expires_at=expires_at,
+            accepted_question_version_id=None,
+            accepted_at=None,
+            discarded_at=None,
+        )
+        self.session.add(row)
+        self.session.flush()
+        return row
+
+    def get_generation(self, generation_id: uuid.UUID) -> QuestionDraftGeneration | None:
+        return self.session.get(QuestionDraftGeneration, generation_id)
+
+    def delete_generation(self, row: QuestionDraftGeneration) -> None:
+        """Purge an expired record. The ledger row is untouched: the call still happened."""
+        self.session.delete(row)
+        self.session.flush()
+
+    def discard_generation(
+        self, row: QuestionDraftGeneration, *, now: datetime
+    ) -> QuestionDraftGeneration:
+        """Drop the candidate content but keep the row, so "discarded" stays auditable."""
+        row.proposal = None
+        row.discarded_at = now
+        self.session.flush()
+        return row
+
+    def accept_generation(
+        self,
+        row: QuestionDraftGeneration,
+        *,
+        question_version_id: uuid.UUID,
+        now: datetime,
+    ) -> QuestionDraftGeneration:
+        """Record that the candidate became a version, and remove the candidate content.
+
+        Called from inside the question-creation transaction: if the version write fails,
+        this rolls back with it, so a generation can never be marked accepted for a version
+        that does not exist.
+        """
+        row.proposal = None
+        row.accepted_question_version_id = question_version_id
+        row.accepted_at = now
+        self.session.flush()
+        return row
+
+    # --- ledger -----------------------------------------------------------
+
+    def record_usage(
+        self,
+        *,
+        generation_id: uuid.UUID | None,
+        course_id: uuid.UUID,
+        owner_subject: str,
+        provider: str,
+        model: str,
+        prompt_version: str,
+        requested_at: datetime,
+        duration_ms: int,
+        status: str,
+        error_category: str | None = None,
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
+        total_tokens: int | None = None,
+    ) -> AIGenerationUsage:
+        row = AIGenerationUsage(
+            usage_id=new_id(),
+            generation_id=generation_id,
+            course_id=course_id,
+            owner_subject=owner_subject,
+            provider=provider,
+            model=model,
+            prompt_version=prompt_version,
+            requested_at=requested_at,
+            duration_ms=max(0, int(duration_ms)),
+            status=status,
+            error_category=error_category,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=total_tokens,
+            accepted_question_version_id=None,
+        )
+        self.session.add(row)
+        self.session.flush()
+        return row
+
+    def link_usage_to_version(
+        self, generation_id: uuid.UUID, question_version_id: uuid.UUID
+    ) -> None:
+        """Copy the accepted version onto the ledger rows for this generation."""
+        self.session.execute(
+            update(AIGenerationUsage)
+            .where(AIGenerationUsage.generation_id == generation_id)
+            .values(accepted_question_version_id=question_version_id)
+        )
+        self.session.flush()
+
+    def usage_since(self, owner_subject: str, since: datetime) -> list[AIGenerationUsage]:
+        statement = (
+            select(AIGenerationUsage)
+            .where(
+                AIGenerationUsage.owner_subject == owner_subject,
+                AIGenerationUsage.requested_at >= since,
+            )
+            .order_by(AIGenerationUsage.requested_at)
+        )
+        return list(self.session.execute(statement).scalars())
+
+
 class EventStoreRepository:
     """Inbox/outbox helpers used by the statistics consumer."""
-
     def __init__(self, session: Session) -> None:
         self.session = session
 

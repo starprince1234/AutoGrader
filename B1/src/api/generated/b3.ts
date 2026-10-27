@@ -220,6 +220,200 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/question-draft-generations/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Provider availability, configured input limits and the caller's own budget
+         * @description Added with `AI-FLOW-01A`. The generation form has to state the limits it will be held
+         *     to -- how long an objective may be, how many cases may be asked for, how long a
+         *     candidate survives -- and those are **deployment** decisions (provider context
+         *     window, cost per token, retention policy), not contract constants. A client that
+         *     printed a hard-coded "1000 characters" would be wrong on every deployment that
+         *     configured something else, so the numbers are read from the server that enforces
+         *     them.
+         *
+         *     Nothing here is a secret: no provider URL, no credential, and **no other account's
+         *     usage**. `requests_remaining` is `null` when this deployment does not cap requests --
+         *     an absent budget must not be rendered as "0 left".
+         *
+         *     Declared before `/question-draft-generations/{generation_id}` on purpose: a literal
+         *     segment under a collection that also has a parameterised child is otherwise parsed as
+         *     an id (the trap `questions/coverage` and `quality-summary` both document).
+         */
+        get: operations["getQuestionDraftGenerationCapabilities"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/question-draft-generations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Turn a teaching objective into an editable question draft (AI-FLOW-01A)
+         * @description `RQ-T-10`. The teacher describes what students should learn; the model returns a
+         *     **structured, editable candidate**. This is not the same operation as
+         *     `requestAuthoringAssistance`: that one advises on a draft that already exists and
+         *     returns prose, this one produces candidate fields and returns a teacher-only
+         *     proposal. They are deliberately two endpoints, because mixing an authoritative
+         *     review with a guess into one response makes the two indistinguishable.
+         *
+         *     Three properties, all normative:
+         *
+         *     1. **A candidate, not a question.** No `question`, `question_version` or `test_case`
+         *        row is created here. Nothing is assignable, nothing is publishable, and a model
+         *        answer can never become a question without a human going through
+         *        `createQuestion` (which validates every field again, including the reference
+         *        answer, the case set and the adapter manifest).
+         *     2. **Teacher-only content.** The response may contain a proposed reference answer and
+         *        proposed hidden cases, so it is not a public DTO and is not shaped like one. The
+         *        same data is readable back through `getQuestionDraftGeneration` only by the account
+         *        that generated it, while it still holds course write scope; a student calling
+         *        either operation gets `403`.
+         *     3. **A real call or an honest refusal.** With no provider configured this answers
+         *        `503` and makes no outbound request. A provider that fails, times out or answers
+         *        something that is not JSON is `502`; the paid attempt is recorded in the
+         *        usage ledger either way. Neither case is ever reported as `ready`.
+         *
+         *     `status` classifies what came back and is the only place a client reads it:
+         *
+         *       * `ready` -- the candidate parsed cleanly and is editable;
+         *       * `needs_review` -- readable, but at least one field is missing or illegal, and each
+         *         such field is named in `warnings[].field` so the client can put the message next
+         *         to the control;
+         *       * `failed` -- a response arrived but the core structure needed to open an editor is
+         *         absent (no stem). The record is kept so the teacher can see *why* after a refresh;
+         *         it holds no candidate;
+         *       * `unavailable` -- no model provider is configured on this deployment. No outbound
+         *         call is made, nothing is charged, and manual authoring stays fully usable.
+         *
+         *     Neither `ready` nor `needs_review` is a statement that the question is correct, fair
+         *     or publishable: that is decided by the deterministic diagnostics and by the
+         *     reference-answer verification the publish gate requires.
+         *
+         *     Refusal order is fixed and is a security property, not an implementation detail:
+         *     role and course scope (`401`/`403`) are checked before input (`422`), before provider
+         *     state (`503`) and before the budget (`429`), so an unauthorized caller cannot learn
+         *     this deployment's model configuration by comparing status codes.
+         */
+        post: operations["createQuestionDraftGeneration"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/question-draft-generations/{generation_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Identifier of a candidate, **not** a credential. Copying the id to another account
+                 *     produces `403`; it grants nothing.
+                 */
+                generation_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Restore an AI candidate after a refresh (AI-FLOW-01A)
+         * @description Returns the **original** candidate again. It deliberately does not restore the
+         *     teacher's unsaved edits: those live in the page, and the honest behaviour after a
+         *     refresh is "here is what the model proposed, your changes are gone" rather than a
+         *     form that looks like it kept them. A client must therefore warn before navigating
+         *     away with unsaved edits, and must not persist the proposal in browser storage -- the
+         *     only copy is the server-side record read back through this operation with a valid
+         *     session.
+         *
+         *     `404` covers three indistinguishable states: unknown id, discarded candidate, and
+         *     expired record. They are collapsed on purpose -- after the retention window nothing
+         *     about the content should remain recoverable, and a distinct `410` would confirm that
+         *     an id once existed.
+         */
+        get: operations["getQuestionDraftGeneration"];
+        put?: never;
+        post?: never;
+        /**
+         * Discard an unaccepted AI candidate (AI-FLOW-01A)
+         * @description The **only** operation that removes an unaccepted proposal. Collapsing the preview
+         *     panel must not do this, which is why it is an explicit action behind a confirmation:
+         *     a discarded candidate cannot be recovered, while a collapsed one can be reopened.
+         *
+         *     What is removed is the candidate content (the proposal). What is kept is the
+         *     de-identified ledger row -- actor, course, provider/model/prompt version, timing,
+         *     token usage, status -- because "a paid call happened and was discarded" is an audit
+         *     fact, not content. The `usage` row therefore never held the candidate in the first
+         *     place and does not change here.
+         *
+         *     A candidate that was already saved as a question version cannot be discarded (`409`):
+         *     the version exists, and removing the generation record would break the provenance
+         *     link from that version back to the call that produced it.
+         */
+        delete: operations["discardQuestionDraftGeneration"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/question-versions/{question_version_id}/learning-context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                question_version_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Public question context for B2's student learning hints (AI-FLOW-01B)
+         * @description INTERNAL, service identity only. B2 builds a hint from a student's own completed
+         *     evaluation, and to explain *what the exercise teaches* it needs the public half of the
+         *     question version: title, stem, language, tags and adapter kind. That is the whole of
+         *     this response.
+         *
+         *     **What is deliberately absent, and why it is a separate schema.** No reference answer,
+         *     no test case, no expected output, no fixture, no teacher note, no student data. This
+         *     is not `QuestionVersionPublic` minus some fields: it is enumerated field by field in
+         *     both the contract and the DTO, so a field added to the version DTO later cannot be
+         *     sent to a model by accident. A hint generator that knew the expected output could be
+         *     persuaded to repeat it into text a student reads, which would turn the hint feature
+         *     into the leak.
+         *
+         *     The caller must be a **service** (`serviceToken`), not a student browser: a browser
+         *     endpoint for this would be an enumerable read of question context, and the learning
+         *     hints are generated server-to-server. A student calling it gets `403`; a request with
+         *     no credential gets `401`, and both are answered before the version is looked up.
+         *
+         *     Only a version that has been published (or was published and later archived) is
+         *     readable. A draft is `409`: an evaluation run can only reference a published version,
+         *     so "hints for an unpublished version" is not a state the consumer can legitimately be
+         *     in, and serving it would create a read path for unpublished content that no
+         *     requirement asks for.
+         */
+        get: operations["getQuestionVersionLearningContext"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/questions/{question_id}/diagnostics": {
         parameters: {
             query?: never;
@@ -387,8 +581,20 @@ export interface paths {
          *     `content_sha256` is computed by the server over the decoded bytes and is the
          *     authoritative value the manifest must then declare.
          *
-         *     Fixture content is protected: it never appears in a public DTO, an event, a log or
-         *     a student-accessible location, and these bytes are not readable back over HTTP.
+         *     **Authorization is the teacher's own bearer token**, within the draft's course write
+         *     scope -- not `serviceToken`. Before this change the operation was declared
+         *     `internal` + service credential, which made a complete file question impossible from
+         *     a browser: the browser does not have (and must never be given) the service token, so
+         *     a teacher could pick "file I/O" and then never supply the fixture the adapter needs.
+         *     The operation is scoped exactly like every other draft write (course write scope on
+         *     the version's question), the digest authority stays in B3, and no credential leaves
+         *     the server. Reads are still impossible: fixture bytes have no read endpoint at all.
+         *
+         *     Only a **draft** version accepts an upload: a published version's content is frozen,
+         *     and its package digest already binds the fixture digests it was published with. The
+         *     version must exist first, which is why the authoring flow saves the draft and then
+         *     uploads -- "draft saved, attachments not finished" is a real state the client must
+         *     report as such rather than as a successful save of the files.
          */
         post: operations["uploadVersionFixture"];
         delete?: never;
@@ -627,6 +833,232 @@ export interface components {
             provider: string;
             model: string;
             prompt_version: string;
+        };
+        /**
+         * @description What the teacher asks for (AI-FLOW-01A). An **objective plus constraints**, never
+         *     question content: no reference answer, no hidden case, no student data and no existing
+         *     question travels here, which is why the model cannot be asked to "improve the answer
+         *     it was shown".
+         *
+         *     `language` and `adapter_kind` are teacher decisions, not model output. They are the
+         *     constraints the finished exercise has to satisfy, so the candidate echoes them
+         *     unchanged: a model that decided to answer in another language or for another adapter
+         *     would produce a question the rest of the platform cannot run.
+         *
+         *     `learning_objective` and `constraints` declare **no maximum length here** on purpose.
+         *     The accepted size is a deployment decision -- provider context window, cost per
+         *     token, abuse policy -- so freezing one environment's number into the contract would
+         *     make every other deployment either wrong or silently truncating. The configured limit
+         *     is returned by `getQuestionDraftGenerationCapabilities` and enforced by the server
+         *     with a field-level `422`; input is never truncated to fit.
+         */
+        QuestionDraftGenerationRequest: {
+            /** @description What students should learn. Passed to the model as data, never concatenated into the system instruction. */
+            learning_objective: string;
+            language: components["schemas"]["Language"];
+            /**
+             * @description Which of the three test frameworks the candidate must be runnable as (RQ-B-3-40/50/60).
+             * @enum {string}
+             */
+            adapter_kind: "stdin" | "file" | "callable";
+            difficulty?: string | null;
+            /** @description Course tags the candidate should align with. Guidance, not a closed vocabulary. */
+            tags?: string[];
+            desired_case_count?: number | null;
+            constraints?: string | null;
+        };
+        /**
+         * @description One AI candidate and everything a teacher needs to judge it (AI-FLOW-01A).
+         *
+         *     **Teacher-only.** `proposal` may carry a reference answer and hidden cases, so this
+         *     schema -- like `ReferenceAnswer` -- is a protected surface: it is returned only to the
+         *     account that generated the candidate while it holds course write scope, and it is not
+         *     shaped like `QuestionPublic`/`QuestionVersionPublic` because a student-facing DTO must
+         *     have no field that could hold any of it.
+         *
+         *     The candidate never becomes a question by itself. Saving is an ordinary
+         *     `createQuestion` call with a human-edited body (plus this `generation_id`), and every
+         *     field is validated again there -- the candidate's own validation exists to place
+         *     messages next to controls, not to guarantee a publishable question.
+         *
+         *     `status` is the only place the outcome is read, for every non-error case:
+         *
+         *       * `ready` -- parsed cleanly and editable;
+         *       * `needs_review` -- readable, with field-level problems named in `warnings`;
+         *       * `failed` -- no editor could be formed (for instance no stem); `proposal` is null;
+         *       * `unavailable` -- this deployment has no model provider; no call was made.
+         *
+         *     `ready` and `needs_review` both mean "human review required"; neither means correct,
+         *     fair or publishable.
+         */
+        QuestionDraftGeneration: {
+            /** @description Identifier used to restore the candidate after a refresh. Null only when no candidate was stored (`unavailable`). */
+            generation_id?: components["schemas"]["Uuid"] | null;
+            course_id: components["schemas"]["Uuid"];
+            /** @enum {string} */
+            status: "ready" | "needs_review" | "failed" | "unavailable";
+            /** @description The editable candidate. Null for `failed` and `unavailable`, and after the candidate was accepted or discarded. */
+            proposal?: components["schemas"]["QuestionDraftProposal"] | null;
+            /** @description Field-level problems, each naming the control it belongs to. Empty only for a clean `ready`. */
+            warnings: components["schemas"]["DraftGenerationWarning"][];
+            /** @description Where the candidate came from. Null for `unavailable`: there is no model to attribute a non-answer to. */
+            provenance?: components["schemas"]["AuthoringProvenance"] | null;
+            /** @description Non-empty. Must be rendered with the candidate: it is a draft, not an answer key. */
+            disclaimers: string[];
+            created_at?: components["schemas"]["Timestamp"] | null;
+            /** @description When the server will refuse to serve this candidate. The retention window is deployment-configured. */
+            expires_at?: components["schemas"]["Timestamp"] | null;
+            /** @description The version this candidate became, once a teacher saved it. Null while the candidate is unaccepted. */
+            accepted_question_version_id?: components["schemas"]["Uuid"] | null;
+        };
+        /**
+         * @description PROTECTED candidate fields. `reference_answer` and every `expected_*` below are the
+         *     content the question bank keeps out of every public DTO, and they appear here only
+         *     because this is the teacher's own drafting surface.
+         *
+         *     Every field is optional except the shape of the exercise itself. Missing optional
+         *     content is a warning, not a failure: the teacher fills it in. Nothing is invented to
+         *     fill a gap -- no title, no stem, no answer, no expected output.
+         */
+        QuestionDraftProposal: {
+            /** @description May be empty when the model proposed none: a title is the teacher's decision. */
+            title: string;
+            stem_markdown: string;
+            language: components["schemas"]["Language"];
+            /** @enum {string} */
+            adapter_kind: "stdin" | "file" | "callable";
+            tags: string[];
+            /** @description PROTECTED. A proposed solution the teacher still has to verify through the publish gate. */
+            reference_answer?: string | null;
+            cases?: components["schemas"]["QuestionDraftProposalCase"][];
+            /** @description Text fixtures only. A digest is never proposed: B3 computes it after the teacher uploads the bytes. */
+            fixtures?: components["schemas"]["QuestionDraftProposalFixture"][];
+            adapter?: components["schemas"]["QuestionDraftProposalAdapter"];
+            examples?: {
+                input: string;
+                output: string;
+                explanation?: string | null;
+            }[];
+            knowledge_points?: string[];
+            difficulty?: string | null;
+            /** @description Why the candidate is shaped this way. Read-only prose for the teacher. */
+            notes?: string | null;
+        };
+        /**
+         * @description PROTECTED. One proposed test case.
+         *
+         *     `weight` is nullable because an unusable number must not be carried forward: a
+         *     negative, `NaN` or infinite weight is replaced by `null` plus a field-level warning, so
+         *     the editor shows an empty box the teacher has to fill rather than a value that would
+         *     poison a score. The ordinal follows the row order in the editor, so reordering a case
+         *     renumbers it instead of leaving two cases claiming the same slot.
+         */
+        QuestionDraftProposalCase: {
+            /** @description May be empty when the model proposed none; the teacher names it. */
+            name: string;
+            ordinal: number;
+            weight?: number | null;
+            /** @default false */
+            visible_to_student: boolean;
+            stdin?: string | null;
+            args?: string[];
+            /** @description PROTECTED. */
+            expected_stdout?: string | null;
+            /** @description PROTECTED. */
+            expected_stderr?: string | null;
+            expected_exit_code?: number | null;
+        };
+        /**
+         * @description A **text** fixture the teacher still has to upload. Content only: there is no digest
+         *     field, because a digest is what binds bytes to a version and B3 computes it from the
+         *     uploaded bytes. A candidate that could declare a digest would be a client-declared
+         *     digest in disguise.
+         */
+        QuestionDraftProposalFixture: {
+            path: string;
+            /** @enum {string} */
+            mount: "input" | "expected_output";
+            content_text: string;
+        };
+        /**
+         * @description Suggested manifest pieces. Deliberately **not** a complete `AdapterManifest`: at
+         *     generation time a file question has no uploaded fixture yet, so claiming a complete
+         *     manifest would be a claim the server has not checked. Each piece here is validated on
+         *     its own (argument vector, exit code, comparison modes, import target), and the whole
+         *     manifest is validated again when the teacher saves.
+         */
+        QuestionDraftProposalAdapter: {
+            args?: string[];
+            stdin?: string | null;
+            expect_exit_code?: number | null;
+            comparison?: {
+                /** @enum {string} */
+                stdout?: "exact" | "ignore_trailing_whitespace" | "numeric_tolerance" | "ignored";
+                /** @enum {string} */
+                stderr?: "exact" | "ignore_trailing_whitespace" | "ignored";
+                numeric_tolerance?: number | null;
+            } | null;
+            callable?: {
+                module?: string | null;
+                attribute?: string | null;
+                arguments_json?: string | null;
+            } | null;
+        };
+        /**
+         * @description One field-level issue with a candidate. `field` names the form control, which is what
+         *     turns "the model's answer was imperfect" into "this box is wrong". The message
+         *     describes the problem and never quotes protected content.
+         */
+        DraftGenerationWarning: {
+            /** @description Dotted path into the candidate, e.g. `cases[2].weight`. */
+            field: string;
+            message: string;
+            /** @enum {string} */
+            severity: "error" | "warning" | "info";
+        };
+        /**
+         * @description What the generation form may state as fact (AI-FLOW-01A). Read from the deployment's
+         *     configuration, so the control shows the number the server actually enforces. No
+         *     credential, no provider URL, no other account's usage.
+         */
+        QuestionDraftGenerationCapabilities: {
+            course_id: components["schemas"]["Uuid"];
+            /**
+             * @description `unavailable` is a configuration state, not a failure.
+             * @enum {string}
+             */
+            provider_status: "enabled" | "unavailable";
+            provider?: string | null;
+            model?: string | null;
+            learning_objective_max_chars: number;
+            constraints_max_chars: number;
+            desired_case_count_max: number;
+            proposal_max_cases: number;
+            retention_seconds: number;
+            /** @description Null when this deployment does not cap requests. Must not be rendered as 0 remaining. */
+            requests_remaining?: number | null;
+            retry_after?: components["schemas"]["Timestamp"] | null;
+            disclaimers: string[];
+        };
+        /**
+         * @description The public half of one published version, for B2's student learning hints
+         *     (AI-FLOW-01B). Five fields, enumerated rather than filtered from
+         *     `QuestionVersionPublic`: no reference answer, no case, no expected output, no fixture,
+         *     no teacher note, no student data.
+         *
+         *     The consumer is B2 acting as a service: a hint is generated from a student's own
+         *     completed run, and this is the only question context that generation is allowed to
+         *     see. A separate schema is what makes "the hint generator cannot be handed the answer"
+         *     a property of the contract instead of a habit.
+         */
+        QuestionLearningContext: {
+            question_version_id: components["schemas"]["Uuid"];
+            title: string;
+            stem_markdown: string;
+            language: components["schemas"]["Language"];
+            tags: string[];
+            /** @enum {string} */
+            adapter_kind: "stdin" | "file" | "callable";
         };
         /**
          * @description Structural delta between two consecutive question versions (CHG-0013). Every field is
@@ -1217,6 +1649,42 @@ export interface components {
                 "application/problem+json": components["schemas"]["ProblemDetails"];
             };
         };
+        /** @description Rate limit exceeded. */
+        TooManyRequests: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["ProblemDetails"];
+            };
+        };
+        /**
+         * @description An upstream dependency answered, but not with something this service can use.
+         *
+         *     Distinct from `ServiceUnavailable` on purpose: "there is no dependency" and "the
+         *     dependency answered garbage" call for different operator actions, and collapsing them
+         *     would make a malformed model response indistinguishable from an unconfigured
+         *     deployment. The response `type` names the classification and the `detail` never
+         *     contains the upstream body -- an upstream error page can echo the request, which would
+         *     put a user's input into an error message.
+         */
+        BadGateway: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["ProblemDetails"];
+            };
+        };
+        /** @description File, aggregate or attachment size limit exceeded. */
+        PayloadTooLarge: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["ProblemDetails"];
+            };
+        };
     };
     parameters: {
         Cursor: string;
@@ -1270,6 +1738,20 @@ export interface operations {
         parameters: {
             query: {
                 course_id: components["schemas"]["Uuid"];
+                /**
+                 * @description The AI-FLOW-01A candidate this draft was edited from, when there is one.
+                 *
+                 *     It is a query parameter rather than a body field because `QuestionDraftInput` is
+                 *     closed (`additionalProperties: false`) and, more importantly, because it is not
+                 *     question content: the body is the teacher's own edited draft and is validated
+                 *     exactly as any other write. The id only records provenance -- B3 verifies that the
+                 *     generation belongs to the same actor and course, that it was neither discarded nor
+                 *     already accepted, and then binds it to the version **in the same transaction**,
+                 *     removing the candidate content. A draft that carries a generation id from someone
+                 *     else's candidate is refused (403), and a candidate is refused when the write it
+                 *     would have been associated with rolls back.
+                 */
+                generation_id?: components["schemas"]["Uuid"];
             };
             header?: never;
             path?: never;
@@ -1506,6 +1988,160 @@ export interface operations {
             422: components["responses"]["UnprocessableEntity"];
         };
     };
+    getQuestionDraftGenerationCapabilities: {
+        parameters: {
+            query: {
+                course_id: components["schemas"]["Uuid"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Provider state, configured limits and the caller's remaining budget. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuestionDraftGenerationCapabilities"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    createQuestionDraftGeneration: {
+        parameters: {
+            query: {
+                /** @description The course the draft is being written for. Used for authorization and for the candidate's ownership; never sent to the model. */
+                course_id: components["schemas"]["Uuid"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QuestionDraftGenerationRequest"];
+            };
+        };
+        responses: {
+            /**
+             * @description The candidate, its field-level warnings, its provenance and its expiry. Returned
+             *     for `ready`, `needs_review`, `failed` and `unavailable` alike -- the status, not the
+             *     HTTP code, says what happened, so a client has one shape and one branch to read.
+             *
+             *     `unavailable` is a **configuration state**, not a failure: no provider is
+             *     configured on this deployment, nothing left the process, nothing was charged and
+             *     nothing was stored (`proposal`, `generation_id`, `provenance` and `expires_at` are
+             *     all `null`). It is reported here rather than as `503` because the editor needs to
+             *     say "AI drafts are not enabled here, you can still write this question" next to the
+             *     button it disables, and a client that had to distinguish a deployment fact from a
+             *     runtime failure by status code would end up showing the wrong one. A **configured**
+             *     provider that misbehaves is `502`, which is a different statement with a different
+             *     operator action.
+             */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuestionDraftGeneration"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["UnprocessableEntity"];
+            429: components["responses"]["TooManyRequests"];
+            502: components["responses"]["BadGateway"];
+        };
+    };
+    getQuestionDraftGeneration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Identifier of a candidate, **not** a credential. Copying the id to another account
+                 *     produces `403`; it grants nothing.
+                 */
+                generation_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The stored candidate, unchanged. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuestionDraftGeneration"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    discardQuestionDraftGeneration: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /**
+                 * @description Identifier of a candidate, **not** a credential. Copying the id to another account
+                 *     produces `403`; it grants nothing.
+                 */
+                generation_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Candidate content removed; de-identified ledger row kept. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    getQuestionVersionLearningContext: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                question_version_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The public half of one published version. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuestionLearningContext"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
     getQuestionDiagnostics: {
         parameters: {
             query?: never;
@@ -1637,6 +2273,7 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
             422: components["responses"]["UnprocessableEntity"];
         };
     };

@@ -1,6 +1,6 @@
 schema_version: 1
 module: B4
-contract_version: 0.17.0
+contract_version: 0.18.0
 entry_point: autograder_b4.plugin:create_module
 provides: [b4-auth, b4-course, postgres, nats]
 requires: [host]

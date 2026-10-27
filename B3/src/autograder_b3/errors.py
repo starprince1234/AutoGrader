@@ -104,6 +104,21 @@ class ServiceUnavailable(B3Error):
     slug = "service-unavailable"
 
 
+class TooManyRequests(B3Error):
+    """A configured budget for a paid operation is exhausted (AI-FLOW-01A).
+
+    ``429`` rather than ``403``/``422``: the caller is authorized and the request is
+    well formed, so neither "you may not" nor "this is invalid" describes it. ``Retry-After``
+    carries the moment the window frees up, which is the only actionable part, and it comes
+    from the ledger rather than from a fixed number so it cannot disagree with the budget
+    that produced it.
+    """
+
+    status = 429
+    title = "Too Many Requests"
+    slug = "generation-budget-exhausted"
+
+
 # --- Domain specific conflicts (all 409) ---------------------------------
 
 

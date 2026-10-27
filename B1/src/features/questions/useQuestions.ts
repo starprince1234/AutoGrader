@@ -30,10 +30,19 @@ export type QuestionListFilter = {
  * 只取一页且不给出"还有更多"的信号，会让最后一页之后的题目**静默消失**——教师看到 100 行
  * 会以为那就是全部。因此这里用 `useInfiniteQuery` 把 `next_cursor` 一路走完，页面提供
  * "加载更多"，并显式显示是否已到末页。
+ *
+ * `options.enabled` 存在的理由只有一个：**学生不浏览全量题库**。P06 对非出题角色不渲染列表，
+ * 但"不渲染"不等于"不请求"——一个仍在后台发出的题库请求既没有必要，也让"学生能不能拿到全量
+ * 题目"这个问题在客户端就已经含糊了。因此由调用方显式关掉它。
  */
-export function useQuestionList(courseId: string | null, filter: QuestionListFilter) {
+export function useQuestionList(
+  courseId: string | null,
+  filter: QuestionListFilter,
+  options: { enabled?: boolean } = {},
+) {
   return useInfiniteQuery({
     queryKey: [...queryKeys.questions(courseId), filter.publishedOnly, filter.tags] as const,
+    enabled: options.enabled ?? true,
     initialPageParam: null as string | null,
     queryFn: async ({ pageParam }): Promise<QuestionListPage> => {
       const page = await apiRequest<QuestionPage>("/api/v1/questions", {

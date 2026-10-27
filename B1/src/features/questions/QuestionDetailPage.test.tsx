@@ -80,7 +80,7 @@ function renderQuestionDetail() {
 }
 
 describe("题目详情与版本机制（RQ-B-1-40）", () => {
-  it("渲染公开 DTO 的题干，并说明受控图形资源的数量（不伪造图片地址）", async () => {
+  it("渲染公开 DTO 的题干，并说明受控图形资源只以元数据出现（不伪造图片地址）", async () => {
     stub = installFetchStub([
       {
         path: `/api/v1/questions/${QUESTION_ID}`,
@@ -90,11 +90,10 @@ describe("题目详情与版本机制（RQ-B-1-40）", () => {
 
     renderQuestionDetail();
 
-    const stem = await screen.findByTestId("stem");
+    const stem = await screen.findByTestId("question-stem-body");
     expect(within(stem).getByText("统计文件行数")).toBeInTheDocument();
     expect(within(stem).getByText("wc -l")).toBeInTheDocument();
-    // 题干本身不含图片地址；资产只以 `stem_assets` 元数据出现，页面如实说明数量。
-    expect(screen.getByTestId("asset-present")).toBeInTheDocument();
+    // 题干本身不含图片地址；资产只以 `stem_assets` 元数据出现，页面不替它拼一个地址出来。
     expect(document.querySelector("img")).toBeNull();
   });
 
@@ -136,15 +135,16 @@ describe("题目详情与版本机制（RQ-B-1-40）", () => {
     const picker = await screen.findByTestId("version-select");
     expect(within(picker).getAllByRole("option")).toHaveLength(2);
     expect(await screen.findByTestId("version-panel")).toHaveTextContent("版本 3");
-    // 两个 stem 节点：题目当前题干 + 选中版本自己的题干（内容不同，必须都渲染）。
-    expect(screen.getAllByTestId("stem")).toHaveLength(2);
-    expect(screen.getAllByTestId("stem").at(-1)).toHaveTextContent("第三版题干");
+    // 两处题干：当前题干（页面主体）+ 选中版本的冻结题干（内容不同，必须都渲染）。
+    expect(screen.getByTestId("question-stem-body")).toBeInTheDocument();
+    expect(screen.getByTestId("version-stem-body")).toHaveTextContent("第三版题干");
+    expect(screen.getByTestId("version-stem-label")).toBeInTheDocument();
 
     // 切换到历史版本：渲染的是**该版本自己的**题干，而不是当前题干。
     await user.selectOptions(picker, VERSION_B);
     expect(await screen.findByTestId("version-panel")).toHaveTextContent("版本 2");
     expect(screen.getByTestId("historical-version-notice")).toBeInTheDocument();
-    expect(screen.getAllByTestId("stem").at(-1)).toHaveTextContent("第二版题干");
+    expect(screen.getByTestId("version-stem-body")).toHaveTextContent("第二版题干");
 
     // 切回版本 A：命中查询缓存，渲染内容与第一次一致（不因切换而改变）
     await user.selectOptions(picker, VERSION_A);
@@ -184,8 +184,8 @@ describe("题目详情与版本机制（RQ-B-1-40）", () => {
     renderQuestionDetail();
 
     await screen.findByTestId("version-panel");
-    // 只有题目详情那一个 stem；版本面板给出"内容一致"的说明而不是第二份副本。
-    expect(screen.getAllByTestId("stem")).toHaveLength(1);
+    // 只有题目主体那一份 stem；版本面板给出"内容一致"的说明而不是第二份副本。
+    expect(screen.queryByTestId("version-stem-body")).toBeNull();
     expect(screen.getByTestId("version-stem-same")).toBeInTheDocument();
   });
 

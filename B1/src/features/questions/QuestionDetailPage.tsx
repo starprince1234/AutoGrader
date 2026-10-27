@@ -2,19 +2,28 @@ import { Link } from "@tanstack/react-router";
 import { t } from "../../i18n";
 import { useSession } from "../../auth/sessionContext";
 import { canAuthorQuestions, canSubmitAnswer, canViewQuestionQuality } from "../../auth/visibility";
-import { Banner, EmptyState, ErrorState, Field, Panel, Spinner } from "../../ui/components";
+import { Banner, EmptyState, ErrorState, Field, PageTitle, Panel, Spinner, StatusPill } from "../../ui/components";
+import { formatDateTime } from "../../ui/format";
 import { ReferenceVerificationPanel } from "../authoring/ReferenceVerificationPanel";
 import { RevisionSummary } from "./RevisionSummary";
 import { SafeMarkdown } from "./SafeMarkdown";
 import { useQuestion, useQuestionVersion } from "./useQuestions";
 
 /**
- * 题目详情（RQ-B-1-40）。
+ * 题目详情（P07，RQ-B-1-40）。
  *
- * 版本切换：`QuestionPublic.versions` 给出完整版本历史（新→旧），下拉选择后以
- * `?version=<question_version_id>` 深链取该版本详情，并按 `question_version_id` 进查询缓存。
- * 渲染的是**该版本自己的题干**（`QuestionVersionPublic.stem_markdown`），不是当前题干——
- * 历史版本必须显示当时的内容，否则"看起来对、其实错"。
+ * 页面只有**一个** h1：题目的真实标题。语言、状态、标签以轻量文本/胶囊跟在标题旁边，
+ * 不再把"标题卡"与"版本卡"叠成两层同一件事。题干是主要内容，图片走受控资源路径。
+ *
+ * 版本：
+ * - `?version=<question_version_id>` 是唯一状态来源，切换后写回 URL，刷新或复制链接都回到同一版本；
+ * - 渲染的是**该版本自己的冻结题干**（`QuestionVersionPublic.stem_markdown`），不是题目当前题干；
+ * - 与当前题干逐字相同时只显示一份（避免两段一模一样的富文本看起来像渲染了两次），不同则在上方
+ *   标注"此版本题干"，历史版本还会给出"正在查看历史版本 v{n}"的提示。
+ *
+ * 授权：学生只在**已发布**版本上看到作答入口；未发布版本对学生显示"这个版本尚未发布，暂不能作答。"。
+ * 教师看到编辑入口（草稿 → 编辑草稿；已发布 → 另存为新版本）与题目质量深链，后者携带**当前选中的
+ * `question_version_id`**，页面不恢复独立的质量路由。
  */
 export function QuestionDetailPage({
   questionId,
@@ -36,74 +45,80 @@ export function QuestionDetailPage({
   // 必须用 effectiveId 取数：传原始 prop 会让"未显式选择"时根本不发请求，
   // 面板因此永远空白（集成时踩到过）。
   const version = useQuestionVersion(effectiveId);
-  const selected = versions.find((item) => item.question_version_id === effectiveId) ?? null;
-  // 版本的冻结题干与题目当前题干是否不同（决定要不要重复渲染一遍）。
   const versionStemDiffers =
     version.data !== undefined &&
     version.data.stem_markdown.trim() !== (question.data?.stem_markdown ?? "").trim();
+  const isHistorical =
+    version.data !== undefined &&
+    preferred !== null &&
+    version.data.question_version_id !== preferred.question_version_id;
+
+  if (question.isPending) return <Spinner />;
+  if (question.isError) return <ErrorState error={question.error} />;
+  if (!question.data) return <EmptyState />;
+
+  const shown = question.data;
 
   return (
     <div className="stack">
-      <Panel title={t("questions.detailTitle")} titleLevel={1}>
-        {question.isPending ? (
-          <Spinner />
-        ) : question.isError ? (
-          <ErrorState error={question.error} />
-        ) : question.data ? (
-          <div className="stack">
-            <div className="inline">
-              <h3>{question.data.title}</h3>
-              <span className="muted">
-                {t("questions.language")}：{t(`questions.language.${question.data.language}`)}
+      <div className="inline">
+        <Link className="button button--ghost" to="/questions" data-testid="back-to-list">
+          {t("questions.backToList")}
+        </Link>
+      </div>
+
+      <PageTitle>{shown.title}</PageTitle>
+
+      <div className="inline" data-testid="question-facts">
+        <span className="muted">
+          {t("questions.language")}：{t(`questions.language.${shown.language}`)}
+        </span>
+        <StatusPill
+          tone={
+            shown.status === "published" ? "ok" : shown.status === "draft" ? "warn" : "idle"
+          }
+        >
+          {t(`questions.status.${shown.status}`)}
+        </StatusPill>
+        {(shown.tags?.length ?? 0) > 0 ? (
+          <span className="inline" data-testid="question-tags">
+            {shown.tags?.map((tag) => (
+              <span className="pill pill--idle" key={tag}>
+                {tag}
               </span>
-              <span className="muted">
-                {t("grades.state")}：{t(`questions.status.${question.data.status}`)}
-              </span>
-              {(question.data.tags?.length ?? 0) > 0 ? (
-                <span className="inline" data-testid="question-tags">
-                  {question.data.tags?.map((tag) => (
-                    <span className="pill pill--idle" key={tag}>
-                      {tag}
-                    </span>
-                  ))}
-                </span>
-              ) : null}
-              {/* 出题入口只对出题角色渲染；服务端仍是判定方（B3 对越权写返回 403）。 */}
-              {canAuthorQuestions(session) ? (
-                <Link
-                  className="button button--ghost"
-                  to="/questions/$questionId/edit"
-                  params={{ questionId: question.data.question_id }}
-                  data-testid="edit-question"
-                >
-                  {t("questions.editDraft")}
-                </Link>
-              ) : null}
-              {/* 题目质量视图（CHG-0015）的入口：带上**当前选中的版本**，因为契约要求
-                  `question_version_id`。它与成绩证据视图同一角色集合，因此用同一个可见性判定。 */}
-              {effectiveId && canViewQuestionQuality(session) ? (
-                <Link
-                  className="button button--ghost"
-                  to="/quality"
-                  search={{ question_version_id: effectiveId, from: undefined, to: undefined }}
-                  data-testid="question-quality-link"
-                >
-                  {t("questions.qualityLink")}
-                </Link>
-              ) : null}
-            </div>
-
-            <SafeMarkdown source={question.data.stem_markdown} />
-
-            {(question.data.stem_assets?.length ?? 0) > 0 ? (
-              <p className="muted" data-testid="asset-present">
-                {t("questions.assetCount", { count: question.data.stem_assets?.length ?? 0 })}
-              </p>
-            ) : null}
-
-            <Banner tone="info">{t("questions.publicDtoGuard")}</Banner>
-          </div>
+            ))}
+          </span>
+        ) : (
+          <span className="muted" data-testid="question-tags-none">
+            {t("questions.tagsNone")}
+          </span>
+        )}
+        {/* 出题入口只对出题角色渲染；服务端仍是判定方（B3 对越权写返回 403）。 */}
+        {canAuthorQuestions(session) ? (
+          <Link
+            className="button button--ghost"
+            to="/questions/$questionId/edit"
+            params={{ questionId: shown.question_id }}
+            data-testid="edit-question"
+          >
+            {shown.status === "published" ? t("questions.newVersion") : t("questions.editDraft")}
+          </Link>
         ) : null}
+        {/* 题目质量视图的入口：带上**当前选中的版本**，因为契约要求 `question_version_id`。 */}
+        {effectiveId && canViewQuestionQuality(session) ? (
+          <Link
+            className="button button--ghost"
+            to="/quality"
+            search={{ question_version_id: effectiveId, from: undefined, to: undefined }}
+            data-testid="question-quality-link"
+          >
+            {t("questions.qualityLink")}
+          </Link>
+        ) : null}
+      </div>
+
+      <Panel title={t("questions.stemTitle")} testId="question-stem">
+        <SafeMarkdown source={shown.stem_markdown} testId="question-stem-body" />
       </Panel>
 
       <Panel title={t("questions.versionPicker")}>
@@ -122,6 +137,9 @@ export function QuestionDetailPage({
                   <option key={item.question_version_id} value={item.question_version_id}>
                     {t("questions.version", { version: item.version })} ·{" "}
                     {t(`questions.status.${item.status}`)}
+                    {item.published_at
+                      ? ` · ${formatDateTime(item.published_at, t("common.none"))}`
+                      : ""}
                   </option>
                 ))}
               </select>
@@ -140,26 +158,32 @@ export function QuestionDetailPage({
               <span className="muted">
                 {t("questions.adapterKind")}：{t(`questions.adapter.${version.data.adapter_kind}`)}
               </span>
-              <span className="muted">
-                {t("questions.language")}：{t(`questions.language.${version.data.language}`)}
-              </span>
-              <span className="muted">
-                {t("grades.state")}：{t(`questions.status.${version.data.status}`)}
-              </span>
+              <StatusPill
+                tone={
+                  version.data.status === "published"
+                    ? "ok"
+                    : version.data.status === "draft"
+                      ? "warn"
+                      : "idle"
+                }
+              >
+                {t(`questions.status.${version.data.status}`)}
+              </StatusPill>
             </div>
 
-            {selected && selected.question_version_id !== preferred?.question_version_id ? (
+            {isHistorical ? (
               <Banner tone="info" testId="historical-version-notice">
                 {t("questions.historicalVersion", { version: version.data.version })}
               </Banner>
             ) : null}
 
-            {/* 该版本自己的题干（可能为空，例如早期草稿）。
-                与当前题干逐字相同时不再重复渲染：两段一模一样的富文本一上一下，读起来
-                像是渲染了两遍，而不是"题目"与"版本"两个不同对象。内容一旦不同（历史版本、
-                或题干已改而版本冻结）就必须完整渲染——那正是"看起来对、其实错"的防线。 */}
+            {/* 该版本自己的题干。与当前题干逐字相同时不再重复渲染；不同时，历史版本要标出
+                "此版本题干"，否则读者会把冻结内容当成当前内容。 */}
             {version.data.stem_markdown === "" ? null : versionStemDiffers ? (
-              <SafeMarkdown source={version.data.stem_markdown} />
+              <>
+                <h3 data-testid="version-stem-label">{t("questions.versionStemLabel")}</h3>
+                <SafeMarkdown source={version.data.stem_markdown} testId="version-stem-body" />
+              </>
             ) : (
               <p className="muted" data-testid="version-stem-same">
                 {t("questions.versionStemSame")}
@@ -167,9 +191,15 @@ export function QuestionDetailPage({
             )}
 
             {version.data.status !== "published" ? (
-              <Banner tone="warn" testId="version-not-published">
-                {t("questions.notPublished")}
-              </Banner>
+              canSubmitAnswer(session) ? (
+                <Banner tone="warn" testId="version-not-published">
+                  {t("questions.notPublished")}
+                </Banner>
+              ) : (
+                <Banner tone="info" testId="version-not-published">
+                  {t("questions.notPublishedStaff")}
+                </Banner>
+              )
             ) : canSubmitAnswer(session) ? (
               <div className="inline">
                 <Link
@@ -181,14 +211,12 @@ export function QuestionDetailPage({
                 </Link>
               </div>
             ) : (
-              // 教师/助教看得到题干，但作答入口对学生开放（服务端同样只接受学生提交）。
-              // 之前这里对所有人渲染按钮，点进去立刻是 403 页面——一个自己指向死路的 CTA。
+              // 教师/助教看得到题干，但作答入口只对学生开放（服务端同样只接受学生提交）。
               <p className="muted" data-testid="submit-student-only">
                 {t("questions.submitStudentOnly")}
               </p>
             )}
 
-            {/* 版本说明与结构差异（CHG-0013）。仅在服务端真的给出时渲染内容。 */}
             <RevisionSummary
               revisionNote={version.data.revision_note}
               revisionDiff={version.data.revision_diff}
@@ -198,9 +226,9 @@ export function QuestionDetailPage({
         ) : null}
       </Panel>
 
-      {/* 未发布版本读到这里时，读者会去找"发布"动作。`ADR-0015` 之后这条路径是通的：
-          入口在 `ReferenceVerificationPanel`（请求平台验证 → 全通过且存证已记录才可发布）。
-          **只对出题角色渲染**：存证的存在与否不是学生需要的信息。 */}
+      {/* 未发布版本看到这里时，读者会去找"发布"动作。入口在 `ReferenceVerificationPanel`
+          （请求平台验证 → 全通过且存证已记录才可发布），**只对出题角色渲染**：
+          存证的存在与否不是学生需要的信息。 */}
       {version.data && version.data.status !== "published" && canAuthorQuestions(session) ? (
         <ReferenceVerificationPanel version={version.data} questionId={questionId} />
       ) : null}

@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from ..auth import Principal, require_course_read
-from ..errors import Forbidden, NotFound, Unauthenticated
+from ..errors import Conflict, Forbidden, NotFound, Unauthenticated
 from ..infra.db import Database
 from ..infra.models import Question, QuestionAsset, QuestionVersion
 from ..infra.repositories import QuestionBankRepository
@@ -212,8 +212,72 @@ def list_stem_assets(
         return assets
 
 
-def load_asset_for_delivery(
+@dataclass(frozen=True)
+class LearningContext:
+    """The **public** half of one published version, for B2's learning hints (AI-FLOW-01B).
+
+    Enumerated fields, not a filtered version object. A hint generator needs what the
+    exercise teaches -- title, stem, language, tags and adapter kind -- and nothing about how
+    it is judged. Handing it a whole version and removing keys would leave every future field
+    on ``QuestionVersionPublic`` one review slip away from being sent to a model that writes
+    text a student reads.
+    """
+
+    question_version_id: uuid.UUID
+    title: str
+    stem_markdown: str
+    language: str
+    tags: tuple[str, ...]
+    adapter_kind: str
+
+
+def load_learning_context(
     database: Database,
+    *,
+    principal: Principal | None,
+    question_version_id: uuid.UUID,
+) -> LearningContext:
+    """Read the public context of a **published** version, for the B2 service identity.
+
+    ``require_service`` runs before the first read, so a teacher or student calling this
+    endpoint learns only that it is restricted -- not whether a given version exists
+    (``AI-FLOW-01B``). A draft is refused with ``409``: a version that has never been
+    published cannot appear in an evaluation run, so there is no run whose hints would need
+    it, and serving it here would create a read path for unpublished content that no
+    requirement asks for.
+
+    Reads run on the ordinary role: every column involved is public question-bank data, and
+    the point of the separate DTO is that no protected table is touched at all.
+    """
+    from ..auth import require_service
+    from .tags import tags_from_storage
+
+    require_service(principal)
+    with database.app_session() as session:
+        bank = QuestionBankRepository(session)
+        version = bank.get_version(question_version_id)
+        if version is None:
+            raise NotFound("question version not found")
+        question = bank.get_question(version.question_id)
+        if question is None:  # pragma: no cover - FK guarantees the parent
+            raise NotFound("question not found")
+        if version.status == "draft":
+            raise Conflict("learning context is only available for a published question version")
+        manifest = version.adapter_manifest or {}
+        kind = manifest.get("kind")
+        if kind not in ("stdin", "file", "callable"):  # pragma: no cover - stored value is validated
+            raise Conflict("this version has no usable adapter declaration")
+        return LearningContext(
+            question_version_id=version.question_version_id,
+            title=question.title,
+            stem_markdown=version.stem_markdown,
+            language=version.language,
+            tags=tags_from_storage(question.tags),
+            adapter_kind=kind,
+        )
+
+
+def load_asset_for_delivery(    database: Database,
     *,
     principal: Principal | None,
     question_id: uuid.UUID,

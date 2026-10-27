@@ -1,6 +1,6 @@
 schema_version: 1
 module: B1
-contract_version: 0.17.0
+contract_version: 0.18.0
 entry_point: static:dist
 provides: [web-ui]
 requires: [host, b4-auth, b2-submissions, b3-questions]

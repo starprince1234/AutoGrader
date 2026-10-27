@@ -352,6 +352,159 @@ class Fixture(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class QuestionDraftGeneration(Base):
+    """PROTECTED. An unaccepted AI candidate (AI-FLOW-01A).
+
+    Why it is its own table rather than columns on ``question_versions``: a candidate is not
+    a question. It belongs to no question, no version and no case set, it is never
+    assignable, and it must be deletable without leaving a hole in the bank. Keeping it in
+    the version table would make "a draft exists" and "a model guessed something" the same
+    row.
+
+    ``proposal`` holds the teacher-only candidate and is therefore protected; it is set to
+    ``NULL`` -- not deleted with the row -- when the candidate is accepted or discarded, so
+    the de-identified ledger row keeps pointing at a generation that provably no longer
+    carries content. ``expires_at`` is the deployment-configured retention boundary; a read
+    after it is refused and the row is purged, which is what makes "the proposal does not
+    live forever" a property of the data rather than of a cron job.
+    """
+
+    __tablename__ = "question_draft_generations"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('ready', 'needs_review', 'failed')",
+            name="ck_question_draft_generations_status",
+        ),
+        CheckConstraint(
+            "language IN ('python', 'bash')",
+            name="ck_question_draft_generations_language",
+        ),
+        CheckConstraint(
+            "adapter_kind IN ('stdin', 'file', 'callable')",
+            name="ck_question_draft_generations_adapter_kind",
+        ),
+        CheckConstraint(
+            "length(owner_subject) BETWEEN 1 AND 200",
+            name="ck_question_draft_generations_owner_subject",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(warnings) = 'array'",
+            name="ck_question_draft_generations_warnings_array",
+        ),
+        CheckConstraint(
+            "proposal IS NULL OR jsonb_typeof(proposal) = 'object'",
+            name="ck_question_draft_generations_proposal_object",
+        ),
+        CheckConstraint(
+            "discarded_at IS NULL OR proposal IS NULL",
+            name="ck_question_draft_generations_discarded_has_no_proposal",
+        ),
+        CheckConstraint(
+            "accepted_at IS NULL OR (proposal IS NULL AND accepted_question_version_id IS NOT NULL)",
+            name="ck_question_draft_generations_accepted_has_no_proposal",
+        ),
+        CheckConstraint("expires_at > created_at", name="ck_question_draft_generations_expiry"),
+        Index("ix_question_draft_generations_owner_subject", "owner_subject", "created_at"),
+        Index("ix_question_draft_generations_course_id", "course_id"),
+        Index("ix_question_draft_generations_expires_at", "expires_at"),
+        {"schema": SCHEMA},
+    )
+
+    generation_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    course_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    #: The JWT ``sub`` of the teacher who asked, as text rather than UUID: the subject is
+    #: whatever the issuer chose to put there, and narrowing it to a UUID would silently
+    #: drop every caller whose issuer uses another form.
+    owner_subject: Mapped[str] = mapped_column(String(200), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    language: Mapped[str] = mapped_column(String(16), nullable=False)
+    adapter_kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    provider: Mapped[str] = mapped_column(String(100), nullable=False)
+    model: Mapped[str] = mapped_column(String(100), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    proposal: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
+    warnings: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    accepted_question_version_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey(
+            "b3.question_versions.question_version_id",
+            name="fk_question_draft_generations_accepted_question_version_id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+    )
+    accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    discarded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AIGenerationUsage(Base):
+    """De-identified ledger for paid model calls (AI-FLOW-01A).
+
+    There is **no column** for the prompt, the objective, the response body or the
+    candidate: "the raw prompt is not stored" is a property of the table's shape, not a rule
+    somebody has to remember. What is stored is enough to answer the questions an operator
+    or a budget calculation actually asks -- who, which course, which provider/model/prompt
+    version, when, how long, how many tokens, what happened -- and nothing that could carry
+    protected content or personal data.
+
+    Not a protected table: every column above is already safe to read, and the request budget
+    has to be computable without touching a candidate.
+    """
+
+    __tablename__ = "ai_generation_usage"
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('ready', 'needs_review', 'failed')",
+            name="ck_ai_generation_usage_status",
+        ),
+        CheckConstraint(
+            "length(owner_subject) BETWEEN 1 AND 200",
+            name="ck_ai_generation_usage_owner_subject",
+        ),
+        CheckConstraint("duration_ms >= 0", name="ck_ai_generation_usage_duration_ms"),
+        CheckConstraint(
+            "prompt_tokens IS NULL OR prompt_tokens >= 0",
+            name="ck_ai_generation_usage_prompt_tokens",
+        ),
+        CheckConstraint(
+            "completion_tokens IS NULL OR completion_tokens >= 0",
+            name="ck_ai_generation_usage_completion_tokens",
+        ),
+        CheckConstraint(
+            "total_tokens IS NULL OR total_tokens >= 0",
+            name="ck_ai_generation_usage_total_tokens",
+        ),
+        Index("ix_ai_generation_usage_owner_subject", "owner_subject", "requested_at"),
+        Index("ix_ai_generation_usage_generation_id", "generation_id"),
+        {"schema": SCHEMA},
+    )
+
+    usage_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    #: ``NULL`` when the call failed before a candidate existed: the ledger records the paid
+    #: attempt even when there is nothing a teacher could resume.
+    generation_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+    course_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
+    owner_subject: Mapped[str] = mapped_column(String(200), nullable=False)
+    provider: Mapped[str] = mapped_column(String(100), nullable=False)
+    model: Mapped[str] = mapped_column(String(100), nullable=False)
+    prompt_version: Mapped[str] = mapped_column(String(100), nullable=False)
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    duration_ms: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    error_category: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    prompt_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    completion_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    total_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: The version this generation's candidate became, once a teacher saved it. This is the
+    #: link that makes "generated, then accepted by a human" auditable after the proposal
+    #: content is gone.
+    accepted_question_version_id: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
+
+
 class ReferenceAttestation(Base):
     """A verifier's digest-bound claim that a reference answer reproduces its outputs.
 
@@ -603,6 +756,8 @@ ALL_MODELS = (
     Blob,
     Fixture,
     ReferenceAttestation,
+    QuestionDraftGeneration,
+    AIGenerationUsage,
     Assignment,
     AssignmentItem,
     EventInbox,
@@ -616,4 +771,18 @@ ALL_MODELS = (
 #: Tables the ordinary question-bank role must never read (acceptance 3-10-3).
 #: ``reference_attestations`` is intentionally absent: it carries a digest and counts,
 #: never the content those counts are about.
-PROTECTED_TABLES = ("reference_answers", "test_suites", "test_cases", "blobs", "fixtures")
+#: ``question_draft_generations`` **is** protected: an unaccepted AI candidate may hold a
+#: reference answer and proposed hidden cases, so it is exactly the class of content that
+#: table exists to keep away from any read path that is not the teacher's own draft write
+#: (AI-FLOW-01A).
+#: ``ai_generation_usage`` is deliberately **not** protected: it has no column for a prompt,
+#: a response body or a candidate, only identifiers, counts and a status, which is what makes
+#: the ledger safe to read for a budget calculation without touching protected content.
+PROTECTED_TABLES = (
+    "reference_answers",
+    "test_suites",
+    "test_cases",
+    "blobs",
+    "fixtures",
+    "question_draft_generations",
+)

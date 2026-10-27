@@ -160,6 +160,24 @@ export interface components {
                 "application/problem+json": components["schemas"]["ProblemDetails"];
             };
         };
+        /**
+         * @description An upstream dependency answered, but not with something this service can use.
+         *
+         *     Distinct from `ServiceUnavailable` on purpose: "there is no dependency" and "the
+         *     dependency answered garbage" call for different operator actions, and collapsing them
+         *     would make a malformed model response indistinguishable from an unconfigured
+         *     deployment. The response `type` names the classification and the `detail` never
+         *     contains the upstream body -- an upstream error page can echo the request, which would
+         *     put a user's input into an error message.
+         */
+        BadGateway: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["ProblemDetails"];
+            };
+        };
     };
     parameters: {
         /** @description W3C Trace Context. Propagated to logs, database records and emitted events. */

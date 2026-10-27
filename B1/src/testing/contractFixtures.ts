@@ -19,6 +19,8 @@ import type {
   GradeRow,
   IntakeQuarantineView,
   ProblemDetails,
+  QuestionDraftGeneration,
+  QuestionDraftGenerationCapabilities,
   QuestionPublic,
   QuestionTagCoverage,
   QuestionVersionPublic,
@@ -397,14 +399,91 @@ export function authoringAssistance(
 }
 
 /**
+ * AI 结构化草稿生成（AI-FLOW-01A）：一份可编辑候选。
+ *
+ * 刻意带上 `needs_review` 才会有的**字段级**问题与一个权重为 `null` 的用例：
+ * 这两处正是"候选不是成品"的体现，测试要能证明页面把它们当成待补项而不是错误结果。
+ */
+export function questionDraftGeneration(
+  overrides?: Partial<QuestionDraftGeneration>,
+): QuestionDraftGeneration {
+  return {
+    generation_id: UUID_C,
+    course_id: UUID_A,
+    status: "needs_review",
+    proposal: {
+      title: "统计标准输入的行数",
+      stem_markdown: "读取标准输入，输出它的行数。",
+      language: "python",
+      adapter_kind: "stdin",
+      tags: ["unix", "text-processing"],
+      reference_answer: "import sys\nprint(len(sys.stdin.read().splitlines()))\n",
+      adapter: {
+        expect_exit_code: 0,
+        comparison: { stdout: "ignore_trailing_whitespace", stderr: "ignored" },
+      },
+      cases: [
+        {
+          name: "三行",
+          ordinal: 0,
+          weight: 1,
+          visible_to_student: false,
+          stdin: "a\nb\nc\n",
+          expected_stdout: "3\n",
+          expected_exit_code: 0,
+        },
+        // 服务端判定权重不可用 → null + 一条字段问题；页面必须留空让教师填。
+        { name: "空输入", ordinal: 1, weight: null, visible_to_student: false },
+      ],
+    },
+    warnings: [
+      { field: "cases[1].weight", message: "权重必须是大于 0 的有限数字；已留空。", severity: "warning" },
+    ],
+    provenance: {
+      provider: "example-provider",
+      model: "example-model-v1",
+      prompt_version: "b3-draft-generation-v1",
+    },
+    disclaimers: [
+      "模型生成的是候选草稿，不是正确答案；每个字段都由你审阅并确认。",
+      "生成不会创建题目、版本或用例，只有你点击“保存草稿”才会写入题库。",
+    ],
+    created_at: "2026-10-24T08:00:00.000Z",
+    expires_at: "2026-10-25T08:00:00.000Z",
+    accepted_question_version_id: null,
+    ...overrides,
+  } as QuestionDraftGeneration;
+}
+
+/** 生成能力（`getQuestionDraftGenerationCapabilities`）：上限来自部署配置。 */
+export function generationCapabilities(
+  overrides?: Partial<QuestionDraftGenerationCapabilities>,
+): QuestionDraftGenerationCapabilities {
+  return {
+    course_id: UUID_A,
+    provider_status: "enabled",
+    provider: "example-provider",
+    model: "example-model-v1",
+    learning_objective_max_chars: 1000,
+    constraints_max_chars: 500,
+    desired_case_count_max: 10,
+    proposal_max_cases: 20,
+    retention_seconds: 86400,
+    requests_remaining: 7,
+    retry_after: null,
+    disclaimers: ["模型生成的是候选草稿，不是正确答案。"],
+    ...overrides,
+  } as QuestionDraftGenerationCapabilities;
+}
+
+/**
  * 与 `MAIN/contracts/examples/evaluation-report.json` 同形（含隐藏用例不给期望输出）。
  *
  * 第二个用例刻意带有 CHG-0012 的三个新块：`resource` 有值（含 `limit_hit`）、
  * `artifacts` 有期望/实际摘要与文件改动、`explanation` 是确定性文本。
  * 第一个用例只有 `resource: null`：**未测量**，不是 0。
  */
-export function evaluationReport(overrides?: Partial<EvaluationReport>): EvaluationReport {
-  return {
+export function evaluationReport(overrides?: Partial<EvaluationReport>): EvaluationReport {  return {
     evaluation_run_id: UUID_RUN,
     submission_id: UUID_C,
     question_version_id: UUID_D,

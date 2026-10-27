@@ -3,6 +3,7 @@ import type {
   AdapterManifest,
   Language,
   QuestionDraftInput,
+  QuestionDraftProposal,
   QuestionPublic,
   QuestionVersionPublic,
   TestCaseInput,
@@ -17,18 +18,22 @@ import type {
  * **可读回与不可读回的字段**（这是本页最重要的一条约束）：
  * - 可读回：`title`/`stem_markdown`/`language`/`tags`（`QuestionPublic`），
  *   `adapter_kind`/`max_files`/`max_total_bytes`（`QuestionVersionPublic`）；
- * - **不可读回**：`reference_answer`、`cases[]`（契约明确标为 PROTECTED，公开 DTO 里不存在），
- *   以及适配器的 `args`/`stdin`/`expect_exit_code`/`comparison`/`callable`（公开 DTO 只给
- *   `adapter_kind`，`RevisionDiff` 也只给布尔与长度，读不出这些值）。
+ * - **不可读回**：`reference_answer`、`cases[]`（契约明确标为 PROTECTED，公开 DTO 里不存在）、
+ *   适配器的 `args`/`stdin`/`expect_exit_code`/`comparison`/`callable`，以及**夹具清单**
+ *   （`adapter.files[]` 只有摘要，且公开 DTO 不返回它）。
  *
- * **省略即保留（CHG-0017，契约 0.15.0）**：两个受保护字段都是**可选**的，留空表示
- * "我对这个字段不作声明"，**不是**"清空它"：
+ * **省略即保留（CHG-0017）**：两个受保护字段都是**可选**的，留空表示"我对这个字段不作声明"，
+ * **不是**"清空它"：
  * - `cases` 省略 ⇒ 服务端保留该版本已有的用例；提供 ⇒ **整体替换**那个集合；
  * - `reference_answer` 省略**或空白** ⇒ 保留已存的答案。
  *
  * 因此本页对这两个字段的做法是：**留空就不发**（而不是发一个空值）。`required` 一字未改，
  * 仍是 `[title, stem_markdown, language, adapter]`——那四个字段**必须每次都发**，
  * 不要试图只发变动的字段（省略语义只对上面两个受保护字段成立，给别的字段加省略语义是另一个契约变更）。
+ *
+ * 夹具（`adapter.files[]`）不属于"可省略"的受保护字段：`adapter` 每次都要整体重发，所以夹具声明
+ * 也每次都要重发。摘要**只能来自服务端上传结果**（见 `FixtureForm.contentSha256`），本模块从不
+ * 自行计算或接受用户输入的摘要。
  */
 
 /** 契约 `QuestionDraftInput.tags[].pattern` 与长度/数量上限（`b3.yaml`）。 */
@@ -40,10 +45,25 @@ export const TAG_MAX_LENGTH = 40;
 export const MAX_FILES_LIMIT = 100;
 export const MAX_TOTAL_BYTES_LIMIT = 10485760;
 
+/** 题目标题上限（契约 `title.maxLength`）。 */
+export const TITLE_MAX_LENGTH = 300;
+
+/**
+ * 图片白名单：**与 B3 的 `ALLOWED_ASSET_CONTENT_TYPES` 一致**。
+ * SVG 刻意不在其中——它能携带脚本，而资源是从 API 源返回的。B3 会再校验一次字节魔数，
+ * 因此这里的列别只是让教师在选错文件时立刻看到原因。
+ */
+export const IMAGE_CONTENT_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp"] as const;
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+/** 契约 `FixtureUploadInput` 没有字节上限字段，B3 的默认限制是 1 MiB。 */
+export const MAX_FIXTURE_BYTES = 1024 * 1024;
+export const MAX_FIXTURE_PATH_LENGTH = 200;
+
 export type AdapterKind = AdapterManifest["kind"];
 export type ComparisonPolicy = NonNullable<AdapterManifest["comparison"]>;
 export type StdoutComparison = ComparisonPolicy["stdout"];
 export type StderrComparison = NonNullable<ComparisonPolicy["stderr"]>;
+export type FixtureMount = "input" | "expected_output";
 
 export const LANGUAGE_OPTIONS: readonly Language[] = ["python", "bash"] as const;
 export const STDOUT_COMPARISONS: readonly StdoutComparison[] = [
@@ -59,14 +79,18 @@ export const STDERR_COMPARISONS: readonly StderrComparison[] = [
 ] as const;
 
 /**
- * 本页可选择的适配器类型。
+ * 本页可选择的适配器类型：**三种全部可选**。
  *
- * `file` 不在其中：`AdapterManifest.files[]` 只带 `{path, content_sha256, mount}`，字节必须经
- * `POST /api/v1/question-versions/{id}/fixtures` 上传，而该端点是 `internal` + `serviceToken`，
- * 摘要由服务端计算。B1 既拿不到服务令牌，也不会替服务端声明一个摘要。
- * 已存在的 `file` 版本仍会被读出来（`adapter_kind` 可读），但本页拒绝保存它以免静默改写。
+ * `file` 曾经被排除，理由是夹具端点当时是 `internal` + serviceToken，浏览器不能安全调用。
+ * 那个端点现在使用教师 bearer JWT + 草稿所属课程授权（见 `useUploadFixture`），摘要仍由 B3 计算，
+ * 因此浏览器可以完整创建 file 题型——**前提是先保存草稿拿到 `question_version_id`**，
+ * 因为夹具是挂在一个版本上的。
  */
-export const SELECTABLE_ADAPTER_KINDS: readonly AdapterKind[] = ["stdin", "callable"] as const;
+export const SELECTABLE_ADAPTER_KINDS: readonly AdapterKind[] = [
+  "stdin",
+  "file",
+  "callable",
+] as const;
 
 export type CaseForm = {
   name: string;
@@ -77,6 +101,19 @@ export type CaseForm = {
   expectedStdout: string;
   expectedStderr: string;
   expectedExitCode: string;
+};
+
+/**
+ * 已上传的夹具。`contentSha256` 与 `sizeBytes` **只能**来自服务端上传结果，
+ * 表单里没有让用户输入摘要的入口——摘要就是"这份字节"的绑定值。
+ */
+export type FixtureForm = {
+  fixtureId: string;
+  path: string;
+  mount: FixtureMount;
+  contentSha256: string;
+  sizeBytes: number;
+  fileName: string;
 };
 
 export type DraftForm = {
@@ -99,6 +136,8 @@ export type DraftForm = {
   maxTotalBytes: string;
   revisionNote: string;
   cases: CaseForm[];
+  /** 已上传的夹具声明（`adapter.files[]`）。未上传的文本建议留在这里没有意义：摘要未知。 */
+  fixtures: FixtureForm[];
   /**
    * 编辑已有题目时，提交用例会**整体替换**服务端那份读不回来的集合（CHG-0017）。
    * 本页读不到现值，因此这个替换必须由人显式确认一次，而不是靠"我加了一个用例"推断出来。
@@ -145,17 +184,22 @@ export function emptyDraftForm(): DraftForm {
     // 新建时给一行空用例：这是"请填一个用例"的邀请，它本身不构成声明
     // （提交前仍会被逐字段校验）。清空它等于"这次不声明用例"。
     cases: [emptyCase()],
+    fixtures: [],
     confirmCaseReplacement: false,
   };
 }
 
 /**
- * 从公开 DTO 预填。**只有公开 DTO 里真的存在的字段会被填**：参考答案、用例与适配器细节不会被
- * "顺手留空"以外的任何方式对待——它们的空是有含义的（"本页读不到服务端的现值"），
+ * 从公开 DTO 预填。**只有公开 DTO 里真的存在的字段会被填**：参考答案、用例、适配器细节与夹具
+ * 清单不会被"顺手留空"以外的任何方式对待——它们的空是有含义的（"本页读不到服务端的现值"），
  * 不是加载失败，**也不是"服务端没有"**。
  *
  * 编辑路径刻意以**零个用例**开场：本页读不到该版本已有的用例集合，凭空渲染一行空用例会让
  * "我不知道有几个"看起来像"它没有用例"，而提交那一行还会把整个集合替换掉。
+ *
+ * 夹具同理，且后果更硬：`adapter` 是整体重发的，所以编辑一个 file 题型时**必须重新上传**夹具，
+ * 否则新版本会声明零个 input 夹具，发布时会被编译器拒绝（"must declare at least one input
+ * fixture"）。本页把这件事写成可见提示，而不是假装清单已经读回来了。
  */
 export function draftFormFrom(
   question: QuestionPublic | undefined,
@@ -175,7 +219,65 @@ export function draftFormFrom(
         ? base.maxTotalBytes
         : String(version.max_total_bytes),
     cases: [],
+    fixtures: [],
     confirmCaseReplacement: false,
+  };
+}
+
+/**
+ * 把一份 AI 候选（AI-FLOW-01A）应用到表单，得到**教师可继续编辑**的工作副本。
+ *
+ * 三条边界：
+ * - 只填表单里存在的字段；语言与适配器沿用**教师已选**的值（它们不是模型的建议，见
+ *   `QuestionDraftGenerationRequest` 的说明），候选里不一致的值也不会覆盖它们；
+ * - `weight` 为空（服务端判定不可用）时留空，由逐字段校验提示教师填写——不替它填一个数字；
+ * - provider 没给 `comparison.stdout` 时取 `"exact"`：manifest 要求这一项，而 `exact` 是最严格的
+ *   默认值，教师在下拉里能看到并修改。这是**界面默认值**，不是模型输出，也不是"猜出来的结论"。
+ *
+ * 返回值不含服务端的 field warnings：那些属于候选预览，由调用方与预览一起展示并定位到控件。
+ */
+export function applyProposal(form: DraftForm, proposal: QuestionDraftProposal): DraftForm {
+  const suggested = proposal.adapter;
+  const comparisonStdout = suggested?.comparison?.stdout ?? "exact";
+  const comparisonStderr = suggested?.comparison?.stderr ?? form.comparisonStderr;
+  const tolerance = suggested?.comparison?.numeric_tolerance;
+  return {
+    ...form,
+    title: proposal.title,
+    stemMarkdown: proposal.stem_markdown,
+    tags: (proposal.tags ?? []).join(", "),
+    referenceAnswer: proposal.reference_answer ?? "",
+    adapterKind: proposal.adapter_kind,
+    adapterArgs: (suggested?.args ?? []).join(" "),
+    adapterStdin: suggested?.stdin ?? "",
+    adapterExpectExitCode:
+      suggested?.expect_exit_code === null || suggested?.expect_exit_code === undefined
+        ? ""
+        : String(suggested.expect_exit_code),
+    callableModule: suggested?.callable?.module ?? "",
+    callableAttribute: suggested?.callable?.attribute ?? "",
+    callableArgumentsJson: suggested?.callable?.arguments_json ?? "",
+    comparisonStdout,
+    comparisonStderr,
+    numericTolerance:
+      tolerance === null || tolerance === undefined ? "" : String(tolerance),
+    cases: (proposal.cases ?? []).map((item) => ({
+      name: item.name,
+      weight: item.weight === null || item.weight === undefined ? "" : String(item.weight),
+      visibleToStudent: item.visible_to_student ?? false,
+      stdin: item.stdin ?? "",
+      args: (item.args ?? []).join(" "),
+      expectedStdout: item.expected_stdout ?? "",
+      expectedStderr: item.expected_stderr ?? "",
+      expectedExitCode:
+        item.expected_exit_code === null || item.expected_exit_code === undefined
+          ? ""
+          : String(item.expected_exit_code),
+    })),
+    // 候选本身不携带夹具摘要（B3 从不建议摘要），所以已上传的夹具保留，文本建议由教师手动上传。
+    fixtures: form.fixtures,
+    // 应用候选会整体替换用例集合，编辑态下仍需教师确认。
+    confirmCaseReplacement: form.confirmCaseReplacement,
   };
 }
 
@@ -224,16 +326,35 @@ export function parseTags(raw: string): ParsedTags {
   return { tags, invalid };
 }
 
+/**
+ * 逻辑路径校验：与 B3 的 `validate_workspace_path` 同一条规则（工作区相对、无 `..`、无绝对路径、
+ * 无盘符、无 `~`、无空段）。放在这里是为了让教师在输入时就看到原因，而不是上传后才收到 422。
+ */
+const WORKSPACE_PATH = /^[A-Za-z0-9_.-]+(\/[A-Za-z0-9_.-]+)*$/;
+
+export function isValidFixturePath(path: string): boolean {
+  const trimmed = path.trim();
+  if (trimmed === "" || trimmed !== path) return false;
+  if (trimmed.length > MAX_FIXTURE_PATH_LENGTH) return false;
+  if (trimmed.startsWith("/") || trimmed.startsWith("\\") || trimmed.startsWith("~")) return false;
+  if (trimmed.includes("\\") || /^[A-Za-z]:/.test(trimmed)) return false;
+  if (trimmed.split("/").some((segment) => segment === "" || segment === "." || segment === "..")) {
+    return false;
+  }
+  return WORKSPACE_PATH.test(trimmed);
+}
+
 function intValue(raw: string): number | null {
   const trimmed = raw.trim();
-  if (!/^\d+$/.test(trimmed)) return null;
+  if (!/^-?\d+$/.test(trimmed)) return null;
   return Number.parseInt(trimmed, 10);
 }
 
 function floatValue(raw: string): number | null {
   const trimmed = raw.trim();
   if (!/^\d+(?:\.\d+)?$/.test(trimmed)) return null;
-  return Number.parseFloat(trimmed);
+  const parsed = Number.parseFloat(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 /** 文本框 → 可空字符串字段：留空 = 不声明（`null`），不是空字符串。 */
@@ -263,7 +384,7 @@ export function buildDraftInput(
   const parsedTags = parseTags(form.tags);
 
   if (form.title.trim() === "") issues.push({ key: "authoring.issue.title" });
-  if (form.title.length > 300) issues.push({ key: "authoring.issue.titleTooLong" });
+  if (form.title.length > TITLE_MAX_LENGTH) issues.push({ key: "authoring.issue.titleTooLong" });
   if (form.stemMarkdown.trim() === "") issues.push({ key: "authoring.issue.stem" });
 
   if (parsedTags.tags.length > TAG_MAX_ITEMS) {
@@ -302,6 +423,11 @@ export function buildDraftInput(
     // 读不到现值却要整体替换：必须由人显式确认（否则"我加了一个用例"会静默丢掉别的用例）。
     issues.push({ key: "authoring.issue.casesReplaceUnconfirmed" });
   }
+  if (options.newVersion && form.revisionNote.trim() === "") {
+    // 已发布版本另存新版本时，版本说明是必填的：不填就不发请求，而不是让服务端替它编一个
+    // 推导出来的说明（那会让"为什么有这一版"变成系统猜的）。
+    issues.push({ key: "authoring.revisionNoteRequired" });
+  }
 
   // 可空结果与 issues 是同一遍校验的两个投影：任一为空必然已经压入对应问题。
   // 一起判空让类型收窄成立，也保证"有问题就一定不发请求"。
@@ -336,13 +462,8 @@ export function buildDraftInput(
   };
 }
 
-/** 适配器：按 `kind` 组装；`file` 被明确拒绝而不是猜一个摘要出来。 */
+/** 适配器：按 `kind` 组装；夹具声明只使用**服务端返回**的摘要。 */
 function buildAdapter(form: DraftForm, issues: DraftIssue[]): AdapterManifest | null {
-  if (form.adapterKind === "file") {
-    issues.push({ key: "authoring.issue.adapterFileLocked" });
-    return null;
-  }
-
   if (form.comparisonStdout === "") {
     issues.push({ key: "authoring.issue.comparisonStdout" });
   }
@@ -371,6 +492,32 @@ function buildAdapter(form: DraftForm, issues: DraftIssue[]): AdapterManifest | 
         issues.push({ key: "authoring.issue.callableArgumentsJson" });
       }
     }
+  }
+
+  // `stdin` 题型在契约里必须声明 args / stdin / expect_exit_code 之一：三者全空时 B3 会 422，
+  // 这里提前说清楚，省掉一次往返。
+  if (
+    form.adapterKind === "stdin" &&
+    parseArgv(form.adapterArgs).length === 0 &&
+    form.adapterStdin === "" &&
+    expectExitCode === null
+  ) {
+    issues.push({ key: "authoring.issue.adapterStdinEmpty" });
+  }
+
+  const files = form.fixtures.map((fixture) => ({
+    path: fixture.path,
+    content_sha256: fixture.contentSha256,
+    mount: fixture.mount,
+  }));
+  if (form.adapterKind === "file") {
+    // 摘要只能来自上传结果；这里只校验"至少有一个 input 夹具已经上传"，
+    // 因为 file 题型没有它就无法编译（B3 在编译期拒绝）。
+    if (!files.some((entry) => entry.mount === "input")) {
+      issues.push({ key: "authoring.issue.fileFixtureMissing" });
+    }
+  } else if (files.length > 0) {
+    issues.push({ key: "authoring.issue.fixturesWrongAdapter" });
   }
 
   if (form.comparisonStdout === "") return null;
@@ -402,6 +549,7 @@ function buildAdapter(form: DraftForm, issues: DraftIssue[]): AdapterManifest | 
           },
         }
       : {}),
+    ...(files.length === 0 ? {} : { files }),
   };
 }
 
@@ -439,4 +587,26 @@ function buildCases(forms: CaseForm[], issues: DraftIssue[]): TestCaseInput[] {
   });
 
   return cases;
+}
+
+/** 受控题干图片的 Markdown 地址：只用**服务端返回的** question_id 与 asset_id 拼。 */
+export function assetMarkdown(questionId: string, assetId: string, alt: string): string {
+  const safeAlt = alt.replace(/[[\]]/g, "").trim();
+  return `![${safeAlt}](/api/v1/questions/${questionId}/assets/${assetId})`;
+}
+
+/** 把一段 Markdown 图片插入题干（追加到末尾并保证换行）。 */
+export function insertIntoStem(stem: string, snippet: string): string {
+  const trimmed = stem.replace(/\s+$/, "");
+  return trimmed === "" ? `${snippet}\n` : `${trimmed}\n\n${snippet}\n`;
+}
+
+/**
+ * 表单是否相对"载入时的快照"有未保存的编辑。
+ *
+ * 存在的理由只有一个：AI 候选（以及任何编辑）**不会**被自动持久化，刷新恢复的是服务端原始候选，
+ * 不是教师的修改。离开前必须能问出"要不要丢掉这些编辑"，所以比较必须只看表单本身。
+ */
+export function isDirty(current: DraftForm, baseline: DraftForm): boolean {
+  return JSON.stringify(current) !== JSON.stringify(baseline);
 }

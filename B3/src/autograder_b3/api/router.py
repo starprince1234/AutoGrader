@@ -20,6 +20,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Query, Request, Response
+from fastapi.responses import JSONResponse
 
 from ..auth import require_service
 from ..domain import (
@@ -27,18 +28,23 @@ from ..domain import (
     authoring_assistance,
     create_assignment,
     create_question,
+    discard_generation,
+    generation_capabilities,
     get_question,
     get_version,
     list_assignment_versions,
     list_questions,
     load_asset_for_delivery,
     load_evaluation_package,
+    load_learning_context,
     load_reference_answer,
     publish_version,
     question_diagnostics,
     question_statistics,
     question_tag_coverage,
+    read_generation,
     record_reference_attestation,
+    request_generation,
     update_question,
     upload_fixture,
     upload_stem_asset,
@@ -49,6 +55,7 @@ from ..dto.internal import (
     AssignmentCreateInputModel,
     AuthoringAssistanceRequestModel,
     FixtureUploadInputModel,
+    QuestionDraftGenerationRequestModel,
     QuestionDraftInputModel,
     ReferenceAttestationInputModel,
 )
@@ -67,6 +74,7 @@ from .serializers import (
     authoring_assistance_to_public,
     coverage_to_public,
     diagnostics_to_public,
+    learning_context_to_public,
     question_to_public,
     serialize_public,
     statistics_to_public,
@@ -187,6 +195,10 @@ def create_question_endpoint(
     request: Request,
     payload: QuestionDraftInputModel,
     course_id: Annotated[uuid.UUID, Query(description="Course the question belongs to")],
+    generation_id: Annotated[
+        uuid.UUID | None,
+        Query(description="AI-FLOW-01A candidate this draft was edited from, if any"),
+    ] = None,
 ) -> dict:
     context = _context(request)
     dependencies = _dependencies(request)
@@ -201,6 +213,7 @@ def create_question_endpoint(
         # from a present one, so that fact is read here and passed down, rather than
         # guessed from the parsed value inside the domain.
         cases_supplied="cases" in payload.model_fields_set,
+        generation_id=generation_id,
         now=dependencies.now,
     )
     log_event(
@@ -327,6 +340,132 @@ def authoring_assistance_endpoint(
         status_code=200,
     )
     return serialize_public(authoring_assistance_to_public(question_id, result))
+
+
+# --------------------------------------------------------------------------
+# AI draft generation (AI-FLOW-01A)
+# --------------------------------------------------------------------------
+
+
+@router.get("/api/v1/question-draft-generations/capabilities")
+def generation_capabilities_endpoint(
+    request: Request,
+    course_id: Annotated[uuid.UUID, Query(description="Course whose bank the draft is for")],
+) -> dict:
+    """Provider availability, the deployment's input limits, and the caller's own budget.
+
+    Declared **before** the parameterised sibling: a literal segment under a collection that
+    also has a ``{generation_id}`` child is otherwise parsed as an id and answered with a
+    validation error (the same trap ``questions/coverage`` documents).
+
+    Nothing here is a secret: no provider URL, no credential, and no other teacher's usage.
+    The limits come from this deployment's configuration so a client can show the number the
+    server will actually enforce instead of a constant that happens to be right somewhere.
+    """
+    context = _context(request)
+    dependencies = _dependencies(request)
+    capabilities = generation_capabilities(
+        dependencies.database,
+        dependencies.settings,
+        principal=context.principal,
+        course_id=course_id,
+        now=dependencies.now,
+    )
+    return capabilities.to_wire()
+
+
+@router.post("/api/v1/question-draft-generations")
+def create_generation_endpoint(
+    request: Request,
+    payload: QuestionDraftGenerationRequestModel,
+    course_id: Annotated[uuid.UUID, Query(description="Course the draft is being written for")],
+) -> Response:
+    """Turn a teaching objective into an editable candidate (``RQ-T-10``, AI-FLOW-01A).
+
+    Writes a **candidate**, never a question: no ``question``, ``question_version`` or
+    ``test_case`` is created here, so the bank is unchanged until the teacher edits the
+    candidate and saves it through ``createQuestion`` with ``generation_id``.
+
+    The response contains a proposed answer and proposed hidden cases, so it is
+    teacher-only and does not go through the public serializer. Every refusal happens in a
+    fixed order -- role/scope, input, provider, budget -- so an unauthorized caller cannot
+    learn this deployment's model state from a status code.
+
+    ``200`` rather than ``201``: the body is the **outcome** of an invocation, and two of the
+    four outcomes (``unavailable`` and, for a failed parse, ``failed``) persist nothing at
+    all. Declaring "Created" for a request that created nothing would be a status code that
+    contradicts the body; one code with a discriminated ``status`` keeps the client's read
+    honest and gives it a single shape to handle.
+    """
+    context = _context(request)
+    dependencies = _dependencies(request)
+    generation = request_generation(
+        dependencies.database,
+        dependencies.settings,
+        principal=context.principal,
+        course_id=course_id,
+        payload=payload,
+        provider=dependencies.draft_provider,
+        now=dependencies.now,
+    )
+    log_event(
+        get_logger("api.generation"),
+        "question.draft.generated",
+        request_id=context.request_id,
+        course_id=str(course_id),
+        generation_id=(
+            None if generation.generation_id is None else str(generation.generation_id)
+        ),
+        outcome=generation.status,
+        attempt_count=len(generation.warnings),
+        status_code=200,
+    )
+    return JSONResponse(status_code=200, content=generation.to_wire())
+
+
+@router.get("/api/v1/question-draft-generations/{generation_id}")
+def get_generation_endpoint(request: Request, generation_id: uuid.UUID) -> Response:
+    """Restore a candidate after a refresh.
+
+    This restores the **original** candidate, never the teacher's unsaved edits: those live
+    in the page and are lost on leave, which the client must warn about before navigating.
+    A record that expired, was discarded, or belongs to someone else is refused -- an id is
+    an identifier, not a credential.
+    """
+    context = _context(request)
+    dependencies = _dependencies(request)
+    generation = read_generation(
+        dependencies.database,
+        principal=context.principal,
+        generation_id=generation_id,
+        now=dependencies.now,
+    )
+    return JSONResponse(content=generation.to_wire())
+
+
+@router.delete("/api/v1/question-draft-generations/{generation_id}", status_code=204)
+def delete_generation_endpoint(request: Request, generation_id: uuid.UUID) -> Response:
+    """Discard a candidate: content gone, de-identified ledger row kept.
+
+    The only operation that removes an unaccepted proposal. Closing the preview panel must
+    not do this, so it is a separate, explicit action.
+    """
+    context = _context(request)
+    dependencies = _dependencies(request)
+    discard_generation(
+        dependencies.database,
+        principal=context.principal,
+        generation_id=generation_id,
+        now=dependencies.now,
+    )
+    log_event(
+        get_logger("api.generation"),
+        "question.draft.discarded",
+        request_id=context.request_id,
+        generation_id=str(generation_id),
+        status_code=204,
+    )
+    return Response(status_code=204)
 
 
 @router.get("/api/v1/questions/{question_id}/diagnostics")
@@ -473,6 +612,41 @@ def _assets_of_version(dependencies: B3Dependencies, version) -> list:
         return assets
 
 
+@router.get("/api/v1/question-versions/{question_version_id}/learning-context")
+def learning_context_endpoint(request: Request, question_version_id: uuid.UUID) -> dict:
+    """INTERNAL. The public half of one published version, for B2's learning hints.
+
+    Service-to-service only (``AI-FLOW-01B``): B2 builds hints from a student's own completed
+    run and needs to know what the exercise teaches, not how it is judged. ``require_service``
+    is the first thing that happens, before the version is even looked up, so a teacher or a
+    student learns only that this operation is restricted.
+
+    The response is a separate schema with five fields -- title, stem, language, tags,
+    adapter kind. It deliberately carries no reference answer, no case, no expected output
+    and no fixture: a model that knew the expected output could repeat it into a hint a
+    student reads, which would turn the hint feature into a leak.
+
+    A draft is refused with ``409`` rather than served: an evaluation run can only reference
+    a published version, so "hints for an unpublished version" is not a state the consumer
+    can legitimately be in.
+    """
+    context = _context(request)
+    dependencies = _dependencies(request)
+    learning_context = load_learning_context(
+        dependencies.database,
+        principal=context.principal,
+        question_version_id=question_version_id,
+    )
+    log_event(
+        get_logger("api.internal"),
+        "question.learning-context.served",
+        request_id=context.request_id,
+        question_version_id=str(question_version_id),
+        status_code=200,
+    )
+    return serialize_public(learning_context_to_public(learning_context))
+
+
 @router.post("/api/v1/question-versions/{question_version_id}/publish")
 def publish_version_endpoint(request: Request, question_version_id: uuid.UUID) -> dict:
     context = _context(request)
@@ -531,6 +705,7 @@ def upload_fixture_endpoint(
     return serialize_public(
         FixtureUploadResult(
             fixture_id=fixture.fixture_id,
+            question_version_id=fixture.question_version_id,
             path=fixture.path,
             mount=fixture.mount,
             content_sha256=fixture.content_sha256,

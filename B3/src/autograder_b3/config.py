@@ -80,6 +80,25 @@ class Settings:
     authoring_api_key: str | None = None
     authoring_timeout_seconds: float = 20.0
 
+    #: AI-FLOW-01A structured draft generation. The **provider** is not configured
+    #: separately: generation reuses ``B3_AUTHORING_PROVIDER_*`` so a deployment has one
+    #: model credential and one place to turn model access off (``ADR-0009`` decision 4).
+    #: What is separate is the *input and retention policy*, because a generation stores a
+    #: candidate answer and candidate hidden cases -- content the assistance path never
+    #: keeps -- so its limits and its lifetime are deployment decisions of their own.
+    draft_generation_max_objective_chars: int = 4_000
+    draft_generation_max_constraints_chars: int = 2_000
+    draft_generation_max_desired_cases: int = 25
+    draft_generation_max_proposal_cases: int = 50
+    draft_generation_max_text_chars: int = 65_536
+    draft_generation_retention_seconds: int = 86_400
+    #: Cost guard. Counted per actor over a sliding window from the usage ledger, so it
+    #: is enforced by persisted facts rather than by a client-side counter, and it is
+    #: configurable because the honest number depends on the provider quota a deployment
+    #: actually pays for. ``0`` means "no request budget is enforced here".
+    draft_generation_budget_requests: int = 20
+    draft_generation_budget_window_seconds: int = 3_600
+
     extra: Mapping[str, str] = field(default_factory=dict)
 
     @classmethod
@@ -111,6 +130,25 @@ class Settings:
                 raise ValueError(f"{name} must be positive, got {raw!r}")
             return parsed
 
+        def count(name: str, default: int) -> int:
+            """A non-negative integer, or the default.
+
+            Same reasoning as :func:`seconds`: a malformed limit fails at start-up rather
+            than silently becoming "no limit". ``0`` is a legal value for the request
+            budget (it means "this deployment does not cap requests here") and is refused
+            for the size limits, where a zero-objective limit could not accept any input.
+            """
+            raw = (source.get(name) or "").strip()
+            if not raw:
+                return default
+            try:
+                parsed = int(raw)
+            except ValueError:
+                raise ValueError(f"{name} must be an integer, got {raw!r}") from None
+            if parsed < 0:
+                raise ValueError(f"{name} must be non-negative, got {raw!r}")
+            return parsed
+
         return cls(
             database_url=value("DATABASE_URL", DEFAULT_DATABASE_URL) or DEFAULT_DATABASE_URL,
             protected_database_url=value(
@@ -131,6 +169,30 @@ class Settings:
             authoring_model=value("B3_AUTHORING_MODEL", None),
             authoring_api_key=value("B3_AUTHORING_API_KEY", None),
             authoring_timeout_seconds=seconds("B3_AUTHORING_TIMEOUT_SECONDS", 20.0),
+            draft_generation_max_objective_chars=count(
+                "B3_DRAFT_GENERATION_MAX_OBJECTIVE_CHARS", 4_000
+            ),
+            draft_generation_max_constraints_chars=count(
+                "B3_DRAFT_GENERATION_MAX_CONSTRAINTS_CHARS", 2_000
+            ),
+            draft_generation_max_desired_cases=count(
+                "B3_DRAFT_GENERATION_MAX_DESIRED_CASES", 25
+            ),
+            draft_generation_max_proposal_cases=count(
+                "B3_DRAFT_GENERATION_MAX_PROPOSAL_CASES", 50
+            ),
+            draft_generation_max_text_chars=count(
+                "B3_DRAFT_GENERATION_MAX_TEXT_CHARS", 65_536
+            ),
+            draft_generation_retention_seconds=count(
+                "B3_DRAFT_GENERATION_RETENTION_SECONDS", 86_400
+            ),
+            draft_generation_budget_requests=count(
+                "B3_DRAFT_GENERATION_BUDGET_REQUESTS", 20
+            ),
+            draft_generation_budget_window_seconds=count(
+                "B3_DRAFT_GENERATION_BUDGET_WINDOW_SECONDS", 3_600
+            ),
         )
 
     @property
@@ -152,3 +214,20 @@ class Settings:
         if not self.authoring_model:
             missing.append("B3_AUTHORING_MODEL")
         return tuple(missing)
+
+    @property
+    def draft_generation_enabled(self) -> bool:
+        """Structured draft generation rides on the same provider as the advice path.
+
+        Deliberately **not** its own credential: one deployment, one model account, one
+        switch to turn model access off. A second credential would mean a second place
+        where a key can leak and a second thing an operator has to remember.
+        """
+        return self.authoring_assistance_enabled
+
+    @property
+    def draft_generation_budget_enabled(self) -> bool:
+        """``0`` requests means no request budget is enforced by B3 itself."""
+        return self.draft_generation_budget_requests > 0 and (
+            self.draft_generation_budget_window_seconds > 0
+        )

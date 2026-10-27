@@ -206,6 +206,30 @@ class QuestionVersionPublic(BaseModel):
     max_total_bytes: int | None = None
 
 
+class QuestionLearningContextPublic(BaseModel):
+    """The public half of one published version, for B2's learning hints (AI-FLOW-01B).
+
+    A separate schema rather than a projection of ``QuestionVersionPublic``, and that is the
+    whole point: a hint generator needs to know *what the exercise teaches* (stem, language,
+    tags, adapter kind) and must not be one serializer change away from receiving the rest of
+    the version. ``QuestionVersionPublic`` is not "safe minus a few fields" -- it is a
+    different audience -- so the field set here is enumerated rather than filtered.
+
+    There is no reference answer, no case, no expected output and no fixture: a hint that
+    knew the expected output could be talked into revealing it, and the model would then be
+    the leak path rather than the review path.
+    """
+
+    model_config = _PUBLIC_CONFIG
+
+    question_version_id: UUID
+    title: str = Field(min_length=1, max_length=300)
+    stem_markdown: str
+    language: Language
+    tags: tuple[str, ...] = ()
+    adapter_kind: AdapterKind
+
+
 class QuestionStatisticsPublic(BaseModel):
     model_config = _PUBLIC_CONFIG
 
@@ -261,12 +285,15 @@ class FixtureUploadResult(BaseModel):
 
     Returns the digest B3 computed so the author can declare it in
     ``adapter.files[]``; the bytes themselves are never echoed back
-    (``CHG-B3-0002``).
+    (``CHG-B3-0002``). ``question_version_id`` is part of the answer because the caller
+    addresses the operation by it: echoing it back is what lets a client attach the result to
+    the version it just uploaded for without keeping a second copy of the id.
     """
 
     model_config = _PUBLIC_CONFIG
 
     fixture_id: UUID
+    question_version_id: UUID
     path: str
     mount: Literal["input", "expected_output"]
     content_sha256: str
@@ -347,6 +374,7 @@ PUBLIC_DTO_TYPES: tuple[type[BaseModel], ...] = (
     QuestionTagCoveragePublic,
     QuestionPublic,
     QuestionVersionPublic,
+    QuestionLearningContextPublic,
     QuestionStatisticsPublic,
     AssignmentPublic,
     StemAssetUploadResult,

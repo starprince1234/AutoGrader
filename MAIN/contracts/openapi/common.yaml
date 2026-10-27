@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AutoGrader common API conventions
-  version: 0.17.0
+  version: 0.18.0
   description: |
     Shared components for the AutoGrader Beta module APIs. Module contracts
     (b2.yaml, b3.yaml, b4.yaml) reference these via external $ref.
@@ -188,6 +188,19 @@ components:
           schema: {$ref: '#/components/schemas/ProblemDetails'}
     ServiceUnavailable:
       description: A required dependency is unavailable; the response names the dependency.
+      content:
+        application/problem+json:
+          schema: {$ref: '#/components/schemas/ProblemDetails'}
+    BadGateway:
+      description: |
+        An upstream dependency answered, but not with something this service can use.
+
+        Distinct from `ServiceUnavailable` on purpose: "there is no dependency" and "the
+        dependency answered garbage" call for different operator actions, and collapsing them
+        would make a malformed model response indistinguishable from an unconfigured
+        deployment. The response `type` names the classification and the `detail` never
+        contains the upstream body -- an upstream error page can echo the request, which would
+        put a user's input into an error message.
       content:
         application/problem+json:
           schema: {$ref: '#/components/schemas/ProblemDetails'}

@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { questionPublic, questionVersionPublic } from "../../testing/contractFixtures";
+import type { QuestionDraftProposal } from "../../api/types";
 import {
   MAX_FILES_LIMIT,
   TAG_MAX_ITEMS,
+  applyProposal,
+  assetMarkdown,
   buildDraftInput,
   draftFormFrom,
   emptyDraftForm,
+  insertIntoStem,
+  isDirty,
+  isValidFixturePath,
   normalizeTag,
   parseTags,
   type DraftForm,
@@ -28,6 +34,9 @@ function validForm(overrides: Partial<DraftForm> = {}): DraftForm {
     tags: "unix, text-processing",
     referenceAnswer: "print(len(open('input.txt').readlines()))",
     comparisonStdout: "exact",
+    // 契约要求 `stdin` 题型至少声明 args / stdin / expect_exit_code 之一（B3 的适配器校验），
+    // 因此一份"合法表单"必须带上其中之一个，否则它本来就该被拒绝。
+    adapterExpectExitCode: "0",
     confirmCaseReplacement: true,
     cases: [
       {
@@ -88,12 +97,16 @@ describe("表单 → QuestionDraftInput", () => {
     expect(input.max_total_bytes).toBe(1048576);
   });
 
-  it("revision_note 只在 as_new_version 的路径上发送", () => {
+  it("revision_note 只在 as_new_version 的路径上发送，且那时必填", () => {
     const form = validForm({ revisionNote: "例题的截止时间写错了" });
     expect(built(form, { newVersion: false, editing: true }).revision_note).toBeUndefined();
     expect(built(form, { newVersion: true, editing: true }).revision_note).toBe(
       "例题的截止时间写错了",
     );
+    // 另存新版本却不填说明：不发请求（服务端会替它推导一个，但那等于系统在解释"为什么有这一版"）。
+    expect(
+      issueKeys(validForm({ revisionNote: "" }), { newVersion: true, editing: true }),
+    ).toContain("authoring.revisionNoteRequired");
   });
 
   it("期望输出留空提交 null（不声明），不是空字符串", () => {
@@ -198,10 +211,57 @@ describe("校验（不通过就不发请求）", () => {
     ).toContain("authoring.issue.numericTolerance");
   });
 
-  it("kind=file 被拒绝：夹具摘要只能由服务端计算，本页不会编造一个", () => {
+  it("kind=file：没有输入夹具时拒绝保存，摘要只能来自服务端上传结果", () => {
+    // 夹具挂在版本上、摘要由 B3 计算，所以"没上传就保存"必然是一份编译不出 package 的 manifest。
     expect(issueKeys(validForm({ adapterKind: "file" }))).toContain(
-      "authoring.issue.adapterFileLocked",
+      "authoring.issue.fileFixtureMissing",
     );
+
+    const uploaded = built(
+      validForm({
+        adapterKind: "file",
+        fixtures: [
+          {
+            fixtureId: "11111111-1111-4111-8111-111111111111",
+            path: "data/input.txt",
+            mount: "input",
+            // 这个值来自 uploadVersionFixture 的响应；本页从不自己算摘要。
+            contentSha256: "a".repeat(64),
+            sizeBytes: 12,
+            fileName: "input.txt",
+          },
+          {
+            fixtureId: "22222222-2222-4222-8222-222222222222",
+            path: "data/expected.txt",
+            mount: "expected_output",
+            contentSha256: "b".repeat(64),
+            sizeBytes: 12,
+            fileName: "expected.txt",
+          },
+        ],
+      }),
+    );
+    expect(uploaded.adapter.kind).toBe("file");
+    expect(uploaded.adapter.files).toEqual([
+      { path: "data/input.txt", content_sha256: "a".repeat(64), mount: "input" },
+      { path: "data/expected.txt", content_sha256: "b".repeat(64), mount: "expected_output" },
+    ]);
+  });
+
+  it("只有 file 题型可以带夹具：其他题型带上夹具会被明确拒绝", () => {
+    const form = validForm({
+      fixtures: [
+        {
+          fixtureId: "11111111-1111-4111-8111-111111111111",
+          path: "data/input.txt",
+          mount: "input",
+          contentSha256: "a".repeat(64),
+          sizeBytes: 1,
+          fileName: "input.txt",
+        },
+      ],
+    });
+    expect(issueKeys(form)).toContain("authoring.issue.fixturesWrongAdapter");
   });
 
   it("契约上限：标签数、上限字节数与标题长度", () => {
@@ -226,6 +286,130 @@ describe("校验（不通过就不发请求）", () => {
     const keys = issueKeys(form);
     expect(keys).toContain("authoring.issue.caseName");
     expect(keys).toContain("authoring.issue.caseWeight");
+  });
+
+  it("stdin 题型三者全空时明确报错（B3 会 422，本地先说清楚）", () => {
+    expect(
+      issueKeys(validForm({ adapterExpectExitCode: "", adapterArgs: "", adapterStdin: "" })),
+    ).toContain("authoring.issue.adapterStdinEmpty");
+  });
+});
+
+describe("夹具路径（与服务端同一条规则）", () => {
+  it("接受工作区相对路径", () => {
+    for (const path of ["data/input.txt", "a.txt", "deep/dir/file.bin", ".hidden"]) {
+      expect(isValidFixturePath(path)).toBe(true);
+    }
+  });
+
+  it("拒绝绝对路径、盘符、.. 段、反斜杠与首尾空格", () => {
+    for (const path of [
+      "/etc/passwd",
+      "\\windows\\system32",
+      "C:/temp/a.txt",
+      "~/a.txt",
+      "data/../secret.txt",
+      "data//a.txt",
+      "data/",
+      " data/a.txt",
+      "a\\b.txt",
+    ]) {
+      expect(isValidFixturePath(path)).toBe(false);
+    }
+  });
+});
+
+describe("AI 候选应用到表单（AI-FLOW-01A）", () => {
+  const proposal: QuestionDraftProposal = {
+    title: "行数统计",
+    stem_markdown: "统计标准输入的行数。",
+    language: "python",
+    adapter_kind: "stdin",
+    tags: ["unix", "text-processing"],
+    reference_answer: "import sys\nprint(len(sys.stdin.read().splitlines()))\n",
+    adapter: {
+      expect_exit_code: 0,
+      comparison: { stdout: "ignore_trailing_whitespace", stderr: "ignored" },
+    },
+    cases: [
+      {
+        name: "三行",
+        ordinal: 0,
+        weight: 2,
+        visible_to_student: true,
+        stdin: "a\nb\nc\n",
+        expected_stdout: "3\n",
+        expected_exit_code: 0,
+      },
+      // 服务端判定权重不可用时是 null：这里必须留空，不能填一个数字。
+      { name: "权重待填", ordinal: 1, weight: null, visible_to_student: false },
+    ],
+  };
+
+  it("只填表单里存在的字段，并保留教师已选的约束", () => {
+    const applied = applyProposal(validForm({ language: "bash" }), proposal);
+    expect(applied.title).toBe("行数统计");
+    expect(applied.stemMarkdown).toBe("统计标准输入的行数。");
+    expect(applied.tags).toBe("unix, text-processing");
+    expect(applied.referenceAnswer).toContain("splitlines");
+    expect(applied.adapterKind).toBe("stdin");
+    expect(applied.adapterExpectExitCode).toBe("0");
+    expect(applied.comparisonStdout).toBe("ignore_trailing_whitespace");
+    // 候选里的 language 不会覆盖教师已选的约束（两者在服务端本就相同，这里证明来源）。
+    expect(applied.language).toBe("bash");
+  });
+
+  it("权重为 null 的候选用例留空，由逐字段校验提示教师填写", () => {
+    const applied = applyProposal(validForm(), proposal);
+    expect(applied.cases).toHaveLength(2);
+    expect(applied.cases[1].weight).toBe("");
+    const keys = issueKeys(applied, { newVersion: false, editing: false });
+    expect(keys).toContain("authoring.issue.caseWeight");
+  });
+
+  it("候选没给比较策略时取最严格的默认值，而不是留空让保存静默失败", () => {
+    const applied = applyProposal(validForm({ comparisonStdout: "" }), {
+      ...proposal,
+      adapter: undefined,
+    });
+    expect(applied.comparisonStdout).toBe("exact");
+  });
+
+  it("应用候选不丢弃已上传的夹具（摘要只来自服务端）", () => {
+    const withFixture = validForm({
+      fixtures: [
+        {
+          fixtureId: "11111111-1111-4111-8111-111111111111",
+          path: "data/input.txt",
+          mount: "input",
+          contentSha256: "a".repeat(64),
+          sizeBytes: 4,
+          fileName: "input.txt",
+        },
+      ],
+    });
+    const applied = applyProposal(withFixture, proposal);
+    expect(applied.fixtures).toHaveLength(1);
+    expect(applied.fixtures[0].contentSha256).toBe("a".repeat(64));
+  });
+});
+
+describe("题干编辑辅助", () => {
+  it("插入图片用受控资源地址，并按需补空行", () => {
+    const snippet = assetMarkdown("q-1", "a-1", "一张图");
+    expect(snippet).toBe("![一张图](/api/v1/questions/q-1/assets/a-1)");
+    expect(insertIntoStem("", snippet)).toBe(`${snippet}\n`);
+    expect(insertIntoStem("正文", snippet)).toBe(`正文\n\n${snippet}\n`);
+  });
+
+  it("alt 文本里的方括号被去掉，避免破坏 Markdown 结构", () => {
+    expect(assetMarkdown("q", "a", "a[b]c")).toBe("![abc](/api/v1/questions/q/assets/a)");
+  });
+
+  it("isDirty 只看表单内容：未保存的编辑必须能被识别", () => {
+    const baseline = validForm();
+    expect(isDirty(baseline, baseline)).toBe(false);
+    expect(isDirty({ ...baseline, title: "改过的标题" }, baseline)).toBe(true);
   });
 });
 
