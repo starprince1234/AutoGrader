@@ -612,6 +612,42 @@ uff、pytest、pnpm * 都无法运行。
 
 ---
 
+## 0.21.0 — 合并两条 0.20.0 分支：P13 复核范围 + 名单导入 CSV
+
+- **级别**：P1（**版本号冲突后的合并**，无新增字段）
+- **状态**：已生效
+- **动机**：两条分支各自以 `0.20.0` 发布了不同内容——P13 复核工作区的行级课程范围，与本次
+  名单导入改为 CSV/XLSX——合并后的工作树是两者并集，摘要与任何一侧都不同。同一个版本号对应
+  两份不同契约会让"锁摘要"失去意义，因此统一升为 `0.21.0`，内容为两侧并集。
+- **内容**：`b2.yaml` 的复核隔离行级范围（成员五）+ `roster-import.schema.json` 与 `b4.yaml`
+  的 CSV/XLSX 媒体类型（成员二）；其余文件仅版本号变化。
+- **影响模块**：B1–B5 的锁与描述符，B1 生成类型
+
+## 0.20.0 — 名单导入改为 CSV + XLSX（去掉 PDF）
+
+- **级别**：P1 变更（媒体类型枚举收紧并替换）；无字段增删
+- **状态**：已生效
+- **动机**：名单来源是教务导出的 CSV/XLSX 表格，而 PDF 名单只能靠"两空格切列"猜测，猜错会把整列
+  映射错，属于不可接受的风险。按产品要求：**接受 `text/csv` 与 XLSX，去掉 `application/pdf`**。
+  CSV 没有容器签名，因此按 `.csv` 后缀识别、在解析时校验可解码（UTF-8/BOM → GB18030 回退）；
+  XLSX 仍按 zip 签名识别。
+- **影响模块**：B4（解析器与上传入口）、B1（上传控件接受 `.csv,.xlsx`）
+
+## 0.19.0 — 作业单条读取、课序响应与创建响应成形（P04/P05/P12）
+
+- **级别**：P1 增补（两处新增操作响应、一条新路径）；无字段删除，无兼容别名
+- **状态**：已生效
+- **动机**：作业详情页原先"取全部作业列表再按 id 本地查找"，一旦列表分页就得出错误结论；
+  课序列表与课程/课序创建响应在契约里没有 schema，客户端只能靠候选键猜字段。三处缺口都由
+  真实调用场景暴露，因此在本批次一并成形：
+  1. `POST /api/v1/assignments` 补 `201` 响应体 `AssignmentPublic`（B3 早已返回该结构，契约只是没写）。
+  2. 新增 `GET /api/v1/assignments/{assignment_id}`：`200 AssignmentPublic` / `401` / `403`（越权，
+     不伪装成 `404`）/ `404`（不存在）。详情页据此单条读取。
+  3. `b4.yaml` 以 `CoursePublic` 取代同义的 `CourseSummary`，并为
+     `GET /courses/{course_id}/sections`、`POST /courses/{course_id}/sections`、`POST /courses`
+     补 `SectionPublic` / `CoursePublic` 响应体。客户端不再读不透明行。
+- **影响模块**：B3（新增 GET、201 响应）、B4（创建响应补全字段）、B1（生成类型与调用点）
+
 ## 0.18.0 — 结构化题目草稿、教师令牌夹具上传、学习提示上下文
 
 - **级别**：P1 增补（新增操作与 schema；一处**收紧**并改正授权声明）
@@ -661,7 +697,100 @@ uff、pytest、pnpm * 都无法运行。
 
 ---
 
-## 0.19.0 — 成绩身份关联与时间范围导出、学生分层提示（CHG-0030）
+## 0.20.0 — 隔离区行级课程范围（P13 越权修复）与复核工作区（无 CHG 编号）
+
+- **级别**：P1 增补 + P2 语义（新增两个响应字段与两个查询参数；把"按令牌不按行"改成行级授权）
+- **状态**：已生效
+- **动机**：P13 的强制验收门槛是"跨课程隔离真正成立"。现行契约在
+  `listIntakeQuarantines` 的 description 里明确写着 **"Scoping is per token, not per row"**，
+  而实现与测试也确实允许另一门课的教师读到本部署的全部隔离记录（`CHG-0021` 曾把它登记为
+  缺口）。只要记录没有可验证的课程关联，"拥有任意课程权限"就等于"能读全局邮件隔离数据"。
+  P13 需要把课程/课序变成可持久化、可查询的事实，并让 `resolve` 在写入前对**锁住的那一行**
+  重新授权。题目质量侧同时需要一个可分享的、不要求教师手填 UUID 的版本入口（由 P07 带入
+  `question_version_id`），因此本批也把该页面的筛选语义写进契约描述层。
+- **变更文件**：`openapi/b2.yaml`
+  - `IntakeQuarantineView`：新增**必需**的 `scope_course_id` / `scope_section_id`
+    （`anyOf: [Uuid, null]`，成对为空或非空）。description 写明唯一来源是**匹配规则候选共识**，
+    `not_matched`、跨课程/课序的 `ambiguous`、信封/附件拒绝一律 `null`，且不得从 mailbox、
+    发件人、附件名或请求参数推测。
+  - `listIntakeQuarantines`：新增可选 `course_id` / `section_id`（后者必须伴随前者）；
+    删除"Scoping is per token, not per row"整段，改成行级语义（staff 只看被令牌作用域覆盖的行、
+    未关联行只对管理员可见、query 只缩小范围且越界 403、SQL 谓词先于排序/limit/游标）；
+    补 `422` 响应（实现对非法 `limit`/游标/`resolved`/`reason_code`/UUID 早已返回它）。
+  - `resolveIntakeQuarantine`：description 增补"在行锁内按记录 scope 重新授权"；staff 对
+    未关联/跨课记录 403；管理员可处置未关联行，其显式课程/课序选择只用于加载候选、不写回
+    scope；并如实写明 B2 没有到 B4 名单的通道，因此不重跑名单成员关系校验。
+  - 六份契约文件 `info.version` 同步到 `0.20.0`（`0.19.0` 已由 P04/P05/P12 的批次占用）。
+- **受影响模块与需要做的改动**：
+  - **B2**：迁移 `20260915_0015`（`intake_quarantines` 两列 + 成对 CHECK + 索引）；
+    `intake/matching.py` 产出候选共识 `ScopeContext`；`intake/imap.py` 在同一事务持久化 scope；
+    `intake/quarantine.py` 行级谓词与 `resolve` 行锁重查；`auth/authorization.py` 新增
+    `require_quarantine_row_authority`；`EXPECTED_SCHEMA_REVISION`/`module.yaml` 推进到 0015；
+    相关 pytest 改写（跨 scope 矩阵、管理员未关联行、查询越界 403）。
+  - **B1**：重新生成类型；`/intake/quarantines` 与 `/quality` 合并为 `/review?tab=mail|quality`，
+    删除旧页面/旧路由/旧导航入口；隔离列表增加课程/课序筛选、详情与安全归属（候选来自 B4 名单）；
+    质量标签由 P07 带入 `question_version_id`，不再手填 UUID。
+  - **B3/B4/B5**：无代码改动，仅同步版本声明（本批不新增跨模块端点）。
+- **是否破坏兼容**：否（纯增量字段与参数）。需要写明两处**收紧**：① staff 不再能读未关联或
+  跨课程的行（这是本批的目的，旧行为是已登记的缺口）；② `IntakeQuarantineView` 的两个新字段是
+  `required`，任何自造该响应的生产者都必须补上（仓库内只有 B2 生产它）。
+- **迁移方式**：一次性切换，不保留兼容层。历史隔离行没有、也无法证明课程归属，迁移**只加列**、
+  把它们留成 NULL（保守：部署后仅管理员可见），不回填、不改写、不删除任何生产数据。
+- **示例变更**：
+  `GET /api/v1/intake/quarantines?resolved=false&course_id=…&section_id=…` →
+  `{"items":[{"intake_quarantine_id":"…","reason_code":"ambiguous_match","scope_course_id":"…","scope_section_id":"…","resolved":false,…}],"next_cursor":null}`；
+  未关联行 `{"scope_course_id":null,"scope_section_id":null}` 只出现在管理员响应里。
+- **验证**：见本批提交说明与 `B2/docs/phases/active/phase-10-quarantine-row-scope.md`、
+  `B1/docs/phases/active/phase-06-review-workspace.md` 的实际执行清单；本机无 Node/uv/PostgreSQL，
+  因此 B2 pytest、B1 `tsc/eslint/vitest`、`pnpm api:check` 与真实迁移的 upgrade/downgrade 未执行，
+  已逐条列出命令与风险。
+- **摘要**：见五份 `contracts.lock`（由 `contract_digest()` 计算，此处不复制）
+- **回滚方式**：还原本批契约文本与版本号、回退 B2 迁移 `20260915_0015`（会丢失 scope 关联）、
+  移除 B1 的 `/review` 页面并恢复旧路由，然后重跑 `relock_contracts.py`；版本回到 `0.19.0`。
+
+---
+
+## 0.22.0 — 邮箱验证码找回密码（无 CHG 编号）
+
+- **级别**：P1 增补（两个新的公开认证操作与一张 B4 表）
+- **状态**：已生效
+- **动机**：登录页此前**没有**找回密码入口，因为后端没有真实重置流程；用户一旦忘记密码，
+  只能由管理员重建账号。本次补上完整闭环：注册邮箱 → 邮件验证码 → 设置新密码。两条新操作
+  都不返回任何账号是否存在的信息，避免把"找回密码"变成账号枚举接口。
+- **变更文件**：
+  - `openapi/b4.yaml`：新增
+    `POST /api/v1/auth/password-reset/code`（`requestPasswordResetCode`）与
+    `POST /api/v1/auth/password-reset`（`completePasswordReset`）；
+  - 六份契约文件 `info.version` 同步到 `0.22.0`（`0.21.0` 已被上游 P13/CSV 并集批次占用）。
+- **语义**：
+  - 发码 `202` 对任意合法邮箱都返回同一结构；只有属于**启用中账号**的邮箱才会真正收到邮件。
+    TTL、重发窗口、小时上限复用注册邮件通道的既有配置；SMTP 未配置或投递失败为 `503`，
+    且不留下可用验证码行。
+  - 完成重置 `204`：消费验证码、替换 Argon2id 口令、撤销该账号全部 refresh 会话，
+    并清理该账号的失败登录计数；已签发的 access token 只在剩余短 TTL 内仍有效。
+  - 所有验证码失败（邮箱不存在、无可用码、错误、尝试次数耗尽）统一返回同一个 `422` detail。
+  - 只保存绑定 `code_id` 的 SHA-256 摘要；明文验证码与口令不写数据库、日志或审计。
+- **受影响模块与需要做的改动**：
+  - **B4**：新增 `b4.password_reset_codes`（迁移 `20261027_0005`）、
+    `POST /api/v1/auth/password-reset/code` / `POST /api/v1/auth/password-reset`、
+    新邮件模板 `send_password_reset_code`、审计动作 `auth.password_reset.*`；
+    `module.yaml` 迁移头推进到 `20261027_0005`。
+  - **B1**：登录页增加「忘记密码？」入口与 `/forgot-password` 页面；注册 API 类型重新生成；
+    登录密码框增加可持久显示的「显示/隐藏密码」按钮（修复失败后浏览器原生小眼睛消失）。
+  - **B2/B3/B5**：无代码改动，仅同步契约版本声明与锁。
+- **是否破坏兼容**：否（纯新增路径与表；既有认证、注册、会话契约不变）。
+- **迁移方式**：新增表，一次性 `alembic upgrade head`；不修改既有行，不保留兼容层。
+- **验证**：见本批提交说明与 `B1/docs/phases/active/phase-08-password-reset.md`；
+  B4 的接口与迁移说明见 `B4/docs/phases/active/phase-04-password-reset.md`；
+  本机无 PostgreSQL/NATS，B4 pytest 与真实迁移 upgrade/downgrade 未执行，已逐条列明；
+  B1 的 `tsc` / ESLint / Vitest / `api:check` 实际执行结果见阶段记录。
+- **摘要**：见五份 `contracts.lock`（由 `contract_digest()` 计算，此处不复制）
+- **回滚方式**：还原本批契约文本与版本号、回退 B4 迁移 `20261027_0005`、移除 B1 的
+  `/forgot-password` 页面与登录入口，然后重跑 `scripts/relock_contracts.py`；版本回到 `0.20.0`。
+
+---
+
+## 0.23.0 — 成绩身份关联与时间范围导出、学生分层提示（CHG-0030）
 
 - **级别**：P2 语义（成绩读/导出参数扩展 + 两条学生提示 operation + 一张新表）
 - **状态**：已生效
@@ -671,10 +800,10 @@ uff、pytest、pnpm * 都无法运行。
     `GET/POST /api/v1/evaluation-runs/{evaluation_run_id}/learning-hints` 与
     `LearningHintStep` / `LearningHintsResponse`。
   - `openapi/common.yaml`、`openapi/b3.yaml`、`openapi/b4.yaml`、`openapi/b5.yaml`、
-    `asyncapi/events.yaml`：`info.version` 同步升至 `0.19.0`（内容未变）。
+    `asyncapi/events.yaml`：`info.version` 同步升至 `0.23.0`（内容未变）。
 - **不变的部分**：权威分数、逐项证据、`result_digest`、绑定摘要、导出汇总规则、评测沙箱路径；
   提示不是分数依据，评语/参考分仍走独立轨。
-- **影响的模块**：B2（实现 + 迁移 `20260915_0015`）、B1（P10/P11 消费）、B3（`learning-context`
+- **影响的模块**：B2（实现 + 迁移 `20260915_0016`）、B1（P10/P11 消费）、B3（`learning-context`
   已在 `0.18.0` 提供，本批只消费、不改契约）、B4（无改动，`listEnrollments` 已有 `student_id`）。
 - **摘要**：由 `checks.py` 计算。
 - **回滚方式**：还原本批契约文本与版本号，删除 `b2.evaluation_learning_hints` 迁移

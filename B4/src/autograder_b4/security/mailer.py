@@ -1,7 +1,7 @@
-"""Outbound e-mail for the self-service registration verification code.
+"""Outbound e-mail for the verification codes (registration and password reset).
 
-The registration flow proves that the claimant owns the mailbox, so a working sender is part
-of the feature rather than an optional integration. Consequences that shape this module:
+Both flows prove that the claimant owns a mailbox, so a working sender is part of the
+feature rather than an optional integration. Consequences that shape this module:
 
 * **No silent skip.** An unconfigured channel raises :class:`MailDeliveryError`; the endpoint
   turns that into `503`. Falling back to "accept the address unverified" would quietly remove
@@ -26,6 +26,7 @@ from ..logging import get_logger
 logger = get_logger("mailer")
 
 SUBJECT: Final = "AutoGrader 注册验证码"
+PASSWORD_RESET_SUBJECT: Final = "AutoGrader 密码重置验证码"
 
 BODY: Final = """你好:
 
@@ -37,6 +38,19 @@ BODY: Final = """你好:
 请勿转发给他人。
 
 如果这不是你发起的注册,请忽略本邮件;没有验证码,任何人无法用这个邮箱完成注册。
+
+—— AutoGrader
+"""
+
+PASSWORD_RESET_BODY: Final = """你好:
+
+你正在重置 AutoGrader 账号的密码。本次重置的验证码是:
+
+    {code}
+
+该验证码 {minutes} 分钟内有效,且只能使用一次。请勿转发给他人。
+
+如果这不是你发起的重置,请忽略本邮件;你的密码不会被修改,账号仍然可以正常登录。
 
 —— AutoGrader
 """
@@ -86,17 +100,57 @@ def send_verification_code(settings: Settings, *, to: str, code: str, ttl_second
     Raises :class:`MailDeliveryError` when the channel is not configured or the server refuses
     the message. The caller reports `503`; nothing is created and no code is consumed.
     """
+    _send_code(
+        settings,
+        to=to,
+        code=code,
+        ttl_seconds=ttl_seconds,
+        subject=SUBJECT,
+        body=BODY,
+        event="registration.code.sent",
+    )
+
+
+def send_password_reset_code(
+    settings: Settings, *, to: str, code: str, ttl_seconds: int
+) -> None:
+    """Compose and send the password-reset mail.
+
+    The same seam as the registration mail: a missing or refusing channel raises
+    :class:`MailDeliveryError`, and the caller reports `503` without consuming anything.
+    """
+    _send_code(
+        settings,
+        to=to,
+        code=code,
+        ttl_seconds=ttl_seconds,
+        subject=PASSWORD_RESET_SUBJECT,
+        body=PASSWORD_RESET_BODY,
+        event="password_reset.code.sent",
+    )
+
+
+def _send_code(
+    settings: Settings,
+    *,
+    to: str,
+    code: str,
+    ttl_seconds: int,
+    subject: str,
+    body: str,
+    event: str,
+) -> None:
     if not settings.smtp_configured:
         raise MailDeliveryError(
-            "the registration mail channel is not configured "
+            "the mail channel is not configured "
             "(SMTP_HOST / SMTP_USER / SMTP_PASS / SMTP_FROM)"
         )
 
     message = EmailMessage()
-    message["Subject"] = SUBJECT
+    message["Subject"] = subject
     message["From"] = formataddr((settings.smtp_from_name, settings.smtp_from))
     message["To"] = to
-    message.set_content(BODY.format(code=code, minutes=max(1, ttl_seconds // 60)))
+    message.set_content(body.format(code=code, minutes=max(1, ttl_seconds // 60)))
 
     try:
         deliver(settings, message)
@@ -108,4 +162,4 @@ def send_verification_code(settings: Settings, *, to: str, code: str, ttl_second
         ) from error
 
     # Identifiers only: the address itself is PII and must not reach a log line.
-    logger.info("registration.code.sent", extra={"event": "registration.code.sent"})
+    logger.info(event, extra={"event": event})

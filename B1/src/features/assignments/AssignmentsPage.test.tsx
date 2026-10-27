@@ -13,6 +13,7 @@ import { renderWithProviders } from "../../testing/renderWithProviders";
 import {
   installFetchStub,
   jsonResponse,
+  problemResponse,
   type FetchStub,
   type StubbedRoute,
 } from "../../testing/httpBoundary";
@@ -28,6 +29,7 @@ import {
   enrollmentPublic,
   gradePage,
   gradeRow,
+  questionPublic,
   questionVersionPublic,
   sessionCreated,
 } from "../../testing/contractFixtures";
@@ -48,6 +50,7 @@ import { AssignmentsPage } from "./AssignmentsPage";
 const V1 = "00000000-0000-4000-8000-000000000101";
 const V2 = "00000000-0000-4000-8000-000000000102";
 const V3 = "00000000-0000-4000-8000-000000000103";
+const Q1 = "00000000-0000-4000-8000-000000000301";
 const S1 = "00000000-0000-4000-8000-000000000201";
 const S2 = "00000000-0000-4000-8000-000000000202";
 const S3 = "00000000-0000-4000-8000-000000000203";
@@ -135,16 +138,38 @@ function routes(options: {
         ),
     },
     {
+      // 单条作业读取：详情页不再遍历列表，因此这里按 id 精确响应。
+      path: `/api/v1/assignments/${UUID_A}`,
+      respond: () => {
+        const found = assignmentPages
+          .flatMap((page) => page.items)
+          .find((item) => (item as { assignment_id?: string }).assignment_id === UUID_A);
+        return found
+          ? jsonResponse(found)
+          : problemResponse({
+              status: 404,
+              title: "Not Found",
+              detail: "assignment not found",
+              instance: `/api/v1/assignments/${UUID_A}`,
+            });
+      },
+    },
+    {
+      // 题目标题只存在于题目 DTO（版本 DTO 不含 title）。
+      path: `/api/v1/questions/${Q1}`,
+      respond: () => jsonResponse(questionPublic({ question_id: Q1, title: "进程与线程" })),
+    },
+    {
       path: `/api/v1/question-versions/${V1}`,
-      respond: () => jsonResponse(questionVersionPublic({ question_version_id: V1, version: 1 })),
+      respond: () => jsonResponse(questionVersionPublic({ question_version_id: V1, version: 1, question_id: Q1 })),
     },
     {
       path: `/api/v1/question-versions/${V2}`,
-      respond: () => jsonResponse(questionVersionPublic({ question_version_id: V2, version: 2 })),
+      respond: () => jsonResponse(questionVersionPublic({ question_version_id: V2, version: 2, question_id: Q1 })),
     },
     {
       path: `/api/v1/question-versions/${V3}`,
-      respond: () => jsonResponse(questionVersionPublic({ question_version_id: V3, version: 1 })),
+      respond: () => jsonResponse(questionVersionPublic({ question_version_id: V3, version: 1, question_id: Q1 })),
     },
   ];
 }
@@ -425,7 +450,7 @@ describe("作业中心（C1：教师侧提交情况）", () => {
 });
 
 describe("作业详情", () => {
-  it("列出作业的题目版本，并把每个版本挂到题干页（学生另见本人提交状态）", async () => {
+  it("按 id 单条读取作业，并列出题目名称与版本（学生另见本人状态）", async () => {
     stub = installFetchStub(
       routes({
         role: "student",
@@ -441,52 +466,50 @@ describe("作业详情", () => {
       }),
     );
     await signIn("student1", "pw");
-    renderAt(`/assignments/${UUID_A}`, () => (
-      <AssignmentDetailPage assignmentId={UUID_A} />
-    ));
+    renderAt(`/assignments/${UUID_A}`, () => <AssignmentDetailPage assignmentId={UUID_A} />);
 
     expect(await screen.findByTestId("assignment-title")).toHaveTextContent("第一次作业");
+    expect(screen.getByTestId("assignment-breadcrumb-current")).toHaveTextContent("第一次作业");
+
     const table = await screen.findByTestId("assignment-versions-table");
     await waitFor(() => expect(within(table).getAllByRole("row")).toHaveLength(3)); // 表头 + 2 版本
-    // 版本 1 已提交、版本 2 未提交；两行都能打开题干
     expect(table).toHaveTextContent("已提交");
     expect(table).toHaveTextContent("未提交");
-    expect(within(table).getAllByRole("link", { name: /版本/ })).toHaveLength(2);
+    expect(await within(table).findAllByText("进程与线程")).toHaveLength(2);
   });
 
-  it("按 id 找不到作业时如实说明（契约没有单取端点）", async () => {
-    stub = installFetchStub(routes({ role: "student", assignments: [{ items: [], nextCursor: null }] }));
+  it("作业不存在时明确说找不到（服务端 404，不伪造空作业）", async () => {
+    stub = installFetchStub(routes({ role: "student", assignments: [] }));
     await signIn("student1", "pw");
-    renderAt(`/assignments/${UUID_A}`, () => (
-      <AssignmentDetailPage assignmentId={UUID_A} />
-    ));
+    renderAt(`/assignments/${UUID_A}`, () => <AssignmentDetailPage assignmentId={UUID_A} />);
 
-    expect(await screen.findByText(/找不到该作业/)).toBeInTheDocument();
+    expect(await screen.findByText(/找不到这个作业/)).toBeInTheDocument();
   });
 
-  it("列表被截断时不下「找不到该作业」的结论，也不显示加载中", async () => {
-    stub = installFetchStub(
-      routes({ role: "student" }).map((route) =>
-        route.path === "/api/v1/assignments"
-          ? {
-              path: "/api/v1/assignments",
-              respond: () => jsonResponse({ items: [A1], next_cursor: "always-more" }),
-            }
-          : route,
+  it("越权读取显示权限拒绝，而不是「找不到」或空列表", async () => {
+    stub = installFetchStub([
+      ...routes({ role: "student" }).filter(
+        (route) => route.path !== `/api/v1/assignments/${UUID_A}`,
       ),
-    );
+      {
+        path: `/api/v1/assignments/${UUID_A}`,
+        respond: () =>
+          problemResponse({
+            status: 403,
+            title: "Forbidden",
+            detail: "outside the caller's course scope",
+            instance: `/api/v1/assignments/${UUID_A}`,
+          }),
+      },
+    ]);
     await signIn("student1", "pw");
-    renderAt(`/assignments/${UUID_A}`, () => (
-      <AssignmentDetailPage assignmentId={UUID_A} />
-    ));
+    renderAt(`/assignments/${UUID_A}`, () => <AssignmentDetailPage assignmentId={UUID_A} />);
 
-    const notice = await screen.findByTestId("assignment-detail-truncated", {}, { timeout: 5000 });
-    const panel = notice.closest("section") as HTMLElement;
-    expect(within(panel).queryAllByRole("status")).toHaveLength(0);
-    expect(screen.queryByText(/找不到该作业/)).toBeNull();
+    expect(await screen.findByText(/没有查看这个课程的权限/)).toBeInTheDocument();
+    expect(screen.queryByText(/找不到这个作业/)).toBeNull();
   });
 
-  it("本人成绩行到上限时版本行不显示「未提交」，并给出截断说明", async () => {
+  it("本人成绩行未取完时版本行不显示「未提交」", async () => {
     stub = installFetchStub(
       routes({ role: "student" }).map((route) =>
         route.path === "/api/v1/grades"
@@ -510,14 +533,11 @@ describe("作业详情", () => {
       ),
     );
     await signIn("student1", "pw");
-    renderAt(`/assignments/${UUID_A}`, () => (
-      <AssignmentDetailPage assignmentId={UUID_A} />
-    ));
+    renderAt(`/assignments/${UUID_A}`, () => <AssignmentDetailPage assignmentId={UUID_A} />);
 
-    await screen.findByTestId("assignment-detail-grades-truncated", {}, { timeout: 5000 });
-    const table = screen.getByTestId("assignment-versions-table");
-    // A1 的两个版本行都不下结论：既不算"已提交"，也不算"未提交"。
-    expect(within(table).getAllByTestId("my-version-progress-truncated")).toHaveLength(2);
-    expect(within(table).queryAllByText("未提交")).toHaveLength(0);
+    const table = await screen.findByTestId("assignment-versions-table");
+    await waitFor(() => expect(within(table).getAllByRole("row")).toHaveLength(3));
+    // 不变量：成绩行没取完时，任何一行都不得断言“未提交”。
+    expect(within(table).queryByText("未提交")).toBeNull();
   });
 });

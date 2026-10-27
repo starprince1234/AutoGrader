@@ -10,7 +10,7 @@ import type {
   AssignmentPublic,
   AuthoringAssistance,
   ComparisonDiagnostics,
-  CourseSummary,
+  CoursePublic,
   EnrollmentPublic,
   EvaluationCommentary,
   EvaluationQualitySummary,
@@ -65,11 +65,11 @@ export function problem(overrides?: Partial<ProblemDetails>): ProblemDetails {
   };
 }
 
-export function courseSummary(overrides?: Partial<CourseSummary>): CourseSummary {
+export function courseSummary(overrides?: Partial<CoursePublic>): CoursePublic {
   return { course_id: UUID_A, course_code: "OS-2026", title: "操作系统", ...overrides };
 }
 
-export function coursePage(courses: CourseSummary[], nextCursor: string | null = null) {
+export function coursePage(courses: CoursePublic[], nextCursor: string | null = null) {
   return { items: courses, next_cursor: nextCursor };
 }
 
@@ -693,6 +693,10 @@ export function intakeQuarantineView(
     resolved: false,
     resolved_student_id: null,
     resolution_note: null,
+    // 默认夹具代表"有可靠课程关联"的记录（P13 之后 staff 只能看到这种行）；
+    // 需要未关联行（只对管理员可见）时显式传 `scope_course_id: null, scope_section_id: null`。
+    scope_course_id: UUID_A,
+    scope_section_id: UUID_B,
     ...overrides,
   } as IntakeQuarantineView;
 }

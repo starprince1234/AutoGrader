@@ -21,8 +21,9 @@ The index is created **after** an explicit duplicate check: silently keeping one
 rows that share a mailbox would decide on the operator's behalf which account owns it.
 """
 
-from alembic import op
 from sqlalchemy import text
+
+from alembic import op
 
 revision = "20261020_0003"
 down_revision = "20260915_0002"

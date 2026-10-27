@@ -67,7 +67,37 @@ def read_lock(path: Path) -> tuple[str, str, str]:
     return text, digest_match.group(1), version_match.group(1)
 
 
+def crlf_contract_files() -> list[str]:
+    """Contract files whose bytes contain CRLF.
+
+    The digest is byte-exact, so such a file makes the local digest disagree with the blob git
+    actually commits. Refusing here is the whole point: the alternative is a production deploy
+    that dies with "contract digest drift" for a commit that looks fine locally.
+    """
+    root = REPO_ROOT / "MAIN" / "contracts"
+    return [
+        path.relative_to(REPO_ROOT).as_posix()
+        for path in sorted(root.rglob("*"))
+        if path.is_file() and b"\r\n" in path.read_bytes()
+    ]
+
+
 def main(argv: list[str] | None = None) -> int:
+    crlf = crlf_contract_files()
+    if crlf:
+        print(
+            "refusing: these contract files contain CRLF, so the computed digest would not "
+            "match the committed (LF) blob:",
+            file=sys.stderr,
+        )
+        for name in crlf:
+            print(f"  {name}", file=sys.stderr)
+        print(
+            "normalise them to LF first (e.g. rewrite with newline='\n' or run a converter), "
+            "then relock.",
+            file=sys.stderr,
+        )
+        return 2
     parser = argparse.ArgumentParser(description="Recompute and write the four contract locks.")
     parser.add_argument("--check", action="store_true", help="report drift without writing")
     arguments = parser.parse_args(argv)

@@ -17,8 +17,8 @@
 
 const DEFAULT_ORIGIN = "https://autograder.invalid";
 const ABSOLUTE_SCHEME = /^[a-zA-Z][a-zA-Z0-9+.-]*:/;
-/** 认证页自身不是回跳目标：登录成功后再回到登录表单只会形成循环。 */
-const AUTH_PATHS = new Set(["/login", "/register"]);
+/** 认证页自身不是回跳目标：登录成功后再回到认证表单只会形成循环。 */
+const AUTH_PATHS = new Set(["/login", "/register", "/forgot-password"]);
 const MAX_LENGTH = 2048;
 
 /** 控制字符会被浏览器/代理规范化，是 URL 走私的常见载体：逐个 charCode 判断（不用正则）。 */

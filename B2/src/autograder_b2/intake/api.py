@@ -277,15 +277,18 @@ def build_router(runtime: IntakeRuntime) -> APIRouter:
     @router.get("/api/v1/intake/quarantines")
     async def list_intake_quarantines(
         request: Request,
+        course_id: str | None = None,
+        section_id: str | None = None,
         reason_code: str | None = None,
         resolved: str | None = None,
         cursor: str | None = None,
         limit: str | None = None,
     ) -> Response:
-        """列出隔离记录（`CHG-0014` 的读出口）：教师能重新找到那封"没能变成提交"的邮件。
+        """列出**调用者可见**的隔离记录（`CHG-0014` 的读出口；行级范围见 P13）。
 
-        过滤与游标的**判定**只有一处（`intake.quarantine`）：`resolved` 的布尔语义、`limit` 的边界、
-        `reason_code` 的长度与游标形态都在那里，本层只做状态码映射。
+        过滤、行级可见性谓词与游标的**判定**只有一处（`intake.quarantine`）：`course_id/
+        section_id` 只是缩小当前调用者可见范围（作用域之外 → 403），`resolved` 的布尔语义、
+        `limit` 的边界、`reason_code` 的长度与游标形态都在那里，本层只做状态码映射。
         """
         instance = request.url.path
         if not runtime.ready:
@@ -306,6 +309,8 @@ def build_router(runtime: IntakeRuntime) -> APIRouter:
         try:
             page = runtime.quarantines.list_quarantines(
                 principal=principal,
+                course_id=course_id or None,
+                section_id=section_id or None,
                 reason_code=wanted_reason,
                 resolved=wanted_resolved,
                 limit=size,

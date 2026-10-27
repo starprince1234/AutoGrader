@@ -1,7 +1,7 @@
-# Phase 10 — 成绩身份关联、时间范围导出与学生分层提示（成员四，CHG-0030）
+# Phase 11 — 成绩身份关联、时间范围导出与学生分层提示（成员四，CHG-0030）
 
 - **状态**：代码已完成；**真实 PostgreSQL 迁移/集成、真实 B4/B3 联调与 provider 调用未执行**
-- **契约**：`MAIN/contracts` 从 `0.18.0` 升到 `0.19.0`；`B2/module.yaml` 与 descriptor 同步；迁移头 `20260915_0015`
+- **契约**：`MAIN/contracts` 从 `0.22.0` 升到 `0.23.0`；`B2/module.yaml` 与 descriptor 同步；迁移头 `20260915_0016`
 
 ## 1. 成绩读/导出
 
@@ -20,7 +20,7 @@
 
 ## 2. 学生分层学习提示（AI-FLOW-01B）
 
-- 新表 `b2.evaluation_learning_hints`（迁移 `20260915_0015`）：一 run 一行、`student_id` 落库、
+- 新表 `b2.evaluation_learning_hints`（迁移 `20260915_0016`）：一 run 一行、`student_id` 落库、
   1–3 条 `hint_steps`、provenance、`context_scope`、幂等键与脱敏失败类别。**没有**分数/证据/源码列。
 - `GET/POST /api/v1/evaluation-runs/{id}/learning-hints`：
   - **仅 run owner 学生**；教师/助教/管理员 403（刻意不提供教师逐条查看学生提示的接口）。
@@ -38,7 +38,7 @@
 
 ```text
 uv run ruff check src/autograder_b2 tests     # All checks passed
-uv run pytest -q                              # 654 passed, 684 skipped（skip = 需要真实 PostgreSQL）
+uv run pytest -q                              # 664 passed, 688 skipped（skip = 需要真实 PostgreSQL）
 ```
 
 - 新增 `tests/test_learning_hints_policy.py`（24 个纯单元用例：协议/顺序/安全闸门/上下文白名单/

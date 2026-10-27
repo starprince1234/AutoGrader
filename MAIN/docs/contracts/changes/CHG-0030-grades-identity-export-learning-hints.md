@@ -2,7 +2,7 @@
 
 - **级别**：P2 语义（B2 成绩读/导出参数扩展 + 新增两条学生提示 operation + 一张新表）
 - **状态**：已生效（契约）；B2/B1 实现同批落地
-- **契约版本**：0.18.0 → **0.19.0**
+- **契约版本**：0.22.0 → **0.23.0**
 - **依据**：`RQ-B-1-30`（成绩查询/证据下钻）、`RQ-B-1-60`（按时间范围导出、可选列）、
   `RQ-B-2-60`（导出由 B2 生成）、AI-FLOW-01B（学生本次评测的分层提示）、
   `ADR-0009`（模型输出只在独立轨）、`ADR-0014`（参考分不是分数）
@@ -56,7 +56,7 @@
 - 状态与错误可区分：未完成 `409`、被安全拒绝 `409`、基础设施失败 `409`、无失败证据
   `200 not_applicable`、预算 `429`、provider 未配置 `503`、传输失败 `503`（行标 `failed`）、
   输出非法/越界 `200 failed`。`Idempotency-Key` 重放返回已有结果、不重复调用模型。
-- 存储：新表 `b2.evaluation_learning_hints`（迁移 `20260915_0015`）。一 run 一行；
+- 存储：新表 `b2.evaluation_learning_hints`（迁移 `20260915_0016`）。一 run 一行；
   **没有** score/evidence 列；`failed` 只存脱敏类别与 request id。`unavailable` / `not_requested`
   不落库。`GET` 在 provider 关闭后仍可读取既有结果。
 
@@ -64,14 +64,14 @@
 
 - `openapi/b2.yaml`：两个 grades operation 的参数；`GradeRow.security_status`；
   新增 `LearningHintStep`、`LearningHintsResponse` 与两条 learning-hints operation。
-- 五个 `openapi/*.yaml` 与 `asyncapi/events.yaml` 的 `info.version` 同步升至 `0.19.0`
+- 五个 `openapi/*.yaml` 与 `asyncapi/events.yaml` 的 `info.version` 同步升至 `0.23.0`
   （契约规则：所有文件同版本）。
 
 ## 4. 影响的模块
 
 | 模块 | 需要做什么 |
 |---|---|
-| **B2** | 成绩过滤（from/to/run id）、`security_status`、导出列选择与 B4 名单关联（新增 `B2_B4_BASE_URL`）；新增 `hints` 包与两条路由；迁移 `20260915_0015`；`module.yaml` 迁移头同步 |
+| **B2** | 成绩过滤（from/to/run id）、`security_status`、导出列选择与 B4 名单关联（新增 `B2_B4_BASE_URL`）；新增 `hints` 包与两条路由；迁移 `20260915_0016`；`module.yaml` 迁移头同步 |
 | **B1** | P10 题干/双栏/草稿确认/终态闭环；P11 时间范围、题目选择器、身份关联、完整数据才出汇总、导出 Drawer（格式/时间/列）、`?evaluation_run_id=` 深链、学习提示卡 |
 | **B3** | **无改动**：`0.18.0` 已提供 `GET /question-versions/{id}/learning-context`（`QuestionLearningContext`，只回公开题面/语言/标签/adapter kind）。B2 消费者直接使用该 operation；不可用时只使用评测证据 |
 | **B4** | **无改动**：`listEnrollments` 已含 `student_id`/`student_number`/`display_name`（`CHG-0007`） |

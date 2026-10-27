@@ -1,17 +1,21 @@
 import { useMemo } from "react";
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "../../api/client";
 import { useLoadAllPages } from "../../api/pagination";
-import type { AssignmentPage, AssignmentPublic } from "../../api/types";
+import type {
+  AssignmentPage,
+  AssignmentPublic,
+  CreateAssignmentRequest,
+} from "../../api/types";
 import { queryKeys } from "../../app/queryClient";
 
 /**
  * 作业（作业集合）读取（`RQ-B-1-40/50` 的入口侧；契约 `AssignmentPublic`，CHG-0007）。
  *
  * 纪律：
- * - 契约只有 `GET /api/v1/assignments`（列表）与 `assignment_id → question_version_ids`；
- *   **没有**按 id 取单个作业的端点，因此"作业详情"也只能从列表里找（见 `useAllAssignments`），
- *   找不到就如实说找不到，不猜、不用别的字段凑。
+ * - 单条读取走 `GET /api/v1/assignments/{assignment_id}`（0.19.0 起）：详情页不再取完列表
+ *   再按 id 本地查找——那样一旦列表分页，"没找到"就变成错误结论。
+ * - 创建走 `POST /api/v1/assignments`，响应体即存储后的作业，页面据此直接进入详情。
  * - 列表同样按游标分页，且作业是页面判定的输入（"这个作业多少人交了"），因此调用方
  *   需要**全部页**时用 `useAllAssignments`：它把 `next_cursor` 走完，未到齐时
  *   `complete === false`，调用方不得据此下结论。
@@ -90,4 +94,37 @@ export function useAllAssignments(filter: AssignmentFilter): {
     complete: complete && !capped,
     truncated: capped,
   };
+}
+
+/**
+ * 单条作业（`GET /api/v1/assignments/{assignment_id}`）。
+ *
+ * 不重试：`404`（不存在）与 `403`（不在调用方的课程范围）都是**终局答案**，重试只会把
+ * “没权限”拖成“加载中”，让用户等一个永远不会来的结果。
+ */
+export function useAssignment(assignmentId: string) {
+  return useQuery({
+    queryKey: queryKeys.assignment(assignmentId),
+    retry: false,
+    queryFn: async (): Promise<AssignmentPublic> =>
+      apiRequest<AssignmentPublic>(
+        `/api/v1/assignments/${encodeURIComponent(assignmentId)}`,
+      ),
+  });
+}
+
+/**
+ * 创建作业。不做“先乐观插入再回滚”：作业是否真的建成必须以服务端 `201` 的正文为准，
+ * 失败时表单里的选择必须原样保留（`409` 表示所选版本已不可用，换题是用户的决定）。
+ */
+export function useCreateAssignment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (body: CreateAssignmentRequest): Promise<AssignmentPublic> =>
+      apiRequest<AssignmentPublic>("/api/v1/assignments", { method: "POST", body }),
+    onSuccess: async (created) => {
+      queryClient.setQueryData(queryKeys.assignment(created.assignment_id), created);
+      await queryClient.invalidateQueries({ queryKey: ["assignments"] });
+    },
+  });
 }

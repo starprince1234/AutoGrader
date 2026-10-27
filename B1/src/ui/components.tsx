@@ -298,6 +298,7 @@ export function Field({
   htmlFor,
   error,
   hint,
+  trailing,
   children,
 }: {
   label: ReactNode;
@@ -305,6 +306,8 @@ export function Field({
   error?: string | null;
   /** 常驻说明（例如"学号需与课程名单一致"）。只放真正需要一直可见的规则。 */
   hint?: ReactNode;
+  /** 与输入框同一行的附加控件（例如密码的显示/隐藏按钮）。 */
+  trailing?: ReactNode;
   children: ReactNode;
 }) {
   const errorId = `${htmlFor}-error`;
@@ -329,7 +332,14 @@ export function Field({
   return (
     <div className="field">
       <label htmlFor={htmlFor}>{label}</label>
-      {control}
+      {trailing ? (
+        <div className="field__control">
+          {control}
+          {trailing}
+        </div>
+      ) : (
+        control
+      )}
       {hint ? (
         <p className="field__hint" id={hintId}>
           {hint}
@@ -556,11 +566,14 @@ export function Drawer({
   onClose,
   children,
   testId,
+  hideCloseButton = false,
 }: {
   title: ReactNode;
   onClose: () => void;
   children: ReactNode;
   testId?: string;
+  /** 抽屉内不再重复导航的关闭控件时置 true；Esc 与遮罩点击仍可关闭。 */
+  hideCloseButton?: boolean;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
@@ -629,9 +642,11 @@ export function Drawer({
           <h2 className="drawer__title" id={titleId}>
             {title}
           </h2>
-          <button type="button" className="button button--ghost" onClick={onClose}>
-            {t("nav.close")}
-          </button>
+          {hideCloseButton ? null : (
+            <button type="button" className="button button--ghost" onClick={onClose}>
+              {t("nav.close")}
+            </button>
+          )}
         </header>
         <div className="drawer__body">{children}</div>
       </div>

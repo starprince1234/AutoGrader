@@ -14,10 +14,10 @@
     "media_type": {
       "type": "string",
       "enum": [
-        "application/pdf",
+        "text/csv",
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
       ],
-      "description": "Only PDF and XLSX rosters are accepted. Anything else is rejected with 422."
+      "description": "Only CSV and XLSX rosters are accepted. Anything else is rejected with 422. CSV is recognised by its .csv filename and validated on decode, because plain text has no container signature."
     },
     "content_sha256": {
       "type": "string",

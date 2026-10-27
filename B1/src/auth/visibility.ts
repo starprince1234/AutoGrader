@@ -55,6 +55,14 @@ export function canViewTeacherEvidence(state: SessionState): boolean {
  * "Teacher/assistant only, inside the authoring flow"，因此入口与之一致。
  * 与其它可见性一样，这**不是**授权：B3 对越权调用返回 403，页面原样展示。
  */
+/**
+ * 创建课程/课序的入口（P12）。B4 只允许 teacher/admin 创建课程；助教只能读名单与导入，
+ * 因此这里不把 assistant 算进来。这仍是可见性：越权调用由 B4 返回 403。
+ */
+export function canCreateCourse(state: SessionState): boolean {
+  return has(state, ["teacher", "admin"]);
+}
+
 export function canAuthorQuestions(state: SessionState): boolean {
   return has(state, ["teacher", "assistant", "admin"]);
 }

@@ -4,7 +4,7 @@
 
 ## 契约权威
 
-- OpenAPI：`../../MAIN/contracts/openapi/b4.yaml`（版本与摘要以 `../contracts.lock` 为准，本模块不写死；**已覆盖 B4 全部端点**：`createSession`、`refreshSession`、`deleteSession`、`getJwks`、`listUsers`/`createUser`/`updateUser`/`deleteUser`、`listCourses`/`createCourse`、`listSections`/`createSection`、`listEnrollments`/`updateEnrollment`/`deleteEnrollment`、`createRosterImport`/`getRosterImport`/`setRosterColumnMapping`/`confirmRosterImport`、`listAuditRecords`、`listRegisteredModules`/`getModuleHealth`）。
+- OpenAPI：`../../MAIN/contracts/openapi/b4.yaml`（版本与摘要以 `../contracts.lock` 为准，本模块不写死；**已覆盖 B4 全部端点**：`createSession`、`refreshSession`、`deleteSession`、`getJwks`、`requestRegistrationCode`、`createRegistration`、`requestPasswordResetCode`、`completePasswordReset`、`listUsers`/`createUser`/`updateUser`/`deleteUser`、`listCourses`/`createCourse`、`listSections`/`createSection`、`listEnrollments`/`updateEnrollment`/`deleteEnrollment`、`createRosterImport`/`getRosterImport`/`setRosterColumnMapping`/`confirmRosterImport`、`listAuditRecords`、`listRegisteredModules`/`getModuleHealth`）。
 - 通用错误：`../../MAIN/contracts/openapi/common.yaml`（`ProblemDetails`）。
 - 名单导入载荷：`../../MAIN/contracts/schemas/roster-import.schema.json`。
 - 事件 envelope：`../../MAIN/contracts/schemas/event-envelope.schema.json`。
@@ -28,6 +28,8 @@
 | `GET /api/v1/auth/jwks` | `getJwks` | 暴露 Ed25519 公钥 | 无需 | — | `已完成` |
 | `POST /api/v1/auth/registrations/code` | `requestRegistrationCode` | 校验身份并发送邮箱验证码 | 无需 | — | `已完成` |
 | `POST /api/v1/auth/registrations` | `createRegistration` | 用验证码完成自助注册（建号即可登录） | 无需 | — | `已完成` |
+| `POST /api/v1/auth/password-reset/code` | `requestPasswordResetCode` | 向注册邮箱发送重置验证码（对是否存在账号返回同一响应） | 无需 | — | `已完成` |
+| `POST /api/v1/auth/password-reset` | `completePasswordReset` | 用验证码设置新密码并撤销该账号全部 refresh 会话 | 无需 | — | `已完成` |
 | `POST /api/v1/registration-allowlists` | `replaceRegistrationAllowlist` | 上传 CSV 全量替换注册白名单 | 是 | 管理员 | `已完成` |
 | `GET /api/v1/registration-allowlists` | `getRegistrationAllowlist` | 读取当前生效的名单批次 | 是 | 管理员 | `已完成` |
 | `GET /api/v1/users` | `listUsers` | 用户列表（游标分页、角色过滤） | 是 | 管理员 | `已完成` |
@@ -62,17 +64,32 @@
 
 几个刻意的取舍：
 
-- **邮箱不参与登录**（需求明确），因此 `users.email` 的唯一索引意义是"绑定关系"，不是凭据；
-  它同样**不用于找回口令**——未验证的字段不能承担安全决策。`users.created_via` 只是运维标记。
+- **邮箱不参与登录**（需求明确），因此 `users.email` 的唯一索引意义是"绑定关系"，不是凭据。
+  `users.created_via` 只是运维标记。
 - **白名单是全量替换**：CSV 是某班/某学期的快照，未出现在文件里的学号从此刻起不能再注册；
   历史批次保留（文件名 + 摘要 + 行数 + 上传人），以便事后回答"当时谁被允许"。
 - **枚举**：注册侧必须告诉用户"用户名/邮箱/学号已被占用"，否则无法纠正；登录侧仍保持失败不可区分。
   限流按邮箱做冷却与小时配额，防止把注册页当邮件轰炸工具。
 
+## 密码重置（0.22.0）
+
+登录仍只收用户名 + 密码；找回密码是独立的两步，邮箱必须先用验证码证明可达：
+
+1. `requestPasswordResetCode`：对任意合法邮箱返回**同一** `202` 结构与数值；只有属于启用中账号的
+   邮箱才会真的收到 6 位验证码。数据库只存绑定本条意图的 SHA-256 摘要；SMTP 缺失/投递失败返回
+   `503`，且删除刚写入的意图行，不留下一个会阻塞重试的冷却记录。
+2. `completePasswordReset`：消费验证码（单次、10 分钟、错 5 次后只能重新获取），替换 Argon2id 凭据，
+   撤销该账号**全部** refresh 会话，并清理该账号的失败登录计数；返回 `204`，不自动建立会话。
+   所有验证码失败（未知邮箱、无可用码、错误、尝试耗尽）共用同一个 `422` detail，避免把找回页面
+   变成账号枚举接口。
+
+刻意取舍：`users.email` 仍不是登录凭据；它只在"验证码已证明邮箱可达"之后参与重置。已签发的
+access token 只在剩余短 TTL 内有效（JWT 无状态），下一次 refresh 会因会话撤销而失败。
+
 ## 复核发现（只读复核，未修改 `MAIN/contracts/**`）
 
-复核对象：本文件上一版 + `../../MAIN/contracts/openapi/b4.yaml`。**operation 清单一致**：上表 22 条
-与 `b4.yaml` 中 22 个 operation 逐条对应，无缺漏、无多余。其余发现如下。
+复核对象：本文件上一版 + `../../MAIN/contracts/openapi/b4.yaml`。**operation 清单一致**：上表 28 条
+与 `b4.yaml` 中 28 个 operation 逐条对应，无缺漏、无多余。其余发现如下。
 
 ### 1. 路径前缀覆盖不一致（B4 侧已修正）
 

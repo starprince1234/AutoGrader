@@ -29,6 +29,7 @@ import {
 import { useCohort } from "../grades/useCohort";
 import { useAllGrades, gradesAvailability, type GradesAvailability } from "../grades/useGrades";
 import { useAllAssignments } from "./useAssignments";
+import { AssignmentComposer } from "./AssignmentComposer";
 
 /**
  * 作业中心（契约 `AssignmentPublic`，CHG-0007）。
@@ -299,9 +300,12 @@ function AssignmentRoster({
 function TeacherProgress({
   assignments,
   cohort,
+  sectionLabelOf,
 }: {
   assignments: AssignmentPublic[];
   cohort: ReturnType<typeof useCohort>;
+  /** course scope 内的课序显示名：作业行必须说清它属于哪个课序。 */
+  sectionLabelOf: (sectionId: string) => string;
 }) {
   const [expanded, setExpanded] = useState<string | null>(null);
   const summaries = useMemo(
@@ -368,11 +372,31 @@ function TeacherProgress({
             ),
           },
           {
+            key: "section",
+            header: t("assignments.col.section"),
+            render: (row) => sectionLabelOf(row.section_id),
+          },
+          {
             key: "due_at",
             header: t("assignments.col.due"),
             render: (row) => (
               <DueCell dueAt={row.due_at} now={Date.now()} />
             ),
+          },
+          {
+            key: "status",
+            header: t("assignments.col.status"),
+            render: (row) => (
+              <StatusPill tone={assignmentStatusTone(row.status)}>
+                {t(`assignments.status.${row.status}`)}
+              </StatusPill>
+            ),
+          },
+          {
+            key: "questions",
+            header: t("assignments.col.questions"),
+            align: "right",
+            render: (row) => (row.question_version_ids ?? []).length,
           },
           {
             key: "submitted",
@@ -441,6 +465,8 @@ export function AssignmentsPage() {
   // 课程/课序选择器决定——列表与提交情况必须看同一个作用域，否则计数与列表对不上。
   const scope = session.scope[0] ?? null;
   const [tab, setTab] = useState<"list" | "progress">("list");
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [createdNotice, setCreatedNotice] = useState<string | null>(null);
   const [courseId, setCourseId] = useState("");
   const [sectionId, setSectionId] = useState("");
 
@@ -523,16 +549,32 @@ export function AssignmentsPage() {
 
   return (
     <div className="stack">
-      {/* 邮件隔离复核不占主导航：它从作业上下文进入，权限仍是教师侧。 */}
+      {/* 邮件隔离复核不占主导航：它从作业上下文进入（P13 的 mail 标签），
+          把当前课程/课序作为筛选上下文带过去；授权仍由服务端按令牌与记录 scope 判定。 */}
       <div className="inline">
         <PageTitle>{t("nav.assignments")}</PageTitle>
+        {cohortView ? (
+          <button
+            type="button"
+            className="button"
+            data-testid="assignments-create-entry"
+            onClick={() => setComposerOpen(true)}
+          >
+            {t("assignments.create.entry")}
+          </button>
+        ) : null}
         {canReviewQuarantine(session) ? (
           <Link
-            to="/intake/quarantines"
+            to="/review"
+            search={{
+              tab: "mail",
+              course_id: courseScope === "" ? undefined : courseScope,
+              section_id: sectionScope === "" ? undefined : sectionScope,
+            }}
             className="button button--ghost"
             data-testid="assignments-quarantine-link"
           >
-            {t("quarantine.title")}
+            {t("review.mail.title")}
           </Link>
         ) : null}
       </div>
@@ -597,7 +639,14 @@ export function AssignmentsPage() {
                       <EmptyState>{t("assignments.progressNeedsSection")}</EmptyState>
                     </Panel>
                   ) : (
-                    <TeacherProgress assignments={assignments.assignments} cohort={cohort} />
+                    <TeacherProgress
+                      assignments={assignments.assignments}
+                      cohort={cohort}
+                      sectionLabelOf={(sectionId) =>
+                        (sections.data ?? []).find((option) => option.sectionId === sectionId)
+                          ?.label ?? shortenId(sectionId)
+                      }
+                    />
                   ),
               },
             ]}
@@ -606,6 +655,19 @@ export function AssignmentsPage() {
       ) : (
         listView
       )}
+
+      {createdNotice ? (
+        <Banner tone="success" testId="assignments-created-notice">
+          {createdNotice}
+        </Banner>
+      ) : null}
+
+      {composerOpen ? (
+        <AssignmentComposer
+          onClose={() => setComposerOpen(false)}
+          onCreated={() => setCreatedNotice(t("assignments.create.success"))}
+        />
+      ) : null}
     </div>
   );
 }

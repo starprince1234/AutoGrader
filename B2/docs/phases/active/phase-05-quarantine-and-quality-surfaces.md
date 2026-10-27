@@ -193,11 +193,15 @@ uv run pytest
    `question_version_id`，而自动路径正是从匹配规则取这三项；`not_matched` 时规则表没有给出任何身份。
    只给 `student_id` 不足以重建信封，且该 UID 的 checkpoint 已按 `quarantined` 落库、下次拉取会跳过。
    **本模块没有发明"归属即建提交"的路径**（那会绕开自动路径的身份判定）。
-3. **课程作用域**：两条隔离区端点与质量汇总都无法按行/按题目判定课程——`intake_quarantines` 没有
-   `course_id`（匹配失败时也不存在课程），"题目→课程"是 B3 的事实（B2 不读 B3 schema）。
-   实现只判到"staff 角色（隔离区额外要求令牌携带课程作用域）"；另一门课的教师当前能读到本部署的
-   隔离记录，这条由 `tests/test_intake_api.py::test_quarantine_scope_gap_is_recorded_not_hidden`
-   钉成可执行的记录。
+3. **课程作用域**（**后续：隔离区部分已由 P13 解决**）：两条隔离区端点与质量汇总当时都无法按行/
+   按题目判定课程——`intake_quarantines` 没有 `course_id`（匹配失败时也不存在课程），"题目→课程"
+   是 B3 的事实（B2 不读 B3 schema）。实现只判到"staff 角色（隔离区额外要求令牌携带课程作用域）"；
+   另一门课的教师当时能读到本部署的隔离记录。**P13 已给隔离行补上可持久化的
+   `scope_course_id/scope_section_id`（迁移 `0015`）并把授权做到行级**，见
+   [phase-10-quarantine-row-scope.md](phase-10-quarantine-row-scope.md)；质量聚合仍只判角色
+   （缺口保留）。本条记录的旧用例
+   `test_quarantine_scope_gap_is_recorded_not_hidden` 已被
+   `test_quarantine_list_is_filtered_by_row_scope_before_pagination` 等取代。
 4. 另有两条较小者（`resolved` 缺省语义的含糊、若干未声明但被使用的状态码）同见该表。
 
 ## 环境事实（写给下一个人）

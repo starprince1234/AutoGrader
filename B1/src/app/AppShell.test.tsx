@@ -109,6 +109,11 @@ function renderApp(initialEntry: string) {
     path: "/register",
     component: () => <Placeholder label="注册页" />,
   });
+  const forgotRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/forgot-password",
+    component: () => <Placeholder label="忘记密码页" />,
+  });
   const assignmentsRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/assignments",
@@ -139,6 +144,7 @@ function renderApp(initialEntry: string) {
       indexRoute,
       loginRoute,
       registerRoute,
+      forgotRoute,
       assignmentsRoute,
       gradesRoute,
       questionsRoute,
@@ -172,6 +178,14 @@ describe("P01 根入口与会话恢复", () => {
     await waitFor(() => expect(router.state.location.pathname).toBe("/login"));
     expect((router.state.location.search as { redirect?: string }).redirect).toBe("/assignments");
     expect(screen.queryByText(/欢迎/)).not.toBeInTheDocument();
+  });
+
+  it("匿名打开忘记密码页：保留公开页，不被送回登录页", async () => {
+    await establishSession("anonymous");
+    const router = renderApp("/forgot-password");
+
+    expect(await screen.findByText("忘记密码页")).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/forgot-password");
   });
 
   it("已登录打开根路径直接进入作业页", async () => {

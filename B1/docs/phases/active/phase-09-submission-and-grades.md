@@ -1,7 +1,7 @@
-# Phase 07 — P10 作答/提交闭环与 P11 成绩、导出、学习提示（成员四）
+# Phase 09 — P10 作答/提交闭环与 P11 成绩、导出、学习提示（成员四）
 
 - **状态**：已完成（代码与定向自动化检查）；**浏览器端到端与真实 B2/B3/B4 联调未执行**
-- **契约**：`MAIN/contracts` 从 `0.18.0` 升到 `0.19.0`（CHG-0030）；五份 `contracts.lock` 同步
+- **契约**：`MAIN/contracts` 从 `0.22.0` 升到 `0.23.0`（CHG-0030）；五份 `contracts.lock` 同步
 - **涉及页面**：P10 `/submit/:questionVersionId`、P11 `/grades`
 
 ## 1. 改了什么
@@ -44,7 +44,7 @@
 ```text
 node node_modules/eslint/bin/eslint.js . --max-warnings 0     # exit 0
 node node_modules/typescript/bin/tsc -b --pretty false        # exit 0
-node node_modules/vitest/vitest.mjs run                       # 46 files / 401 tests passed
+node node_modules/vitest/vitest.mjs run                       # 49 files / 416 tests passed
 node node_modules/vite/bin/vite.js build                      # 成功（仅既有 chunk 体积警告）
 ```
 

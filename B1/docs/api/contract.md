@@ -2,7 +2,7 @@
 
 契约唯一权威：`../../../MAIN/contracts/**`（本地集成时）。版本与摘要见 `../../contracts.lock`。本文件只写"我提供/我消费哪些端点与事件"，**不写字段表**；需要字段时打开契约文件。
 
-> **契约现状（已复核）**：契约 `0.18.0` 的 OpenAPI 已覆盖下表**全部**端点（B1 消费的每一个端点都能在
+> **契约现状（已复核）**：契约 `0.16.0` 的 OpenAPI 已覆盖下表**全部**端点（B1 消费的每一个端点都能在
 > `MAIN/contracts/openapi/{b2,b3,b4}.yaml` 中找到路径与 operationId）。因此 B1 的三条泳道**均具备开工条件**，
 > 不存在"等待 MAIN 冻结才能开工"的端点。
 >
@@ -12,7 +12,7 @@
 > `GET /api/v1/questions/coverage`，即题库标签覆盖度）→ **`0.15.0`**（同批：`CHG-0019`/`CHG-0023`
 > 参考解答验证与它的交付通道、`CHG-0017` 草稿省略语义、`CHG-0021` 隔离区语义修复、`CHG-0022` 标签形态、
 > `CHG-0024` 草稿 `published_at` 可空；批内摘要两度变动 `9ae4ebfe…` → `511f27ad…` → `29271ee2…`，
-> 版本号始终 `0.15.0`）→ **`0.18.0`**（`CHG-0026` 参考解答的 `409` 语义、`CHG-0027`
+> 版本号始终 `0.15.0`）→ **`0.16.0`**（`CHG-0026` 参考解答的 `409` 语义、`CHG-0027`
 > `IntakeQuarantineView.reason_code` 的 19 项 `enum`、`CHG-0028` 评测包与存证对**草稿**开放——
 > 正是"先验证再发布"能成立的前提；摘要 `372cfcab…`。`CHG-0025` 的 `draft-input` 读出口**未随本批落地**）。
 > B1 的类型按当前版本重新生成，`contracts.lock` 与 `B1/module.yaml` 由 MAIN 同步，B1 未手改。
@@ -33,7 +33,7 @@
 
 ## 我提供的端点
 
-B1 是静态客户端，`module.yaml` 声明 `routes: []`，**不提供任何服务端端点**。`provides: [web-ui]` 表示它提供的是浏览器 UI 资产（由 MAIN host 在 `/app` 静态托管），不是 API。
+B1 是静态客户端，`module.yaml` 声明 `routes: []`，**不提供任何服务端端点**。`provides: [web-ui]` 表示它提供浏览器 UI 资产，由 Vercel 发布到 `www.91idc.me/app/`；API 则由 `api.91idc.me` 提供。
 
 ## 我消费的端点（按提供方）
 
@@ -88,8 +88,8 @@ B1 是静态客户端，`module.yaml` 声明 `routes: []`，**不提供任何服
 | `GET /api/v1/grades/export` | 成绩导出（XLSX/CSV，防公式注入） | `exportGrades` | `RQ-B-1-60` |
 | `GET /api/v1/evaluation-runs/{evaluation_run_id}/commentary` | **教学评语轨**（非确定性；`disclaimers` 必须逐字显示；未配置 provider 时 `200 + status=unavailable`） | `getEvaluationCommentary` | `RQ-T-20`、`RQ-T-30` |
 | `POST /api/v1/evaluation-runs/{evaluation_run_id}/commentary` | 生成/重新生成评语（教师/助教；无 provider 时 `409`，**永不改变分数**） | `requestEvaluationCommentary` | `RQ-T-20` |
-| `GET /api/v1/intake/quarantines` | **隔离区读取**（`cursor`/`limit`/`reason_code`/`resolved`；`resolved` 无声明默认值，B1 始终显式传值） | `listIntakeQuarantines` | `RQ-B-1-30` 的运营侧（CHG-0014） |
-| `POST /api/v1/intake/quarantines/{intake_quarantine_id}/resolve` | 手动归属到学生（体只有 `student_id` 必填 / `note` 可选） | `resolveIntakeQuarantine` | 同上 |
+| `GET /api/v1/intake/quarantines` | **隔离区读取**（`cursor`/`limit`/`course_id`/`section_id`/`reason_code`/`resolved`；`resolved` 无声明默认值，B1 始终显式传值或按"全部"省略；`course_id/section_id` 只是筛选，越界由服务端 `403`） | `listIntakeQuarantines` | `RQ-B-1-30` 的运营侧（CHG-0014；行级范围 `0.19.0`） |
+| `POST /api/v1/intake/quarantines/{intake_quarantine_id}/resolve` | 手动归属到学生（体只有 `student_id` 必填 / `note` 可选；staff 对未关联/跨课记录 `403`，管理员可处置未关联行） | `resolveIntakeQuarantine` | 同上 |
 | `GET /api/v1/evaluation-runs/{evaluation_run_id}/appeal-pack` | **可移动的证据包**（`view` 默认 `teacher`，B1 始终显式发送；`redactions` 必须逐条列出） | `getAppealPack` | `RQ-B-1-30` 的争议侧（CHG-0014） |
 | `GET /api/v1/evaluation-runs/quality-summary` | **题目质量聚合**（仅计数；`security_not_checked` 与 `unmeasured_runs` 必须分开呈现） | `getEvaluationQualitySummary` | `RQ-B-1-30` 的教师侧（CHG-0015） |
 | `POST /api/v1/reference-verifications` | **参考解答验证**（CHG-0019 / `ADR-0015`）：B2 在沙箱执行该版本的参考解答并逐用例比对。响应只有计数、逐用例结局与失败类别——**没有**期望输出、隐藏用例输入与参考解源码。`attestation_id` 为 `null` 表示 B3 没记下存证（此时即使全通过也不能发布）；没有沙箱的平台返回 `503` 且不记录任何东西 | `verifyReferenceAnswer` | `RQ-T-10` 与 `RQ-B-3-20` 的可用性补全 |
@@ -103,7 +103,7 @@ B1 是静态客户端，`module.yaml` 声明 `routes: []`，**不提供任何服
   也没有把"未生成"与"未配置 provider（`200 + unavailable`）"的区别写进正文——**已作为契约表述缺口登记**。
 - `POST .../commentary` 实测返回 **`202` + 完整的 `ready` 评语体**（deepseek / deepseek-flash /
   `b2-commentary/1`，约 5.9 s），因此客户端不需要再补一次 `GET`（B1 直接把它写回查询缓存）。
-- `/commentary` 的 `advisory_score` **键在 `0.18.0` 复核时已出现，但值为 `null`**（`GET` → 200/`ready`，
+- `/commentary` 的 `advisory_score` **键在 `0.16.0` 复核时已出现，但值为 `null`**（`GET` → 200/`ready`，
   以及一次真实 `POST` → `202 / 7497 ms`，两次读到的都是 `null`）。因此 B1 的"`null` 不渲染 + 说明
   本次没有产生参考分"这条路径**已真实联通**；**非空参考分仍未在真机上出现过**（本部署的 provider
   对这几次 `failed` 运行返回 none），非空渲染只有契约与夹具证据。
@@ -124,9 +124,9 @@ B1 的**全部终态**（`completed` / `rejected` / `failed`）经 **SSE 流**�
 
 - **路径取自契约原文**：`MAIN/contracts/openapi/*.yaml` 中的路径已含 `/api/v1` 前缀，B1 原样使用，
   不做二次拼接（否则会得到 `/api/api/v1/...`）。
-- **`VITE_API_BASE_URL` 是"源"，不是"前缀"**：缺省为空串 = 同源（MAIN host 同时提供 `/app` 与 `/api`）；
-  仅当 host 位于另一个源时填写协议+主机。这与 ADR-0007 的举例（`/api`）不同，属于**需 MAIN 判定的文档不一致**，
-  已记录在 `../collaboration/interfaces.md`；B1 未修改 MAIN 任何文件。
+- **`VITE_API_BASE_URL` 是"源"，不是"前缀"**：生产构建读取 `https://api.91idc.me`；本地开发连接 `http://127.0.0.1:18000`。
+  契约路径原样带 `/api/v1`，不会再拼接路径前缀。
+- 浏览器请求设置 `credentials: include`，以便访问 API 子域下的 HttpOnly 刷新 cookie；后端 CORS 只允许 `https://www.91idc.me`。
 - **每个请求带 `X-Request-ID`**（与前端结构化日志同源）；`401` 刷新一次后重放，`403/404/409/422` 不重试（确定性结论）。
 - **重复同名查询参数**：`QueryParams` 的值可以是数组，序列化为 `?tags=a&tags=b`（契约里 `tags` 是
   `style: form, explode: true`，逗号拼接会得到一个服务端读不到的值）。空数组等于不加该条件。
@@ -144,9 +144,9 @@ B1 的**全部终态**（`completed` / `rejected` / `failed`）经 **SSE 流**�
 | 项 | 状态 | 说明 |
 |---|---|---|
 | 上表全部消费端点 | **契约已锁定** | 均在 `MAIN/contracts/openapi/` 中成文；"契约已锁定"指路径与语义已确定，**不代表 B4/B3/B2 已实现** |
-| 契约版本 | `0.18.0` | 见 `../../contracts.lock`；B1 的 `CONTRACT_VERSION` 由构建期从该文件注入（`vite.config.ts` 的 `define`），代码里不再有手写字面量 |
-| 教学评语轨（RQ-T-20/T-30） | **已实现，已真实联通** | `getEvaluationCommentary`/`requestEvaluationCommentary`；三态 + `disclaimers` 逐字 + 出处/输入白名单 + 参考分低权重并列。**真机证据**：`http://127.0.0.1:18000` 上 `GET`→200/`ready`（真实中文评语 + 2 条 disclaimers）、未生成→404（信息态）、`POST`→202（5.9 s，另一次 `0.18.0` 复核为 7497 ms）。**`advisory_score` 键已出现、值为 `null`** ⇒ "null 不渲染"这条路径已真实联通；**非空参考分**仍只有契约夹具证据（provider 对这几次 `failed` 运行返回 none） |
-| 隔离区复核台（CHG-0014 + CHG-0021） | **已实现，读路径已真实联通（空库）** | `listIntakeQuarantines`/`resolveIntakeQuarantine`；`resolved` **永不省略**（省略 = "全部"，只看未归属只能由 `?resolved=false` 表达）；只有 `not_uniquely_matched`/`ambiguous_match` 显示归属按钮，其余原因码说明会 `422`（`CHG-0021` §2.1）。**真机证据**：`GET /api/v1/intake/quarantines?resolved=false&limit=5` → **200**，`{"items":[],"next_cursor":null}`（库里没有隔离记录）⇒ 端点可用、页面渲染"当前筛选下没有隔离记录"；**带数据的渲染与归属写路径仍只有组件测试证据** |
+| 契约版本 | **`0.19.0`** | 见 `../../contracts.lock`；B1 的 `CONTRACT_VERSION` 由构建期从该文件注入（`vite.config.ts` 的 `define`），代码里不再有手写字面量 |
+| 教学评语轨（RQ-T-20/T-30） | **已实现，已真实联通** | `getEvaluationCommentary`/`requestEvaluationCommentary`；三态 + `disclaimers` 逐字 + 出处/输入白名单 + 参考分低权重并列。**真机证据**：`http://127.0.0.1:18000` 上 `GET`→200/`ready`（真实中文评语 + 2 条 disclaimers）、未生成→404（信息态）、`POST`→202（5.9 s，另一次 `0.16.0` 复核为 7497 ms）。**`advisory_score` 键已出现、值为 `null`** ⇒ "null 不渲染"这条路径已真实联通；**非空参考分**仍只有契约夹具证据（provider 对这几次 `failed` 运行返回 none） |
+| 复核工作区 · 邮件提交（P13-A） | **已实现；页面未部署** | `listIntakeQuarantines`/`resolveIntakeQuarantine` + 行级 scope；`resolved` 默认显式 `false`、"全部"才省略；课程/课序只是筛选（越界 `403`）；只有 `not_uniquely_matched`/`ambiguous_match` 且未处理的记录显示归属入口；未关联行只对管理员显示为「未关联」；候选来自 B4 现取名单，确认前不发 POST。**证据**：`features/review/MailReviewTab.test.tsx`（9 用例）+ `search.test.ts`；**带数据的真机渲染与归属写路径尚未部署验证** |
 | 证据包下载（CHG-0014） | **已实现；200 路径未触达** | `getAppealPack`；按需加载、`view` 显式发送、`redactions` 逐条列出、下载响应体原字节（同一个 `Blob`）。**真机证据**：`GET .../appeal-pack?view=teacher` → **404**，detail 为 "The evaluation run exists but has no report yet (state: failed，终态原因 infrastructure_error). A report exists only after a successful run." ⇒ 端点已实现，但本部署所有运行都是 `failed`（Windows 沙箱，`ADR-0004` 禁止降级），**成功响应体从未被读到**；该面板在报告缺失时不渲染，因此浏览器里也未打开 |
 | 题目质量热力图（CHG-0015） | **已实现，已真实联通** | `getEvaluationQualitySummary`；`security_not_checked` 与 `unmeasured_runs` 分开呈现；**静态规则按冻结目录逐条给出、`count=0` 不过滤**（见下）。**真机读数**（`question_version_id=34d07765-…`）：`200`，`attempt_count=0`、`static_rule_hits` **15 条且全部 `count=0`**、`security_found/not_found/not_checked` 皆 `0`、`failure_categories`/`case_failure_rates` 为空；浏览器里逐条核对（15 行 0 命中、三条安全计数、样本不足提示、"没有可读的信号"）。**非空数据分支**仍只有契约夹具证据 |
 | 题库标签覆盖度（CHG-0020） | **已实现，已真实联通（真实浏览器 + 真实 B3）** | `getQuestionTagCoverage`；`course_id` 缺失时不发请求，`tags` 顺序原样渲染，`tagged + untagged == total` 是页面上唯一被校验的恒等式（逐标签计数按设计重叠、不与总数相加），`untagged_questions` 单独一格。**真实读数**：`total=102 / tagged=4 / untagged=98`，`file-systems=3 / virtual-memory=3 / unix=1`，与 MAIN 的独立 SQL 逐项一致。`404` 分支是**数据驱动**的（只说"本部署取不到该端点"）。`CHG-0022` 补齐标签形态约束后，那段"标签可能不可筛"的防御分支已删除（缺口 8 关闭） |
@@ -168,7 +168,7 @@ B1 的**全部终态**（`completed` / `rejected` / `failed`）经 **SSE 流**�
 > 上述缺口的完整影响面（对应 RQ / 验收 / B1 处置）见 `../collaboration/interfaces.md` 的
 > "已知契约缺口"。**未修改** `MAIN/contracts/**`，也**未**用猜字段的方式绕过。
 
-## 0.19.0 增量（CHG-0030，B1 消费侧）
+## 0.23.0 增量（CHG-0030，B1 消费侧）
 
 - `listGrades` / `exportGrades` 新增 `from` / `to` / `evaluation_run_id`；`exportGrades` 新增
   `columns`（B1 发送逗号分隔的可选列，必需列由 B2 固定包含）。B1 **不重拼导出文件**。
@@ -177,4 +177,3 @@ B1 的**全部终态**（`completed` / `rejected` / `failed`）经 **SSE 流**�
   student_id、不发送题面/源码，`POST` 带 `Idempotency-Key`；响应中的提示**不参与**任何本地汇总。
 - 身份关联：B1 用教师可读的 `GET /sections/{section_id}/enrollments`（`EnrollmentPublic`）按
   `(section_id, student_id)` 关联；映射不到显示“名单中未找到”，不把平台 ID 当学号。
-

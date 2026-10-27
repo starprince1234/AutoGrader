@@ -13,6 +13,19 @@
 
 端口只接收 `(mailbox, sender, attachment names)`：发件人与附件名都是**可伪造**输入，因此它们只
 参与"查表"，不参与身份构造；本模块的任何返回文本都**不含**发件人地址（PII）与邮件内容。
+
+## 隔离记录的 `scope_context`：只从"规则候选共识"产生
+
+隔离记录必须能用课程/课序做**行级授权**，但"匹配失败时课程本身就不存在"。唯一可信的来源是
+**命中的规则本身**：每条规则都显式写了 `course_id/section_id`，它们是运营配置而不是邮件内容。
+因此 `MatchResult.scope_context` 的判定口径固定为：
+
+- 命中规则指向的 `(course_id, section_id)` **完全一致**（去重后只有一个组合）→ 带出这一对值；
+- 没有命中任何规则（`not_matched`）→ `null`；
+- 候选跨课程或跨课序（`ambiguous`）→ `null`（宁可让管理员处理，也不猜）。
+
+本模块**不**从 `mailbox`、发件人、附件名或请求参数推测 scope：那些都是可伪造输入，用它们补
+课程关联等于伪造授权依据。
 """
 
 from __future__ import annotations
@@ -50,6 +63,18 @@ class SubmissionTarget:
 
 
 @dataclass(frozen=True, slots=True)
+class ScopeContext:
+    """隔离记录可持久化的课程/课序关联（**只由规则候选共识产生**，见模块文档）。
+
+    两个字段成对存在：数据库约束保证"同时为空或同时非空"，服务层据此判定"这条记录能否按
+    课程/课序授权"。
+    """
+
+    course_id: str
+    section_id: str
+
+
+@dataclass(frozen=True, slots=True)
 class MatchResult:
     """匹配结论；`detail` 已脱敏（只含规则计数，不含发件人/正文/附件原文）。"""
 
@@ -58,6 +83,9 @@ class MatchResult:
     candidates: int
     identities: int
     detail: str
+    #: 命中规则共同指向的课程/课序；`not_matched`、跨 scope 的 `ambiguous` 为 `None`。
+    #: 只有"可审计的候选共识"才会到这里——这是隔离记录 scope 字段的**唯一**产生方式。
+    scope_context: ScopeContext | None = None
 
 
 @runtime_checkable
@@ -112,6 +140,7 @@ class MappingEmailMatcher:
             and (rule.required_attachment is None or rule.required_attachment in names)
         ]
         identities = {rule.target for rule in matched}
+        scope = _scope_of(matched)
         if not identities:
             return MatchResult(
                 outcome="not_matched",
@@ -119,6 +148,7 @@ class MappingEmailMatcher:
                 candidates=len(matched),
                 identities=0,
                 detail=f"no rule matched (rules={len(self._rules)})",
+                scope_context=None,
             )
         if len(identities) > 1:
             return MatchResult(
@@ -127,6 +157,7 @@ class MappingEmailMatcher:
                 candidates=len(matched),
                 identities=len(identities),
                 detail=f"{len(identities)} distinct identities matched",
+                scope_context=scope,
             )
         return MatchResult(
             outcome="matched",
@@ -134,7 +165,21 @@ class MappingEmailMatcher:
             candidates=len(matched),
             identities=1,
             detail=f"one identity matched (rules={len(matched)})",
+            scope_context=scope,
         )
+
+
+def _scope_of(matched: Sequence[_Rule]) -> ScopeContext | None:
+    """命中规则的课程/课序**共识**：只有一个 `(course_id, section_id)` 组合时返回它。
+
+    没有命中（空序列）或候选跨课程/跨课序时返回 `None`。判定基于**去重后的组合数**而不是
+    命中规则条数：同一门课、同一个课序的多条规则（含 `*` 兜底）不构成歧义。
+    """
+    pairs = {(rule.target.course_id, rule.target.section_id) for rule in matched}
+    if len(pairs) != 1:
+        return None
+    course_id, section_id = next(iter(pairs))
+    return ScopeContext(course_id=course_id, section_id=section_id)
 
 
 def _parse_rule(key: str, value: Mapping[str, str]) -> _Rule:

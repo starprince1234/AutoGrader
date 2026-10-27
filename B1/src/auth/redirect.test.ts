@@ -44,7 +44,7 @@ describe("登录回跳目标的校验（开放重定向防护）", () => {
   });
 
   it("拒绝空值、根路径、认证页与控制字符", () => {
-    for (const value of [undefined, null, 1, {}, "", "   ", "/", "/login", "/register", "/login?x=1"]) {
+    for (const value of [undefined, null, 1, {}, "", "   ", "/", "/login", "/register", "/forgot-password", "/login?x=1"]) {
       expect(safeRedirectTarget(value)).toBeNull();
     }
     expect(safeRedirectTarget("/assign\u0000ments")).toBeNull();

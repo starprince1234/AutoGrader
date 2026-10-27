@@ -78,6 +78,7 @@ PRIMARY_KEY_COLUMNS = {
     "inbox_events": "inbox_id",
     "dlq_messages": "dlq_id",
     "login_attempts": "attempt_id",
+    "password_reset_codes": "code_id",
 }
 
 #: Primary keys that are deliberately **not** a surrogate `<entity>_id`, which

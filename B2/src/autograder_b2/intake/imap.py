@@ -55,7 +55,7 @@ from autograder_b2.intake.attachments import (
     parse_message,
     screen_attachments,
 )
-from autograder_b2.intake.matching import EmailMatcher
+from autograder_b2.intake.matching import EmailMatcher, ScopeContext
 from autograder_b2.intake.service import (
     IntakeLimits,
     SubmissionIntakeService,
@@ -233,6 +233,9 @@ class QuarantineRecord:
     uid: int | None
     message_id: str | None
     created_at: datetime
+    #: 由匹配规则候选共识产生的课程/课序（成对为空或非空）；运维读路径据此核对 scope 来源。
+    scope_course_id: str | None = None
+    scope_section_id: str | None = None
 
 
 class EmailCheckpointStore:
@@ -331,9 +334,14 @@ class QuarantineStore:
         uid: int,
         message_id: str | None,
         now: datetime,
+        scope: ScopeContext | None = None,
         intake: str = "email",
     ) -> str:
-        """写一条隔离记录（在调用方事务内）。`detail` 已在调用方脱敏，这里只兜长度上限。"""
+        """写一条隔离记录（在调用方事务内）。`detail` 已在调用方脱敏，这里只兜长度上限。
+
+        `scope` 是**匹配规则候选共识**（见 `intake.matching` 的模块文档）；`None` 表示这条来件
+        没有任何可验证的课程/课序关联，之后只对平台管理员可见。两列由数据库 CHECK 约束成对。
+        """
         identifier = uuid.uuid4()
         connection.execute(
             sa.insert(intake_quarantines).values(
@@ -346,6 +354,8 @@ class QuarantineStore:
                 uid=uid,
                 message_id=message_id,
                 created_at=now,
+                scope_course_id=None if scope is None else uuid.UUID(scope.course_id),
+                scope_section_id=None if scope is None else uuid.UUID(scope.section_id),
             )
         )
         return str(identifier)
@@ -353,7 +363,7 @@ class QuarantineStore:
     def list_recent(
         self, *, mailbox: str | None = None, limit: int = 50
     ) -> tuple[QuarantineRecord, ...]:
-        """按时间倒序查询隔离记录（运维查询入口；只有标识、原因码与脱敏明细）。"""
+        """按时间倒序查询隔离记录（运维查询入口；只有标识、原因码、脱敏明细与 scope）。"""
         statement = sa.select(
             intake_quarantines.c.intake_quarantine_id,
             intake_quarantines.c.intake,
@@ -364,6 +374,8 @@ class QuarantineStore:
             intake_quarantines.c.uid,
             intake_quarantines.c.message_id,
             intake_quarantines.c.created_at,
+            intake_quarantines.c.scope_course_id,
+            intake_quarantines.c.scope_section_id,
         ).order_by(intake_quarantines.c.created_at.desc())
         if mailbox is not None:
             statement = statement.where(intake_quarantines.c.mailbox == mailbox)
@@ -380,6 +392,8 @@ class QuarantineStore:
                 uid=None if row[6] is None else int(row[6]),
                 message_id=None if row[7] is None else str(row[7]),
                 created_at=row[8],
+                scope_course_id=None if row[9] is None else str(row[9]),
+                scope_section_id=None if row[10] is None else str(row[10]),
             )
             for row in rows
         )
@@ -599,6 +613,7 @@ class EmailIntakeService:
                 message_id=message_id,
                 reason_code=reason,
                 detail=match.detail,
+                scope=match.scope_context,
             )
 
         target = match.target
@@ -721,6 +736,7 @@ class EmailIntakeService:
         message_id: str,
         reason_code: EmailIntakeReason,
         detail: str,
+        scope: ScopeContext | None,
     ) -> MessageOutcome:
         """无法唯一匹配：进隔离区、不产生提交、也**不因此**产生任何评测。"""
         outcome = self._record_outcome(
@@ -730,6 +746,7 @@ class EmailIntakeService:
             message_id=message_id,
             reason_code=reason_code,
             detail=detail,
+            scope=scope,
         )
         if outcome.status == "quarantined":
             logger.info(
@@ -751,6 +768,7 @@ class EmailIntakeService:
         message_id: str | None,
         reason_code: str,
         detail: str,
+        scope: ScopeContext | None = None,
     ) -> MessageOutcome:
         mailbox = self._settings.mailbox
         now = utc_now()
@@ -765,6 +783,7 @@ class EmailIntakeService:
                     uid=uid,
                     message_id=message_id,
                     now=now,
+                    scope=scope,
                 )
                 self._checkpoints.record(
                     connection,

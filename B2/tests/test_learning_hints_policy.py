@@ -450,6 +450,6 @@ def test_migration_head_and_manifest_agree_on_the_new_revision() -> None:
     root = pathlib.Path(__file__).resolve().parents[1]
     manifest = yaml.safe_load((root / "module.yaml").read_text(encoding="utf-8"))
     assert manifest["database"]["migration_head"] == EXPECTED_SCHEMA_REVISION
-    latest = root / "alembic" / "versions" / "20260915_0015_b2_evaluation_learning_hints.py"
+    latest = root / "alembic" / "versions" / "20260915_0016_b2_evaluation_learning_hints.py"
     assert latest.is_file()
-    assert 'revision = "20260915_0015"' in latest.read_text(encoding="utf-8")
+    assert 'revision = "20260915_0016"' in latest.read_text(encoding="utf-8")

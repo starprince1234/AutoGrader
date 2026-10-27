@@ -26,13 +26,24 @@
 | `20260915_0011` | 运行表补三态安全结论列 | `evaluation_runs.security_status`（`found`/`not_found`/`not_checked`，NULL＝没走到安全判定）：评语轨白名单里"三态安全结论"的**唯一**存储落点 |
 | `20260915_0012` | 表标准整改（`RQ-B-4-30` / 缺陷 E16） | 18 个主键约束改名为 `pk_<table>` + 7 个 `created_at`/`updated_at` 列收窄到 `timestamptz(3)` |
 | `20260915_0013` | 隔离区人工归属落点（`CHG-0014`） | `intake_quarantines` 加 `resolved`/`resolved_student_id`/`resolution_note` + `ck_intake_quarantines_resolution`（`resolved = (resolved_student_id IS NOT NULL)`） |
-| `20260915_0014` | AI 评分参考的存储落点（`RQ-T-30` / `ADR-0014` / `CHG-0018`） | `evaluation_commentaries` 加 `advisory_score`/`advisory_max_score`/`advisory_rationale`/`advisory_confidence` 四列；**重写** `ck_evaluation_commentaries_shape`（把四列纳入状态配对）；新增 `ck_evaluation_commentaries_advisory_bounds`（`0 <= score <= max_score` 且 `max_score > 0`）、`..._advisory_confidence`、`..._advisory_rationale`（当前 head） |
+| `20260915_0014` | AI 评分参考的存储落点（`RQ-T-30` / `ADR-0014` / `CHG-0018`） | `evaluation_commentaries` 加 `advisory_score`/`advisory_max_score`/`advisory_rationale`/`advisory_confidence` 四列；**重写** `ck_evaluation_commentaries_shape`（把四列纳入状态配对）；新增 `ck_evaluation_commentaries_advisory_bounds`（`0 <= score <= max_score` 且 `max_score > 0`）、`..._advisory_confidence`、`..._advisory_rationale` |
+| `20260915_0015` | 隔离区的行级课程范围（P13 的越权修复） | `intake_quarantines` 加 `scope_course_id`/`scope_section_id`（可空）+ `ck_intake_quarantines_scope`（`(scope_course_id IS NULL) = (scope_section_id IS NULL)`）+ `ix_intake_quarantines_scope_created_at`；**当前 head** |
 
-- 当前 head = **`20260915_0014`**，三处一致（`uv run alembic heads` 实测为
-  `20260915_0014 (head)`）：`module.yaml: database.migration_head`、`db/schema.py: EXPECTED_SCHEMA_REVISION`、
+- 当前 head = **`20260915_0015`**，三处一致（`uv run alembic heads` 实测为
+  `20260915_0015 (head)`）：`module.yaml: database.migration_head`、`db/schema.py: EXPECTED_SCHEMA_REVISION`、
   Alembic 自身。**注意**：`EXPECTED_SCHEMA_REVISION` 是 readiness 判据，因此**部署时必须先跑
-  `uv run alembic upgrade head`**——库停在上一个 revision 时评测/成绩/评语路由会按设计返回 503
+  `uv run alembic upgrade head`**——库停在上一个 revision 时评测/成绩/评语/隔离区路由会按设计返回 503
   （如实报"库结构版本与本构建不符"，而不是带着旧结构继续服务）。
+- **0015 为什么必须新增列**：P13 要求"教师只能读取授权范围内有可靠课程关联的隔离记录"。没有
+  可持久化的课程/课序，"拥有任意课程权限"就等于"能读全局隔离数据"（旧行为是已登记的缺口）。
+  列的**唯一**来源是邮件匹配规则的候选共识（全部命中规则的 `(course_id, section_id)` 完全一致）；
+  `not_matched`、跨课程/课序的 `ambiguous`、信封/附件拒绝一律 NULL，**不从** mailbox/发件人/
+  附件名/请求参数推测（那些是可伪造输入）。
+- **0015 的数据后果**：纯加列，**不改动任何既有行**；历史记录留成 NULL（无法证明课程归属），
+  新语义下只对平台管理员可见/可处置——这是**收紧**而不是丢数据。`downgrade()` 删索引、约束与两列，
+  课程关联随之丢失（授权退回旧的"任意 scope 可见"行为），降级必须写进运维记录。
+- **0015 的索引**：`(scope_course_id, scope_section_id, created_at)` 服务"先按行 scope 过滤、再按
+  时间倒序取一页"；SQL 谓词必须在 `ORDER BY`/`LIMIT`/游标判定之前，否则分页会先看到未授权行。
 - **0014 为什么加在评语表里而不开新表**：契约把参考分定成 `EvaluationCommentary` 的**子对象**，
   且 `CHG-0018` §4 明确没有"只生成参考分"的开关——两者是**同一次生成**的产物。开第二张表会造出
   "有分无评语"这种没有语义的状态组合。四列与 `text` 同生同死，由 shape CHECK 强制。

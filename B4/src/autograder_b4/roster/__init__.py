@@ -2,7 +2,7 @@
 
 from .mapping import MappingError, propose_mapping, validate_submitted_mapping
 from .parsers import (
-    MEDIA_TYPE_PDF,
+    MEDIA_TYPE_CSV,
     MEDIA_TYPE_XLSX,
     SUPPORTED_MEDIA_TYPES,
     UnsupportedDocument,
@@ -27,7 +27,7 @@ from .service import (
 from .table import RosterParseError, RosterTable
 
 __all__ = [
-    "MEDIA_TYPE_PDF",
+    "MEDIA_TYPE_CSV",
     "MEDIA_TYPE_XLSX",
     "STATUS_COMMITTED",
     "STATUS_FAILED_PARSE",

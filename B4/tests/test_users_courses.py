@@ -430,6 +430,43 @@ def test_section_creation_on_a_missing_course_is_404(client, teacher, sign_in_as
     assert response.status_code == 404
 
 
+def test_create_course_returns_the_stored_course(client, teacher, sign_in_as) -> None:
+    response = client.post(
+        "/api/v1/courses",
+        headers=sign_in_as("teacher").headers,
+        json={"course_code": "CS102", "title": "Data Structures"},
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert set(body) == {"course_id", "course_code", "title"}
+    assert body["course_code"] == "CS102"
+    assert body["title"] == "Data Structures"
+
+
+def test_create_section_returns_the_stored_section(client, teacher, sign_in_as, factory) -> None:
+    course_id = factory.course(code="CS103")
+    factory.grant(user_id=teacher, course_id=course_id, role="teacher")
+    response = client.post(
+        f"/api/v1/courses/{course_id}/sections",
+        headers=sign_in_as("teacher").headers,
+        json={"section_code": "02", "term": "2027S"},
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert set(body) == {"section_id", "course_id", "section_code", "term", "created_at"}
+    assert body["course_id"] == str(course_id)
+    assert body["section_code"] == "02"
+    assert body["term"] == "2027S"
+
+    # The read shape and the create shape must stay identical: the client renders both with
+    # one type, so a field that only one of them carries becomes a silent undefined.
+    listed = client.get(
+        f"/api/v1/courses/{course_id}/sections", headers=sign_in_as("teacher").headers
+    ).json()
+    assert set(listed["items"][0]) == set(body)
+    assert listed["items"][0]["section_id"] == body["section_id"]
+
+
 # --------------------------------------------------------------------- enrollments
 
 

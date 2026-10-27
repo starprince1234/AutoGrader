@@ -1,4 +1,4 @@
-"""PDF and XLSX readers.
+"""CSV and XLSX readers.
 
 The accepted formats and their media types are fixed by
 `MAIN/contracts/schemas/roster-import.schema.json`: only `application/pdf` and the XLSX
@@ -14,14 +14,12 @@ exhaust the host on its own.
 
 from __future__ import annotations
 
+import csv
 import io
-import re
 import zipfile
 
 from openpyxl import load_workbook
-from pypdf import PdfReader
 
-from .mapping import _ALIAS_LOOKUP
 from .table import (
     MAX_CELL_LENGTH,
     MAX_COLUMNS,
@@ -30,24 +28,23 @@ from .table import (
     RosterParseError,
     RosterTable,
     clean_cell,
-    normalize_header,
 )
 
-MEDIA_TYPE_PDF = "application/pdf"
+MEDIA_TYPE_CSV = "text/csv"
 MEDIA_TYPE_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-SUPPORTED_MEDIA_TYPES = (MEDIA_TYPE_PDF, MEDIA_TYPE_XLSX)
+SUPPORTED_MEDIA_TYPES = (MEDIA_TYPE_CSV, MEDIA_TYPE_XLSX)
 
-PDF_MAGIC = b"%PDF-"
 ZIP_MAGIC = b"PK\x03\x04"
 
-MAX_PDF_PAGES = 50
 #: Declared uncompressed size ceiling for the XLSX container (zip bomb guard).
 MAX_XLSX_UNCOMPRESSED_BYTES = 64 * 1024 * 1024
-CELL_DELIMITER = re.compile(r"\s{2,}|\t")
+#: CSV has no container to sniff, so the filename is the only discriminator; the decoded
+#: text is validated afterwards, which is what actually rejects a mislabelled file.
+CSV_SUFFIX = ".csv"
 
 
 class UnsupportedDocument(ValueError):
-    """The uploaded bytes are not a PDF or XLSX roster.
+    """The uploaded bytes are not a CSV or XLSX roster.
 
     A plain exception rather than a dataclass: a frozen dataclass cannot have
     `__traceback__` assigned, so raising one fails inside the exception machinery itself.
@@ -55,32 +52,88 @@ class UnsupportedDocument(ValueError):
 
 
 def detect_media_type(filename: str, content: bytes) -> str:
-    """Decide the format from content, then confirm it agrees with the filename."""
-    if content.startswith(PDF_MAGIC):
-        detected = MEDIA_TYPE_PDF
-    elif content.startswith(ZIP_MAGIC):
-        detected = MEDIA_TYPE_XLSX
-    else:
-        raise UnsupportedDocument(
-            "Only PDF and XLSX rosters are accepted; the upload is neither "
-            "(no PDF or ZIP container signature)."
-        )
+    """Decide the format.
+
+    XLSX is recognised by its container signature. CSV is recognised by the filename, because
+    a CSV is plain text with no signature to sniff; the decoded content is then validated by
+    the parser, so a PDF renamed to `.csv` still fails instead of being parsed as text.
+    """
     lowered = (filename or "").lower()
-    expected_suffix = ".pdf" if detected == MEDIA_TYPE_PDF else ".xlsx"
-    if not lowered.endswith(expected_suffix):
-        raise UnsupportedDocument(
-            f"The upload looks like {detected} but the filename does not end in "
-            f"{expected_suffix}; the filename is not used to choose a parser."
-        )
-    return detected
+    if content.startswith(ZIP_MAGIC):
+        if not lowered.endswith(".xlsx"):
+            raise UnsupportedDocument(
+                "The upload is a zip container but the filename does not end in .xlsx."
+            )
+        return MEDIA_TYPE_XLSX
+    if lowered.endswith(CSV_SUFFIX):
+        return MEDIA_TYPE_CSV
+    raise UnsupportedDocument(
+        "Only CSV and XLSX rosters are accepted; the upload has neither a zip container "
+        "signature nor a .csv filename."
+    )
 
 
 def parse_roster(content: bytes, media_type: str) -> RosterTable:
     if media_type == MEDIA_TYPE_XLSX:
         return parse_xlsx(content)
-    if media_type == MEDIA_TYPE_PDF:
-        return parse_pdf(content)
+    if media_type == MEDIA_TYPE_CSV:
+        return parse_csv(content)
     raise UnsupportedDocument(f"unsupported media type: {media_type}")
+
+
+def _decode_csv(content: bytes) -> str:
+    """UTF-8 (optionally with BOM) first, then GB18030 - Chinese exports are either."""
+    for encoding in ("utf-8-sig", "utf-8", "gb18030"):
+        try:
+            return content.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    raise RosterParseError("the CSV is not decodable as UTF-8 or GB18030")
+
+
+def parse_csv(content: bytes) -> RosterTable:
+    """Read a CSV roster: the first non-empty record is the header."""
+    reader = csv.reader(io.StringIO(_decode_csv(content)))
+    header: list[str] | None = None
+    rows: list[ParsedRow] = []
+    blank = 0
+    for index, raw in enumerate(reader, start=1):
+        cells = [clean_cell(value) for value in raw]
+        while cells and cells[-1] == "":
+            cells.pop()
+        if header is None:
+            if not any(cells):
+                continue
+            if len(cells) > MAX_COLUMNS:
+                raise RosterParseError(
+                    f"the roster has {len(cells)} columns; the limit is {MAX_COLUMNS}"
+                )
+            header = cells
+            continue
+        if not any(cells):
+            blank += 1
+            continue
+        if len(rows) >= MAX_ROWS:
+            raise RosterParseError(f"the roster has more than {MAX_ROWS} rows")
+        padded = cells + [""] * (len(header) - len(cells))
+        rows.append(
+            ParsedRow(
+                # The record's own position, so a rejected row can be found in the file.
+                row_number=index,
+                cells={
+                    column: _truncate(value)
+                    for column, value in zip(header, padded, strict=False)
+                },
+            )
+        )
+    if header is None:
+        raise RosterParseError("the CSV is empty: no header row was found")
+    return RosterTable(
+        columns=tuple(header),
+        rows=tuple(rows),
+        blank_rows_excluded=blank,
+        notes=_blank_note(blank),
+    )
 
 
 def parse_xlsx(content: bytes) -> RosterTable:
@@ -137,99 +190,6 @@ def parse_xlsx(content: bytes) -> RosterTable:
         )
     finally:
         workbook.close()
-
-
-def parse_pdf(content: bytes) -> RosterTable:
-    """Extract a table from a text-based PDF roster.
-
-    Column detection is deliberately conservative. PDF has no notion of a table, so the
-    reader looks for a header line whose cells match known field aliases when split on
-    two-or-more spaces (or a tab). When that fails the table comes back with no columns
-    and the import stops in `mapping_required` -- which is the documented behaviour, not
-    a fallback: a wrong guess here would silently mis-assign a whole column.
-    """
-    try:
-        reader = PdfReader(io.BytesIO(content))
-    except Exception as error:
-        raise RosterParseError(f"the PDF could not be opened: {type(error).__name__}") from error
-    if reader.is_encrypted:
-        raise RosterParseError("encrypted PDFs are not supported")
-    if len(reader.pages) > MAX_PDF_PAGES:
-        raise RosterParseError(
-            f"the PDF has {len(reader.pages)} pages; the limit is {MAX_PDF_PAGES}"
-        )
-
-    lines: list[str] = []
-    for page in reader.pages:
-        try:
-            text = page.extract_text() or ""
-        except Exception as error:
-            raise RosterParseError(
-                f"page text extraction failed: {type(error).__name__}"
-            ) from error
-        lines.extend(line.strip() for line in text.splitlines())
-    if not any(lines):
-        raise RosterParseError(
-            "no extractable text: the PDF is probably a scan, which this pipeline does not OCR"
-        )
-
-    header_index = _find_header_line(lines)
-    if header_index is None:
-        return RosterTable(
-            columns=(),
-            rows=(),
-            detail=(
-                "no header line matched a known roster column; supply the column mapping explicitly"
-            ),
-            notes=("pdf-text-extracted", f"{len(lines)} lines scanned"),
-        )
-    header = CELL_DELIMITER.split(lines[header_index].strip())
-    header = [clean_cell(cell) for cell in header if clean_cell(cell)]
-    if len(header) < 2:
-        return RosterTable(
-            columns=(),
-            rows=(),
-            detail="the PDF header line does not separate into distinct cells",
-            notes=("pdf-text-extracted",),
-        )
-
-    rows: list[ParsedRow] = []
-    blank = 0
-    for line in lines[header_index + 1 :]:
-        if not line:
-            blank += 1
-            continue
-        cells = [clean_cell(cell) for cell in CELL_DELIMITER.split(line)]
-        if not any(cells):
-            blank += 1
-            continue
-        if len(rows) >= MAX_ROWS:
-            raise RosterParseError(f"the roster has more than {MAX_ROWS} rows")
-        padded = (cells + [""] * len(header))[: len(header)]
-        rows.append(
-            ParsedRow(
-                row_number=len(rows) + 2,
-                cells={
-                    column: _truncate(value) for column, value in zip(header, padded, strict=False)
-                },
-            )
-        )
-    return RosterTable(
-        columns=tuple(header),
-        rows=tuple(rows),
-        blank_rows_excluded=blank,
-        notes=("pdf-text-extracted", *_blank_note(blank)),
-    )
-
-
-def _find_header_line(lines: list[str]) -> int | None:
-    for index, line in enumerate(lines[:80]):
-        if not line:
-            continue
-        cells = [normalize_header(cell) for cell in CELL_DELIMITER.split(line)]
-        if any(cell in _ALIAS_LOOKUP for cell in cells if cell):
-            return index
-    return None
 
 
 def _blank_note(blank: int) -> tuple[str, ...]:

@@ -301,6 +301,19 @@ registration_codes = Table(
     Column("created_at", TIMESTAMPTZ, nullable=False, server_default=func.now()),
 )
 
+password_reset_codes = Table(
+    "password_reset_codes",
+    metadata,
+    Column("code_id", PGUUID(as_uuid=True), primary_key=True),
+    Column("user_id", PGUUID(as_uuid=True), nullable=False),
+    Column("email", Text, nullable=False),
+    Column("code_hash", Text, nullable=False),
+    Column("attempts", Integer, nullable=False, server_default="0"),
+    Column("expires_at", TIMESTAMPTZ, nullable=False),
+    Column("consumed_at", TIMESTAMPTZ, nullable=True),
+    Column("created_at", TIMESTAMPTZ, nullable=False, server_default=func.now()),
+)
+
 ALL_TABLES = (
     users,
     courses,
@@ -320,4 +333,5 @@ ALL_TABLES = (
     registration_allowlist_batches,
     registration_allowlist,
     registration_codes,
+    password_reset_codes,
 )

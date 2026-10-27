@@ -40,6 +40,7 @@ function renderLogin(initialEntry: string) {
     validateSearch: (search: Record<string, unknown>) => ({
       redirect: typeof search.redirect === "string" ? search.redirect : undefined,
       registered: typeof search.registered === "string" ? search.registered : undefined,
+      reset: typeof search.reset === "string" ? search.reset : undefined,
     }),
     component: LoginPage,
   });
@@ -47,6 +48,11 @@ function renderLogin(initialEntry: string) {
     getParentRoute: () => rootRoute,
     path: "/register",
     component: () => <p>注册页占位</p>,
+  });
+  const forgotRoute = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/forgot-password",
+    component: () => <p>忘记密码页占位</p>,
   });
   const assignmentsRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -65,6 +71,7 @@ function renderLogin(initialEntry: string) {
     routeTree: rootRoute.addChildren([
       loginRoute,
       registerRoute,
+      forgotRoute,
       assignmentsRoute,
       gradesRoute,
     ]),
@@ -183,6 +190,57 @@ describe("P02 登录页", () => {
     stub = installFetchStub([]);
     expect(await screen.findByTestId("login-registered")).toHaveTextContent(
       "账号已创建，请登录。",
+    );
+  });
+
+  it("密码显示按钮在登录失败后仍然保留，可继续查看/隐藏密码", async () => {
+    const user = userEvent.setup();
+    renderLogin("/login");
+    stubSession(() =>
+      problemResponse({ status: 401, title: "Unauthorized", detail: "invalid credentials" }),
+    );
+
+    await screen.findByTestId("login-panel");
+    const passwordInput = screen.getByLabelText("密码");
+    const toggle = screen.getByTestId("login-password-toggle");
+
+    await user.type(screen.getByLabelText("用户名"), "student1");
+    await user.type(passwordInput, "wrong-password");
+    expect(passwordInput).toHaveAttribute("type", "password");
+
+    await user.click(toggle);
+    expect(passwordInput).toHaveAttribute("type", "text");
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+
+    await user.click(screen.getByTestId("login-submit"));
+    expect(await screen.findByTestId("login-error")).toBeInTheDocument();
+
+    // 修复的核心：提交失败后输入框仍在，且显示/隐藏状态没有被重置。
+    expect(passwordInput).toHaveAttribute("type", "text");
+    expect(screen.getByTestId("login-password-toggle")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+
+    await user.click(screen.getByTestId("login-password-toggle"));
+    expect(passwordInput).toHaveAttribute("type", "password");
+  });
+
+  it("登录页提供可用的忘记密码入口", async () => {
+    const user = userEvent.setup();
+    const router = renderLogin("/login");
+    await screen.findByTestId("login-panel");
+
+    await user.click(screen.getByTestId("login-forgot-password"));
+
+    await waitFor(() => expect(router.state.location.pathname).toBe("/forgot-password"));
+  });
+
+  it("密码重置成功后登录页显示明确提示", async () => {
+    renderLogin("/login?reset=done");
+    stub = installFetchStub([]);
+    expect(await screen.findByTestId("login-reset")).toHaveTextContent(
+      "密码已重置，请使用新密码登录。",
     );
   });
 });

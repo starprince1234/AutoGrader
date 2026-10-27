@@ -92,6 +92,7 @@ TRUNCATE_ORDER = (
     "inbox_events",
     "outbox_events",
     "login_attempts",
+    "password_reset_codes",
     "sessions",
     "credentials",
     "roles",

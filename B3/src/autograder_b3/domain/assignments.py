@@ -84,6 +84,29 @@ def create_assignment(
         return assignment, items
 
 
+def get_assignment_detail(
+    database: Database,
+    *,
+    principal: Principal | None,
+    assignment_id: uuid.UUID,
+) -> tuple[Assignment, list[uuid.UUID]]:
+    """Read one assignment inside the caller's course scope.
+
+    The detail page must not walk the list and match locally: once the list paginates, a
+    missing page silently becomes "this assignment does not exist". Absent records are
+    ``404``; a record whose course is outside the caller's scope is ``403`` - the caller
+    does not get to learn whether an id exists elsewhere.
+    """
+    with database.app_session() as session:
+        bank = QuestionBankRepository(session)
+        assignment = bank.get_assignment(assignment_id)
+        if assignment is None:
+            raise NotFound(f"assignment {assignment_id} not found")
+        require_course_read(principal, assignment.course_id)
+        items = bank.list_assignment_items(assignment_id)
+        return assignment, [item.question_version_id for item in items]
+
+
 def list_assignment_versions(
     database: Database,
     *,

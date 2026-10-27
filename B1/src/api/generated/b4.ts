@@ -143,6 +143,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/password-reset/code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send the e-mail verification code for a password reset
+         * @description Starts a password reset for the account carrying this registered e-mail address.
+         *     The answer is deliberately identical for every syntactically valid address, whether
+         *     or not an active account exists, so this endpoint cannot be used to enumerate
+         *     accounts: a code is mailed only when the address belongs to an active account.
+         *     It stores only a SHA-256 digest bound to the reset intent and never stores the
+         *     plaintext code.
+         *
+         *     The TTL, resend window and hourly limits are the same mail-channel limits used by
+         *     `requestRegistrationCode`. A missing or failing SMTP configuration is `503`, and
+         *     no code is persisted in that case.
+         */
+        post: operations["requestPasswordResetCode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/password-reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Replace the password using the e-mailed reset code
+         * @description Consumes the code issued by `requestPasswordResetCode` exactly once, replaces the
+         *     Argon2id credential, and revokes every refresh session of the account. Access
+         *     tokens already issued remain valid only until their short TTL; the next refresh
+         *     fails and the browser must sign in again with the new password.
+         *
+         *     Every code rejection (unknown address, missing/expired code, wrong code, attempts
+         *     exhausted) uses the same `422` detail, for the same anti-enumeration reason as the
+         *     code request. The plaintext password and code never enter a log line or an audit
+         *     record.
+         */
+        post: operations["completePasswordReset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/registration-allowlists": {
         parameters: {
             query?: never;
@@ -315,7 +372,7 @@ export interface paths {
         put?: never;
         /**
          * Upload a roster file and start parsing (RQ-B-1-10)
-         * @description Accepts a PDF or XLSX roster. Parsing never guesses: when a column cannot be
+         * @description Accepts a CSV or XLSX roster. Parsing never guesses: when a column cannot be
          *     mapped unambiguously the import stops in `mapping_required` and waits for a
          *     human decision. No roster row is persisted before confirmation.
          */
@@ -498,10 +555,27 @@ export interface components {
             updated_at: components["schemas"]["Timestamp"];
             created_at?: components["schemas"]["Timestamp"];
         };
-        CourseSummary: {
+        /**
+         * @description A course as the API returns it, for reads and for the create response. The create
+         *     response previously carried only `course_id`, so a client could not show the new
+         *     course without a second round trip.
+         */
+        CoursePublic: {
             course_id: components["schemas"]["Uuid"];
             course_code: string;
             title: string;
+        };
+        /**
+         * @description A section (课序) of a course. Defined here because the read and create responses
+         *     had no schema, which forced the client to guess which key carried the identifier
+         *     and which one carried the label.
+         */
+        SectionPublic: {
+            section_id: components["schemas"]["Uuid"];
+            course_id: components["schemas"]["Uuid"];
+            section_code: string;
+            term?: string | null;
+            created_at?: components["schemas"]["Timestamp"] | null;
         };
         /**
          * @description Parse preview for a roster import. `database.schema` of B4 is untouched while
@@ -920,6 +994,80 @@ export interface operations {
             429: components["responses"]["TooManyRequests"];
         };
     };
+    requestPasswordResetCode: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description W3C Trace Context. Propagated to logs, database records and emitted events. */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Correlation identifier. Generated at the entry point when absent. */
+                "X-Request-ID"?: components["parameters"]["RequestId"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: email */
+                    email: string;
+                };
+            };
+        };
+        responses: {
+            /**
+             * @description Same answer whether or not the address belongs to an active account. A code is
+             *     sent only in the latter case.
+             */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        expires_in_seconds: number;
+                        resend_after_seconds: number;
+                    };
+                };
+            };
+            422: components["responses"]["UnprocessableEntity"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    completePasswordReset: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description W3C Trace Context. Propagated to logs, database records and emitted events. */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Correlation identifier. Generated at the entry point when absent. */
+                "X-Request-ID"?: components["parameters"]["RequestId"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: email */
+                    email: string;
+                    code: string;
+                    /** Format: password */
+                    new_password: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Password replaced; every refresh session of the account revoked. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            422: components["responses"]["UnprocessableEntity"];
+        };
+    };
     getRegistrationAllowlist: {
         parameters: {
             query?: never;
@@ -1162,7 +1310,7 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CursorPage"] & {
-                        items?: components["schemas"]["CourseSummary"][];
+                        items?: components["schemas"]["CoursePublic"][];
                     };
                 };
             };
@@ -1185,12 +1333,14 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Course created. */
+            /** @description Course created; the body is the stored course. */
             201: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["CoursePublic"];
+                };
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
@@ -1208,12 +1358,16 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Sections of the course. */
+            /** @description Sections of the course, ordered by section code. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["SectionPublic"][];
+                    };
+                };
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
@@ -1238,12 +1392,14 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Section created. */
+            /** @description Section created; the body is the stored section. */
             201: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["SectionPublic"];
+                };
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];

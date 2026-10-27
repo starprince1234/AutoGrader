@@ -5,21 +5,21 @@ import {
   redirect,
 } from "@tanstack/react-router";
 import { AppShell } from "./AppShell";
+import { ForgotPasswordPage } from "../features/auth/ForgotPasswordPage";
 import { LoginPage } from "../features/auth/LoginPage";
 import { NotFoundPage } from "./NotFoundPage";
 import { RegisterPage } from "../features/auth/RegisterPage";
 import { safeRedirectTarget } from "../auth/redirect";
+import { parseReviewSearch } from "../features/review/search";
 import {
   AssignmentDetailRoute,
   AssignmentsRoute,
   AuthoringEditRoute,
   AuthoringNewRoute,
   GradesRoute,
-  QuarantineRoute,
-  QualityRoute,
   QuestionDetailRoute,
   QuestionListRoute,
-  RosterImportRoute,
+  ReviewRoute,
   RosterRoute,
   SubmitRoute,
   UsersRoute,
@@ -48,7 +48,7 @@ const indexRoute = createRoute({
  * `/login` 的查询串。**两个键都必须可选**：多数入口是裸的 `/login`，
  * 若把键推成"必填但可为 undefined"，那些 `Link` 会全部报类型错。
  */
-type LoginSearch = { redirect?: string; registered?: string };
+type LoginSearch = { redirect?: string; registered?: string; reset?: string };
 
 function validateLoginSearch(search: Record<string, unknown>): LoginSearch {
   const parsed: LoginSearch = {};
@@ -61,6 +61,11 @@ function validateLoginSearch(search: Record<string, unknown>): LoginSearch {
     parsed.registered = search.registered;
   } else if (search.registered === true || typeof search.registered === "number") {
     parsed.registered = "created";
+  }
+  if (typeof search.reset === "string" && search.reset !== "") {
+    parsed.reset = search.reset;
+  } else if (search.reset === true || typeof search.reset === "number") {
+    parsed.reset = "done";
   }
   return parsed;
 }
@@ -76,6 +81,13 @@ const registerRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/register",
   component: RegisterPage,
+});
+
+/** 忘记密码：公开页，走 B4 的邮件验证码重置流程（P02 补充）。 */
+const forgotPasswordRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/forgot-password",
+  component: ForgotPasswordPage,
 });
 
 const questionsRoute = createRoute({
@@ -168,16 +180,38 @@ const gradesRoute = createRoute({
   component: GradesRoute,
 });
 
+/**
+ * P12 工作区：`view`（名单 / 导入名单）、课程/课序作用域、导入任务 ID 全部住在 query。
+ * 刷新、前进后退、复制链接都回到同一处状态；无效值按缺省处理，不渲染第三个页面。
+ */
+type RosterSearch = {
+  view?: "roster" | "import";
+  course_id?: string;
+  section_id?: string;
+  import_id?: string;
+};
+
+function validateRosterSearch(search: Record<string, unknown>): RosterSearch {
+  const result: RosterSearch = {};
+  if (search.view === "import") result.view = "import";
+  if (search.view === "roster") result.view = "roster";
+  if (typeof search.course_id === "string" && search.course_id !== "") {
+    result.course_id = search.course_id;
+  }
+  if (typeof search.section_id === "string" && search.section_id !== "") {
+    result.section_id = search.section_id;
+  }
+  if (typeof search.import_id === "string" && search.import_id !== "") {
+    result.import_id = search.import_id;
+  }
+  return result;
+}
+
 const rosterRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/roster",
+  validateSearch: validateRosterSearch,
   component: RosterRoute,
-});
-
-const rosterImportRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/roster/import",
-  component: RosterImportRoute,
 });
 
 /**
@@ -202,36 +236,24 @@ const usersRoute = createRoute({
   component: UsersRoute,
 });
 
-/** 隔离区复核台（CHG-0014）。 */
-const quarantineRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/intake/quarantines",
-  component: QuarantineRoute,
-});
-
 /**
- * 题目质量视图（CHG-0015）。筛选条件走查询串，使"某版本的教师质量视图"成为可分享的深链。
- * 三个参数都可选：`question_version_id` 虽是契约的必需参数，但页面在它为空时**不发请求**并
- * 说明原因，而不是渲染一个空结果——因此路由层不强制要求它。
+ * P13 复核工作区的唯一入口（`/review?tab=mail|quality`）。
+ *
+ * 旧 `/intake/quarantines` 与 `/quality` 已合并到这里：不注册别名、不留兼容路由。
+ * 未知 `tab` 由 `parseReviewSearch` 归一到 `mail`；查询串只承载筛选与对象 ID。
  */
-const qualityRoute = createRoute({
+const reviewRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/quality",
-  validateSearch: (search: Record<string, unknown>) => ({
-    question_version_id:
-      typeof search.question_version_id === "string" && search.question_version_id !== ""
-        ? search.question_version_id
-        : undefined,
-    from: typeof search.from === "string" && search.from !== "" ? search.from : undefined,
-    to: typeof search.to === "string" && search.to !== "" ? search.to : undefined,
-  }),
-  component: QualityRoute,
+  path: "/review",
+  validateSearch: parseReviewSearch,
+  component: ReviewRoute,
 });
 
 const routeTree = rootRoute.addChildren([
   indexRoute,
   loginRoute,
   registerRoute,
+  forgotPasswordRoute,
   questionsRoute,
   // 静态段 `/questions/new` 必须与动态段 `/questions/$questionId` 同时注册：
   // 路由器按段排序，静态段优先，因此 `new` 不会被当成一个 question_id。
@@ -243,10 +265,8 @@ const routeTree = rootRoute.addChildren([
   assignmentDetailRoute,
   gradesRoute,
   rosterRoute,
-  rosterImportRoute,
   usersRoute,
-  quarantineRoute,
-  qualityRoute,
+  reviewRoute,
 ]);
 
 export const router = createRouter({
