@@ -53,6 +53,7 @@
 | `node node_modules/eslint/bin/eslint.js . --max-warnings 0`（B1） | 通过（0 error / 0 warning） |
 | `node node_modules/vitest/vitest.mjs run`（B1 全量） | **48 个测试文件 / 412 个用例全部通过**（exit 0） |
 | `node node_modules/vite/bin/vite.js build`（B1） | 通过 |
+| 线上入口复核（提交 `b30e2b9`） | `https://www.91idc.me/app/` HTTP 200，页面引用 `/app/assets/index-CIBPK-9p.js`；该 bundle 含「教学管理」「学习任务」「当前账号没有教师端权限」「最近登录过的账号」与 `portal-mismatch`；`https://api.91idc.me/health/ready` 四个模块均 healthy，B4 迁移头 `20261027_0005` |
 
 契约没有变化（纯前端），`contracts.lock` 与后端无需更新。
 
@@ -60,7 +61,8 @@
 
 - 1440 / 768 / 390 px 的真实浏览器截图、深色模式与触摸操作未验收。
 - 未使用真实教师/学生账号走"导览 → 登录 → 回目标页"的完整线上闭环；该路径由
-  LandingPage + AppShell + LoginPage 的集成测试组合覆盖。
+  LandingPage + AppShell + LoginPage 的集成测试组合覆盖。线上只确认了构建产物包含导览页，
+  未做真实账号的浏览器点击复核。
 - 未对生产部署后的导览页做视觉复核（部署结果以推送后的 Vercel 状态为准）。
 
 ## 回滚

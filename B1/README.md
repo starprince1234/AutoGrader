@@ -8,6 +8,8 @@ B1 是 AutoGrader 的**静态 Web 客户端**（TypeScript + React 19 + Vite 7�
 > 跳过登录页**直接进入；其余先登录再回到所点功能。门户意图只保存 `{portal, path}`（不存凭据），
 > 角色与门户不匹配时阻断并给出切换说明，避免教师/学生视图混淆。验证：ESLint、`tsc -b`、
 > `api:check`、Vitest（**48 文件 / 412 用例**）、`vite build` 实跑通过；MAIN 契约/清单/迁移头/文档门禁通过。
+> 线上 `https://www.91idc.me/app/` 已切换到本次构建（bundle 含导览页文案），
+> `https://api.91idc.me/health/ready` 四个模块均 healthy。
 > 上一批为**找回密码与密码可见性**：登录页「忘记密码？」与 `/forgot-password`（注册邮箱 → 邮件验证码
 > → 设置新密码，成功后撤销该账号全部 refresh 会话），登录失败后密码"小眼睛"仍可用；契约随之升到
 > `0.22.0`，B4 新增两条公开认证操作与迁移 `20261027_0005`。**B4 pytest 需要 PostgreSQL/NATS，
