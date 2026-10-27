@@ -155,7 +155,9 @@ describe("用户标签：列表与状态（P14 / RQ-B-4-50）", () => {
     expect(screen.getByText("未绑定")).toBeInTheDocument();
     expect(screen.getByTestId(`user-status-${UUID_B}`)).toHaveTextContent("已停用");
     expect(screen.queryByTestId(`deactivate-${UUID_B}`)).toBeNull();
-    expect(screen.getByTestId(`deactivated-${UUID_B}`)).toBeInTheDocument();
+    // 已停用的行给"启用账号"（反向软操作），启用的行不给。
+    expect(screen.getByTestId(`activate-${UUID_B}`)).toHaveTextContent("启用账号");
+    expect(screen.queryByTestId(`activate-${UUID_A}`)).toBeNull();
     // 停用的行仍然可以被读出与查阅（软停用，不是删除）。
     expect(screen.getByTestId(`detail-${UUID_B}`)).toBeInTheDocument();
   });
@@ -188,8 +190,10 @@ describe("用户标签：列表与状态（P14 / RQ-B-4-50）", () => {
     expect(screen.getByTestId(`user-status-${UUID_A}`)).not.toHaveTextContent("已停用");
     // 未知不是"可以停用"，也不是"已经停用"：两个动作都不提供。
     expect(screen.queryByTestId(`deactivate-${UUID_A}`)).toBeNull();
+    expect(screen.queryByTestId(`activate-${UUID_A}`)).toBeNull();
     expect(screen.queryByTestId(`change-role-${UUID_A}`)).toBeNull();
     expect(screen.getByTestId(`role-blocked-${UUID_A}`)).toHaveTextContent("缺少并发字段");
+    expect(screen.getByTestId(`state-unknown-${UUID_A}`)).toHaveTextContent("状态未知");
     // 只读的详情仍然可用。
     expect(screen.getByTestId(`detail-${UUID_A}`)).toBeInTheDocument();
   });
@@ -496,6 +500,141 @@ describe("用户标签：停用账号", () => {
     expect(screen.getByTestId(`user-status-${USER_ID}`)).toHaveTextContent("启用");
   });
 });
+
+describe("用户标签：启用账号", () => {
+  it("确认弹窗写明对象与「软启用」；确认后只发一次 POST，状态刷新为启用", async () => {
+    let active = false;
+    stub = installFetchStub(
+      withCommonRoutes([
+        {
+          method: "GET",
+          path: "/api/v1/users",
+          respond: () =>
+            jsonResponse(
+              userPage([
+                userSummary({
+                  user_id: USER_ID,
+                  username: "alice",
+                  display_name: "爱丽丝",
+                  is_active: active,
+                }),
+              ]),
+            ),
+        },
+        {
+          method: "POST",
+          path: `/api/v1/users/${USER_ID}/activate`,
+          respond: () => {
+            active = true;
+            return new Response(null, { status: 204 });
+          },
+        },
+      ]),
+    );
+    const user = userEvent.setup();
+    await signIn("admin1", "pw");
+    renderWithProviders(<UsersPage onCreate={noop} />);
+
+    await screen.findByTestId("users-table");
+    await user.click(screen.getByTestId(`activate-${USER_ID}`));
+
+    const modal = await screen.findByTestId("activate-modal");
+    expect(within(modal).getByText("启用账号", { selector: "h3" })).toBeInTheDocument();
+    expect(within(modal).getByTestId("activate-target")).toHaveTextContent(
+      "确定启用账号 “alice”（爱丽丝）？启用后该账号恢复登录权限。",
+    );
+    expect(within(modal).getByText("这是软启用，不会改动账号历史成绩与记录。")).toBeInTheDocument();
+    // 打开确认框不是启用。
+    expect(activateRequests()).toHaveLength(0);
+
+    await user.click(within(modal).getByTestId("activate-confirm"));
+
+    expect(await screen.findByText(/账号已启用/)).toBeInTheDocument();
+    await waitFor(() =>
+      expect(screen.getByTestId(`user-status-${USER_ID}`)).toHaveTextContent("启用"),
+    );
+    expect(screen.queryByTestId(`activate-${USER_ID}`)).toBeNull();
+    expect(screen.getByTestId(`deactivate-${USER_ID}`)).toBeInTheDocument();
+
+    const requests = activateRequests();
+    expect(requests).toHaveLength(1);
+    expect(requests[0].url.pathname).toBe(`/api/v1/users/${USER_ID}/activate`);
+    expect(requests[0].body).toBeNull();
+  });
+
+  it("取消启用没有任何写请求", async () => {
+    stub = installFetchStub(
+      withCommonRoutes([
+        {
+          method: "GET",
+          path: "/api/v1/users",
+          respond: () =>
+            jsonResponse(
+              userPage([
+                userSummary({ user_id: USER_ID, username: "alice", is_active: false }),
+              ]),
+            ),
+        },
+      ]),
+    );
+    const user = userEvent.setup();
+    await signIn("admin1", "pw");
+    renderWithProviders(<UsersPage onCreate={noop} />);
+
+    await screen.findByTestId("users-table");
+    await user.click(screen.getByTestId(`activate-${USER_ID}`));
+    await user.click(screen.getByTestId("activate-cancel"));
+
+    expect(screen.queryByTestId("activate-modal")).toBeNull();
+    expect(activateRequests()).toHaveLength(0);
+  });
+
+  it("409（例如启用自己）显示服务端拒绝，不显示成功", async () => {
+    stub = installFetchStub(
+      withCommonRoutes([
+        {
+          method: "GET",
+          path: "/api/v1/users",
+          respond: () =>
+            jsonResponse(
+              userPage([
+                userSummary({ user_id: USER_ID, username: "root", is_active: false }),
+              ]),
+            ),
+        },
+        {
+          method: "POST",
+          path: `/api/v1/users/${USER_ID}/activate`,
+          respond: () =>
+            problemResponse({
+              status: 409,
+              title: "Conflict",
+              detail: "An administrator cannot activate their own account.",
+            }),
+        },
+      ]),
+    );
+    const user = userEvent.setup();
+    await signIn("admin1", "pw");
+    renderWithProviders(<UsersPage onCreate={noop} />);
+
+    await screen.findByTestId("users-table");
+    await user.click(screen.getByTestId(`activate-${USER_ID}`));
+    await user.click(screen.getByTestId("activate-confirm"));
+
+    const conflict = await screen.findByTestId("activate-conflict");
+    expect(conflict).toHaveTextContent("管理员不能启用或停用自己的账号");
+    expect(screen.queryByText(/账号已启用/)).toBeNull();
+    // 行仍然在那里，并且状态没有被页面提前改成"启用"。
+    expect(screen.getByTestId(`user-status-${USER_ID}`)).toHaveTextContent("已停用");
+  });
+});
+
+function activateRequests() {
+  return (stub?.requests ?? []).filter(
+    (request) => request.method === "POST" && request.url.pathname.endsWith("/activate"),
+  );
+}
 
 describe("用户标签：详情与复制 ID", () => {
   it("详情显示短 ID，复制按钮把完整 ID 写入剪贴板并给出反馈", async () => {

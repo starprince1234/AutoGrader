@@ -658,6 +658,39 @@ samp {
   flex-wrap: wrap;
 }
 
+/* 管理员工作区（P14）：切换标签时内容面板横向滑入。
+   “向右滑”是内容自左向右移动（切到注册名单），反向即“向左滑”（切回用户）。
+   动画只挂在内容包装层上；标签按钮本身不移动，外观、配色与选中态完全不变。 */
+@keyframes tab-panel-slide-right {
+  from {
+    opacity: 0;
+    transform: translateX(-24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes tab-panel-slide-left {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.admin-tab-panel--slide-right {
+  animation: tab-panel-slide-right 240ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+.admin-tab-panel--slide-left {
+  animation: tab-panel-slide-left 240ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
 /* 剪贴板不可用时的诊断文本：等宽、可横向滚动、可全选复制。 */
 .diagnostics {
   width: 100%;

@@ -10,6 +10,7 @@ import {
   ASSIGNABLE_ROLES,
   loadedUsers,
   orderedRoles,
+  useActivateUser,
   useDeactivateUser,
   useUpdateUserRoles,
   useUsers,
@@ -23,7 +24,9 @@ import {
  *   把"点过按钮"当成"账号已停用"）；
  * - 改角色必须先比对旧/新角色并确认，且带上从该行读到的 `expected_updated_at`，让并发的另一位
  *   管理员得到 409 而不是被静默覆盖；
- * - 停用文案一律是"停用账号"：契约没有物理删除，写"删除"会让管理员以为历史成绩一起没了。
+ * - 停用文案一律是"停用账号"：契约没有物理删除，写"删除"会让管理员以为历史成绩一起没了；
+ * - 启用文案一律是"启用账号"：它是停用的反向软操作（`activateUser`），同样不改历史与课程名单，
+ *   同样只有管理员能执行，也同样是"确认后才发请求"。
  *
  * 可见性不是授权：普通角色直接调用这些接口会得到 403，页面把它原样展示。
  */
@@ -40,18 +43,21 @@ export function UsersPage({
   const rows = useMemo(() => loadedUsers(users.data?.pages), [users.data]);
   const updateRoles = useUpdateUserRoles();
   const deactivate = useDeactivateUser();
+  const activate = useActivateUser();
   const queryClient = useQueryClient();
 
   const [notice, setNotice] = useState<string | null>(null);
   const [roleTargetId, setRoleTargetId] = useState<string | null>(null);
   const [nextRole, setNextRole] = useState<Role>("student");
   const [deactivateTargetId, setDeactivateTargetId] = useState<string | null>(null);
+  const [activateTargetId, setActivateTargetId] = useState<string | null>(null);
   const [detailTargetId, setDetailTargetId] = useState<string | null>(null);
 
   // 目标行从**当前列表数据**里取，而不是存一份快照：并发冲突后管理员点"重新加载"，
   // 弹窗里的旧/新角色与 `expected_updated_at` 必须一起变成服务端的最新值。
   const roleTarget = rows.find((row) => row.user_id === roleTargetId) ?? null;
   const deactivateTarget = rows.find((row) => row.user_id === deactivateTargetId) ?? null;
+  const activateTarget = rows.find((row) => row.user_id === activateTargetId) ?? null;
   const detailTarget = rows.find((row) => row.user_id === detailTargetId) ?? null;
 
   const closeRoleChange = () => {
@@ -62,6 +68,11 @@ export function UsersPage({
   const closeDeactivate = () => {
     setDeactivateTargetId(null);
     deactivate.reset();
+  };
+
+  const closeActivate = () => {
+    setActivateTargetId(null);
+    activate.reset();
   };
 
   const openRoleChange = (row: UserSummary) => {
@@ -101,6 +112,21 @@ export function UsersPage({
         onSuccess: () => {
           setNotice(t("users.deactivated", { username: deactivateTarget.username }));
           setDeactivateTargetId(null);
+        },
+      },
+    );
+  };
+
+  const confirmActivate = () => {
+    if (!activateTarget || activate.isPending) return;
+    // 只有"已停用"的行才可启用：启用不是"状态未知"的补救措施。
+    if (accountState(activateTarget.is_active) !== "inactive") return;
+    activate.mutate(
+      { userId: activateTarget.user_id },
+      {
+        onSuccess: () => {
+          setNotice(t("users.activated", { username: activateTarget.username }));
+          setActivateTargetId(null);
         },
       },
     );
@@ -202,11 +228,24 @@ export function UsersPage({
               >
                 {t("users.deactivate")}
               </button>
+            ) : state === "inactive" ? (
+              // 已停用的行给"启用账号"：它是停用的反向软操作，重复点也只会再写一条审计。
+              <button
+                type="button"
+                className="button button--ghost"
+                data-testid={`activate-${row.user_id}`}
+                onClick={() => {
+                  setNotice(null);
+                  activate.reset();
+                  setActivateTargetId(row.user_id);
+                }}
+              >
+                {t("users.activate")}
+              </button>
             ) : (
-              // 已停用的行不再给"停用"按钮：重复 DELETE 只会再写一条审计，不会让事实更清楚。
-              // 状态未知的行同样不给：未知不代表可以停用。
-              <span className="muted" data-testid={`deactivated-${row.user_id}`}>
-                {state === "inactive" ? t("users.inactive") : t("users.statusUnknown")}
+              // 状态未知的行两个方向都不给：未知既不代表可停用，也不代表已停用。
+              <span className="muted" data-testid={`state-unknown-${row.user_id}`}>
+                {t("users.statusUnknown")}
               </span>
             )}
             <button
@@ -455,6 +494,55 @@ export function UsersPage({
                 className="button button--ghost"
                 data-testid="deactivate-cancel"
                 onClick={closeDeactivate}
+              >
+                {t("common.cancel")}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
+
+      {activateTarget ? (
+        <Modal
+          title={t("users.activateTitle")}
+          testId="activate-modal"
+          onClose={closeActivate}
+        >
+          <div className="stack">
+            <p data-testid="activate-target">
+              {t("users.activateBody", {
+                username: activateTarget.username,
+                name: activateTarget.display_name,
+              })}
+            </p>
+            <p className="muted">{t("users.activateKeepsData")}</p>
+            {activate.isError ? (
+              isApiError(activate.error) && activate.error.isConflict ? (
+                <Banner tone="error" testId="activate-conflict">
+                  <p>{t("users.activateConflict")}</p>
+                  <p className="muted">{describeApiError(activate.error)}</p>
+                </Banner>
+              ) : (
+                <ErrorState error={activate.error} testId="activate-error" />
+              )
+            ) : null}
+            <div className="inline">
+              <button
+                type="button"
+                className="button button--danger"
+                data-testid="activate-confirm"
+                disabled={
+                  activate.isPending || accountState(activateTarget.is_active) !== "inactive"
+                }
+                onClick={confirmActivate}
+              >
+                {activate.isPending ? t("users.activating") : t("users.activate")}
+              </button>
+              <button
+                type="button"
+                className="button button--ghost"
+                data-testid="activate-cancel"
+                onClick={closeActivate}
               >
                 {t("common.cancel")}
               </button>

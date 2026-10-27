@@ -265,14 +265,44 @@ export interface paths {
          *     owns stay in place; `is_active` becomes `false` and every open session of that user is
          *     revoked, so the account can no longer sign in. An administrator whose own row this is
          *     gets `409`: deactivating yourself would end the session that is performing the request
-         *     and can leave the platform without an active administrator. Re-activation has no
-         *     endpoint here — it is deliberately not invented by a client.
+         *     and can leave the platform without an active administrator. The opposite direction is
+         *     `activateUser`; this verb never revives an account by itself.
          */
         delete: operations["deleteUser"];
         options?: never;
         head?: never;
         /** Update a user or reassign roles (admin only) */
         patch: operations["updateUser"];
+        trace?: never;
+    };
+    "/api/v1/users/{user_id}/activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-activate a deactivated user (admin only)
+         * @description **Soft re-activation, the inverse of `deleteUser`.** `is_active` becomes `true`, the
+         *     deactivation timestamp is cleared and the account may sign in again; the row, its
+         *     historical records and every course membership stay untouched, so reviving an account
+         *     never rewrites history or re-creates enrollments. `updated_at` advances, which is what
+         *     a concurrent editor compares against.
+         *
+         *     The self-service rule is symmetric with `deleteUser`: an administrator whose own row
+         *     this is gets `409`. State changes on the account performing the request are refused in
+         *     both directions, so no single administrator can lock or unlock themselves.
+         */
+        post: operations["activateUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/courses": {
@@ -541,10 +571,11 @@ export interface components {
             student_number?: string | null;
             roles: components["schemas"]["Role"][];
             /**
-             * @description Whether the account may sign in. `deleteUser` is a **soft** deactivation, so this
-             *     is the only field that distinguishes a deactivated account from a usable one: an
-             *     admin screen that omits it has no way to say whether `204` actually took effect,
-             *     and RQ-B-4-50 requires the account state to be visible.
+             * @description Whether the account may sign in. `deleteUser` is a **soft** deactivation and
+             *     `activateUser` is its soft inverse, so this is the only field that distinguishes a
+             *     deactivated account from a usable one: an admin screen that omits it has no way to
+             *     say whether either `204` actually took effect, and RQ-B-4-50 requires the account
+             *     state to be visible.
              */
             is_active: boolean;
             /**
@@ -1289,6 +1320,35 @@ export interface operations {
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
             422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    activateUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description User re-activated; an audit record is written. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /**
+             * @description Refused because the target is the caller's own account. Activation mirrors
+             *     deactivation: the state of the account performing the request cannot be changed by
+             *     that request, so a second administrator has to perform it.
+             */
+            409: components["responses"]["Conflict"];
         };
     };
     listCourses: {

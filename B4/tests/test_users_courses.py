@@ -216,6 +216,85 @@ def test_deactivating_a_missing_user_is_404(client, admin, sign_in_as) -> None:
     assert response.status_code == 404
 
 
+def test_activating_a_user_restores_sign_in_and_audits_the_change(
+    client, admin, sign_in_as, factory, engine
+) -> None:
+    """`activateUser` is the soft inverse of `deleteUser`.
+
+    Reviving an account must not rewrite anything but the account state: the row, its roles
+    and its history stay, and the new state has to be readable from the list afterwards. The
+    proof that the account really works again is a fresh sign-in, not just the status code.
+    """
+    target = factory.user(username="alice", roles=("student",))
+    headers = sign_in_as("root").headers
+    assert client.delete(f"/api/v1/users/{target}", headers=headers).status_code == 204
+
+    response = client.post(f"/api/v1/users/{target}/activate", headers=headers)
+    assert response.status_code == 204, response.text
+
+    with engine.connect() as connection:
+        row = connection.execute(
+            select(
+                users.c.is_active,
+                users.c.deactivated_at,
+                users.c.display_name,
+                users.c.updated_at,
+            ).where(users.c.user_id == target)
+        ).fetchone()
+        role_values = [
+            item[0]
+            for item in connection.execute(
+                select(roles.c.role).where(roles.c.user_id == target)
+            ).fetchall()
+        ]
+        audit = connection.execute(
+            select(audit_records.c.action).where(
+                audit_records.c.target_id == target,
+                audit_records.c.action == "user.activated",
+            )
+        ).fetchone()
+    assert row.is_active is True
+    assert row.deactivated_at is None
+    assert row.display_name == "alice"
+    assert role_values == ["student"]
+    assert audit is not None
+
+    # The account can sign in again; the page can read the new state back from the list.
+    assert sign_in_as("alice").user_id == target
+    listed = client.get("/api/v1/users", headers=headers).json()["items"]
+    assert next(item for item in listed if item["user_id"] == str(target))["is_active"] is True
+
+
+def test_activating_a_missing_user_is_404(client, admin, sign_in_as) -> None:
+    response = client.post(
+        f"/api/v1/users/{uuid.uuid4()}/activate", headers=sign_in_as("root").headers
+    )
+    assert response.status_code == 404
+
+
+def test_an_administrator_cannot_activate_their_own_account(
+    client, admin, sign_in_as, engine
+) -> None:
+    """Activation mirrors deactivation: the caller cannot change their own account state.
+
+    Refusing is an authorisation decision, so it is audited like every other denial and the
+    account keeps the state a second administrator can read back.
+    """
+    response = client.post(f"/api/v1/users/{admin}/activate", headers=sign_in_as("root").headers)
+    assert response.status_code == 409, response.text
+    assert "own account" in response.json()["detail"]
+
+    with engine.connect() as connection:
+        still_active = connection.execute(
+            select(users.c.is_active).where(users.c.user_id == admin)
+        ).scalar_one()
+        denial = connection.execute(
+            select(audit_records.c.outcome).where(audit_records.c.action == "authz.denied")
+        ).fetchone()
+    assert still_active is True
+    assert denial is not None and denial[0] == "denied"
+
+
 def test_an_administrator_cannot_deactivate_their_own_account(
     client, admin, sign_in_as, engine
 ) -> None:

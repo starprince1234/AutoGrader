@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { t } from "../../i18n";
 import { PageTitle, Tabs } from "../../ui/components";
 import { CreateUserDrawer } from "../users/CreateUserDrawer";
@@ -25,6 +25,28 @@ export function AdminUsersPage({
 }) {
   const [createOpen, setCreateOpen] = useState(false);
   const [createdUserId, setCreatedUserId] = useState<string | null>(null);
+
+  /**
+   * 内容面板的滑动方向。
+   *
+   * 只看"上一次是哪个标签"：切换发生时才有方向，首次渲染不播放动画；浏览器前进/后退同样走
+   * 这条判断，因此方向与真实切换一致。标签按钮本身完全不参与动画（它们的样式保持不变）。
+   *   切到注册名单 → 内容自左向右滑入；切回用户 → 自右向左滑入。
+   */
+  const previousTab = useRef<AdminTab | null>(null);
+  const slideDirection: "right" | "left" | null =
+    previousTab.current === null || previousTab.current === tab
+      ? null
+      : tab === "allowlist"
+        ? "right"
+        : "left";
+  useLayoutEffect(() => {
+    previousTab.current = tab;
+  }, [tab]);
+  const panelClassName =
+    slideDirection === null
+      ? "admin-tab-panel"
+      : `admin-tab-panel admin-tab-panel--slide-${slideDirection}`;
 
   const changeTab = (next: AdminTab) => {
     if (next === tab) return;
@@ -66,19 +88,25 @@ export function AdminUsersPage({
             id: "users",
             label: t("admin.tabUsers"),
             content: (
-              <UsersPage
-                createdUserId={createdUserId}
-                onCreate={() => {
-                  setCreatedUserId(null);
-                  setCreateOpen(true);
-                }}
-              />
+              <div key="users" className={panelClassName} data-testid="admin-tab-panel">
+                <UsersPage
+                  createdUserId={createdUserId}
+                  onCreate={() => {
+                    setCreatedUserId(null);
+                    setCreateOpen(true);
+                  }}
+                />
+              </div>
             ),
           },
           {
             id: "allowlist",
             label: t("admin.tabAllowlist"),
-            content: <RegistrationAllowlistPanel />,
+            content: (
+              <div key="allowlist" className={panelClassName} data-testid="admin-tab-panel">
+                <RegistrationAllowlistPanel />
+              </div>
+            ),
           },
         ]}
       />

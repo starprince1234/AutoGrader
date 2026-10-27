@@ -824,6 +824,35 @@ uff、pytest、pnpm * 都无法运行。
 
 ---
 
+### 0.23.0 修订 — 新增 `activateUser`（无 CHG 编号）
+
+- **级别**：P1 增补（新增一条管理员路径；不改既有请求体、响应体与错误语义）
+- **状态**：已生效
+- **动机**：P14 用户标签此前只能停用账号，停用后**没有恢复入口**：契约里 `deleteUser`
+  是软停用，却没有任何"反向"操作，管理员误停用或学生复学后只能等下一次注册，页面也无法
+  如实提供「启用账号」。本次补上完整闭环：停用 ⇄ 启用。
+- **变更文件**：`openapi/b4.yaml`
+  - 新增 `POST /api/v1/users/{user_id}/activate`（`activateUser`）：`204`；清空停用时间、
+    `is_active` 恢复 `true`、`updated_at` 前进；不恢复已撤销的会话（需重新登录），
+    不改历史成绩、角色与课程名单；
+  - 启用**自己**返回 `409`，与 `deleteUser` 的自停用拒绝对称，避免单个管理员改自己的状态；
+  - `deleteUser` 的说明删除"重新激活不在本契约"一句，改为指向 `activateUser`；
+  - `UserSummary.is_active` 的说明补上两个方向的软状态变更。
+- **受影响模块与需要做的改动**：**B4** 增加端点、`user.activated` 审计动作与测试；
+  **B1** 重新生成类型，P14 用户行对已停用账号提供「启用账号」按钮与确认弹窗；
+  **B2/B3/B5** 无改动（不消费 `UserSummary`，也不调用该端点）。
+- **是否破坏兼容**：否（纯新增路径；`deleteUser` 的请求与响应未变）。
+- **迁移方式**：一次性切换，不保留兼容层（无数据库结构变化，无迁移文件）。
+- **验证**：`tsc`（B1）、ESLint（B1）、`pnpm api:check`、B1 全量 Vitest（48 文件 / 420 用例）、
+  B4 `ruff`、`MAIN/scripts/relock_contracts.py --check` 与 `MAIN/host/tests`（7 用例）均通过；
+  B4 `tests/test_users_courses.py` 在本机临时 PostgreSQL 17 实例上 **39 用例全部通过**
+  （含新增的启用成功、启用自己 409、启用不存在用户 404 三条）。生产部署后的线上复核见提交说明。
+- **摘要**：见五份 `contracts.lock`（由 `contract_digest()` 计算，此处不复制）
+- **回滚方式**：删除 `activateUser` 段落、还原 `deleteUser` 与 `UserSummary` 的说明文字，
+  移除 B1 的启用按钮与弹窗，然后重跑 `scripts/relock_contracts.py`；模块版本仍为 `0.23.0`。
+
+---
+
 ## 记录模板（后续变更复制此块）
 
 ```md

@@ -134,6 +134,30 @@ export function useDeactivateUser() {
   });
 }
 
+/**
+ * 启用账号（`POST /api/v1/users/{user_id}/activate`）。
+ *
+ * 停用是软停用，启用也是软启用：服务端只把 `is_active` 改回 `true` 并清空停用时间，
+ * 行、历史成绩与课程名单都不动，已撤销的会话也不会复活（需要重新登录）。
+ * 与停用共用同一条自我保护规则：服务端拒绝"启用自己"时返回 `409`，页面原样展示。
+ */
+export function useActivateUser() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { userId: string }): Promise<void> => {
+      const requestId = newRequestId();
+      await apiRequest<void>(`/api/v1/users/${encodeURIComponent(input.userId)}/activate`, {
+        method: "POST",
+        requestId,
+      });
+      log({ event: "user_activated", request_id: requestId, user_id: input.userId });
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["users"] });
+    },
+  });
+}
+
 export const ASSIGNABLE_ROLES: readonly Role[] = [
   "student",
   "teacher",
