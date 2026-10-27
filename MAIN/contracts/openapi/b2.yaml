@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AutoGrader B2 Evaluation API
-  version: 0.19.0
+  version: 0.20.0
   description: |
     Submission intake (API and email), content-addressed storage, static legality,
     security confirmation, sandboxed dynamic execution, explainable and replayable
@@ -237,19 +237,39 @@ paths:
         plainly: unmatched mail was, from a teacher's point of view, disappearing without a
         trace. This is the read path.
 
-        Authorization: teacher/assistant/admin within the course scope. Rows carry a
-        `reason_code` and an already-redacted `detail`; they never carry attachment contents,
-        student source or any part of a submission.
+        Authorization: teacher/assistant/admin within the row's course scope. Rows carry a
+        `reason_code`, an already-redacted `detail`, and the record's own
+        `scope_course_id/scope_section_id`; they never carry attachment contents, student source
+        or any part of a submission.
 
-        **Scoping is per token, not per row** (`CHG-0021` §2.2). `b2.intake_quarantines` has no
-        `course_id`, and when matching fails there is no course to record -- working out "which
-        course is this" is exactly what failed. So this endpoint requires the token to carry at
-        least one course scope and **cannot** filter rows by course. Stated here rather than left
-        to be discovered: a caller that assumed per-row scoping would read a superset.
+        **Scoping is per row** (P13). A row's scope is persisted when the mail path records it,
+        and it comes from exactly one place: the matching rules' targets. When every matched rule
+        target names the same `(course_id, section_id)` that pair is stored; `not_matched`,
+        candidates spanning courses/sections, and envelope/attachment rejections store `null`.
+        The record's scope is never derived from the mailbox, the sender, the attachment names or
+        this request -- those are attacker-controlled inputs, and deriving scope from them would
+        forge the authorization basis.
+
+        What that means for callers:
+
+        * staff receive only rows whose `scope_course_id/scope_section_id` are covered by one of
+          their token scopes; rows with a null scope are invisible to them;
+        * administrators receive the global list, including unscoped rows (they are the only role
+          that may process those);
+        * `course_id/section_id` only narrow the caller's visible set. They are a filter, not a
+          grant: a staff caller naming a course/section outside the token scope gets `403`, not an
+          empty page. `section_id` requires `course_id`.
+
+        The row predicate is applied in SQL **before** ordering, `limit` and the cursor, so the
+        page contents, `next_cursor` and any counts derived from the page never hint at hidden
+        rows. A cursor is only a position, never a filter or an identity, so reusing one cannot
+        widen what the caller may read.
       tags: [intake]
       parameters:
         - $ref: './common.yaml#/components/parameters/Cursor'
         - $ref: './common.yaml#/components/parameters/Limit'
+        - {name: course_id, in: query, required: false, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+        - {name: section_id, in: query, required: false, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
         - {name: reason_code, in: query, required: false, schema: {type: string, maxLength: 64}}
         - name: resolved
           in: query
@@ -280,6 +300,7 @@ paths:
                         items: {$ref: '#/components/schemas/IntakeQuarantineView'}
         '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
         '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
 
   /api/v1/intake/quarantines/{intake_quarantine_id}/resolve:
     parameters:
@@ -316,8 +337,25 @@ paths:
         3. **Attribution is recorded once.** A second attempt returns `409`; the row is never
            silently re-attributed.
 
+        **Row scope is re-checked under the row lock (P13).** The record's
+        `scope_course_id/scope_section_id` is the authoritative course association, and the
+        authorization decision is made against the **locked** row before any write:
+
+        * staff: a null scope or a scope outside the token's course scope is refused with `403`.
+          Unscoped records are not theirs to process -- otherwise "the matcher could not derive an
+          identity" would become "any staff member may claim it";
+        * administrator: may attribute unscoped records. The UI's explicit course/section choice
+          is only how it loads candidate students; it is **not** part of this body and does not
+          rewrite the record's original scope, which stays null.
+
         `student_id` is the platform user id -- the same key `CHG-0007` added to the roster, so
         both sides of "who is this" finally use one identifier.
+
+        Stated plainly here rather than left to be assumed: roster membership ("is this student
+        still enrolled in the record's section?") is B4's fact. B2 has no B2->B4 roster channel,
+        so this operation does **not** re-verify membership; the candidate list is always fetched
+        fresh from B4 by the client, and the server re-verifies the record's row scope and the
+        caller's role/scope instead of trusting the client's candidate list.
       tags: [intake]
       requestBody:
         required: true
@@ -690,7 +728,15 @@ components:
         One quarantined intake record (CHG-0014). Carries identification metadata and a
         redacted reason, never message contents: the point is that a teacher can *find* the
         message in their mailbox again, not that the platform becomes a second mail store.
-      required: [intake_quarantine_id, intake, reason_code, detail, mailbox, recorded_at, resolved]
+
+        `scope_course_id/scope_section_id` are the record's **verified course association**
+        (P13). They are persisted at intake time from the matching rules' targets and only when
+        every matched target agrees on the same pair; `not_matched`, candidates spanning
+        courses/sections, and envelope/attachment rejections leave them `null` ("unscoped").
+        The pair is either both null or both non-null, and it is the field the server uses for
+        row-level authorization: staff never see null-scope rows, and administrators are the
+        only role that may read/process them.
+      required: [intake_quarantine_id, intake, reason_code, detail, mailbox, recorded_at, resolved, scope_course_id, scope_section_id]
       properties:
         intake_quarantine_id: {$ref: './common.yaml#/components/schemas/Uuid'}
         intake: {type: string, enum: [email]}
@@ -754,6 +800,18 @@ components:
         resolved: {type: boolean}
         resolved_student_id: {anyOf: [{$ref: './common.yaml#/components/schemas/Uuid'}, {type: "null"}]}
         resolution_note: {type: [string, "null"], maxLength: 500}
+        scope_course_id:
+          anyOf: [{$ref: './common.yaml#/components/schemas/Uuid'}, {type: "null"}]
+          description: |
+            The record's verified course, or `null` when no course association could be proven.
+            Persisted from the matching rules' targets at intake time (never from the mailbox,
+            sender, attachment names or a request parameter). Null means "unscoped": only
+            administrators may see or process such a row.
+        scope_section_id:
+          anyOf: [{$ref: './common.yaml#/components/schemas/Uuid'}, {type: "null"}]
+          description: |
+            The record's verified section. Either both scope fields are null or both are set;
+            the database enforces that as a CHECK constraint.
       additionalProperties: false
 
     AppealPack:

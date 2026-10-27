@@ -65,21 +65,18 @@ _QUARANTINE_STAFF_ROLES = ("teacher", "assistant")
 
 
 def require_intake_quarantine_authority(principal: Principal) -> None:
-    """隔离区复核（列表与人工归属）的授权判定；不满足即 `AuthorizationError`（对外 403）。
+    """隔离区复核的**入口**授权（列表与人工归属共用）；不满足即 `AuthorizationError`（403）。
 
-    契约 `CHG-0014` 把这组端点的授权写成"课程作用域内的 teacher/assistant/admin"。三层里有两层
-    在当前数据模型下能真正判定，第三层**判定不了**，这里如实说明而不是假装判过：
+    这一层只判定与具体记录无关的三件事：角色、staff 是否至少持有一个课程作用域、
+    管理员豁免。**按行**的课程/课序判定不在本函数里——它需要记录自身的 scope，只有在读出
+    （或 SQL 谓词里拿到）那一行之后才能做：
 
-    1. **角色**：学生一律 403（`has_recognized_role` 不成立时同样 403——认证不等于授权）；
-    2. **课程作用域的存在性**：教师/助教的令牌必须携带**至少一个**课程作用域条目。一个
-       `scope: []` 的 staff 令牌不属于任何课程作用域，因此不满足"课程作用域内"；
-    3. **课程作用域的相符性**：**无法判定**——`b2.intake_quarantines` 没有 `course_id`，匹配失败时
-       也**不存在**课程（自动匹配正是没得出身份才隔离的）。因此任何 staff 令牌都能看到本部署的
-       全部隔离记录，而不是"只看到自己课程的"。这不是收窄，也没被写成收窄：硬造一个课程关联
-       等于伪造数据，见 [docs/requirements/traceability.md](../../../docs/requirements/traceability.md)
-       的契约缺口一节与 `CHG-0014` 的实现报告。
+    - 列表：由 `intake.quarantine` 在 SQL 中先把 `principal.covers_course(...)` 翻译成谓词，
+      再排序、限页、算游标；NULL scope 行只留给管理员（口径见该模块文档）。
+    - 归属：由 `require_quarantine_row_authority` 在**行锁事务内**按锁住的那一行再判一次。
 
-    管理员不受课程限制（与其余端点同口径），因此第 2 条对它不适用。
+    学生一律 403（`has_recognized_role` 不成立同样 403——认证不等于授权）；一个 `scope: []`
+    的 staff 令牌不属于任何课程作用域，因此连入口都不满足。管理员不受课程限制。
     """
     if not principal.has_recognized_role:
         raise AuthorizationError("the token carries no recognized platform role")
@@ -89,6 +86,32 @@ def require_intake_quarantine_authority(principal: Principal) -> None:
         raise AuthorizationError("quarantine review is limited to teacher, assistant or admin")
     if not principal.scopes:
         raise AuthorizationError("the token carries no course scope")
+
+
+def require_quarantine_row_authority(
+    principal: Principal, *, scope_course_id: str | None, scope_section_id: str | None
+) -> None:
+    """**行级**授权：调用者能否读取/处置这一条隔离记录；不满足即 `AuthorizationError`（403）。
+
+    判定顺序（管理员优先，其余 fail-closed）：
+
+    1. 管理员不受课程限制（未关联行也正是由管理员处置的）；
+    2. 其余 staff 只允许 scope **成对非空**且被令牌作用域覆盖的记录；
+    3. `scope` 为空（无法证明课程归属）的记录 → 403：不能把"匹配器没得出身份"变成
+       "任何 staff 都能认领"，那正是本仓库此前记录的越权缺口。
+
+    只在事务内、对**已经锁住的那一行**调用（见 `IntakeQuarantineService.resolve`），
+    因此不存在"先按旧值授权、再用新值写入"的窗口。
+    """
+    if principal.is_admin:
+        return
+    if scope_course_id is None or scope_section_id is None:
+        raise AuthorizationError(
+            "this quarantined record has no verified course scope; only an administrator may"
+            " process it"
+        )
+    if not principal.covers_course(scope_course_id, scope_section_id):
+        raise AuthorizationError("course scope does not cover this quarantined record")
 
 
 def require_question_quality_authority(principal: Principal) -> None:

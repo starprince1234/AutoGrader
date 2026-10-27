@@ -9,16 +9,16 @@ import { LoginPage } from "../features/auth/LoginPage";
 import { NotFoundPage } from "./NotFoundPage";
 import { RegisterPage } from "../features/auth/RegisterPage";
 import { safeRedirectTarget } from "../auth/redirect";
+import { parseReviewSearch } from "../features/review/search";
 import {
   AssignmentDetailRoute,
   AssignmentsRoute,
   AuthoringEditRoute,
   AuthoringNewRoute,
   GradesRoute,
-  QuarantineRoute,
-  QualityRoute,
   QuestionDetailRoute,
   QuestionListRoute,
+  ReviewRoute,
   RosterRoute,
   SubmitRoute,
   UsersRoute,
@@ -203,30 +203,17 @@ const usersRoute = createRoute({
   component: UsersRoute,
 });
 
-/** 隔离区复核台（CHG-0014）。 */
-const quarantineRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/intake/quarantines",
-  component: QuarantineRoute,
-});
-
 /**
- * 题目质量视图（CHG-0015）。筛选条件走查询串，使"某版本的教师质量视图"成为可分享的深链。
- * 三个参数都可选：`question_version_id` 虽是契约的必需参数，但页面在它为空时**不发请求**并
- * 说明原因，而不是渲染一个空结果——因此路由层不强制要求它。
+ * P13 复核工作区的唯一入口（`/review?tab=mail|quality`）。
+ *
+ * 旧 `/intake/quarantines` 与 `/quality` 已合并到这里：不注册别名、不留兼容路由。
+ * 未知 `tab` 由 `parseReviewSearch` 归一到 `mail`；查询串只承载筛选与对象 ID。
  */
-const qualityRoute = createRoute({
+const reviewRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/quality",
-  validateSearch: (search: Record<string, unknown>) => ({
-    question_version_id:
-      typeof search.question_version_id === "string" && search.question_version_id !== ""
-        ? search.question_version_id
-        : undefined,
-    from: typeof search.from === "string" && search.from !== "" ? search.from : undefined,
-    to: typeof search.to === "string" && search.to !== "" ? search.to : undefined,
-  }),
-  component: QualityRoute,
+  path: "/review",
+  validateSearch: parseReviewSearch,
+  component: ReviewRoute,
 });
 
 const routeTree = rootRoute.addChildren([
@@ -245,8 +232,7 @@ const routeTree = rootRoute.addChildren([
   gradesRoute,
   rosterRoute,
   usersRoute,
-  quarantineRoute,
-  qualityRoute,
+  reviewRoute,
 ]);
 
 export const router = createRouter({

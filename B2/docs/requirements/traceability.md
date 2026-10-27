@@ -39,19 +39,24 @@
 
 | 端点 | 状态 | 证据 | 实现落点 |
 |---|---|---|---|
-| `GET /api/v1/intake/quarantines` | `已完成` | `tests/test_intake_api.py`（列表字段与写入侧一一对应、`reason_code`/`resolved` 过滤、倒序游标分页不重不漏、坏游标/坏 limit 422、契约长度上限、未迁移库 503、**已知课程作用域缺口**的记录用例） | `intake/quarantine.py` + `intake/api.py` |
-| `POST /api/v1/intake/quarantines/{id}/resolve` | `已完成` | 同上（归属写入、**不产生提交/事件/评测**、内容类拒绝一律 422、重复归属 409、未知记录 404、请求体校验 422） | `intake/quarantine.py` + `auth/authorization.py` |
+| `GET /api/v1/intake/quarantines` | `已完成` | `tests/test_intake_api.py`（列表字段与写入侧一一对应、`reason_code`/`resolved` 过滤、倒序游标分页不重不漏、坏游标/坏 limit 422、契约长度上限、未迁移库 503、**跨课程隔离矩阵**（staff 只看到本课序行、越界 query 403、未关联行仅管理员可见）、行级过滤先于分页、查询参数校验）；`tests/test_matching_scope.py`（scope 只来自规则候选共识）；`tests/test_quarantine_scope_sql.py`（谓词在 SQL 里且在 `LIMIT` 之前） | `intake/quarantine.py` + `intake/api.py` + `intake/matching.py` + `intake/imap.py` |
+| `POST /api/v1/intake/quarantines/{id}/resolve` | `已完成` | 同上（归属写入、**不产生提交/事件/评测**、内容类拒绝一律 422、重复归属 409、未知记录 404、请求体校验 422、**行锁内重查行 scope**：staff 对未关联/跨课记录 403 且不改写，管理员可处置未关联行） | `intake/quarantine.py` + `auth/authorization.py` |
 | `GET /api/v1/evaluation-runs/{id}/appeal-pack` | `已完成` | `tests/test_b2_routes.py`（`result_digest` = 报告摘要且可复算、宿主路径零命中 + `redactions` 非空、学生视图不扩大、`view` 语义 403/422、不改写已落库报告、未迁移库 503） | `evaluation/appeal.py` + `api/evaluation_routes.py` |
 | `GET /api/v1/evaluation-runs/quality-summary` | `已完成` | 同上（**字面路由不被路径参数吞掉**、只含计数（键名与取值双重扫描）、逐用例/逐规则聚合与库内读数逐条相等、三态不合并且完整划分、`unmeasured_runs` 可见、时间窗与非法参数 422） | `evaluation/quality.py` + `api/evaluation_routes.py` |
 
-**新增存储**：迁移 `20260915_0013`（`intake_quarantines` 的人工归属三列 + 一条 CHECK），
-三步可逆性实测见 [../phases/active/phase-05-quarantine-and-quality-surfaces.md](../phases/active/phase-05-quarantine-and-quality-surfaces.md)。
+**新增存储**：迁移 `20260915_0013`（`intake_quarantines` 的人工归属三列 + 一条 CHECK）与
+`20260915_0015`（行级课程范围两列 + 成对 CHECK + 查询索引）。0013 的三步可逆性实测见
+[../phases/active/phase-05-quarantine-and-quality-surfaces.md](../phases/active/phase-05-quarantine-and-quality-surfaces.md)；
+0015 的 DDL 离线渲染与数据后果见
+[../phases/active/phase-10-quarantine-row-scope.md](../phases/active/phase-10-quarantine-row-scope.md)。
 
-**三处契约缺口已上报（未自行裁决，见 `docs/api/contract.md`）**：① resolve 声明的"重跑信封/摘要校验"
-在"隔离记录不存报文"的数据模型下不可判定（本实现只重跑角色/作用域 + 内容类闸门）；
-② 两条隔离区端点与质量汇总的**课程作用域**判定缺少数据（`intake_quarantines` 无 `course_id`；
-题目→课程属 B3）；③ 归属只提供 `student_id`，不足以重建提交信封，因此"归属后交给正常提交路径评测"
-在当前架构下无法闭环。三者都需要 MAIN 走 CHG，本模块没有为了让它们"看起来成立"而发明数据或路径。
+**契约缺口状态**：① resolve 声明的"重跑信封/摘要校验"在"隔离记录不存报文"的数据模型下不可判定
+（本实现只重跑角色/行 scope + 内容类闸门，见 1e 节）；② **隔离区的课程作用域已由 P13 修复**
+（行级 scope 持久化 + SQL 过滤 + 行锁重查），但**质量聚合仍只判角色**（题目→课程属 B3，本轮不新增
+跨模块通道；P13 前端先经 B3 校验版本可见性）；③ 归属只提供 `student_id`，不足以重建提交信封，
+因此"归属后交给正常提交路径评测"在当前架构下无法闭环；④ 名单成员关系（学生是否仍在该课序）
+属 B4 事实，B2 没有到 B4 名单的通道，resolve 不重查它（客户端每次现取候选，服务端重查行 scope
+与调用者权限）。以上都没有为了让它们"看起来成立"而发明数据或路径。
 
 ## 契约变更的实现状态（`CHG-0019` / `CHG-0023`，**不新增 RQ 编号**）
 

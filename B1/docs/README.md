@@ -46,20 +46,25 @@
 | 运行日志（RQ-B-1-99） | `已完成` | `src/logging/logger.test.ts`（8 用例）+ 错误态「复制诊断信息」（`src/ui/components.test.tsx`：request_id + ProblemDetails + 契约版本，PII 走 `redaction.ts`） |
 | 教学评语轨（RQ-T-20） | `已完成`（**已真实联通**） | `CommentarySection.test.tsx`（14 用例）四态 + `disclaimers` 逐字 + 出处/输入白名单；真机 `GET`→200/`ready`、未生成→404（信息态）、`POST`→202（5882 ms，deepseek），浏览器里逐条核对，见 `../phases/active/phase-03-contract-surface-completion.md` |
 | AI 评分参考（RQ-T-30，契约 `0.16.0`） | `部分` | `CommentarySection.test.tsx` + `GradeDrilldown.test.tsx`：参考分与权威分并列（权威分在先）、外观权重更低、`null` 不渲染、**不参与任何本地计算**（反向断言成绩轨道模块不含 `advisory`）。**`null` 路径已真实联通**（`0.16.0` 复核：`/commentary` 响应带 `advisory_score` 键且为 `null`）；**非空参考分的真机渲染未出现**（provider 对这几次 `failed` 运行返回 none） |
-| 隔离区复核台（CHG-0014 + CHG-0021） | `部分` | `QuarantinePage.test.tsx`（14 用例）：`resolved` **永不省略**（反向断言每一次请求都带它；省略现在等于"全部"）、只有 `not_uniquely_matched`/`ambiguous_match` 显示归属按钮、不可归属的原因码显示原因而不是让人点了拿 422、游标分页、归属体精确形状、学生候选来自名单。**读路径已真实联通**（真机 `GET` → `200` 空列表）；**带数据的渲染与归属写路径仍只有夹具证据** |
+| 复核工作区 · 邮件提交（P13-A，含 B2 行级 scope） | `部分` | `features/review/MailReviewTab.test.tsx`（9 用例）+ `search.test.ts`：请求显式带 `resolved` 与课程/课序、403 显示权限说明而非空列表、未关联行仅管理员可见、详情只读契约字段、不可归属无入口、归属确认前不发 POST 且体只有 `student_id/note`、409 冲突、空候选禁用。**页面未部署**；跨课程隔离由 B2 的 DB 用例证明（本机未执行），B1 侧只有组件证据 |
+| 复核工作区 · 题目质量（P13-B） | `部分` | `features/review/QualityReviewTab.test.tsx`（10 用例）：无版本/非法版本不发请求、B3 403/404 不拉 B2 聚合、三态安全与未测量分开、`infrastructure_error` 单列、零命中规则保留、0 次评测与样本不足的区分、时间校验与 RFC 3339、清除时间。**新页面未部署**；非空聚合仍只有夹具证据 |
 | 证据包下载（CHG-0014） | `部分` | `AppealPackPanel.test.tsx`（6 用例）：`view` 显式发送、`redactions` 逐字、下载响应体原字节（字节数与 `text()` 双重断言）。**200 路径未触达**：真机 `GET .../appeal-pack?view=teacher` → `404`（failed 运行没有报告），本部署没有 `completed` 运行 |
-| 题目质量热力图（CHG-0015） | `部分` | `QualitySummaryPage.test.tsx`（15 用例）：`security_not_checked` 与 `unmeasured_runs` 分开呈现（含"合并值 41 不存在"的反向断言）、小样本提示、`infrastructure_error` 单列、**静态规则按冻结目录逐条呈现且 0 命中行不被过滤**、七条诚实性标注钉成断言。**已真实联通**：真机 `200`，`attempt_count=0`、15 条规则全为 `count=0`；**非空数据分支**仍只有夹具证据 |
+| 题目质量热力图（CHG-0015） | `部分` | 已并入 `features/review/QualityReviewTab.tsx`（见上方"复核工作区 · 题目质量"行）；旧 `QualitySummaryPage.test.tsx` 随旧页面删除 |
 | 题库标签覆盖度（CHG-0020 + CHG-0022） | `部分` | `QuestionCoveragePanel.test.tsx`（13 用例）+ `QuestionListPage.test.tsx`（2 用例）：`tagged + untagged == total` 是唯一被展示与校验的恒等式（反向断言逐标签之和 21 不在页面上）、`untagged_questions` 单独一格、`tags` 按契约顺序原样渲染、点标签复用既有筛选（CHG-0022 后每个标签都可筛，防御分支已删除）、`404` → "尚未在 B3 实现"信息态（只请求一次、不客户端兜底）、`403` 原样带出 detail。**对着已声明契约构建、未经真实 B3 验证**（本批未对运行中的 host 发过请求） |
 | 「验证并发布」（CHG-0019 / ADR-0015） | `部分` | `ReferenceVerificationPanel.test.tsx`（15 用例）：两步显式动作（验证 ≠ 发布）+ 不自动重试/不自动发布；三态互不混淆（全通过可发布 / 未通过逐用例 `failure_category` / `503` 或全 `infrastructure_error` → "验证需要 Linux 沙箱环境"，文案不含"成功"也不含"验证失败"）；**全通过但 B3 未记录存证（`attestation_id: null`）→ 仍不可发布**；结论摘要与当前版本不一致 → 失效；换版本 → 结论不跨实例。**对着已声明契约构建、未经真实 B2 验证**（B2 尚未实现该端点） |
-| 测试框架（vitest） | `已完成` | `vitest run`：42 文件 / **360** 用例全部通过（exit 0）；本轮新增入口/外壳/登录/注册/回跳安全与控件可访问性用例 |
+| 测试框架（vitest） | `已完成` | `vitest run`：**43 文件 / 374 用例**全部通过（exit 0）；其中 `src/features/review` 新增 3 文件 / 25 用例（P13 两个标签 + URL 状态） |
 | 真实 ESLint | `已完成` | `eslint . --max-warnings 0`：0 error / 0 warning |
-| API 类型生成（ADR-0002） | `已完成` | `node scripts/generate-api-types.mjs` / `--check`（契约 `0.16.0`；`reason_code` 现在是 19 项字面量联合，B1 的 `ReasonCode` 别名由此派生、可归属的那对值因此受编译期核对） |
-| 端到端（真实后端） | `部分`（覆盖度**已打通**；其余按页说明） | 真实 MAIN host `http://127.0.0.1:18000` + B2/B3/B4。**本轮真实浏览器复核**：`/app/questions` 的覆盖度面板渲染真实 B3 数据（`total=102 / tagged=4 / untagged=98`，逐标签与独立 SQL 一致）⇒ **覆盖度端到端成立**；隔离区与质量两页正常渲染（空列表/筛选面板），**不再是 404**；`/app/questions/<id>/edit` 的验证面板可用，但对**草稿**得到 B2 `422`（评测包只对已发布版本编译 → 该跨模块缺口已由 `CHG-0028` 处理，待 B3 落地后复测）。**证据包面板未在浏览器里打开**。**AI 参考分的非空渲染、`unavailable` 态、学生视图仍未做端到端**（原因见 phase-03 的"未验证项"） |
+| API 类型生成（ADR-0002） | `已完成` | `node scripts/generate-api-types.mjs` / `--check`（契约 **`0.19.0`**，`API types match MAIN/contracts.`） |
+| 端到端（真实后端） | `部分`（覆盖度**已打通**；其余按页说明） | 真实 MAIN host `http://127.0.0.1:18000` + B2/B3/B4。**本轮真实浏览器复核**：`/app/questions` 的覆盖度面板渲染真实 B3 数据（`total=102 / tagged=4 / untagged=98`，逐标签与独立 SQL 一致）⇒ **覆盖度端到端成立**；旧隔离区与旧质量页当时正常渲染（空列表/筛选面板），但**已随 P13 合并删除，新 `/review` 尚未部署**；`/app/questions/<id>/edit` 的验证面板可用，但对**草稿**得到 B2 `422`（评测包只对已发布版本编译 → 该跨模块缺口已由 `CHG-0028` 处理，待 B3 落地后复测）。**证据包面板未在浏览器里打开**。**AI 参考分的非空渲染、`unavailable` 态、学生视图仍未做端到端**（原因见 phase-03 的"未验证项"） |
 
 > 归档门禁与完成定义见 `collaboration/definition-of-done.md` 与 `phases/archive/README.md`。
-> 当前阶段记录：`phases/active/phase-06-entry-shell-and-auth-redesign.md`（根入口、登录、注册
+> 当前阶段记录：`phases/active/phase-07-review-workspace.md`（P13 复核工作区：旧隔离区/质量两页
+> 合并为 `/review?tab=mail|quality`，删除旧路由与旧测试；邮件标签带课程/课序筛选、详情与安全归属，
+> 质量标签由 P07 带版本、先经 B3 再拉 B2 聚合；B2 同时补齐行级课程范围，见 B2 的 phase-10；
+> 含真实执行命令与未验证项）；上一阶段：
+> `phases/active/phase-06-entry-shell-and-auth-redesign.md`（根入口、登录、注册
 > 与应用外壳重做：删除独立首页，认证页独立布局，角色导航收敛到 2/4 项，深链回跳只接受
-> 站内路径；含真实命令与未做的浏览器视觉验收）；上一阶段：
+> 站内路径；含真实命令与未做的浏览器视觉验收）；再上一阶段：
 > `phases/active/phase-05-authoring-publish-path-and-0-15-0.md`（出题发布路径打通
 > `CHG-0019`/`CHG-0023` + `CHG-0017`/`CHG-0021`/`CHG-0022`/`CHG-0024`，以及**验收后修正**：
 > 删除四条"断言对方实现进度"的常驻横幅、把过宽的 `503` 结论改为中性标题 + 原样 detail，

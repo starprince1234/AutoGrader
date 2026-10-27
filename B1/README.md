@@ -5,10 +5,11 @@ B1 是 AutoGrader 的**静态 Web 客户端**（TypeScript + React 19 + Vite 7�
 > 当前状态：业务界面与端到端 `已完成`；**本轮重做了入口与全局外壳（P01–P03）**——
 > 删除独立首页（`/` 直接进入作业页）、登录/注册改为独立认证布局、导航按角色收敛为学生 2 项 /
 > 教学侧 4 项、管理员「用户管理」移入账户菜单、小屏导航改为可键盘操作的抽屉，登录回跳只接受
-> 站内路径。验证：ESLint、`tsc -b`、Vitest（**42 文件 / 360 用例**）、`vite build` 实跑通过；
-> **未做真实浏览器视觉验收**（见
-> [`phase-06-entry-shell-and-auth-redesign.md`](docs/phases/active/phase-06-entry-shell-and-auth-redesign.md)
-> 的未验证项）。
+> 站内路径。本批为 **P13 复核工作区**：旧隔离区/质量两页合并为 `/review?tab=mail|quality`，
+> 旧路由与旧测试删除；邮件标签带课程/课序筛选、详情与安全归属（候选来自 B4 现取名单），
+> 质量标签由 P07 带版本、先经 B3 校验再拉 B2 聚合。验证：ESLint、`tsc -b`、`api:check`、
+> Vitest（**43 文件 / 374 用例**）实跑通过；**未做真实浏览器视觉验收、页面尚未部署**
+> （见 [`phase-07-review-workspace.md`](docs/phases/active/phase-07-review-workspace.md) 的未验证项）。
 > 上一轮（`0.15.0` → `0.16.0`）打通了出题的最后一段：出题页的「验证并发布」入口——
 > `CHG-0019`/`ADR-0015` 的"B2 执行、B3 记录、教师一键触发"，并同时落地 `CHG-0017` 的草稿省略语义
 > （`cases`/`reference_answer` 留空即不发该键，服务端保留已存值）、`CHG-0021` 的隔离区语义修复
@@ -16,7 +17,7 @@ B1 是 AutoGrader 的**静态 Web 客户端**（TypeScript + React 19 + Vite 7�
 > 上一轮的当时的工具链读数：ESLint、`tsc -b`、`api:check`、
 > Vitest（32 文件 / 263 用例，exit 0）、`vite build`。
 > **真实浏览器复核（宿主 18000 + 真实 B2/B3）**：覆盖度**端到端成立**（`total=102 / tagged=4 /
-> untagged=98`，逐标签与独立 SQL 一致）；隔离区与质量两页正常渲染；`/commentary` 此前已真机联通。
+> untagged=98`，逐标签与独立 SQL 一致）；旧隔离区与旧质量页当时正常渲染；`/commentary` 此前已真机联通。
 > 验证端点可用，但对**草稿**返回 `422`（评测包只对已发布版本编译）——该跨模块缺口已由 `CHG-0028`
 > 处理、待 B3 落地后复测。**UI 出题此前"没有发布路径"的结论本轮被推翻**：
 > 发布入口由 `ReferenceVerificationPanel` 提供（验证是请求平台验证，不是自我声明），
@@ -43,8 +44,7 @@ B1 是 AutoGrader 的**静态 Web 客户端**（TypeScript + React 19 + Vite 7�
 - **成绩、导出与日志（`RQ-B-1-30/60/99`）**：成绩筛选与**已加载行**汇总、分数分布、逐项证据下钻（学生/教师视图，学生视图不下发期望输出与期望摘要）；**逐用例证据卡片**（资源峰值 / 文件改动 / 确定性说明，`null` 一律渲染"未测量"而不是 0）；调 B2 导出端点下载（**不重新拼接成绩数据**）；结构化 JSON 日志（含 `request_id`、拒绝清单脱敏、上报失败静默丢弃）。
 - **出题辅助与诊断（`RQ-T-10`）**：`POST /questions/{id}/authoring-assistance` 的**模型建议**与 `GET /questions/{id}/diagnostics` 的**确定性 `CMP-*` 规则**分两块渲染，`disclaimers` 原文照录；未配置 provider（`409`）显示"未启用"，与"检查过、无问题"是不同状态。
 - **教学评语轨与 AI 参考分（`RQ-T-20/T-30`，契约 `0.16.0`）**：成绩页的证据下钻里读 `GET /evaluation-runs/{id}/commentary`，四态（`unavailable`/`pending`/`ready`/`failed`）**分别渲染**，`404`（本部署实测 = "尚未生成"）渲染为信息态而不是错误，`disclaimers` **逐字**显示且永不为空，出处（provider/model/prompt 版本）与**输入白名单**一并列出；教师/助教可 `POST` 生成（`409` → "未启用"）。`advisory_score` 与**权威分并列**但外观权重更低（灰底虚线、`pill--idle`、独立类名），`null` 时整块不渲染，**不参与任何本地计算**（不求和/不排序/不比较/不导出，有反向断言守着）。
-- **隔离区复核台与证据包（`CHG-0014`）**：`/intake/quarantines` 读隔离记录（`resolved` 始终显式发送、`reason_code` 筛选、游标分页），可手动归属到学生（体只有 `student_id`/`note`；候选学生来自**教师可见的名单**，拿不到候选时如实说明）；证据下钻里按需加载 `GET /evaluation-runs/{id}/appeal-pack`，`view` 由角色显式推出，`redactions` 逐条列出，下载的是**响应体原字节**。
-- **题目质量热力图（`CHG-0015`）**：`/quality?question_version_id=…` 读每版本的判分聚合（题目详情页有教师入口）。`security_not_checked` 与 `security_not_found` **分开**、`unmeasured_runs` **单列**（"没看"不等于"看了没问题"，"没有数据"不等于"用了 0"），`infrastructure_error` 从难度里单列，`attempt_count < 5` 提示样本不足。
+- **复核工作区（P13，`/review?tab=mail|quality`）**：旧 `/intake/quarantines` 与 `/quality` 合并为唯一入口（不保留别名）。**邮件提交**：按课程/课序/处理状态/原因筛选真实隔离记录，游标分页；详情只显示契约字段（可复制 Message-ID/UID）；只有未处理且可归属的原因码提供"归属学生"，候选来自 **B4 当前授权名单**，确认前不发 POST、体只有 `student_id`/`note`；未关联记录只对管理员显示并标为"未关联"；403 显示权限说明而不是空列表；URL 的课程/课序只是筛选（服务端行级授权）。**题目质量**：版本由 P07 带 `question_version_id` 进入（或按课程选版本），先经 B3 取标题/版本（B3 403 就不向 B2 拉聚合）；展示去标识化聚合、三态安全、未测量、失败类别（`infrastructure_error` 单列）与静态规则（零命中保留），不显示学生/提交/源码，也不提供个人下钻。
 - **题库标签覆盖度（`CHG-0020`，契约 `0.14.0`）**：题目列表页的「标签覆盖度」面板读 `GET /questions/coverage`（与列表**共用**同一个课程与 `published_only`，因此两个数字永远来自同一作用域）。`total_questions` / `tagged_questions` / `untagged_questions` 各自成格；页面上**唯一**被展示与校验的恒等式是 `tagged + untagged == total`——逐标签计数按设计重叠（一题最多 20 个标签），所以**不显示任何"标签合计"**，条形也只相对最多的标签。标签按契约顺序原样渲染（不再排一次），点一下即填入既有的标签筛选。`404`（B3 尚未实现）是信息态，**不**回退到"在客户端数一遍"；`403` 原样带出服务端 detail。
 - **验证并发布（`CHG-0019` / `ADR-0015`）**：出题页与题目详情页的未发布版本上，`ReferenceVerificationPanel` 请求平台验证参考解答（`POST /reference-verifications`：**B2 执行、B3 记录**，教师用普通令牌触发——这不是自我声明），并把结论分三态呈现：**全通过且存证已记录 → 出现发布按钮**（发布是独立的第二个显式动作，从不自动串起来）；**未通过 → 逐用例失败类别**；**`503` 或逐用例全是 `infrastructure_error` → "验证需要 Linux 沙箱环境"**（本机 Windows 的常态，既不写成"验证失败"也不伪装成功）。**全通过但 `attestation_id` 为 `null`（B3 没记下存证）仍然不可发布**——执行者与记录者分离正是这条门禁的意义。响应里没有期望输出、隐藏用例输入与参考解源码，界面也不提供这类入口。点击都会真的起一次沙箱作业，因此不自动重试。
 - **草稿省略语义（`CHG-0017`）**：`cases` 与 `reference_answer` **留空 = 不声明该字段**（请求体里不发这两个键，服务端保留已存值）；填了才覆盖，提交用例会**整体替换**该版本的集合，因此在读不到服务端现值时必须显式确认一次。`title`/`stem_markdown`/`language`/`adapter` 是契约的 `required`，每次照发。
@@ -130,12 +130,13 @@ pnpm verify       # 一键串联上面五步
    的版本"先分支再发布"（它在保存那一步就被拦住），所以 B3 上报的"分支版本不继承 fixture"对 B1 界面不可达。
 9. **出题写路径的诚实性修复没有端到端证据**：出题写路径、辅助/诊断端点与证据字段只经过契约夹具与生成类型校验，
    **没有**对着运行中的 B3/B2 实际写题或读报告。
-10. **`/intake/quarantines`、`/appeal-pack`、`/quality-summary` 的端点都已可用，但证据强度不同**：
+10. **`/review` 两个标签、`/appeal-pack`、`/quality-summary` 的端点都已可用，但证据强度不同**：
    端点都真实存在，`0.16.0` 复核的真机读数是：隔离区 `GET` → **200**（空列表，读路径联通）、
    质量聚合 `GET ?question_version_id=…` → **200**（`attempt_count=0`、15 条规则全为 `0` 命中）、
    证据包 `GET ?view=teacher` → **404**（`A report exists only after a successful run.`，
-   本部署所有运行都是 failed，**成功响应体从未被读到**）。因此**带数据的**隔离区渲染与归属写路径、
-   证据包的 200 路径、质量聚合的非空数据分支仍只有契约夹具与组件测试证据。
+   本部署所有运行都是 failed，**成功响应体从未被读到**）。P13 合并后**尚未部署**，因此新页面
+   只有组件/契约夹具证据；**带数据的**隔离区渲染、归属写路径、行级授权后的跨课程隔离与质量聚合的
+   非空数据分支都还没有真机读数。
    页面**不再**挂"B2 尚未实现"的证据边界说明——那类由静态文案断言别人实现进度的横幅
    **已按裁决全部删除**（端点不可用改由**数据驱动**的信息态说明）。
    `/commentary` 此前已真机跑通（`GET`→200/`ready`、未生成→404、`POST`→202，见

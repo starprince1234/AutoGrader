@@ -16,7 +16,7 @@ SCHEMA = "b2"
 #: 本代码期望的迁移版本（必须与 `module.yaml: database.migration_head` 和 Alembic head 三者一致）。
 #: 用途：readyness 探测据此判断"库结构与代码是否匹配"——连接得上但版本落后同样是**不可用**，
 #: 否则 health 会谎报健康而受权读请求全线 500。三者一致性由 `tests/test_migrations.py` 断言。
-EXPECTED_SCHEMA_REVISION = "20260915_0014"
+EXPECTED_SCHEMA_REVISION = "20260915_0015"
 
 metadata = sa.MetaData(schema=SCHEMA)
 
@@ -104,6 +104,10 @@ intake_quarantines = sa.Table(
     sa.Column("resolved", sa.Boolean(), nullable=False),
     sa.Column("resolved_student_id", sa.Uuid(), nullable=True),
     sa.Column("resolution_note", sa.Text(), nullable=True),
+    # 迁移 0015（P13 的行级课程范围）：匹配规则候选共识产生的课程/课序，成对为空或非空。
+    # 历史行保持 NULL（无法证明课程归属）⇒ 只对平台管理员可见，原始数据不动。
+    sa.Column("scope_course_id", sa.Uuid(), nullable=True),
+    sa.Column("scope_section_id", sa.Uuid(), nullable=True),
 )
 
 artifact_gc_runs = sa.Table(

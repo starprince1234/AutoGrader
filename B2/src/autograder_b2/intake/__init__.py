@@ -33,6 +33,7 @@ from autograder_b2.intake.matching import (
     EmailMatcher,
     MappingEmailMatcher,
     MatchResult,
+    ScopeContext,
     SubmissionTarget,
 )
 from autograder_b2.intake.quarantine import (
@@ -90,6 +91,7 @@ __all__ = [
     "QuarantineRequestError",
     "QuarantineStore",
     "RawAttachment",
+    "ScopeContext",
     "SubmissionIntakeService",
     "SubmissionTarget",
     "build_runtime",

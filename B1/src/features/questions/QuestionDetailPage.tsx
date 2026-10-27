@@ -104,12 +104,13 @@ export function QuestionDetailPage({
             {shown.status === "published" ? t("questions.newVersion") : t("questions.editDraft")}
           </Link>
         ) : null}
-        {/* 题目质量视图的入口：带上**当前选中的版本**，因为契约要求 `question_version_id`。 */}
+        {/* 题目质量入口（P13）：打开复核工作区的 quality 标签，并带上**当前选中的版本**。
+            P13 是唯一入口（旧 `/quality` 已合并），版本 id 由这里带过去，教师不必手填 UUID。 */}
         {effectiveId && canViewQuestionQuality(session) ? (
           <Link
             className="button button--ghost"
-            to="/quality"
-            search={{ question_version_id: effectiveId, from: undefined, to: undefined }}
+            to="/review"
+            search={{ tab: "quality", question_version_id: effectiveId }}
             data-testid="question-quality-link"
           >
             {t("questions.qualityLink")}

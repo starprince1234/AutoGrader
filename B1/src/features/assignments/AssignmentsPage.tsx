@@ -548,7 +548,8 @@ export function AssignmentsPage() {
 
   return (
     <div className="stack">
-      {/* 邮件隔离复核不占主导航：它从作业上下文进入，权限仍是教师侧。 */}
+      {/* 邮件隔离复核不占主导航：它从作业上下文进入（P13 的 mail 标签），
+          把当前课程/课序作为筛选上下文带过去；授权仍由服务端按令牌与记录 scope 判定。 */}
       <div className="inline">
         <PageTitle>{t("nav.assignments")}</PageTitle>
         {cohortView ? (
@@ -563,11 +564,16 @@ export function AssignmentsPage() {
         ) : null}
         {canReviewQuarantine(session) ? (
           <Link
-            to="/intake/quarantines"
+            to="/review"
+            search={{
+              tab: "mail",
+              course_id: courseScope === "" ? undefined : courseScope,
+              section_id: sectionScope === "" ? undefined : sectionScope,
+            }}
             className="button button--ghost"
             data-testid="assignments-quarantine-link"
           >
-            {t("quarantine.title")}
+            {t("review.mail.title")}
           </Link>
         ) : null}
       </div>

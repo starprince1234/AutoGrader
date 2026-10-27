@@ -84,15 +84,15 @@
 | TC-B1-072 | T-30 | 组件+视觉 | `advisory_score` 非空 | 对比两块的视觉标记 | 参考分**不复用**权威分的 `score-authoritative`、**不含** `pill--ok`、无进度条主色；两个数值各自独立（夹具 86 vs 62，不合并） | 存在 | `GradeDrilldown.test.tsx` |
 | TC-B1-073 | T-30 | 组件 | `advisory_score = null` | 打开下钻 | 参考分区块**不存在**（无 0 分占位、无空壳元素）；`ready` 时另有一句"本次没有产生参考分" | 存在 | 同上 |
 | TC-B1-074 | T-30 | 组件+安全 | 服务端返回参考分但 `disclaimers` 为空（契约违规） | 打开下钻 | **拒绝渲染参考分**并报告契约违规事实（契约：渲染参考分却不带标注 = 把建议当成绩） | 存在 | `CommentarySection.test.tsx` |
-| TC-B1-075 | CHG-0014 | 组件+契约 | 教师登录，隔离区有多条记录 | 打开隔离区 | 请求显式带 `resolved=false`（契约未声明默认值）与 `limit`；不发送契约未声明的参数；逐行显示识别性元数据与已脱敏原因 | 存在 | `src/features/intake/QuarantinePage.test.tsx` |
-| TC-B1-076 | CHG-0014 | 组件+契约 | 点击某条未处理记录 → 归属 | 填学生 ID + 说明 → 提交 | 请求体**精确等于** `{student_id, note}`（`note` 留空发 `null`）；成功后该记录离开「未处理」列表；非法/缺失 UUID 时**不发请求**；409 原样展示不假装成功 | 存在 | 同上 |
-| TC-B1-077 | CHG-0014 | 组件+诚实性 | 教师可见名单有 / 没有已绑定账号的行 | 展开学生选择器 | 候选来自**名单**（平台用户 ID）并填入输入框；展开前不发课程请求；`student_id` 为空的行不进候选并如实说明"没有可归属的学生"（不伪造候选人） | 存在 | 同上 |
+| TC-B1-075 | P13-A | 组件+契约 | 教师登录，隔离区有多条记录 | 打开 `/review?tab=mail` | 请求显式带 `resolved=false`（契约未声明默认值）与 `limit`，并带 URL 的课程/课序；逐行显示识别性元数据、记录 scope 与已脱敏原因；`403` 显示权限说明而不是空列表 | 存在 | `src/features/review/MailReviewTab.test.tsx` |
+| TC-B1-076 | P13-A | 组件+契约 | 点击某条未处理且可归属的记录 → 归属 | 从名单选学生 + 说明 → 确认 | 确认前**不发** POST；请求体**精确等于** `{student_id, note}`（`note` 留空发 `null`）；成功后该记录离开「未处理」列表；409 提示刷新且不假装成功 | 存在 | 同上 |
+| TC-B1-077 | P13-A | 组件+诚实性 | 当前课序名单为空 / 有已绑定账号的行 | 打开归属抽屉 | 候选来自 **B4 名单**；空名单显示"当前课序没有可选择的学生"并禁用确认；`student_id` 为空的行不进候选（不伪造候选人）；换课序时强制重新取候选 | 存在 | 同上 |
 | TC-B1-078 | T-20 | 组件+契约 | `failed` 运行（**真机实测**：`/report` 返回 404） | 打开下钻 | 报告错误照常展示，**评语轨仍然可达**（两轨分离）；证据包因内嵌报告而不再提供入口 | 存在 | `GradeDrilldown.test.tsx` |
 | TC-B1-079 | T-30 | 单元+结构 | 成绩轨道的计算/导出模块 | 读取 `aggregate.ts`/`cohort.ts`/`useGrades.ts` 源码 | **反向断言**：三处都不出现 `advisory`（不求和、不排序、不参与导出）；并先断言"确实读到了这三个文件"以防重命名让检查变空 | 存在 | `CommentarySection.test.tsx` |
 | TC-B1-080 | T-30 | 组件+契约 | 参考分只被显示 | 打开下钻并观察请求/日志 | 参考分不进入任何请求参数、不进日志数值（日志只记一个布尔"是否存在"） | 存在 | `src/features/commentary/useCommentary.ts` + 同上 |
 | TC-B1-081 | CHG-0014 | 组件+契约 | 教师 / 学生 / 角色未知 | 打开证据包面板并下载 | `view` **显式**发送（`teacher` / `student`）；角色未知时不发请求并说明；`redactions` 两条逐字；`result_digest` 可见 | 存在 | `src/features/appeals/AppealPackPanel.test.tsx` |
 | TC-B1-082 | CHG-0014 | 组件+安全 | 证据包已加载 | 点下载 | 下载的是**响应体原字节**（`Blob.size` 与 `text()` 双断言，夹具带缩进；只发一次请求）；403/409 不产生可下载文件 | 存在 | 同上 |
-| TC-B1-083 | CHG-0015 | 组件+契约 | 无 / 非法 `question_version_id`；深链带参数 | 打开质量页 | 空参数**零请求**并说明；非法 UUID 不发请求；深链立即查询且参数原样；本地时间转成 UTC `Timestamp` | 存在 | `src/features/quality/QualitySummaryPage.test.tsx` |
+| TC-B1-083 | P13-B | 组件+契约 | 无 / 非法 `question_version_id`；深链带参数 | 打开 `/review?tab=quality` | 空参数**零请求**并说明；非法 UUID 不发请求；深链先经 B3 取版本再查询；本地时间转成 RFC 3339 `Timestamp` | 存在 | `src/features/review/QualityReviewTab.test.tsx` |
 | TC-B1-084 | CHG-0015 | 组件+诚实性 | `security_found/not_found/not_checked` 各不同 | 打开质量页 | 三个数**各自成块**、各自带值；**反向断言**"合并值 41（27+14）在页面上不存在"；注明"没检查 ≠ 检查过没问题" | 存在 | 同上 |
 | TC-B1-085 | CHG-0015 | 组件+诚实性 | `unmeasured_runs = 6` | 打开质量页 | 单独一块显示 6；**反向断言**该块内不出现安全检查的任何数字（"没有资源数据" ≠ "没有占用"） | 存在 | 同上 |
 | TC-B1-086 | CHG-0015 | 组件 | `attempt_count = 4` / `= 5` / `= 0` | 打开质量页 | `<5` 提示"样本太少、不足以判断区分度"并说明门槛是本页阅读辅助；`=5` 不提示；`=0` 给"没有可读的信号" | 存在 | 同上 |
@@ -111,8 +111,8 @@
 | TC-B1-099 | CHG-0008/0019 | 组件+诚实性 | 结论摘要与当前版本不一致 / 版本无 `content_digest` / 切换版本 | 打开出题页的「验证并发布」 | 摘要不一致 → 结论失效、无发布按钮；拿不到摘要 → 不放行；**同一实例换版本 → 上一次的结论不再出现**（同一 Provider 下的 Harness，避免用 `rerender` 假通过）；已发布版本 → 面板不渲染 | 存在 | 同上 |
 | TC-B1-100 | CHG-0017 | 单元+契约 | 两个受保护字段留空 / 只有空白 / 填了 | 保存草稿 | 留空 ⇒ 请求体里**不发** `reference_answer` 与 `cases`（省略 = 服务端保留已存值）；只有空白同样不发；填了就发且用例**整体替换**；`title`/`stem_markdown`/`language`/`adapter` 四项照发 | 存在 | `src/features/authoring/draft.test.ts`、`AuthoringPage.test.tsx` |
 | TC-B1-101 | CHG-0017 | 组件+安全 | 编辑已有题目并提交用例（服务端那集合读不回来） | 勾选/不勾选整体替换确认后保存 | 未确认 ⇒ 报"会整体替换…本页读不到那份集合"且**不发请求**；确认后才发 PATCH；编辑路径以**零个用例**开场（不凭空渲染用例行），新建路径给一行邀请 | 存在 | `draft.test.ts`、`AuthoringPage.test.tsx` |
-| TC-B1-102 | CHG-0021 | 组件+诚实性 | `resolved` 的省略语义 / 可归属与不可归属的原因码 | 打开隔离区 | **每一次列表请求都带 `resolved`**（反向断言；省略现在等于"全部"）；可归属（`not_uniquely_matched`/`ambiguous_match`）显示归属按钮，不可归属（如 `archive_bomb`）**不显示**并说明会 422；已归属与不可归属必须能被分开断言 | 存在 | `src/features/intake/QuarantinePage.test.tsx` |
-| TC-B1-103 | CHG-0015 | 组件+诚实性 | `static_rule_hits` = 冻结目录逐条（含 `count=0` 的目录内规则）+ 目录之外追加的 `rule_id`；另有一次 `static_rule_hits: []` | 打开质量页 | **0 命中行不被过滤**：`STAT-PY-013` 那一行在场且计数列恰为 `0`；标题与说明与渲染出来的形状一致（"冻结的规则目录"/"一次都没有命中过"/"不过滤"/"追加在目录之后"）；目录之外的 `ZZ-LEGACY-001` 也呈现；契约的用意（never-firing 规则"要么没用，要么写错了"）留在页面上；数组为空时给空态而不是编造条目 | 存在 | `src/features/quality/QualitySummaryPage.test.tsx` |
+| TC-B1-102 | P13-A | 组件+诚实性 | `resolved` 的三态 / 可归属与不可归属的原因码 | 打开 `/review?tab=mail` | 默认请求显式 `resolved=false`；URL `resolved=all` 时请求**省略**该参数（契约不能表达"两者都要"）；可归属（`not_uniquely_matched`/`ambiguous_match`）显示归属按钮，不可归属（如 `archive_bomb`）**不显示** | 存在 | `src/features/review/search.test.ts` + `MailReviewTab.test.tsx` |
+| TC-B1-103 | P13-B | 组件+诚实性 | `static_rule_hits` 含 `count=0`；`attempt_count=0`；`infrastructure_error` 存在 | 打开 `/review?tab=quality` | **0 命中行不被过滤**（`STAT-PY-013` 在场且为 `0`）；`attempt_count=0` 显示"没有评测记录"且**不**再叠"样本较少"；`infrastructure_error` 单列"系统问题"；三态安全与 `unmeasured_runs` 不合并、不转 0 | 存在 | `src/features/review/QualityReviewTab.test.tsx` |
 
 | TC-B1-104 | P01 | 组件 | 匿名打开受保护深链 | 等待会话恢复 | 先显示骨架、不渲染受保护内容；去登录页并在 `?redirect=` 保留原站内路径（含筛选） | 存在 | `src/app/AppShell.test.tsx` |
 | TC-B1-105 | P01 | 组件 | 已登录打开 `/` | 观察导航与页头 | 直接进入 `/assignments`；侧栏只出现角色允许的入口；页头没有契约版本、欢迎语或课程作用域 UUID | 存在 | `src/app/AppShell.test.tsx`、`src/app/navigation.test.ts` |

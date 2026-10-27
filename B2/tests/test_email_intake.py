@@ -725,6 +725,113 @@ def test_ambiguous_message_is_quarantined_without_guessing(
     assert matched.status == "processed", matched.detail
 
 
+def test_quarantine_scope_comes_only_from_matching_rule_consensus(
+    engine: Engine, artifact_root: pathlib.Path
+) -> None:
+    """P13：隔离记录的课程/课序**只**由匹配候选共识产生，且与拒绝/未匹配保持为空。
+
+    四个场景（每个都走真实的 `EmailIntakeService.process_raw`）：
+
+    1. `ambiguous`，但候选指向同一 course/section（学生不同）→ 写入这一对值；
+    2. `ambiguous`，候选跨课序 → NULL（宁可交给管理员，也不猜）；
+    3. `not_matched` → NULL；
+    4. 附件筛查拒绝（匹配从未运行）→ NULL。
+
+    这不只是"字段有没有值"：`scope` 是行级授权的依据，任何从邮件内容/请求参数补出来的值
+    都会把"匹配器没得出身份"变成"任意 staff 都能认领"。
+    """
+    other_section = "66666666-6666-4666-8666-666666666666"
+    same_scope_rules = {
+        "*": {
+            "student_id": STUDENT_ID,
+            "course_id": COURSE_ID,
+            "section_id": SECTION_ID,
+            "question_version_id": QUESTION_ID,
+        },
+        "alice@example.edu|main.py": {
+            "student_id": OTHER_STUDENT_ID,
+            "course_id": COURSE_ID,
+            "section_id": SECTION_ID,
+            "question_version_id": QUESTION_ID,
+        },
+    }
+    same_scope = build_harness(engine, artifact_root, rules=same_scope_rules)
+    outcome = same_scope.service().process_raw(
+        uidvalidity=101, uid=1, raw=build_message(message_id="<same-scope@example.edu>")
+    )
+    assert outcome.reason_code == "ambiguous_match", outcome.detail
+    recorded = next(
+        entry
+        for entry in same_scope.quarantine.list_recent(mailbox=MAILBOX)
+        if entry.message_id == "<same-scope@example.edu>"
+    )
+    assert (recorded.scope_course_id, recorded.scope_section_id) == (COURSE_ID, SECTION_ID), (
+        "候选共识指向同一课程/课序时必须带出该对值"
+    )
+
+    cross_scope_rules = {
+        "*": {
+            "student_id": STUDENT_ID,
+            "course_id": COURSE_ID,
+            "section_id": SECTION_ID,
+            "question_version_id": QUESTION_ID,
+        },
+        "alice@example.edu|main.py": {
+            "student_id": OTHER_STUDENT_ID,
+            "course_id": COURSE_ID,
+            "section_id": other_section,
+            "question_version_id": QUESTION_ID,
+        },
+    }
+    cross = build_harness(engine, artifact_root, rules=cross_scope_rules)
+    outcome = cross.service().process_raw(
+        uidvalidity=102, uid=2, raw=build_message(message_id="<cross-scope@example.edu>")
+    )
+    assert outcome.reason_code == "ambiguous_match", outcome.detail
+    recorded = next(
+        entry
+        for entry in cross.quarantine.list_recent(mailbox=MAILBOX)
+        if entry.message_id == "<cross-scope@example.edu>"
+    )
+    assert (recorded.scope_course_id, recorded.scope_section_id) == (None, None), (
+        "跨课序的候选不得被折成其中任意一个"
+    )
+
+    default = build_harness(engine, artifact_root)
+    unmatched = default.service().process_raw(
+        uidvalidity=103,
+        uid=3,
+        raw=build_message(
+            message_id="<unmatched-scope@example.edu>", sender="stranger@example.edu"
+        ),
+    )
+    assert unmatched.reason_code == "not_uniquely_matched", unmatched.detail
+    recorded = next(
+        entry
+        for entry in default.quarantine.list_recent(mailbox=MAILBOX)
+        if entry.message_id == "<unmatched-scope@example.edu>"
+    )
+    assert (recorded.scope_course_id, recorded.scope_section_id) == (None, None)
+
+    rejected = default.service().process_raw(
+        uidvalidity=104,
+        uid=4,
+        raw=build_message(
+            message_id="<rejected-scope@example.edu>",
+            attachments=(("run.sh", ELF_PAYLOAD),),
+        ),
+    )
+    assert rejected.status == "rejected", rejected.detail
+    recorded = next(
+        entry
+        for entry in default.quarantine.list_recent(mailbox=MAILBOX)
+        if entry.message_id == "<rejected-scope@example.edu>"
+    )
+    assert (recorded.scope_course_id, recorded.scope_section_id) == (None, None), (
+        "内容类拒绝发生在匹配之前，不存在可审计的候选共识"
+    )
+
+
 def test_concurrent_duplicate_is_skipped_instead_of_crashing(
     harness: Harness, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -3,8 +3,7 @@ import { AssignmentDetailPage } from "../features/assignments/AssignmentDetailPa
 import { AssignmentsPage } from "../features/assignments/AssignmentsPage";
 import { AuthoringPage } from "../features/authoring/AuthoringPage";
 import { GradesPage } from "../features/grades/GradesPage";
-import { QuarantinePage } from "../features/intake/QuarantinePage";
-import { QualitySummaryPage } from "../features/quality/QualitySummaryPage";
+import { ReviewPage } from "../features/review/ReviewPage";
 import { QuestionDetailPage } from "../features/questions/QuestionDetailPage";
 import { QuestionListPage } from "../features/questions/QuestionListPage";
 import { RosterPage } from "../features/roster/RosterPage";
@@ -17,7 +16,6 @@ import {
   canManageUsers,
   canReviewQuarantine,
   canSubmitAnswer,
-  canViewQuestionQuality,
   canViewRoster,
 } from "../auth/visibility";
 
@@ -171,48 +169,24 @@ export function UsersRoute() {
 }
 
 /**
- * 隔离区复核台（CHG-0014）。契约把授权写成 "teacher/assistant/admin within the course scope"，
- * 可见性与之一致；服务端仍是判定方（403 原样展示）。
+ * P13 复核工作区（`/review?tab=mail|quality`）。
+ *
+ * 唯一路由、两个标签；标签与筛选住在 URL 里（刷新/复制链接/前进后退都恢复）。
+ * 可见性与 B2 的角色集合一致；服务端仍是判定方：学生或越权调用得到 403，页面原样展示。
  */
-export function QuarantineRoute() {
+export function ReviewRoute() {
+  const search = useSearch({ from: "/review" });
+  const navigate = useNavigate();
   return (
     <RequireAuth>
       <RequirePermission
         allow={canReviewQuarantine}
         allowedRoles={["teacher", "assistant", "admin"]}
       >
-        <QuarantinePage />
-      </RequirePermission>
-    </RequireAuth>
-  );
-}
-
-/**
- * 题目质量视图（CHG-0015）。筛选条件住在 URL 的查询串里（与题目详情页的 `?version=` 同一做法）：
- * 这样"某版本的教师质量视图"是一条可以贴给同事的深链，而不是一个只有当前会话才存在的页面内状态。
- */
-export function QualityRoute() {
-  const { question_version_id, from, to } = useSearch({ from: "/quality" });
-  const navigate = useNavigate();
-  return (
-    <RequireAuth>
-      <RequirePermission
-        allow={canViewQuestionQuality}
-        allowedRoles={["teacher", "assistant", "admin"]}
-      >
-        <QualitySummaryPage
-          questionVersionId={question_version_id ?? null}
-          from={from ?? null}
-          to={to ?? null}
-          onApply={(next) => {
-            void navigate({
-              to: "/quality",
-              search: {
-                question_version_id: next.questionVersionId ?? undefined,
-                from: next.from ?? undefined,
-                to: next.to ?? undefined,
-              },
-            });
+        <ReviewPage
+          search={search}
+          onChange={(next) => {
+            void navigate({ to: "/review", search: next });
           }}
         />
       </RequirePermission>
