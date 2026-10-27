@@ -19,4 +19,4 @@ events:
   subscribes: []
 database:
   schema: b4
-  migration_head: "20261020_0003"
+  migration_head: "20261027_0004"
