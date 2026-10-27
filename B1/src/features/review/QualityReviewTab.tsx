@@ -102,18 +102,18 @@ function CategoryTables({ summary }: { summary: EvaluationQualitySummary }) {
   const others = summary.failure_categories.filter(
     (item) => item.category !== "infrastructure_error",
   );
+  const systemCount = system.reduce((total, item) => total + item.count, 0);
   return (
     <div data-testid="review-quality-categories">
       <h3>{t("review.quality.categories")}</h3>
-      <div className="count-grid">
-        <CountCard
-          label={t("review.quality.categorySystem")}
-          value={system.reduce((total, item) => total + item.count, 0)}
-          testId="review-quality-category-system"
-          tone="warn"
-        />
-      </div>
-      <p className="muted">{t("review.quality.categorySystemHint")}</p>
+      <p className="inline" data-testid="review-quality-category-system">
+        <StatusPill tone="warn">{t("review.quality.categorySystem")}</StatusPill>
+        <span className="muted">
+          <span data-testid="review-quality-category-system-value">{systemCount}</span>{" "}
+          {t("review.quality.hits")}
+        </span>
+        <span className="muted">{t("review.quality.categorySystemHint")}</span>
+      </p>
       {others.length === 0 ? (
         <EmptyState>{t("review.quality.noOtherCategories")}</EmptyState>
       ) : (
@@ -135,7 +135,13 @@ function CategoryTables({ summary }: { summary: EvaluationQualitySummary }) {
 function QualityBody({ summary }: { summary: EvaluationQualitySummary }) {
   return (
     <div className="stack" data-testid="review-quality-summary">
-      <div className="count-grid" data-testid="review-quality-counts">
+      <div
+        className="count-grid"
+        data-testid="review-quality-counts"
+        // 五个汇总数字在桌面端排成一行（共享 `.count-grid` 的 200px 下限会把第 5 个挤到
+        // 第二行，视觉上像漏了一格）；窄屏仍按可用宽度自动换行。
+        style={{ gridTemplateColumns: "repeat(auto-fit, minmax(165px, 1fr))" }}
+      >
         <CountCard
           label={t("review.quality.sampleSize")}
           value={summary.attempt_count}
@@ -183,18 +189,17 @@ function QualityBody({ summary }: { summary: EvaluationQualitySummary }) {
 
       <div data-testid="review-quality-security">
         <h3>{t("review.quality.security")}</h3>
-        <div className="count-grid">
-          <p className="muted">{t("review.quality.securityFoundMeaning")}</p>
-          <p className="muted">{t("review.quality.securityNotFoundMeaning")}</p>
-          <p className="muted">{t("review.quality.securityNotCheckedMeaning")}</p>
-        </div>
-        <p className="muted">{t("review.quality.securityCountsAtTop")}</p>
+        {/* 口径说明用列表而不是三列：三段文字长短不一时，三列会出现高低不齐的"台阶"。 */}
+        <ul className="muted">
+          <li>{t("review.quality.securityFoundMeaning")}</li>
+          <li>{t("review.quality.securityNotFoundMeaning")}</li>
+          <li>{t("review.quality.securityNotCheckedMeaning")}</li>
+        </ul>
       </div>
 
       <div data-testid="review-quality-resources">
         <h3>{t("review.quality.resources")}</h3>
         <p className="muted">{t("review.quality.resourceMeaning")}</p>
-        <p className="muted">{t("review.quality.unmeasuredCountsAtTop")}</p>
       </div>
 
       <CategoryTables summary={summary} />
@@ -318,118 +323,121 @@ export function QualityReviewTab({
       <h2>{t("review.quality.title")}</h2>
 
       <Panel title={t("review.quality.filter")}>
-        <div className="form-grid">
-          <Field label={t("review.quality.course")} htmlFor="review-quality-course">
-            <select
-              id="review-quality-course"
-              data-testid="review-quality-course"
-              value={courseId}
-              onChange={(event) => setCourseId(event.target.value)}
+        <div className="stack">
+          <div className="form-grid">
+            <Field label={t("review.quality.course")} htmlFor="review-quality-course">
+              <select
+                id="review-quality-course"
+                data-testid="review-quality-course"
+                value={courseId}
+                onChange={(event) => setCourseId(event.target.value)}
+              >
+                <option value="">{t("common.selectPrompt")}</option>
+                {courseOptions.map((course) => (
+                  <option key={course.course_id} value={course.course_id}>
+                    {course.course_code} · {course.title}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            <Field label={t("review.quality.version")} htmlFor="review-quality-version">
+              <select
+                id="review-quality-version"
+                data-testid="review-quality-version"
+                value={filter.questionVersionId ?? ""}
+                disabled={courseId === ""}
+                onChange={(event) => {
+                  const next = event.target.value === "" ? null : event.target.value;
+                  onChange(
+                    withQualityFilter(search, {
+                      questionVersionId: next,
+                      from: filter.from,
+                      to: filter.to,
+                    }),
+                  );
+                }}
+              >
+                <option value="">{t("common.selectPrompt")}</option>
+                {filter.questionVersionId !== null && !invalidVersion ? (
+                  <option value={filter.questionVersionId}>
+                    {context.label ?? filter.questionVersionId}
+                  </option>
+                ) : null}
+                {versionOptions.options
+                  .filter((option) => option.questionVersionId !== filter.questionVersionId)
+                  .map((option) => (
+                    <option key={option.questionVersionId} value={option.questionVersionId}>
+                      {option.label}
+                    </option>
+                  ))}
+              </select>
+            </Field>
+
+            <Field
+              label={t("review.quality.from")}
+              htmlFor="review-quality-from"
+              error={issue === "invalidTime" ? t("review.quality.invalidTime") : null}
             >
-              <option value="">{t("common.selectPrompt")}</option>
-              {courseOptions.map((course) => (
-                <option key={course.course_id} value={course.course_id}>
-                  {course.course_code} · {course.title}
-                </option>
-              ))}
-            </select>
-          </Field>
+              <input
+                id="review-quality-from"
+                data-testid="review-quality-from"
+                type="datetime-local"
+                value={fromDraft}
+                onChange={(event) => setFromDraft(event.target.value)}
+              />
+            </Field>
 
-          <Field
-            label={t("review.quality.version")}
-            htmlFor="review-quality-version"
-            hint={t("review.quality.versionHint")}
-          >
-            <select
-              id="review-quality-version"
-              data-testid="review-quality-version"
-              value={filter.questionVersionId ?? ""}
-              disabled={courseId === ""}
-              onChange={(event) => {
-                const next = event.target.value === "" ? null : event.target.value;
-                onChange(
-                  withQualityFilter(search, {
-                    questionVersionId: next,
-                    from: filter.from,
-                    to: filter.to,
-                  }),
-                );
-              }}
+            <Field
+              label={t("review.quality.to")}
+              htmlFor="review-quality-to"
+              error={issue === "endBeforeStart" ? t("review.quality.endBeforeStart") : null}
             >
-              <option value="">{t("common.selectPrompt")}</option>
-              {filter.questionVersionId !== null && !invalidVersion ? (
-                <option value={filter.questionVersionId}>
-                  {context.label ?? filter.questionVersionId}
-                </option>
-              ) : null}
-              {versionOptions.options
-            .filter((option) => option.questionVersionId !== filter.questionVersionId)
-            .map((option) => (
-                <option key={option.questionVersionId} value={option.questionVersionId}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </Field>
+              <input
+                id="review-quality-to"
+                data-testid="review-quality-to"
+                type="datetime-local"
+                value={toDraft}
+                onChange={(event) => setToDraft(event.target.value)}
+              />
+            </Field>
+          </div>
 
-          <Field
-            label={t("review.quality.from")}
-            htmlFor="review-quality-from"
-            error={issue === "invalidTime" ? t("review.quality.invalidTime") : null}
-          >
-            <input
-              id="review-quality-from"
-              data-testid="review-quality-from"
-              type="datetime-local"
-              value={fromDraft}
-              onChange={(event) => setFromDraft(event.target.value)}
-            />
-          </Field>
-
-          <Field
-            label={t("review.quality.to")}
-            htmlFor="review-quality-to"
-            error={issue === "endBeforeStart" ? t("review.quality.endBeforeStart") : null}
-          >
-            <input
-              id="review-quality-to"
-              data-testid="review-quality-to"
-              type="datetime-local"
-              value={toDraft}
-              onChange={(event) => setToDraft(event.target.value)}
-            />
-          </Field>
-        </div>
-
-        <div className="inline">
-          <button type="button" className="button" data-testid="review-quality-apply" onClick={apply}>
-            {t("review.quality.apply")}
-          </button>
-          {filter.from !== null || filter.to !== null ? (
+          <div className="row-actions">
             <button
               type="button"
-              className="button button--ghost"
-              data-testid="review-quality-clear-time"
-              onClick={clearTime}
+              className="button"
+              data-testid="review-quality-apply"
+              onClick={apply}
             >
-              {t("review.quality.clearTime")}
+              {t("review.quality.apply")}
             </button>
-          ) : null}
-          {versionOptions.query.hasNextPage ? (
-            <LoadMoreActions
-              loadedCount={versionOptions.options.length}
-              hasNextPage={versionOptions.query.hasNextPage}
-              isFetchingNextPage={versionOptions.query.isFetchingNextPage}
-              onLoadMore={() => {
-                void versionOptions.query.fetchNextPage();
-              }}
-              testId="review-quality-versions"
-            />
-          ) : null}
+            {filter.from !== null || filter.to !== null ? (
+              <button
+                type="button"
+                className="button button--ghost"
+                data-testid="review-quality-clear-time"
+                onClick={clearTime}
+              >
+                {t("review.quality.clearTime")}
+              </button>
+            ) : null}
+            {versionOptions.query.hasNextPage ? (
+              <LoadMoreActions
+                loadedCount={versionOptions.options.length}
+                hasNextPage={versionOptions.query.hasNextPage}
+                isFetchingNextPage={versionOptions.query.isFetchingNextPage}
+                onLoadMore={() => {
+                  void versionOptions.query.fetchNextPage();
+                }}
+                testId="review-quality-versions"
+              />
+            ) : null}
+          </div>
+          {courses.isError ? <ErrorState error={courses.error} /> : null}
+          {versionOptions.query.isError ? <ErrorState error={versionOptions.query.error} /> : null}
+          <p className="muted">{t("review.quality.rangeNote")}</p>
         </div>
-        {courses.isError ? <ErrorState error={courses.error} /> : null}
-        {versionOptions.query.isError ? <ErrorState error={versionOptions.query.error} /> : null}
-        <p className="muted">{t("review.quality.rangeNote")}</p>
       </Panel>
 
       {invalidVersion ? (
@@ -476,8 +484,9 @@ export function QualityReviewTab({
           ) : null}
           <QualityBody summary={summary.data} />
           {context.questionId ? (
-            <p>
+            <div className="row-actions">
               <Link
+                className="button button--ghost"
                 to="/questions/$questionId"
                 params={{ questionId: context.questionId }}
                 search={{ version: filter.questionVersionId ?? undefined }}
@@ -485,7 +494,7 @@ export function QualityReviewTab({
               >
                 {t("review.quality.back")}
               </Link>
-            </p>
+            </div>
           ) : null}
         </Panel>
       ) : null}

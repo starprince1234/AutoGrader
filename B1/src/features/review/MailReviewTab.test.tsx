@@ -165,7 +165,7 @@ describe("P13-A 邮件提交标签", () => {
     renderWithProviders(<Harness initial={MAIL_PATH} />);
 
     expect(await screen.findByTestId("review-mail-forbidden")).toHaveTextContent(
-      "你没有查看这个课程隔离记录的权限。",
+      "你没有权限查看这个课程的邮件记录。",
     );
     expect(screen.queryByTestId("review-mail-empty")).toBeNull();
   });
@@ -178,7 +178,7 @@ describe("P13-A 邮件提交标签", () => {
     expect(await screen.findByTestId("review-mail-empty")).toHaveTextContent(
       "没有待处理记录。",
     );
-    expect(screen.getByText(/未能确认课程的邮件仅管理员可见/)).toBeInTheDocument();
+    expect(screen.getByText(/无法确认课程的邮件只有管理员能看到/)).toBeInTheDocument();
   });
 
   it("详情只展示契约字段，不额外发请求", async () => {
