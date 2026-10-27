@@ -783,10 +783,12 @@ uff、pytest、pnpm * 都无法运行。
 - **验证**：见本批提交说明与 `B1/docs/phases/active/phase-08-password-reset.md`；
   B4 的接口与迁移说明见 `B4/docs/phases/active/phase-04-password-reset.md`；
   本机无 PostgreSQL/NATS，B4 pytest 与真实迁移 upgrade/downgrade 未执行，已逐条列明；
-  B1 的 `tsc` / ESLint / Vitest / `api:check` 实际执行结果见阶段记录。
+  B1 的 `tsc` / ESLint / Vitest（46 文件 / 398 用例）/ `api:check` / `vite build` 与
+  MAIN 契约/清单/文档门禁实际通过；Vercel 与 `Deploy AutoGrader backend` 对提交 `de4a0ee`
+  均成功，线上公开发码接口对未知邮箱返回 `202`，B4 health 为 healthy。
 - **摘要**：见五份 `contracts.lock`（由 `contract_digest()` 计算，此处不复制）
 - **回滚方式**：还原本批契约文本与版本号、回退 B4 迁移 `20261027_0005`、移除 B1 的
-  `/forgot-password` 页面与登录入口，然后重跑 `scripts/relock_contracts.py`；版本回到 `0.20.0`。
+  `/forgot-password` 页面与登录入口，然后重跑 `scripts/relock_contracts.py`；版本回到 `0.21.0`。
 
 ---
 

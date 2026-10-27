@@ -30,7 +30,7 @@
   - `POST /api/v1/auth/password-reset`（`completePasswordReset`）
 - 契约版本 `0.20.0` → `0.22.0`（`0.21.0` 已被上游 P13/CSV 批次占用）；六份契约文件的 `info.version`、五个模块的 `contract_version`
   与五份 `contracts.lock` 同步，摘要由 canonical `contract_digest()` 计算为
-  `22bbbfab886d5f198c2f9caf3bc0f23440755f059fb7fd43bd6acba53db700f9`。
+  `5ada1a87d55584422874025aed7143c75d31cd4eb5e90330ad7472bee0ba7d61`。
 - B4 迁移 `20261027_0005_password_reset.py`：新表 + 用户外键 + 摘要/归一化邮箱/尝试次数 CHECK +
   查询索引 + 应用角色授权；`module.yaml` 的 `migration_head` 推进到 `20261027_0005`。
 - B4 API `api/password_reset.py`：发码、完成重置、审计动作、会话撤销；邮件模板
@@ -63,13 +63,16 @@
 | `node node_modules/vite/bin/vite.js build`（B1） | 通过（只有既有 >500kB chunk 警告） |
 | `uv run --project MAIN python -m autograder_host.checks` | 通过（契约、清单、迁移头、文档链接与端口一致性） |
 | `uv tool run ruff check B4/src B4/tests/test_password_reset.py B4/alembic/versions/20261027_0005_password_reset.py` | 通过 |
+| Vercel 部署（提交 `de4a0ee`） | `success`；线上 bundle 含「忘记密码？」「重置密码」「如果该邮箱已注册」「显示密码/隐藏密码」 |
+| `Deploy AutoGrader backend`（提交 `de4a0ee`） | `success`；线上 `POST /api/v1/auth/password-reset/code` 对未知邮箱返回 `202`，`GET /api/v1/modules/B4/health` → `healthy: true` |
 
-**未执行**：
+**未执行/未验证**：
 
 - B4 `pytest`：本机没有 PostgreSQL（55435）与 NATS（54224），B4 测试套件要求真实实例；因此
-  新接口的数据库集成测试、迁移 `upgrade`/`downgrade` 均为**未验证**（代码与测试已写）。
+  新接口的数据库集成测试与真实 `upgrade`/`downgrade` 未执行（代码与测试已写）。
+  线上后端部署工作流成功，但未直接查询生产库的 `alembic_version_b4` 或表行。
 - 真实 SMTP：没有发送真实找回密码邮件，也没有在真实浏览器中完成"收码 → 改密 → 登录"闭环。
-- 线上部署与生产账号重置：只验证了本地构建与契约门禁，未部署、未对生产账号执行改密。
+- 生产账号改密：未对任何真实账号执行重置；未知邮箱的 `202` 只验证了公开接口与其反枚举形状。
 - 1440 / 768 / 390 三档视口截图与深色模式视觉验收：未执行。
 
 ## 顺带修正
@@ -81,4 +84,4 @@
 ## 回滚
 
 还原本轮契约文本与版本号、回退 B4 迁移 `20261027_0005`、移除 B1 的 `/forgot-password` 页面与
-登录入口，然后重跑 `scripts/relock_contracts.py`；版本回到 `0.20.0`。
+登录入口，然后重跑 `scripts/relock_contracts.py`；版本回到 `0.21.0`。

@@ -30,7 +30,7 @@
 | 文档/能力 | 状态 | 最后验证方式 |
 |---|---|---|
 | 应用壳（`src/main.tsx` + `src/app/**`） | `已完成`（入口与外壳本轮重做，无独立首页） | `vite build` 实跑通过；`AppShell.test.tsx`（10 用例）+ `navigation.test.ts` + `routerBasepath.test.ts` 覆盖会话恢复门、根入口重定向、角色导航、账户菜单、退出与 basepath 回跳 |
-| 契约锁 `contracts.lock` | `已完成` | 与 `../../MAIN/contracts` 摘要一致（**`0.22.0`**，摘要 `22bbbfab…`；含密码重置两条公开操作与 P13 的查询范围字段）；`generate-api-types.mjs --check` 实跑通过 |
+| 契约锁 `contracts.lock` | `已完成` | 与 `../../MAIN/contracts` 摘要一致（**`0.22.0`**，摘要 `5ada1a87…`；含密码重置两条公开操作与 P13 的查询范围字段）；`generate-api-types.mjs --check` 实跑通过 |
 | 找回密码（P02 补充） | `部分`（B1 已完成；B4 集成测试未跑） | `ForgotPasswordPage.test.tsx`（6 用例）+ `LoginPage.test.tsx`（忘记入口、失败后密码显示按钮保留、重置成功提示）：字段校验、发码冷却、统一错误文案、成功后回登录；`uv run --project MAIN python -m autograder_host.checks` 通过。**B4 pytest 需要 PostgreSQL/NATS，本机未执行**；真实 SMTP 与线上改密未验证 |
 | 密码可见性 | `已完成` | `Field` 行内 `trailing` 控件 + 页面自维护显示/隐藏状态；`LoginPage.test.tsx` 固定"失败后仍可查看/隐藏密码" |
 | `module.yaml` | `已完成` | 与 MAIN `manifest.schema.json` 一致 |
