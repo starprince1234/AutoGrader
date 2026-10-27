@@ -3,10 +3,10 @@
 本表是"需求能否被证明满足"的检查单。`层次` 取值：单元 / 组件 / 契约 / 安全 / 端到端。
 `当前状态` 取值：`存在`（有真实测试且通过）／`部分`（B1 侧已覆盖，另一半须由提供方断言或需真实后端）／`待建`。
 
-测试实跑结果：**42 个测试文件 / 360 个用例全部通过**（`vitest run`，见
-`../phases/active/phase-06-entry-shell-and-auth-redesign.md` 的"真实执行的命令与结果"一节；
-上一阶段为 32 文件 / 265 用例，本轮新增入口/外壳/登录/注册/回跳安全与控件可访问性用例）。
-浏览器视觉验收（1440/768/390px 截图、深色模式与真实账号）**本轮未执行**，见 phase-06 的未验证项。
+测试实跑结果：**46 个测试文件 / 398 个用例全部通过**（`vitest run`，见
+`../phases/active/phase-08-password-reset.md` 的"真实执行的命令与结果"一节；
+上一阶段 P13 为 43 文件 / 374 用例，本批新增找回密码与密码可见性用例）。
+浏览器视觉验收（1440/768/390px 截图、深色模式与真实账号）**本轮未执行**，见 phase-08 的未验证项。
 
 | 用例 ID | 目标 RQ | 层次 | 前置 | 步骤要点 | 期望 | 当前状态 | 测试位置 |
 |---|---|---|---|---|---|---|---|
@@ -123,6 +123,10 @@
 | TC-B1-110 | P01 | 组件+安全 | 抽屉打开/选页、主动退出登录 | 小屏导航与账户菜单 | 焦点进入抽屉，Escape/遮罩/选页都能关闭并归还焦点；退出只发一次 logout、清空本地查询缓存并进入不带 redirect 的登录页 | 存在 | `src/ui/components.test.tsx`、`AppShell.test.tsx` |
 | TC-B1-111 | — | 组件 | `Field` 带 hint 与错误 / 无错误 | 读屏属性检查 | hint 与 error 经 `aria-describedby` 关联到控件；`aria-invalid` 只在出错时出现 | 存在 | `src/ui/components.test.tsx` |
 | TC-B1-112 | P02/P03 | 组件 | 已登录用户访问 `/login` 或 `/register` | 直接打开 | 被送回作业页；不渲染第二套认证表单，也不显示已登录身份/退出按钮 | 存在 | `src/app/AppShell.test.tsx` |
+| TC-B1-113 | P02 | 组件+安全 | 登录失败前后点击密码显示按钮 | 输入密码并触发 401 | 输入框 `type` 在 `password`/`text` 间切换；失败后按钮与可见状态仍保留，可继续查看/隐藏 | 存在 | `src/features/auth/LoginPage.test.tsx` |
+| TC-B1-114 | P02 | 组件 | 邮箱格式错误 / 邮箱合法 | 点击「发送验证码」 | 格式错误就地报错且零请求；合法邮箱显示通用提示「如果该邮箱已注册…」并进入冷却 | 存在 | `src/features/auth/ForgotPasswordPage.test.tsx` |
+| TC-B1-115 | P02 | 组件+安全 | 验证码错误 / 新密码过短 / 两次不一致 | 提交重置 | 验证码错误落到验证码字段；密码规则在本地拦截；不把服务端细节或账号存在性暴露给用户 | 存在 | `src/features/auth/ForgotPasswordPage.test.tsx` |
+| TC-B1-116 | P02 | 组件 | 完整重置成功 | 邮箱 + 验证码 + 新密码提交 | 只发一次 `password-reset` 请求；成功后回 `/login?reset=done`，登录页显示「密码已重置，请使用新密码登录。」 | 存在 | `src/features/auth/ForgotPasswordPage.test.tsx`、`LoginPage.test.tsx` |
 
 ## 夹具政策（必须遵守）
 

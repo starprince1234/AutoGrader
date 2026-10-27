@@ -1,6 +1,6 @@
 schema_version: 1
 module: B4
-contract_version: 0.21.0
+contract_version: 0.22.0
 entry_point: autograder_b4.plugin:create_module
 provides: [b4-auth, b4-course, postgres, nats]
 requires: [host]
@@ -19,4 +19,4 @@ events:
   subscribes: []
 database:
   schema: b4
-  migration_head: "20261027_0004"
+  migration_head: "20261027_0005"

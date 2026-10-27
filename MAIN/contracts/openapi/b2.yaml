@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AutoGrader B2 Evaluation API
-  version: 0.21.0
+  version: 0.22.0
   description: |
     Submission intake (API and email), content-addressed storage, static legality,
     security confirmation, sandboxed dynamic execution, explainable and replayable

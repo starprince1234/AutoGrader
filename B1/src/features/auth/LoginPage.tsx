@@ -13,15 +13,18 @@ type FormError = { message: string; requestId?: string };
  * 登录（`POST /api/v1/auth/session`）。刷新凭据由 B4 以 HttpOnly cookie 下发。
  *
  * 产品规则：
- * - 只收**用户名 + 密码**，没有"忘记密码"链接（后端没有真实重置流程，就不放一个假入口）；
+ * - 只收**用户名 + 密码**；忘记密码走真实的 `/forgot-password` 邮件验证码流程；
+ * - 密码框提供自己的显示/隐藏按钮：浏览器原生的"小眼睛"在失焦后会被隐藏，登录失败后
+ *   用户就看不到刚输入的密码了，因此这里是页面自己维护的状态；
  * - 认证失败只有一个结论「用户名或密码不正确」，不区分账号是否存在；
  * - `?redirect=` 来自"未登录被拦下"的那次导航，只接受站内路径，登录成功直接回到原页。
  */
 export function LoginPage() {
   const navigate = useNavigate();
-  const { redirect, registered } = useSearch({ from: "/login" });
+  const { redirect, registered, reset } = useSearch({ from: "/login" });
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState<FormError | null>(null);
   const [pending, setPending] = useState(false);
@@ -78,6 +81,11 @@ export function LoginPage() {
             {t("login.registered")}
           </Banner>
         ) : null}
+        {reset ? (
+          <Banner tone="success" testId="login-reset">
+            {t("login.resetSuccess")}
+          </Banner>
+        ) : null}
 
         <Field label={t("login.username")} htmlFor="login-username" error={fieldErrors.username}>
           <input
@@ -95,12 +103,29 @@ export function LoginPage() {
           />
         </Field>
 
-        <Field label={t("login.password")} htmlFor="login-password" error={fieldErrors.password}>
+        <Field
+          label={t("login.password")}
+          htmlFor="login-password"
+          error={fieldErrors.password}
+          trailing={
+            <button
+              type="button"
+              className="field__action"
+              data-testid="login-password-toggle"
+              aria-label={showPassword ? t("login.hidePassword") : t("login.showPassword")}
+              aria-pressed={showPassword}
+              title={showPassword ? t("login.hidePassword") : t("login.showPassword")}
+              onClick={() => setShowPassword((current) => !current)}
+            >
+              <EyeIcon crossed={showPassword} />
+            </button>
+          }
+        >
           <input
             ref={passwordRef}
             id="login-password"
             name="password"
-            type="password"
+            type={showPassword ? "text" : "password"}
             autoComplete="current-password"
             placeholder={t("login.passwordPlaceholder")}
             value={password}
@@ -110,6 +135,12 @@ export function LoginPage() {
             }}
           />
         </Field>
+
+        <div className="auth-field-actions">
+          <Link to="/forgot-password" data-testid="login-forgot-password">
+            {t("login.forgotPassword")}
+          </Link>
+        </div>
 
         {formError ? (
           <Banner tone="error" testId="login-error">
@@ -149,4 +180,26 @@ function loginError(error: unknown): FormError {
     return { message: t("login.serviceUnavailable"), requestId: error.requestId };
   }
   return { message: t("login.serviceError"), requestId: error.requestId };
+}
+
+/** 密码可见性图标：只做功能提示，按钮本身有可读的 aria-label。 */
+function EyeIcon({ crossed }: { crossed: boolean }) {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <path d="M3 12s3.5-7 9-7 9 7 9 7-3.5 7-9 7-9-7-9-7z" />
+      <circle cx="12" cy="12" r="3" />
+      {crossed ? <path d="M4 4l16 16" /> : null}
+    </svg>
+  );
 }

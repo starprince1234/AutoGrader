@@ -18,8 +18,8 @@ import { AuthLayout } from "./AuthLayout";
 import { isMainNavActive, mainNavItems, type MainNavItem } from "./navigation";
 import { Drawer } from "../ui/components";
 
-/** 不需要登录的路径：登录页与注册页是两个公开入口。 */
-const PUBLIC_PATHS = new Set(["/login", "/register"]);
+/** 不需要登录的路径：登录、注册与忘记密码是三个公开入口。 */
+const PUBLIC_PATHS = new Set(["/login", "/register", "/forgot-password"]);
 
 /**
  * 应用外壳（全站唯一）。

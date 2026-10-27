@@ -38,6 +38,14 @@ export type RegistrationCodeAccepted = JsonBody<B4Operations["requestRegistratio
 export type RegistrationCompleteRequest =
   B4Operations["createRegistration"]["requestBody"]["content"]["application/json"];
 export type RegistrationCreated = JsonBody<B4Operations["createRegistration"], 201>;
+export type PasswordResetCodeRequest =
+  B4Operations["requestPasswordResetCode"]["requestBody"]["content"]["application/json"];
+export type PasswordResetCodeAccepted = JsonBody<
+  B4Operations["requestPasswordResetCode"],
+  202
+>;
+export type PasswordResetCompleteRequest =
+  B4Operations["completePasswordReset"]["requestBody"]["content"]["application/json"];
 export type UserSummary = B4Schemas["UserSummary"];
 export type CoursePublic = B4Schemas["CoursePublic"];
 export type SectionPublic = B4Schemas["SectionPublic"];

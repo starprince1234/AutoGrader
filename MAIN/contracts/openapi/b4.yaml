@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AutoGrader B4 Platform API
-  version: 0.21.0
+  version: 0.22.0
   description: |
     Identity, courses, sections, enrollments, roster import, audit and the runtime
     module registry. Owned by B4 (RQ-B-4-10/20/30/40/50/99).
@@ -17,12 +17,15 @@ servers:
   - url: /
     description: Served by the MAIN composition host, same origin as the B1 client.
 
-# Document-level default: every B4 operation requires a bearer access token. The three
-# session/JWKS operations are public by design and say so individually:
+# Document-level default: every B4 operation requires a bearer access token.
+# Session/JWKS, self-service registration and password-reset operations are public by
+# design and say so individually:
 #   * `createSession`  — credentials are in the body; there is nothing to authenticate yet.
 #   * `refreshSession` — authenticated by the HttpOnly refresh cookie, not by a bearer token.
 #   * `getJwks`        — every module verifies tokens locally, so the key set must be readable
 #                        without a token (it is public key material and reveals nothing).
+#   * registration / password-reset — the caller has no account/session yet; the e-mailed
+#                        code is what proves the mailbox.
 security:
   - bearerAuth: []
 
@@ -261,6 +264,88 @@ paths:
         '409': {$ref: './common.yaml#/components/responses/Conflict'}
         '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
         '429': {$ref: './common.yaml#/components/responses/TooManyRequests'}
+
+  /api/v1/auth/password-reset/code:
+    post:
+      operationId: requestPasswordResetCode
+      summary: Send the e-mail verification code for a password reset
+      description: |
+        Starts a password reset for the account carrying this registered e-mail address.
+        The answer is deliberately identical for every syntactically valid address, whether
+        or not an active account exists, so this endpoint cannot be used to enumerate
+        accounts: a code is mailed only when the address belongs to an active account.
+        It stores only a SHA-256 digest bound to the reset intent and never stores the
+        plaintext code.
+
+        The TTL, resend window and hourly limits are the same mail-channel limits used by
+        `requestRegistrationCode`. A missing or failing SMTP configuration is `503`, and
+        no code is persisted in that case.
+      tags: [auth]
+      security: []
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Traceparent'
+        - $ref: './common.yaml#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email]
+              properties:
+                email: {type: string, format: email, maxLength: 320}
+              additionalProperties: false
+      responses:
+        '202':
+          description: |
+            Same answer whether or not the address belongs to an active account. A code is
+            sent only in the latter case.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [expires_in_seconds, resend_after_seconds]
+                properties:
+                  expires_in_seconds: {type: integer, minimum: 1}
+                  resend_after_seconds: {type: integer, minimum: 1}
+                additionalProperties: false
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+        '503': {$ref: './common.yaml#/components/responses/ServiceUnavailable'}
+
+  /api/v1/auth/password-reset:
+    post:
+      operationId: completePasswordReset
+      summary: Replace the password using the e-mailed reset code
+      description: |
+        Consumes the code issued by `requestPasswordResetCode` exactly once, replaces the
+        Argon2id credential, and revokes every refresh session of the account. Access
+        tokens already issued remain valid only until their short TTL; the next refresh
+        fails and the browser must sign in again with the new password.
+
+        Every code rejection (unknown address, missing/expired code, wrong code, attempts
+        exhausted) uses the same `422` detail, for the same anti-enumeration reason as the
+        code request. The plaintext password and code never enter a log line or an audit
+        record.
+      tags: [auth]
+      security: []
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Traceparent'
+        - $ref: './common.yaml#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, code, new_password]
+              properties:
+                email: {type: string, format: email, maxLength: 320}
+                code: {type: string, pattern: '^[0-9]{6}$'}
+                new_password: {type: string, minLength: 8, maxLength: 128, format: password}
+              additionalProperties: false
+      responses:
+        '204': {description: Password replaced; every refresh session of the account revoked.}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
 
   /api/v1/registration-allowlists:
     post:

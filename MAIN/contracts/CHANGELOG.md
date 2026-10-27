@@ -750,6 +750,46 @@ uff、pytest、pnpm * 都无法运行。
 
 ---
 
+## 0.22.0 — 邮箱验证码找回密码（无 CHG 编号）
+
+- **级别**：P1 增补（两个新的公开认证操作与一张 B4 表）
+- **状态**：已生效
+- **动机**：登录页此前**没有**找回密码入口，因为后端没有真实重置流程；用户一旦忘记密码，
+  只能由管理员重建账号。本次补上完整闭环：注册邮箱 → 邮件验证码 → 设置新密码。两条新操作
+  都不返回任何账号是否存在的信息，避免把"找回密码"变成账号枚举接口。
+- **变更文件**：
+  - `openapi/b4.yaml`：新增
+    `POST /api/v1/auth/password-reset/code`（`requestPasswordResetCode`）与
+    `POST /api/v1/auth/password-reset`（`completePasswordReset`）；
+  - 六份契约文件 `info.version` 同步到 `0.22.0`（`0.21.0` 已被上游 P13/CSV 并集批次占用）。
+- **语义**：
+  - 发码 `202` 对任意合法邮箱都返回同一结构；只有属于**启用中账号**的邮箱才会真正收到邮件。
+    TTL、重发窗口、小时上限复用注册邮件通道的既有配置；SMTP 未配置或投递失败为 `503`，
+    且不留下可用验证码行。
+  - 完成重置 `204`：消费验证码、替换 Argon2id 口令、撤销该账号全部 refresh 会话，
+    并清理该账号的失败登录计数；已签发的 access token 只在剩余短 TTL 内仍有效。
+  - 所有验证码失败（邮箱不存在、无可用码、错误、尝试次数耗尽）统一返回同一个 `422` detail。
+  - 只保存绑定 `code_id` 的 SHA-256 摘要；明文验证码与口令不写数据库、日志或审计。
+- **受影响模块与需要做的改动**：
+  - **B4**：新增 `b4.password_reset_codes`（迁移 `20261027_0005`）、
+    `POST /api/v1/auth/password-reset/code` / `POST /api/v1/auth/password-reset`、
+    新邮件模板 `send_password_reset_code`、审计动作 `auth.password_reset.*`；
+    `module.yaml` 迁移头推进到 `20261027_0005`。
+  - **B1**：登录页增加「忘记密码？」入口与 `/forgot-password` 页面；注册 API 类型重新生成；
+    登录密码框增加可持久显示的「显示/隐藏密码」按钮（修复失败后浏览器原生小眼睛消失）。
+  - **B2/B3/B5**：无代码改动，仅同步契约版本声明与锁。
+- **是否破坏兼容**：否（纯新增路径与表；既有认证、注册、会话契约不变）。
+- **迁移方式**：新增表，一次性 `alembic upgrade head`；不修改既有行，不保留兼容层。
+- **验证**：见本批提交说明与 `B1/docs/phases/active/phase-08-password-reset.md`；
+  B4 的接口与迁移说明见 `B4/docs/phases/active/phase-04-password-reset.md`；
+  本机无 PostgreSQL/NATS，B4 pytest 与真实迁移 upgrade/downgrade 未执行，已逐条列明；
+  B1 的 `tsc` / ESLint / Vitest / `api:check` 实际执行结果见阶段记录。
+- **摘要**：见五份 `contracts.lock`（由 `contract_digest()` 计算，此处不复制）
+- **回滚方式**：还原本批契约文本与版本号、回退 B4 迁移 `20261027_0005`、移除 B1 的
+  `/forgot-password` 页面与登录入口，然后重跑 `scripts/relock_contracts.py`；版本回到 `0.20.0`。
+
+---
+
 ## 记录模板（后续变更复制此块）
 
 ```md

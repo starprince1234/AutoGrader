@@ -1,7 +1,7 @@
 asyncapi: 3.0.0
 info:
   title: AutoGrader domain events
-  version: 0.21.0
+  version: 0.22.0
   description: |
     Asynchronous contract between modules, carried by NATS JetStream.
 

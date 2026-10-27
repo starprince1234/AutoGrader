@@ -2,14 +2,18 @@
 
 B1 是 AutoGrader 的**静态 Web 客户端**（TypeScript + React 19 + Vite 7），生产拓扑由 Vercel 从 `B1/` 构建并托管在 `https://www.91idc.me/app/`。面向学生 / 教师 / 助教 / 管理员，提供名单导入与编辑、富文本题目展示、代码提交与实时评测进度、成绩查询与导出的**交互界面**。B1 **没有后端、没有权威数据库**，所有权威数据都来自 B4（身份/课程/名单）、B3（题目）、B2（提交/评测/成绩），API origin 为 `https://api.91idc.me`。
 
-> 当前状态：业务界面与端到端 `已完成`；**本轮重做了入口与全局外壳（P01–P03）**——
-> 删除独立首页（`/` 直接进入作业页）、登录/注册改为独立认证布局、导航按角色收敛为学生 2 项 /
-> 教学侧 4 项、管理员「用户管理」移入账户菜单、小屏导航改为可键盘操作的抽屉，登录回跳只接受
-> 站内路径。本批为 **P13 复核工作区**：旧隔离区/质量两页合并为 `/review?tab=mail|quality`，
+> 当前状态：业务界面与端到端 `已完成`；**本批为找回密码与密码可见性**——
+> 登录页增加「忘记密码？」入口与 `/forgot-password` 页面（注册邮箱 → 邮件验证码 → 设置新密码，
+> 成功后撤销该账号全部 refresh 会话），并修复登录失败后密码"小眼睛"消失的问题（改为页面
+> 自维护的显示/隐藏按钮）。契约随之升到 `0.22.0`，B4 新增两条公开认证操作与迁移
+> `20261027_0005`。验证：ESLint、`tsc -b`、`api:check`、Vitest（**46 文件 / 398 用例**）、
+> `vite build` 实跑通过；MAIN 契约/清单/迁移头/文档门禁通过。**B4 pytest 需要 PostgreSQL/NATS，
+> 本机未执行；真实 SMTP 与线上改密未验证**（见
+> [`phase-08-password-reset.md`](docs/phases/active/phase-08-password-reset.md) 的未验证项）。
+> 上一轮为 **P13 复核工作区**：旧隔离区/质量两页合并为 `/review?tab=mail|quality`，
 > 旧路由与旧测试删除；邮件标签带课程/课序筛选、详情与安全归属（候选来自 B4 现取名单），
-> 质量标签由 P07 带版本、先经 B3 校验再拉 B2 聚合。验证：ESLint、`tsc -b`、`api:check`、
-> Vitest（**43 文件 / 374 用例**）实跑通过；**未做真实浏览器视觉验收、页面尚未部署**
-> （见 [`phase-07-review-workspace.md`](docs/phases/active/phase-07-review-workspace.md) 的未验证项）。
+> 质量标签由 P07 带版本、先经 B3 校验再拉 B2 聚合（见
+> [`phase-07-review-workspace.md`](docs/phases/active/phase-07-review-workspace.md)）。
 > 上一轮（`0.15.0` → `0.16.0`）打通了出题的最后一段：出题页的「验证并发布」入口——
 > `CHG-0019`/`ADR-0015` 的"B2 执行、B3 记录、教师一键触发"，并同时落地 `CHG-0017` 的草稿省略语义
 > （`cases`/`reference_answer` 留空即不发该键，服务端保留已存值）、`CHG-0021` 的隔离区语义修复
@@ -26,6 +30,8 @@ B1 是 AutoGrader 的**静态 Web 客户端**（TypeScript + React 19 + Vite 7�
 > 端点上线后与实时数据自相矛盾）；`503` 的结论改为中性标题 + **原样保留服务端 detail**。
 >
 > 真实命令、结果、未执行项与契约缺口见
+> [`docs/phases/active/phase-08-password-reset.md`](docs/phases/active/phase-08-password-reset.md)、
+> [`docs/phases/active/phase-07-review-workspace.md`](docs/phases/active/phase-07-review-workspace.md)、
 > [`docs/phases/active/phase-06-entry-shell-and-auth-redesign.md`](docs/phases/active/phase-06-entry-shell-and-auth-redesign.md)、
 > [`phase-05-authoring-publish-path-and-0-15-0.md`](docs/phases/active/phase-05-authoring-publish-path-and-0-15-0.md)、
 > [`phase-04-question-tag-coverage.md`](docs/phases/active/phase-04-question-tag-coverage.md)、

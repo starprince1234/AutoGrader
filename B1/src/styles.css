@@ -829,6 +829,52 @@ samp {
   box-shadow: var(--shadow-focus);
 }
 
+/* 输入框 + 行内附加控件（密码的显示/隐藏）。控件只占右侧一格，输入框仍拉伸。 */
+.field__control {
+  display: flex;
+  align-items: stretch;
+  gap: var(--space-2);
+}
+
+.field__control > input,
+.field__control > select,
+.field__control > textarea {
+  flex: 1;
+  min-width: 0;
+}
+
+.field__action {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  min-width: 40px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+
+.field__action:hover {
+  border-color: var(--color-border-strong);
+  color: var(--color-text);
+}
+
+.field__action:focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: var(--shadow-focus);
+}
+
+/* Edge/IE 的原生密码小眼睛在失焦后会消失；页面自己提供持久按钮，避免两个图标叠在一起。 */
+.field input[type="password"]::-ms-reveal,
+.field input[type="password"]::-ms-clear {
+  display: none;
+}
+
 .field__error {
   color: var(--color-bad);
   font-size: 12.5px;
@@ -1488,6 +1534,19 @@ samp {
   text-align: center;
   font-size: 14px;
   color: var(--color-text-muted);
+}
+
+/* 登录表单里"忘记密码？"这类次级动作：右对齐、与密码字段贴近。 */
+.auth-field-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: calc(var(--space-2) * -1);
+  font-size: 14px;
+}
+
+.auth-hint {
+  margin: 0;
+  font-size: 12.5px;
 }
 
 /* 验证码与「发送验证码」同一行：桌面并排，窄屏上下排列且按钮占满宽度。 */

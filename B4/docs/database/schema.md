@@ -1,10 +1,10 @@
 # B4 数据库 schema（表意图）
 
-> 铁律一：**不抄 DDL**。物理表结构的唯一权威是本模块 `../alembic/versions/**`；本文只写表意图、关键约束、生命周期、敏感列标记。平台表由 `20260915_0002` 建成，注册相关表与 `users.created_via` 由 `20261020_0003` 增加（见 `../phases/active/phase-01-platform-implementation.md`）。
+> 铁律一：**不抄 DDL**。物理表结构的唯一权威是本模块 `../alembic/versions/**`；本文只写表意图、关键约束、生命周期、敏感列标记。平台表由 `20260915_0002` 建成，注册相关表与 `users.created_via` 由 `20261020_0003` 增加，密码重置验证码表由 `20261027_0005` 增加（见 `../phases/active/phase-01-platform-implementation.md`）。
 
 ## 归属声明
 
-- 我拥有 `b4` schema 的 8 类平台实体，物理表为 **18 张业务表 + `alembic_version_b4`**（0.17.0 新增 3 张注册相关表）。
+- 我拥有 `b4` schema 的 8 类平台实体，物理表为 **19 张业务表 + `alembic_version_b4`**（0.17.0 新增 3 张注册相关表；0.22.0 新增 1 张密码重置表）。
 - **B2/B3 物理表不归我**：我不代管、不读写、不迁移它们（见 `../../MAIN/docs/database/ownership.md`）。
 - 我只负责实例、角色、schema、备份、健康；应用连接用最小权限角色，禁止超级用户。
 
@@ -19,6 +19,15 @@
 补充：`users` 新增 `created_via`（`admin` / `self`），用于区分"管理员建号"与"自助注册"；它只做运维标记，
 不参与任何授权判定。`users.email` 上有一条 `lower(btrim(email))` 的**部分唯一索引**（非空时唯一），
 迁移在发现存量重复邮箱时会**明确失败**，不会替操作者挑选保留哪一行。
+
+## 密码重置相关表（`20261027_0005`）
+
+| 表 | 主键 | 意图 | 关键约束 | 敏感列 |
+|---|---|---|---|---|
+| `password_reset_codes` | `code_id` | 一次找回密码意图：账号、注册邮箱、验证码摘要、过期与尝试次数 | 只存 SHA-256 摘要（绑 `code_id`）；`email` 必须已归一化；`attempts >= 0`；用户外键 `ON DELETE CASCADE` | 邮箱（PII），**不含验证码原文与口令** |
+
+该表与 `registration_codes` 分开：注册码绑定"要创建的身份"，重置码绑定"已存在的 `user_id`"；
+两者生命周期不同（后者成功时替换凭据并撤销全部 refresh 会话）。
 
 ## 实体 ↔ 表名对照
 
@@ -42,6 +51,7 @@
 | — | `inbox_events` | `inbox_id` |
 | — | `dlq_messages` | `dlq_id` |
 | — | `login_attempts` | `attempt_id` |
+| — | `password_reset_codes` | `code_id` |
 
 主键列名由 `src/autograder_b4/ops/table_standards.py` 的 `PRIMARY_KEY_COLUMNS` **显式声明**并被自动检查：
 从表名推断实体名会把 `audit_records` 推成 `audit_record_id`，那是猜而非规范。未声明的表直接判违规，
@@ -66,6 +76,7 @@
 | `inbox_events` | 已消费投递账本（去重） | `(consumer, event_id)` 唯一 | 首次投递插入；重复投递命中唯一键 |
 | `dlq_messages` | 死信存储 | `(original_stream, original_sequence)` 唯一（`NULLS NOT DISTINCT`）；`envelope` 可空（advisory 来源为空） | 记录后可按 `replayed_at` 标记重放 |
 | `login_attempts` | 登录失败限流账本 | `principal_key`/`client_key` 均为 SHA-256（CHECK 正则），**不存原始用户名/IP** | 每次登录写一行；窗口外记录被清理 |
+| `password_reset_codes` | 一次密码重置意图 | 只存绑 `code_id` 的 SHA-256 摘要；`email` 已归一化；`attempts >= 0`；用户外键 `ON DELETE CASCADE` | 成功消费一次；过期/换码/撤销会话 |
 
 ## 角色—用户关系
 
@@ -84,6 +95,7 @@
 | `credentials` | 密码哈希 | 永不进 API DTO、日志、事件；只比对，不还原 |
 | `sessions` | 刷新凭据摘要 | 只进 `HttpOnly`/`Secure`/`SameSite` cookie；不进响应体、日志 |
 | `login_attempts` | 主体/客户端标识 | 只存 SHA-256，不存明文用户名或 IP |
+| `password_reset_codes` | 邮箱与验证码摘要 | 邮箱是 PII，只用于投递；验证码只存摘要，明文不落库、不进日志；不存口令 |
 | `users` | 姓名、学号、邮箱等 PII | 公开 DTO 最小化；日志脱敏；仅授权者可读 |
 | `roster_import_rows`、`roster_import_files` | 名单原始行与文件字节 | **确认前**只存于此，不进 `enrollments`；`RosterRowPreview` 只返回给授权调用者 |
 | `audit_records` | 变更前后**摘要** | 只存 SHA-256 摘要与字段名，不存值 |

@@ -298,6 +298,7 @@ export function Field({
   htmlFor,
   error,
   hint,
+  trailing,
   children,
 }: {
   label: ReactNode;
@@ -305,6 +306,8 @@ export function Field({
   error?: string | null;
   /** 常驻说明（例如"学号需与课程名单一致"）。只放真正需要一直可见的规则。 */
   hint?: ReactNode;
+  /** 与输入框同一行的附加控件（例如密码的显示/隐藏按钮）。 */
+  trailing?: ReactNode;
   children: ReactNode;
 }) {
   const errorId = `${htmlFor}-error`;
@@ -329,7 +332,14 @@ export function Field({
   return (
     <div className="field">
       <label htmlFor={htmlFor}>{label}</label>
-      {control}
+      {trailing ? (
+        <div className="field__control">
+          {control}
+          {trailing}
+        </div>
+      ) : (
+        control
+      )}
       {hint ? (
         <p className="field__hint" id={hintId}>
           {hint}

@@ -143,6 +143,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/password-reset/code": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Send the e-mail verification code for a password reset
+         * @description Starts a password reset for the account carrying this registered e-mail address.
+         *     The answer is deliberately identical for every syntactically valid address, whether
+         *     or not an active account exists, so this endpoint cannot be used to enumerate
+         *     accounts: a code is mailed only when the address belongs to an active account.
+         *     It stores only a SHA-256 digest bound to the reset intent and never stores the
+         *     plaintext code.
+         *
+         *     The TTL, resend window and hourly limits are the same mail-channel limits used by
+         *     `requestRegistrationCode`. A missing or failing SMTP configuration is `503`, and
+         *     no code is persisted in that case.
+         */
+        post: operations["requestPasswordResetCode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/auth/password-reset": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Replace the password using the e-mailed reset code
+         * @description Consumes the code issued by `requestPasswordResetCode` exactly once, replaces the
+         *     Argon2id credential, and revokes every refresh session of the account. Access
+         *     tokens already issued remain valid only until their short TTL; the next refresh
+         *     fails and the browser must sign in again with the new password.
+         *
+         *     Every code rejection (unknown address, missing/expired code, wrong code, attempts
+         *     exhausted) uses the same `422` detail, for the same anti-enumeration reason as the
+         *     code request. The plaintext password and code never enter a log line or an audit
+         *     record.
+         */
+        post: operations["completePasswordReset"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/registration-allowlists": {
         parameters: {
             query?: never;
@@ -935,6 +992,80 @@ export interface operations {
             409: components["responses"]["Conflict"];
             422: components["responses"]["UnprocessableEntity"];
             429: components["responses"]["TooManyRequests"];
+        };
+    };
+    requestPasswordResetCode: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description W3C Trace Context. Propagated to logs, database records and emitted events. */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Correlation identifier. Generated at the entry point when absent. */
+                "X-Request-ID"?: components["parameters"]["RequestId"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: email */
+                    email: string;
+                };
+            };
+        };
+        responses: {
+            /**
+             * @description Same answer whether or not the address belongs to an active account. A code is
+             *     sent only in the latter case.
+             */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        expires_in_seconds: number;
+                        resend_after_seconds: number;
+                    };
+                };
+            };
+            422: components["responses"]["UnprocessableEntity"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    completePasswordReset: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description W3C Trace Context. Propagated to logs, database records and emitted events. */
+                traceparent?: components["parameters"]["Traceparent"];
+                /** @description Correlation identifier. Generated at the entry point when absent. */
+                "X-Request-ID"?: components["parameters"]["RequestId"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** Format: email */
+                    email: string;
+                    code: string;
+                    /** Format: password */
+                    new_password: string;
+                };
+            };
+        };
+        responses: {
+            /** @description Password replaced; every refresh session of the account revoked. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            422: components["responses"]["UnprocessableEntity"];
         };
     };
     getRegistrationAllowlist: {

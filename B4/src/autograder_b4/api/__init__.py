@@ -11,6 +11,7 @@ from .auth import build_auth_router
 from .courses import build_courses_router
 from .dependencies import B4State, build_dependencies
 from .modules import build_modules_router
+from .password_reset import build_password_reset_router
 from .registrations import build_registration_router
 from .roster import build_roster_router
 from .users import build_users_router
@@ -33,9 +34,10 @@ def build_api_router(state: B4State) -> APIRouter:
     dependencies = build_dependencies(state)
     router = APIRouter()
     router.include_router(build_auth_router(state, dependencies))
-    # Registration is mounted next to authentication on purpose: it is the unauthenticated
-    # entry point that produces accounts, and its two routes share the `/api/v1/auth` prefix.
+    # Registration and password reset are mounted next to authentication on purpose: both
+    # are unauthenticated entry points under the `/api/v1/auth` prefix.
     router.include_router(build_registration_router(state, dependencies))
+    router.include_router(build_password_reset_router(state))
     router.include_router(build_users_router(state, dependencies))
     router.include_router(build_courses_router(state, dependencies))
     router.include_router(build_roster_router(state, dependencies))

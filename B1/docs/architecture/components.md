@@ -39,7 +39,7 @@
 | 分布图 | `src/features/grades/GradesChart.tsx`、`echartsLoader.ts` | ECharts 分布图（可注入加载器，失败降级为表格） | echarts |
 | 前端日志器 | `src/logging/logger.ts`、`redaction.ts` | 结构化 JSON 行 + 拒绝清单脱敏 + 有界缓冲 | 无 |
 | UI 原语与脱敏 | `src/ui/components.tsx`、`src/ui/masking.ts`、`src/styles.css` | 表格/面板/弹窗与抽屉（焦点陷阱 + 焦点归还）/选项卡/分页控件/页面标题/诊断复制 + 展示层脱敏 + 设计 token | 无 |
-| 登录与注册 | `src/features/auth/LoginPage.tsx`、`RegisterPage.tsx`、`registrationValidation.ts`、`registrationErrors.ts`、`registrationApi.ts`、`src/auth/redirect.ts` | 登录（字段校验、错误分类、深链回跳）；名单校验后的两步注册（格式校验/服务端原因映射/发码冷却）；回跳只接受站内路径 | `POST /auth/*` |
+| 登录、注册与找回密码 | `src/features/auth/LoginPage.tsx`、`RegisterPage.tsx`、`ForgotPasswordPage.tsx`、`registrationValidation.ts`、`registrationErrors.ts`、`registrationApi.ts`、`passwordResetApi.ts`、`src/auth/redirect.ts` | 登录（字段校验、错误分类、密码显示/隐藏、深链回跳）；名单校验后的两步注册；邮箱验证码找回密码（通用提示、字段错误、成功回登录）；回跳只接受站内路径 | `POST /auth/*`、`POST /auth/password-reset*` |
 
 ## 依赖方向
 

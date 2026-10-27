@@ -5,6 +5,7 @@ import {
   redirect,
 } from "@tanstack/react-router";
 import { AppShell } from "./AppShell";
+import { ForgotPasswordPage } from "../features/auth/ForgotPasswordPage";
 import { LoginPage } from "../features/auth/LoginPage";
 import { NotFoundPage } from "./NotFoundPage";
 import { RegisterPage } from "../features/auth/RegisterPage";
@@ -47,7 +48,7 @@ const indexRoute = createRoute({
  * `/login` 的查询串。**两个键都必须可选**：多数入口是裸的 `/login`，
  * 若把键推成"必填但可为 undefined"，那些 `Link` 会全部报类型错。
  */
-type LoginSearch = { redirect?: string; registered?: string };
+type LoginSearch = { redirect?: string; registered?: string; reset?: string };
 
 function validateLoginSearch(search: Record<string, unknown>): LoginSearch {
   const parsed: LoginSearch = {};
@@ -60,6 +61,11 @@ function validateLoginSearch(search: Record<string, unknown>): LoginSearch {
     parsed.registered = search.registered;
   } else if (search.registered === true || typeof search.registered === "number") {
     parsed.registered = "created";
+  }
+  if (typeof search.reset === "string" && search.reset !== "") {
+    parsed.reset = search.reset;
+  } else if (search.reset === true || typeof search.reset === "number") {
+    parsed.reset = "done";
   }
   return parsed;
 }
@@ -75,6 +81,13 @@ const registerRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/register",
   component: RegisterPage,
+});
+
+/** 忘记密码：公开页，走 B4 的邮件验证码重置流程（P02 补充）。 */
+const forgotPasswordRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/forgot-password",
+  component: ForgotPasswordPage,
 });
 
 const questionsRoute = createRoute({
@@ -220,6 +233,7 @@ const routeTree = rootRoute.addChildren([
   indexRoute,
   loginRoute,
   registerRoute,
+  forgotPasswordRoute,
   questionsRoute,
   // 静态段 `/questions/new` 必须与动态段 `/questions/$questionId` 同时注册：
   // 路由器按段排序，静态段优先，因此 `new` 不会被当成一个 question_id。
