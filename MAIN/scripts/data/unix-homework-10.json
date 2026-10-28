@@ -1,0 +1,71 @@
+{
+  "course_note": "Unix 操作系统作业（10 题）。题干来自课程作业文档；提交要求统一由脚本追加。第 1、2 题为邮件/登录类人工操作，系统内只能作为草稿保存；第 3–9 题依赖运行环境（who/uname/ls -i/vi）或需要配套 fixture 文件，暂以草稿入库；第 10 题为确定性 shell 编程题，带完整用例与参考解。",
+  "questions": [
+    {
+      "title": "第1题 发送作业邮件（人工复核）",
+      "stem_markdown": "向 linuxos_assignment@163.com 发送一封电子邮件。\n\n要求邮件主题为：`学号_第几次作业`。注意学号用半角阿拉伯数字，下划线为半角下划线，题号使用阿拉伯数字表示。本次邮件的发件人邮件地址，将固定作为以后提交作业的邮件发件地址。需要先提交第一次作业答案后才能提交后续作业答案，提交后续的作业答案使用的邮件地址需要与提交第一次作业答案的邮件地址相同。\n\n例：学号为 2020141440777 的同学提交的第一次作业电子邮件的标题应为：`2020141440777_1`\n\n> 本题的答案是一封邮件，不在自动评测范围内（无法在沙箱里复现收发件人身份）。",
+      "gradable": false
+    },
+    {
+      "title": "第2题 ssh 登录与退出（人工复核）",
+      "stem_markdown": "使用 ssh 命令登录到 127.0.0.1 主机。登录用户：`user01`，密码：`12345678`，登录成功后退出登录。可以暂不考虑判断输入 yes 的问题。\n\n> 本题的答案是一段交互式登录过程，沙箱内没有可登录的 sshd 与会话，无法自动评测。",
+      "gradable": false
+    },
+    {
+      "title": "第3题 who/uname/date/cal/cat",
+      "stem_markdown": "使用 linux 命令完成以下操作：\n\n1. 使用 `who` 命令显示系统最近启动的时间和日期。\n2. 使用 `uname` 命令显示系统内核版本号。\n3. 使用 `date` 命令查看当前系统时间，系统时间显示年月日小时分，显示格式为：`yyyy|mm|dd_HH:MM`。\n   例：`2019|12|25_12:34`　注意分隔符，没有引号。\n4. 使用 `cal` 命令显示 1949 年 10 月的日历。\n5. 显示当前目录中文件名为 `week5_5.txt` 的文件内容。",
+      "gradable": false,
+      "note": "who/uname/date 的输出取决于沙箱环境与当前时间，无法给出确定性期望输出。"
+    },
+    {
+      "title": "第4题 目录切换与文件合并",
+      "stem_markdown": "使用 linux 命令完成以下操作：\n\n1. 进入当前目录中的子目录 `week5_6`。\n2. 显示当前目录名称。\n3. 回到上一级目录。\n4. 显示当前目录名称。\n5. 合并当前目录中的 `week5_10_1.txt`、`week5_10_2.txt`、`week5_10_3.txt` 三个文件，并显示。",
+      "gradable": false,
+      "note": "pwd 输出是沙箱绝对路径，需要先确定工作区路径才能给期望输出。"
+    },
+    {
+      "title": "第5题 head/tail/stat/拷贝/改名",
+      "stem_markdown": "使用 linux 命令完成以下操作：\n\n1. 显示当前目录中 `week5_11.txt` 文件的前 5 行。\n2. 显示当前目录中 `week5_12.txt` 文件的最后 5 行。\n3. 显示当前文件夹中所有文件的 inode 信息，包含隐藏文件。\n4. 将当前文件夹中的 `week5_14.log` 文件拷贝到当前目录下的子文件夹 `week5_14_dest` 中。\n5. 将当前文件夹下 `week5_15.log` 文件改名为 `week5_15.txt`。",
+      "gradable": false,
+      "note": "第 3 项的 inode 编号不可复现；需要改成\"只校验列结构\"或提供固定 fixture 后重新设计期望输出。"
+    },
+    {
+      "title": "第6题 vi 批处理命令与权限调整",
+      "stem_markdown": "1. 使用 vi 的命令行参数特性，编写命令编辑当前目录中的 `week6_1.txt` 文件：在第 2 行插入 `[line22222222]`（包含方括号），原第 2 行变为第 3 行，删除此时文档的第 5 行，存盘并退出。\n2. 对当前目录下 `week6_2.dat` 文件进行权限调整：文件所有者添加执行权限，所有者同组用户去掉写入权限，其他用户的权限修改为只读。",
+      "gradable": false,
+      "note": "沙箱内不保证安装 vi；第 2 项可以用 stat 校验权限位，属可自动化部分。"
+    },
+    {
+      "title": "第7题 grep 统计与排序",
+      "stem_markdown": "1. 使用 `grep` 统计 `week7.txt` 中含有单词 linux 出现的行数，忽略首字母大小写。\n2. 使用 `grep` 统计 `week7.txt` 中空行数。\n3. 使用 `grep` 输出 `week7.txt` 中不包含空格的非空行，输出时包含该行在文件中的行号。\n4. 使用 `grep -E` 找出 `week7.txt` 中只包含数字的行，并按数值由大到小排序。\n5. 将 `week7.txt` 中以 The、You、One 开始的句子按行号大到小排序。",
+      "gradable": false,
+      "note": "完全可自动化，但需要先提供 week7.txt 这一份 fixture 并按答案逐项确定期望输出。"
+    },
+    {
+      "title": "第8题 sed 输出含 argument 的行号",
+      "stem_markdown": "1. 使用 `sed` 显示 `week8.txt` 中包含 argument 单词的行的行号，不区分首字母大小写。**只显示行号**。\n2. 使用 `sed` 显示 `week8.txt` 中包含 argument 单词的行的行号与该行文字，行号在前、行号与文字间用冒号分开，不区分大小写。",
+      "gradable": false,
+      "note": "需要 week8.txt fixture 才能确定期望输出。"
+    },
+    {
+      "title": "第9题 awk 统计销售平均收入",
+      "stem_markdown": "`employee.txt` 内容如下（序号 姓名 职位 部门 收入）：\n\n```\n1 ajay manager account 45000\n2 sunil clerk account 25000\n3 varun manager sales 50000\n4 amit manager account 47000\n5 tarun peon sales 15000\n6 deepak clerk sales 23000\n7 sunil peon sales 13000\n8 satvik director purchase 80000\n```\n\n1. 使用 `awk` 计算销售部门（sales）员工的平均收入。\n2. 使用 `awk` 打印 varun 员工的全部信息。",
+      "gradable": false,
+      "note": "平均值的输出精度（29333.3 / 29333 / 29333.33）需要与参考解对齐后才能定期望输出。"
+    },
+    {
+      "title": "第10题 shell 打印 2~100 内的非素数",
+      "stem_markdown": "使用 shell 脚本编程计算并打印 2 至 100（包含 100）以内的非素数。\n\n- 输出时每个数以半角逗号 `,` 隔开，在同一行输出，不换行；\n- 最后一个数字后不应有逗号；\n- 在答案的行尾需要包含一个换行符；\n- **直接打印预先计算的结果判为不通过**。\n\n输出形式类似：`4,6,8,9,10,12,14\\n`",
+      "gradable": true,
+      "adapter": {"kind": "stdin", "args": [], "stdin": "", "expect_exit_code": 0, "comparison": {"stdout": "exact", "stderr": "ignore"}},
+      "reference_answer": "#!/bin/sh\nfirst=1\nfor n in $(seq 2 100); do\n  is_prime=1\n  i=2\n  while [ $i -le $((n / i)) ]; do\n    if [ $((n % i)) -eq 0 ]; then is_prime=0; break; fi\n    i=$((i + 1))\n  done\n  if [ $is_prime -eq 0 ]; then\n    if [ $first -eq 1 ]; then printf '%s' \"$n\"; first=0; else printf ',%s' \"$n\"; fi\n  fi\ndone\nprintf '\\n'\n",
+      "cases": [
+        {
+          "stdin": "",
+          "expected_stdout": "4,6,8,9,10,12,14,15,16,18,20,21,22,24,25,26,27,28,30,32,33,34,35,36,38,39,40,42,44,45,46,48,49,50,51,52,54,55,56,57,58,60,62,63,64,65,66,68,69,70,72,74,75,76,77,78,80,81,82,84,85,86,87,88,90,91,92,93,94,95,96,98,99,100\n",
+          "expect_exit_code": 0
+        }
+      ]
+    }
+  ]
+}
