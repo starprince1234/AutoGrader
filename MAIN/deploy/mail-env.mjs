@@ -99,33 +99,77 @@ export function mailEnvFile(env, options) {
  * 就是它）；**给了但缺关键项** = 配置错误，直接拒绝，因为半配置的收信入口比关着更危险
  * （健康检查会显示"已配置"，而实际拉不到邮件）。
  */
-const IMAP_REQUIRED = ["B2_IMAP_HOST", "B2_IMAP_USERNAME", "B2_IMAP_PASSWORD"];
-const IMAP_OPTIONAL = [
-  "B2_IMAP_PORT",
-  "B2_IMAP_MAILBOX",
-  "B2_IMAP_USE_SSL",
-  "B2_IMAP_PROCESSED_MAILBOX",
-  "B2_IMAP_MATCHING_JSON",
-  "B2_IMAP_MATCHING_PATH",
-  "B2_IMAP_MAX_MESSAGES",
-  "B2_IMAP_MAX_MESSAGE_BYTES",
-];
+/**
+ * Doppler 里收信走的是与 `SMTP_*` 一致的命名：`IMAP_HOST / IMAP_USER / IMAP_PASS /
+ * IMAP_PORT / IMAP_TLS_MODE`；而 B2 读的是带模块前缀的 `B2_IMAP_*`。翻译只放在这里：
+ * 少了它，键根本不会出现在环境文件里，入口永远"not configured"，而日志里只说"没配"。
+ *
+ * 两套名字都接受，显式带前缀的优先——这样有人愿意在 Doppler 里直接用 B2 规范名时也不用改代码。
+ */
+const IMAP_ALIASES = {
+  B2_IMAP_HOST: ["B2_IMAP_HOST", "IMAP_HOST"],
+  B2_IMAP_PORT: ["B2_IMAP_PORT", "IMAP_PORT"],
+  B2_IMAP_USERNAME: ["B2_IMAP_USERNAME", "IMAP_USER"],
+  B2_IMAP_PASSWORD: ["B2_IMAP_PASSWORD", "IMAP_PASS"],
+  B2_IMAP_MAILBOX: ["B2_IMAP_MAILBOX", "IMAP_MAILBOX"],
+  B2_IMAP_USE_SSL: ["B2_IMAP_USE_SSL", "IMAP_USE_SSL", "IMAP_TLS_MODE"],
+  B2_IMAP_PROCESSED_MAILBOX: ["B2_IMAP_PROCESSED_MAILBOX", "IMAP_PROCESSED_MAILBOX"],
+  B2_IMAP_MATCHING_JSON: ["B2_IMAP_MATCHING_JSON", "IMAP_MATCHING_JSON"],
+};
 
-export function imapEnvEntries(env) {
-  const present = IMAP_REQUIRED.filter((name) => (env[name] ?? "").trim() !== "");
-  if (present.length === 0) {
-    return {};
-  }
-  const missing = IMAP_REQUIRED.filter((name) => (env[name] ?? "").trim() === "");
-  if (missing.length > 0) {
-    throw new Error("the IMAP intake is half-configured; missing " + missing.join(", "));
-  }
-  const entries = {};
-  for (const name of [...IMAP_REQUIRED, ...IMAP_OPTIONAL]) {
+const IMAP_REQUIRED = ["B2_IMAP_HOST", "B2_IMAP_USERNAME", "B2_IMAP_PASSWORD"];
+
+function pick(env, names) {
+  for (const name of names) {
     const value = (env[name] ?? "").trim();
     if (value !== "") {
-      entries[name] = value;
+      return { name, value };
     }
   }
-  return entries;
+  return null;
+}
+
+/** `IMAP_TLS_MODE=tls|ssl` 与 `IMAP_USE_SSL=true` 是同一件事，B2 只认后者。 */
+function asBooleanFlag(source, value) {
+  if (source !== "IMAP_TLS_MODE") {
+    return value;
+  }
+  const normalised = value.toLowerCase();
+  if (normalised === "none" || normalised === "starttls" || normalised === "plain") {
+    return "false";
+  }
+  return "true";
+}
+
+export function imapEnvEntries(env) {
+  const resolved = {};
+  const missing = [];
+  for (const [target, names] of Object.entries(IMAP_ALIASES)) {
+    const hit = pick(env, names);
+    if (hit === null) {
+      if (IMAP_REQUIRED.includes(target)) {
+        missing.push(target);
+      }
+      continue;
+    }
+    resolved[target] = asBooleanFlag(hit.name, hit.value);
+  }
+
+  const anyGiven = Object.keys(resolved).length > 0;
+  if (!anyGiven) {
+    // 一个都没给 = 收信未启用，这是合法状态（README/健康面把它显示为 not-configured）。
+    return {};
+  }
+  if (missing.length > 0) {
+    throw new Error(
+      "the IMAP intake is half-configured; missing " + missing.join(", "),
+    );
+  }
+  if (resolved.B2_IMAP_MAILBOX === undefined) {
+    resolved.B2_IMAP_MAILBOX = "INBOX";
+  }
+  if (resolved.B2_IMAP_PORT === undefined) {
+    resolved.B2_IMAP_PORT = "993";
+  }
+  return resolved;
 }

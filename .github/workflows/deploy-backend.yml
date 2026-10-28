@@ -294,14 +294,12 @@ jobs:
           SMTP_TIMEOUT_SECONDS: ${{ steps.doppler.outputs.SMTP_TIMEOUT_SECONDS }}
           # 收信通道（B2 IMAP）：Doppler 里没配就整体跳过；配了就必须成套，
           # 半配置由 write-mail-env.mjs 直接拒绝。
-          B2_IMAP_HOST: ${{ steps.doppler.outputs.B2_IMAP_HOST }}
-          B2_IMAP_PORT: ${{ steps.doppler.outputs.B2_IMAP_PORT }}
-          B2_IMAP_USERNAME: ${{ steps.doppler.outputs.B2_IMAP_USERNAME }}
-          B2_IMAP_PASSWORD: ${{ steps.doppler.outputs.B2_IMAP_PASSWORD }}
-          B2_IMAP_MAILBOX: ${{ steps.doppler.outputs.B2_IMAP_MAILBOX }}
-          B2_IMAP_USE_SSL: ${{ steps.doppler.outputs.B2_IMAP_USE_SSL }}
-          B2_IMAP_PROCESSED_MAILBOX: ${{ steps.doppler.outputs.B2_IMAP_PROCESSED_MAILBOX }}
-          B2_IMAP_MATCHING_JSON: ${{ steps.doppler.outputs.B2_IMAP_MATCHING_JSON }}
+          # Doppler 里的实际命名（与 SMTP_* 同风格）；翻译成 B2_IMAP_* 由 mail-env.mjs 负责。
+          IMAP_HOST: ${{ steps.doppler.outputs.IMAP_HOST }}
+          IMAP_PORT: ${{ steps.doppler.outputs.IMAP_PORT }}
+          IMAP_USER: ${{ steps.doppler.outputs.IMAP_USER }}
+          IMAP_PASS: ${{ steps.doppler.outputs.IMAP_PASS }}
+          IMAP_TLS_MODE: ${{ steps.doppler.outputs.IMAP_TLS_MODE }}
         run: node MAIN/deploy/write-mail-env.mjs "$RUNNER_TEMP/mail.env"
 
       - name: Install mail channel variables on the host
