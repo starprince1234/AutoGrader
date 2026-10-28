@@ -389,7 +389,7 @@ describe("新建题目（POST /api/v1/questions）", () => {
     expect((body.adapter as Record<string, unknown>).comparison).toEqual({ stdout: "exact" });
 
     expect(await screen.findByTestId("authoring-created")).toBeInTheDocument();
-    expect(screen.getByText(/包含草稿/)).toBeInTheDocument();
+    expect(screen.getByText(/保存的是草稿/)).toBeInTheDocument();
   });
 
   it("受保护字段留空时不发这两个键（CHG-0017：省略 = 服务端保留已存值）", async () => {

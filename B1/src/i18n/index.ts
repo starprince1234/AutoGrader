@@ -573,7 +573,7 @@ export const messages = {
     "authoring.issue.callableArgumentsJson": "函数参数要是合法的 JSON。",
     "authoring.created": "题目已保存。",
     "authoring.updated": "题目已保存（版本 {version}，{status}）。",
-    "authoring.createdDraftHint": "草稿默认不在题库列表里——打开题库的「包含草稿」即可看到它。",
+    "authoring.createdDraftHint": "保存的是草稿：发布之后学生才能看到这道题。",
     "authoring.createdNext": "这一页已经保存过这道题，为避免重复创建已停止再次保存；要继续修改请点「继续编辑」。",
     "authoring.openDetail": "查看题目",
 
