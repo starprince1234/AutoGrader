@@ -280,19 +280,11 @@ export function AuthoringPage({
         {questionId === null ? t("authoring.titleNew") : t("authoring.titleEdit")}
       </PageTitle>
 
-      {/* 顶部操作栏：只剩"取消"与状态横幅；保存按钮在每一步的底部。 */}
-      <Panel
-        actions={
-          <button
-            type="button"
-            className="button button--ghost"
-            data-testid="authoring-cancel"
-            onClick={requestLeave}
-          >
-            {t("common.cancel")}
-          </button>
-        }
-      >
+      {/*
+        顶部操作栏：变矮变紧凑——「未保存」提示与「取消」放在同一行、垂直居中，整块留白减到最小。
+        保存按钮在每一步的底部；这里只有取消与状态横幅。
+      */}
+      <Panel className="panel--compact">
         {issues.length > 0 ? (
           <Banner tone="error" testId="authoring-issues">
             <strong>{t("authoring.issues")}</strong>
@@ -309,11 +301,24 @@ export function AuthoringPage({
             {t("authoring.courseRequired")}
           </p>
         ) : null}
-        {dirty ? (
-          <p className="muted" data-testid="authoring-dirty">
-            {t("authoring.unsaved")}
-          </p>
-        ) : null}
+        {/* 未保存提示与取消按钮同一行、垂直居中；没有改动时只留按钮。 */}
+        <div className="wizard-topbar">
+          {dirty ? (
+            <span className="muted" data-testid="authoring-dirty">
+              {t("authoring.unsaved")}
+            </span>
+          ) : (
+            <span />
+          )}
+          <button
+            type="button"
+            className="button button--ghost"
+            data-testid="authoring-cancel"
+            onClick={requestLeave}
+          >
+            {t("common.cancel")}
+          </button>
+        </div>
         {mutation.isError ? <ErrorState error={mutation.error} /> : null}
         {savedVersion.data ? (
           <Banner tone="success" testId="authoring-saved">

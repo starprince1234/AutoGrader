@@ -197,8 +197,7 @@ async function fillCreateForm(user: ReturnType<typeof userEvent.setup>) {
   // 分值不再预置 1：要保存就必须由教师填一个合法分值。
   await user.type(screen.getByLabelText("分值"), "1");
   await user.type(screen.getByLabelText("标准输入"), "a\nb\n");
-  // `stdin` 题型必须在 manifest 上声明 args / stdin / 命令退出码之一（B3 的适配器校验），
-  // 因此这里填退出码——只填用例级 stdin 会被服务端 422 拒绝。
+  // 三个全局项现在都可以留空（用例自带输入即可评测）；这里仍填退出码，验证它确实随请求发出。
   await setAdapterExitCode(user, "0");
   await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
 }
@@ -215,7 +214,7 @@ async function addCaseAndConfirm(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByLabelText(/我确认/));
 }
 
-/** `stdin` 题型的 manifest 必须声明 args / stdin / 退出码之一，编辑路径也要补上。 */
+/** 编辑路径也显式改一次「命令期望退出码」，验证它进了 manifest。 */
 async function fillAdapterExitCode(user: ReturnType<typeof userEvent.setup>) {
   await setAdapterExitCode(user, "0");
 }
@@ -285,6 +284,25 @@ describe("分步向导", () => {
       await goToStep(user, step);
       expect(screen.getByTestId("authoring-save")).toBeEnabled();
     }
+  });
+
+  it("顶部条更紧凑：未保存提示与「取消」同一行、垂直居中", async () => {
+    stub = installFetchStub(baseRoutes());
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+
+    await selectCourse(user);
+    await user.type(screen.getByLabelText("题目标题"), "统计行数");
+
+    const dirty = await screen.findByTestId("authoring-dirty");
+    const cancel = screen.getByTestId("authoring-cancel");
+    // 两者是同一个 .wizard-topbar 的直接子元素：同一行、由 flex 垂直居中。
+    const row = dirty.parentElement;
+    expect(row?.className).toContain("wizard-topbar");
+    expect(row).toBe(cancel.parentElement);
+    // 整块顶部条用的是紧凑内边距（不再是 20px 上下留白）。
+    expect(row?.closest(".panel--compact")).not.toBeNull();
   });
 
   it("顶部只留一行小字提示「请先选择课程」，不再占一条横幅", async () => {
@@ -1178,6 +1196,28 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
     ).toHaveLength(0);
   });
 
+  it("难度是四档下拉（简单/中等/较难/困难），默认中等", async () => {
+    stub = installFetchStub(baseRoutes(generationRoutes()));
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+    await openAi(user);
+    await selectCourseInAiPanel(user);
+
+    const select = screen.getByLabelText("难度") as HTMLSelectElement;
+    expect(select.tagName).toBe("SELECT");
+    expect([...select.options].map((option) => option.value)).toEqual([
+      "简单",
+      "中等",
+      "较难",
+      "困难",
+    ]);
+    expect(select.value).toBe("中等");
+
+    await user.selectOptions(select, "困难");
+    expect(select.value).toBe("困难");
+  });
+
   it("显式点击才请求模型：目标为空时按钮禁用，请求体只带公开约束", async () => {
     stub = installFetchStub(baseRoutes(generationRoutes()));
     const user = userEvent.setup();
@@ -1206,6 +1246,8 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
     expect(body.learning_objective).toBe("让学生学会读标准输入");
     expect(body.language).toBe("python");
     expect(body.adapter_kind).toBe("stdin");
+    // 难度默认「中等」，并且作为参数发给 AI 控制出题复杂度。
+    expect(body.difficulty).toBe("中等");
     for (const forbidden of [
       "reference_answer",
       "cases",

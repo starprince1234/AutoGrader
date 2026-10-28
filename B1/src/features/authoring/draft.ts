@@ -497,16 +497,8 @@ function buildAdapter(form: DraftForm, issues: DraftIssue[]): AdapterManifest | 
     }
   }
 
-  // `stdin` 题型在契约里必须声明 args / stdin / expect_exit_code 之一：三者全空时 B3 会 422，
-  // 这里提前说清楚，省掉一次往返。
-  if (
-    form.adapterKind === "stdin" &&
-    parseArgv(form.adapterArgs).length === 0 &&
-    form.adapterStdin === "" &&
-    expectExitCode === null
-  ) {
-    issues.push({ key: "authoring.issue.adapterStdinEmpty" });
-  }
+  // 命令行题型的三个全局项（命令参数 / 全局标准输入 / 期望退出码）允许全部留空：
+  // 用例自带输入就能正常评测，因此这里不再要求"三者至少填一个"。
 
   const files = form.fixtures.map((fixture) => ({
     path: fixture.path,

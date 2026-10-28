@@ -87,11 +87,8 @@ class StdinArgvAdapterCompiler:
         _only_input_mounts(manifest, self.kind)
         validate_args(manifest.args)
         validate_bounded_text(manifest.stdin, field="adapter.stdin", limit=65_536)
-        if not manifest.args and manifest.stdin is None and manifest.expect_exit_code is None:
-            raise ManifestInvalid(
-                "adapter kind 'stdin' must declare args, stdin or expect_exit_code",
-                field="adapter",
-            )
+        # 命令行题型的三个全局项（命令参数 / 全局标准输入 / 期望退出码）允许全部留空：
+        # 每个用例自带输入就能评测，全局项只是"所有用例共用的默认值"，不该成为保存草稿的门槛。
         for case in cases:
             validate_args(case.args)
             validate_bounded_text(case.stdin, field=f"tests[{case.ordinal}].stdin", limit=65_536)

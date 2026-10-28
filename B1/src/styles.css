@@ -1900,6 +1900,19 @@ samp {
    出题向导：左侧步骤导航 + 右侧一步内容。
    只新增 .wizard* / .step-dot* 这几个类，不改动上面任何既有规则。
 --------------------------------------------------------------------------- */
+/* 顶部操作栏：留白更小、「未保存」提示与「取消」同一行垂直居中。 */
+.panel--compact {
+  padding: 10px var(--space-5);
+  gap: 6px;
+}
+
+.wizard-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
 /* 一行说明的浅蓝底小标签（例如「题干图片」右侧的"保存草稿后再插入图片"）。 */
 .hint-chip {
   display: inline-flex;

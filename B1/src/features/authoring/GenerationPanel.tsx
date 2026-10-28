@@ -28,6 +28,9 @@ import {
 
 const STATUS_TONE = { ready: "ok", needs_review: "warn", failed: "bad", unavailable: "idle" } as const;
 
+/** 难度四档：简单 / 中等 / 较难 / 困难。顺序即下拉顺序，默认取「中等」。 */
+const DIFFICULTY_LEVELS = ["easy", "medium", "advanced", "hard"] as const;
+
 function statusText(generation: QuestionDraftGeneration): string {
   return t(`authoring.generation.status.${generation.status}`);
 }
@@ -176,7 +179,8 @@ export function GenerationPanel({
   const discard = useDiscardGeneration();
 
   const [objective, setObjective] = useState("");
-  const [difficulty, setDifficulty] = useState("");
+  // 难度是四档下拉，默认「中等」；选中的中文等级原样作为 `difficulty` 传给 AI，用来控制出题复杂度。
+  const [difficulty, setDifficulty] = useState(() => t("authoring.generation.difficulty.medium"));
   const [caseCount, setCaseCount] = useState("");
   const [constraints, setConstraints] = useState("");
   const [confirmDiscard, setConfirmDiscard] = useState(false);
@@ -253,7 +257,7 @@ export function GenerationPanel({
           learning_objective: objective,
           language: form.language,
           adapter_kind: form.adapterKind,
-          difficulty: difficulty.trim() === "" ? null : difficulty.trim(),
+          difficulty,
           tags: parseTags(form.tags).tags,
           desired_case_count: desiredCases,
           constraints: constraints.trim() === "" ? null : constraints,
@@ -348,11 +352,20 @@ export function GenerationPanel({
 
         <div className="form-grid">
           <Field label={t("authoring.generation.difficulty")} htmlFor="generation-difficulty">
-            <input
+            <select
               id="generation-difficulty"
               value={difficulty}
               onChange={(event) => setDifficulty(event.target.value)}
-            />
+            >
+              {DIFFICULTY_LEVELS.map((level) => {
+                const label = t(`authoring.generation.difficulty.${level}`);
+                return (
+                  <option key={level} value={label}>
+                    {label}
+                  </option>
+                );
+              })}
+            </select>
           </Field>
           <Field label={t("authoring.generation.caseCount")} htmlFor="generation-case-count">
             <input

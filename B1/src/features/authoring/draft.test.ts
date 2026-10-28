@@ -310,10 +310,15 @@ describe("校验（不通过就不发请求）", () => {
     expect(input.adapter.comparison).toEqual({ stdout: "exact" });
   });
 
-  it("stdin 题型三者全空时明确报错（B3 会 422，本地先说清楚）", () => {
-    expect(
-      issueKeys(validForm({ adapterExpectExitCode: "", adapterArgs: "", adapterStdin: "" })),
-    ).toContain("authoring.issue.adapterStdinEmpty");
+  it("命令行题型的三个全局项可以全部留空：用例自带输入即可评测", () => {
+    const input = built(
+      validForm({ adapterExpectExitCode: "", adapterArgs: "", adapterStdin: "" }),
+    );
+    // 不发这三个字段的任何"占位值"，适配器里只剩类型与比对规则。
+    expect(input.adapter.kind).toBe("stdin");
+    expect(input.adapter).not.toHaveProperty("args");
+    expect(input.adapter).not.toHaveProperty("stdin");
+    expect(input.adapter).not.toHaveProperty("expect_exit_code");
   });
 });
 
