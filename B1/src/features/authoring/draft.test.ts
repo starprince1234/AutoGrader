@@ -281,12 +281,28 @@ describe("校验（不通过就不发请求）", () => {
     );
   });
 
-  it("用例名与权重按序号定位问题", () => {
+  it("用例名可以留空：按序号自动命名；权重仍必须大于 0", () => {
     const form = validForm();
     form.cases.push({ ...emptyDraftForm().cases[0], name: "", weight: "0" });
     const keys = issueKeys(form);
-    expect(keys).toContain("authoring.issue.caseName");
+    // 用例名是选填项：缺名字不再是一个"问题"。
+    expect(keys).not.toContain("authoring.issue.caseName");
     expect(keys).toContain("authoring.issue.caseWeight");
+
+    // 留空的名字在提交时变成「用例N」，序号从 1 开始。
+    const input = built(validForm({ cases: [{ ...emptyDraftForm().cases[0], name: "" }] }));
+    expect(input.cases?.[0].name).toBe("用例1");
+  });
+
+  it("用例的期望退出码预置为 0（程序正常退出就是 0）", () => {
+    expect(emptyDraftForm().cases[0].expectedExitCode).toBe("0");
+    expect(emptyDraftForm().adapterExpectExitCode).toBe("0");
+  });
+
+  it("数值容差只在「数值容差」模式下校验：其他模式里禁用的输入不该挡住保存", () => {
+    // 残留的旧值 + 非数值模式：不发容差字段，也不报错。
+    const input = built(validForm({ comparisonStdout: "exact", numericTolerance: "not-a-number" }));
+    expect(input.adapter.comparison).toEqual({ stdout: "exact" });
   });
 
   it("stdin 题型三者全空时明确报错（B3 会 422，本地先说清楚）", () => {

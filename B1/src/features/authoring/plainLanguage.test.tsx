@@ -8,7 +8,7 @@ import {
   createRoute,
   createRouter,
 } from "@tanstack/react-router";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { renderWithProviders } from "../../testing/renderWithProviders";
 import { installFetchStub, jsonResponse, type FetchStub } from "../../testing/httpBoundary";
 import {
@@ -134,6 +134,14 @@ function renderAt(children: ReactNode) {
   return renderWithProviders(<RouterProvider router={testRouter} />);
 }
 
+/**
+ * 新建题目 + AI 视图：真实页面用 URL 上的 `ai` 决定视图，这里用同样的两个回调驱动。
+ */
+function NewQuestionWithAi() {
+  const [ai, setAi] = useState(false);
+  return <AuthoringPage questionId={null} aiView={ai} onAiViewChange={setAi} />;
+}
+
 const SESSION = () => jsonResponse(sessionCreated({ roles: ["teacher"] }));
 const COURSES = () => jsonResponse(coursePage([courseSummary()]));
 
@@ -199,13 +207,16 @@ describe("教师界面只说人话", () => {
       },
     ]);
     await signIn("teacher1", "pw");
-    renderAt(<AuthoringPage questionId={null} />);
+    renderAt(<NewQuestionWithAi />);
 
     const courseSelect = await screen.findByLabelText("课程");
     await waitFor(() =>
       expect(within(courseSelect).getAllByRole("option").length).toBeGreaterThan(1),
     );
     await user.selectOptions(courseSelect, UUID_A);
+    // AI 入口在「题干」步的标题右侧。
+    await user.click(screen.getByTestId("wizard-step-stem"));
+    await screen.findByTestId("step-stem");
     await user.click(screen.getByTestId("authoring-ai"));
     await screen.findByTestId("generation-panel");
     await user.type(screen.getByLabelText("教学目标"), "统计每个单词出现的次数");

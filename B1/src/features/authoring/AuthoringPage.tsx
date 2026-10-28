@@ -18,9 +18,11 @@ import { useQuestion, useQuestionVersion } from "../questions/useQuestions";
 import { AuthoringAssistancePanel, ComparisonDiagnosticsPanel } from "./AuthoringSignals";
 import { CaseEditor } from "./CaseEditor";
 import { FixtureEditor } from "./FixtureEditor";
-import { GenerationPanel } from "./GenerationPanel";
+import { AiAuthoringView } from "./AiAuthoringView";
 import { ImageUploader } from "./ImageUploader";
 import { ReferenceVerificationPanel } from "./ReferenceVerificationPanel";
+import { StepNav } from "./StepNav";
+import { STEPS, isStepComplete, type StepId } from "./steps";
 import {
   LANGUAGE_OPTIONS,
   SELECTABLE_ADAPTER_KINDS,
@@ -42,11 +44,11 @@ import { useCreateQuestion, useUpdateQuestionDraft } from "./useAuthoring";
 /**
  * 出题页（P08 新建 / P09 编辑，共用一个编辑器与同一条序列化路径）。
  *
- * 页面结构按"教师实际要做的事"排，而不是按 API 字段排：基本信息 → 题干（含图片与预览）→
- * 参考答案 → 测试用例 → 比较规则 → 适配器与夹具 → 版本说明 → 保存/验证发布。
- * 每个章节都是独立的 `Panel`，所以长表单可以分段阅读，而不是一路滚到底。
+ * 版面是**五步向导**而不是一张长表单：基本信息 → 题干 → 参考答案 → 测试用例 →
+ * 判分比对规则与运行配置。左侧是步骤导航（完成的步骤蓝色实心圆点带对勾，未完成的是空心圆圈），
+ * 右侧一次只渲染一步；每一步底部都有「保存草稿」，所以教师写完一步就能立刻存下来。
  *
- * 三条贯穿全页的规则：
+ * 三条贯穿全页的规则（与改版前一致，未改动）：
  *
  * 1. **受保护内容不回显、也不假装知道**：`reference_answer`、`cases[]`、适配器细节与夹具清单
  *    都不在公开 DTO 里。本页只预填能读回的字段；留空 = 不声明（`CHG-0017`），编辑时既有用例集合
@@ -54,17 +56,22 @@ import { useCreateQuestion, useUpdateQuestionDraft } from "./useAuthoring";
  * 2. **发布是一道真门禁**：入口在 `ReferenceVerificationPanel`——教师请求平台验证，只有"全通过 ∧
  *    存证已记录 ∧ 摘要未变"才出现发布动作。AI 候选同样要经过它。
  * 3. **未保存的编辑不会自己保住**：AI 候选与手工编辑都只存在当前页面。离开或刷新前若表单已改动，
- *    本页会明确提示"这些编辑不会保留"，而不是让教师以为刷新后还能看到自己改过的版本。
+ *    本页会明确提示"这些编辑不会保留"。
  */
 export function AuthoringPage({
   questionId,
   generationId = null,
   onGenerationId = () => {},
+  aiView = false,
+  onAiViewChange = () => {},
 }: {
   questionId: string | null;
   /** AI 候选 id（来自 URL）。刷新后用它取回**服务端原始候选**。 */
   generationId?: string | null;
   onGenerationId?: (next: string | null) => void;
+  /** 「AI 出题」视图（来自 URL）。新建题目之外不提供该视图。 */
+  aiView?: boolean;
+  onAiViewChange?: (next: boolean) => void;
 }) {
   const courses = useCourses();
   const courseOptions = loadedCourses(courses.data?.pages);
@@ -84,11 +91,7 @@ export function AuthoringPage({
   const [issues, setIssues] = useState<DraftIssue[]>([]);
   const [savedVersionId, setSavedVersionId] = useState<string | null>(null);
   const [leaveConfirm, setLeaveConfirm] = useState(false);
-  // AI 面板默认收起，但入口按钮始终在顶部。URL 里带候选 id 时（刷新恢复）自动展开。
-  const [aiOpen, setAiOpen] = useState(Boolean(generationId));
-  useEffect(() => {
-    if (generationId) setAiOpen(true);
-  }, [generationId]);
+  const [step, setStep] = useState<StepId>("basic");
 
   // 预填只发生一次：数据到齐后填入公开 DTO 里**真的存在**的字段，之后不再覆盖用户的编辑。
   const [seeded, setSeeded] = useState(false);
@@ -195,11 +198,86 @@ export function AuthoringPage({
   // 会**创建第二道题**。要继续编辑（尤其是上传夹具后补 manifest）就走「继续编辑」进 P09，
   // 那里是 PATCH，不会再产生新题目。
   const alreadyCreated = questionId === null && createQuestion.data !== undefined;
-  const saveDisabled =
-    mutation.isPending || (questionId === null && courseId === "") || alreadyCreated;
+
+  /**
+   * 保存草稿的禁用原因。契约 `QuestionDraftInput` 要求 `title` 与 `stem_markdown` 非空，
+   * 因此没填题干时哪一步都存不下来——这里把"缺什么"直接说在按钮旁边，而不是让服务端回 422。
+   */
+  const saveBlocker = alreadyCreated
+    ? t("authoring.save.alreadyCreated")
+    : courseId === ""
+      ? t("authoring.save.needCourse")
+      : form.title.trim() === ""
+        ? t("authoring.save.needTitle")
+        : form.stemMarkdown.trim() === ""
+          ? t("authoring.save.needStem")
+          : null;
+  const saveDisabled = mutation.isPending || saveBlocker !== null;
+
+  const completed = useMemo(
+    () =>
+      Object.fromEntries(
+        STEPS.map((definition) => [
+          definition.id,
+          isStepComplete(definition.id, form, courseId, { editing: questionId !== null }),
+        ]),
+      ) as Record<StepId, boolean>,
+    [form, courseId, questionId],
+  );
 
   if (questionId !== null && question.isPending) return <Spinner />;
   if (questionId !== null && question.isError) return <ErrorState error={question.error} />;
+
+  if (questionId === null && aiView) {
+    return (
+      <AiAuthoringView
+        courseId={courseId === "" ? null : courseId}
+        courses={courseOptions}
+        onCourseChange={setCourseId}
+        form={form}
+        generationId={generationId}
+        onGenerationId={onGenerationId}
+        onApply={applyProposalToForm}
+        onApplied={() => {
+          // 教师点了「填进编辑器」：回到题干那一步，看到的是"内容已经填进去"，而不是空白页。
+          setStep("stem");
+          onAiViewChange(false);
+        }}
+        onBack={() => onAiViewChange(false)}
+      />
+    );
+  }
+
+  const saveButton = (
+    <button
+      type="button"
+      className="button"
+      data-testid="authoring-save"
+      disabled={saveDisabled}
+      onClick={submit}
+    >
+      {mutation.isPending
+        ? t("authoring.saving")
+        : questionId === null
+          ? t("authoring.save.create")
+          : asNewVersion
+            ? t("authoring.save.newVersion")
+            : t("authoring.save.update")}
+    </button>
+  );
+
+  const saveRow = (
+    <div className="inline wizard__save" data-testid="step-save">
+      {saveButton}
+      {saveBlocker === null ? null : (
+        <span className="muted" data-testid="save-blocker">
+          {saveBlocker}
+        </span>
+      )}
+    </div>
+  );
+
+  const stepDefinition = STEPS.find((definition) => definition.id === step) ?? STEPS[0];
 
   return (
     <div className="stack">
@@ -207,47 +285,17 @@ export function AuthoringPage({
         {questionId === null ? t("authoring.titleNew") : t("authoring.titleEdit")}
       </PageTitle>
 
-      {/* 顶部操作栏：标题、取消、保存。窄屏时按钮仍在正文之前，不需要滚到底才能保存。 */}
+      {/* 顶部操作栏：只剩"取消"与状态横幅；保存按钮在每一步的底部。 */}
       <Panel
-        title={t("authoring.actions")}
         actions={
-          <div className="inline">
-            {/* AI 出题入口：放在标题栏，第一屏就能看到；不依赖是否已选课程。 */}
-            {questionId === null ? (
-              <button
-                type="button"
-                className="button button--ghost"
-                data-testid="authoring-ai"
-                aria-expanded={aiOpen}
-                onClick={() => setAiOpen((open) => !open)}
-              >
-                {aiOpen ? t("authoring.ai.hide") : t("authoring.ai.action")}
-              </button>
-            ) : null}
-            <button
-              type="button"
-              className="button button--ghost"
-              data-testid="authoring-cancel"
-              onClick={requestLeave}
-            >
-              {t("common.cancel")}
-            </button>
-            <button
-              type="button"
-              className="button"
-              data-testid="authoring-save"
-              disabled={saveDisabled}
-              onClick={submit}
-            >
-              {mutation.isPending
-                ? t("authoring.saving")
-                : questionId === null
-                  ? t("authoring.save.create")
-                  : asNewVersion
-                    ? t("authoring.save.newVersion")
-                    : t("authoring.save.update")}
-            </button>
-          </div>
+          <button
+            type="button"
+            className="button button--ghost"
+            data-testid="authoring-cancel"
+            onClick={requestLeave}
+          >
+            {t("common.cancel")}
+          </button>
         }
       >
         {issues.length > 0 ? (
@@ -323,414 +371,453 @@ export function AuthoringPage({
         ) : null}
       </Panel>
 
-      {/* AI 出题：由标题栏按钮展开，展开后就在第一屏，不用滚到表单底部。 */}
-      {questionId === null && aiOpen ? (
-        <GenerationPanel
-          courseId={courseId === "" ? null : courseId}
-          form={form}
-          generationId={generationId}
-          onGenerationId={onGenerationId}
-          onApply={applyProposalToForm}
-        />
-      ) : null}
+      <div className="wizard">
+        <StepNav current={step} completed={completed} onSelect={setStep} />
 
-      {/* 1. 基本信息 */}
-      <Panel title={t("authoring.basic")}>
-        <div className="form-grid">
-          {questionId === null ? (
-            <Field label={t("authoring.course")} htmlFor="authoring-course">
-              <select
-                id="authoring-course"
-                value={courseId}
-                onChange={(event) => setCourseId(event.target.value)}
-              >
-                <option value="">{t("common.selectPrompt")}</option>
-                {courseOptions.map((course) => (
-                  <option key={course.course_id} value={course.course_id}>
-                    {course.course_code} · {course.title}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          ) : (
-            <Field label={t("authoring.course")} htmlFor="authoring-course-readonly">
-              <input id="authoring-course-readonly" value={courseLabel} readOnly />
-            </Field>
-          )}
-          <Field label={t("authoring.title")} htmlFor="authoring-title">
-            <input
-              id="authoring-title"
-              value={form.title}
-              maxLength={TITLE_MAX_LENGTH}
-              onChange={(event) => setForm({ ...form, title: event.target.value })}
-            />
-          </Field>
-          <Field label={t("authoring.language")} htmlFor="authoring-language">
-            <select
-              id="authoring-language"
-              value={form.language}
-              onChange={(event) =>
-                setForm({ ...form, language: event.target.value as DraftForm["language"] })
-              }
-            >
-              {LANGUAGE_OPTIONS.map((language) => (
-                <option key={language} value={language}>
-                  {t(`questions.language.${language}`)}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label={t("authoring.tags")} htmlFor="authoring-tags">
-            <input
-              id="authoring-tags"
-              value={form.tags}
-              onChange={(event) => setForm({ ...form, tags: event.target.value })}
-            />
-          </Field>
-        </div>
-        <p className="muted">{t("authoring.tagsHint")}</p>
-        <div className="inline" data-testid="authoring-tags-preview">
-          <span className="muted">{t("authoring.tagsParsed")}</span>
-          {parsed.tags.length === 0 ? (
-            <span className="muted">{t("common.none")}</span>
-          ) : (
-            parsed.tags.map((tag) => (
-              <span className="pill pill--idle" key={tag}>
-                {tag}
-              </span>
-            ))
-          )}
-        </div>
-        {parsed.invalid.length > 0 ? (
-          <Banner tone="warn" testId="authoring-tags-invalid">
-            {t("authoring.tagsInvalid", { tags: parsed.invalid.join(", ") })}
-          </Banner>
-        ) : null}
-        {questionId === null ? (
-          <div className="inline">
-            <span className="muted">
-              {t("common.coursesLoaded", { count: courseOptions.length })}
-            </span>
-            <LoadMoreActions
-              loadedCount={courseOptions.length}
-              hasNextPage={courses.hasNextPage}
-              isFetchingNextPage={courses.isFetchingNextPage}
-              onLoadMore={() => {
-                void courses.fetchNextPage();
-              }}
-              testId="authoring-courses"
-            />
-          </div>
-        ) : null}
-        {courses.isError ? <ErrorState error={courses.error} /> : null}
-        {newestVersion.isError ? <ErrorState error={newestVersion.error} /> : null}
-        {questionId !== null ? (
-          <Banner tone="info" testId="authoring-version-mode">
-            {asNewVersion ? t("authoring.newVersionNotice") : t("authoring.draftVersionNotice")}
-          </Banner>
-        ) : null}
-      </Panel>
-
-      {/* 2. 题干：编辑与安全预览并排（窄屏由 .grid-2 自动堆叠）。 */}
-      <Panel title={t("authoring.stem")}>
-        <div className="grid-2">
-          <div>
-            <Field label={t("authoring.stem")} htmlFor="authoring-stem">
-              <textarea
-                id="authoring-stem"
-                rows={14}
-                value={form.stemMarkdown}
-                onChange={(event) => setForm({ ...form, stemMarkdown: event.target.value })}
-              />
-            </Field>
-            <p className="muted">{t("authoring.stemPreviewHint")}</p>
-          </div>
-          <div data-testid="authoring-stem-preview">
-            <h3>{t("authoring.stemPreview")}</h3>
-            {form.stemMarkdown.trim() === "" ? (
-              <p className="muted">{t("authoring.stemEmpty")}</p>
-            ) : (
-              <SafeMarkdown source={form.stemMarkdown} testId="authoring-preview-stem" />
-            )}
-          </div>
-        </div>
-
-        <h3>{t("authoring.image.title")}</h3>
-        <ImageUploader
-          questionId={targetQuestionId}
-          // 新建并已保存之后不再允许上传：本页的「插入题干」不会写库，而保存按钮已停用，
-          // 插入的地址会随着离开而丢失。要插图请进 P09（那里是 PATCH，插入能保存）。
-          disabled={targetQuestionId === null || asNewVersion || alreadyCreated}
-          disabledReason={
-            targetQuestionId === null
-              ? t("authoring.image.needDraft")
-              : asNewVersion
-                ? t("authoring.image.publishedFrozen")
-                : t("authoring.image.createdHint")
-          }
-          onInsert={(snippet) => setForm({ ...form, stemMarkdown: insertIntoStem(form.stemMarkdown, snippet) })}
-        />
-      </Panel>
-
-      {/* 3. 参考答案（受保护，学生看不到） */}
-      <Panel title={t("authoring.reference")} testId="authoring-protected">
-        <Banner tone="warn" testId="authoring-reference-notice">
-          {t("authoring.referenceNotice")}
-        </Banner>
-        <Field label={t("authoring.referenceAnswer")} htmlFor="authoring-reference">
-          <textarea
-            id="authoring-reference"
-            rows={8}
-            value={form.referenceAnswer}
-            onChange={(event) => setForm({ ...form, referenceAnswer: event.target.value })}
-          />
-        </Field>
-        <p className="muted" data-testid="authoring-omission-rule">
-          {t("authoring.protectedRule")}
-        </p>
-        <p className="muted" data-testid="authoring-protected-unknown">
-          {t("authoring.protectedUnknown")}
-        </p>
-      </Panel>
-
-      {/* 4. 测试用例 */}
-      <Panel title={t("authoring.casesSection")}>
-        <p className="muted" data-testid="authoring-cases-hint">
-          {t("authoring.casesHint")}
-        </p>
-        <CaseEditor
-          cases={form.cases}
-          onChange={(cases) => {
-            setForm({ ...form, cases });
-          }}
-        />
-        {/* 编辑时提交用例 = 整体替换一份本页读不到的集合。必须由人显式确认一次。 */}
-        {questionId !== null && form.cases.length > 0 ? (
-          <div className="field" data-testid="authoring-cases-replace">
-            <label className="inline" htmlFor="authoring-confirm-cases">
-              <input
-                id="authoring-confirm-cases"
-                type="checkbox"
-                checked={form.confirmCaseReplacement}
-                onChange={(event) =>
-                  setForm({ ...form, confirmCaseReplacement: event.target.checked })
-                }
-              />
-              {t("authoring.casesReplace")}
-            </label>
-            <span className="muted">{t("authoring.casesReplaceHint")}</span>
-          </div>
-        ) : null}
-      </Panel>
-
-      {/* 5. 比较规则 */}
-      <Panel title={t("authoring.comparison")}>
-        <div className="form-grid">
-          <Field label={t("authoring.comparisonStdout")} htmlFor="authoring-comparison-stdout">
-            <select
-              id="authoring-comparison-stdout"
-              value={form.comparisonStdout}
-              onChange={(event) =>
-                setForm({
-                  ...form,
-                  comparisonStdout: event.target.value as DraftForm["comparisonStdout"],
-                })
-              }
-            >
-              <option value="">{t("common.selectPrompt")}</option>
-              {STDOUT_COMPARISONS.map((policy) => (
-                <option key={policy} value={policy}>
-                  {t(`authoring.comparison.${policy}`)}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label={t("authoring.comparisonStderr")} htmlFor="authoring-comparison-stderr">
-            <select
-              id="authoring-comparison-stderr"
-              value={form.comparisonStderr}
-              onChange={(event) =>
-                setForm({
-                  ...form,
-                  comparisonStderr: event.target.value as DraftForm["comparisonStderr"],
-                })
-              }
-            >
-              <option value="">{t("authoring.comparisonStderr.unset")}</option>
-              {STDERR_COMPARISONS.map((policy) => (
-                <option key={policy} value={policy}>
-                  {t(`authoring.comparison.${policy}`)}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label={t("authoring.numericTolerance")} htmlFor="authoring-tolerance">
-            <input
-              id="authoring-tolerance"
-              inputMode="decimal"
-              value={form.numericTolerance}
-              onChange={(event) => setForm({ ...form, numericTolerance: event.target.value })}
-            />
-          </Field>
-        </div>
-        <p className="muted">{t("authoring.numericToleranceHint")}</p>
-      </Panel>
-
-      {/* 6. 适配器与夹具：字段随 adapter 展开，不同时显示所有高级项。 */}
-      <Panel title={t("authoring.adapter")}>
-        <div className="form-grid">
-          <Field label={t("authoring.adapterKind")} htmlFor="authoring-adapter-kind">
-            <select
-              id="authoring-adapter-kind"
-              value={form.adapterKind}
-              onChange={(event) =>
-                setForm({ ...form, adapterKind: event.target.value as DraftForm["adapterKind"] })
-              }
-            >
-              {SELECTABLE_ADAPTER_KINDS.map((kind) => (
-                <option key={kind} value={kind}>
-                  {t(`questions.adapter.${kind}`)}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label={t("authoring.maxFiles")} htmlFor="authoring-max-files">
-            <input
-              id="authoring-max-files"
-              inputMode="numeric"
-              value={form.maxFiles}
-              onChange={(event) => setForm({ ...form, maxFiles: event.target.value })}
-            />
-          </Field>
-          <Field label={t("authoring.maxTotalBytes")} htmlFor="authoring-max-total-bytes">
-            <input
-              id="authoring-max-total-bytes"
-              inputMode="numeric"
-              value={form.maxTotalBytes}
-              onChange={(event) => setForm({ ...form, maxTotalBytes: event.target.value })}
-            />
-          </Field>
-        </div>
-
-        {form.adapterKind === "stdin" ? (
-          <div className="form-grid">
-            <Field label={t("authoring.adapterArgs")} htmlFor="authoring-adapter-args">
-              <input
-                id="authoring-adapter-args"
-                value={form.adapterArgs}
-                onChange={(event) => setForm({ ...form, adapterArgs: event.target.value })}
-              />
-            </Field>
-            <Field label={t("authoring.adapterExpectExitCode")} htmlFor="authoring-adapter-exit">
-              <input
-                id="authoring-adapter-exit"
-                inputMode="numeric"
-                value={form.adapterExpectExitCode}
-                onChange={(event) =>
-                  setForm({ ...form, adapterExpectExitCode: event.target.value })
-                }
-              />
-            </Field>
-            <Field label={t("authoring.adapterStdin")} htmlFor="authoring-adapter-stdin">
-              <textarea
-                id="authoring-adapter-stdin"
-                rows={3}
-                value={form.adapterStdin}
-                onChange={(event) => setForm({ ...form, adapterStdin: event.target.value })}
-              />
-            </Field>
-          </div>
-        ) : null}
-
-        {form.adapterKind === "callable" ? (
-          <div className="form-grid">
-            <Field label={t("authoring.callableModule")} htmlFor="authoring-callable-module">
-              <input
-                id="authoring-callable-module"
-                value={form.callableModule}
-                onChange={(event) => setForm({ ...form, callableModule: event.target.value })}
-              />
-            </Field>
-            <Field label={t("authoring.callableAttribute")} htmlFor="authoring-callable-attribute">
-              <input
-                id="authoring-callable-attribute"
-                value={form.callableAttribute}
-                onChange={(event) => setForm({ ...form, callableAttribute: event.target.value })}
-              />
-            </Field>
-            <Field
-              label={t("authoring.callableArgumentsJson")}
-              htmlFor="authoring-callable-arguments"
-            >
-              <input
-                id="authoring-callable-arguments"
-                value={form.callableArgumentsJson}
-                onChange={(event) =>
-                  setForm({ ...form, callableArgumentsJson: event.target.value })
-                }
-              />
-            </Field>
-          </div>
-        ) : null}
-
-        {form.adapterKind === "file" ? (
-          <>
-            <h3>{t("authoring.fixture.title")}</h3>
-            <p className="muted" data-testid="fixture-explanation">
-              {targetQuestionId === null
-                ? t("authoring.fixture.saveFirst")
-                : t("authoring.fixture.explanation")}
-            </p>
-            <FixtureEditor
-              versionId={newestVersionId ?? savedVersionId ?? createdVersionId}
-              questionId={targetQuestionId}
-              fixtures={form.fixtures}
-              onChange={(fixtures) => setForm({ ...form, fixtures })}
-              // 已保存过的新建页同样停用：夹具声明是 manifest 的一部分，而本页保存已停用，
-              // 上传后无法写进题目——要保住这次声明请进 P09 上传并保存。
-              disabled={
-                (newestVersionId ?? savedVersionId ?? createdVersionId) === null ||
-                asNewVersion ||
-                alreadyCreated
-              }
-              disabledReason={
-                asNewVersion
-                  ? t("authoring.fixture.publishedFrozen")
-                  : alreadyCreated
-                    ? t("authoring.fixture.createdHint")
-                    : t("authoring.fixture.needVersion")
-              }
-              onlyInputMounts
-            />
-          </>
-        ) : null}
-
-        <p className="muted" data-testid="adapter-not-readable">
-          {t("authoring.adapterNotReadable")}
-        </p>
-      </Panel>
-
-      {/* 7. 版本说明：只在"已发布版本另存新版本"时出现且必填。 */}
-      {asNewVersion ? (
-        <Panel title={t("authoring.revisionNote")}>
-          <p className="muted">{t("authoring.revisionNoteHint")}</p>
-          <Field label={t("authoring.revisionNote")} htmlFor="authoring-revision-note">
-            <textarea
-              id="authoring-revision-note"
-              rows={2}
-              value={form.revisionNote}
-              onChange={(event) => setForm({ ...form, revisionNote: event.target.value })}
-            />
-          </Field>
-          {form.revisionNote.trim() === "" ? (
-            <Banner tone="warn" testId="authoring-revision-note-required">
-              {t("authoring.revisionNoteRequired")}
-            </Banner>
+        <div className="wizard__body">
+          {step === "basic" ? (
+            <Panel title={stepDefinition.label()} testId="step-basic">
+              <div className="form-grid">
+                {questionId === null ? (
+                  <Field label={t("authoring.course")} htmlFor="authoring-course">
+                    <select
+                      id="authoring-course"
+                      value={courseId}
+                      onChange={(event) => setCourseId(event.target.value)}
+                    >
+                      <option value="">{t("common.selectPrompt")}</option>
+                      {courseOptions.map((course) => (
+                        <option key={course.course_id} value={course.course_id}>
+                          {course.course_code} · {course.title}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                ) : (
+                  <Field label={t("authoring.course")} htmlFor="authoring-course-readonly">
+                    <input id="authoring-course-readonly" value={courseLabel} readOnly />
+                  </Field>
+                )}
+                <Field label={t("authoring.title")} htmlFor="authoring-title">
+                  <input
+                    id="authoring-title"
+                    value={form.title}
+                    maxLength={TITLE_MAX_LENGTH}
+                    onChange={(event) => setForm({ ...form, title: event.target.value })}
+                  />
+                </Field>
+                <Field label={t("authoring.language")} htmlFor="authoring-language">
+                  <select
+                    id="authoring-language"
+                    value={form.language}
+                    onChange={(event) =>
+                      setForm({ ...form, language: event.target.value as DraftForm["language"] })
+                    }
+                  >
+                    {LANGUAGE_OPTIONS.map((language) => (
+                      <option key={language} value={language}>
+                        {t(`questions.language.${language}`)}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label={t("authoring.tags")} htmlFor="authoring-tags">
+                  <input
+                    id="authoring-tags"
+                    value={form.tags}
+                    onChange={(event) => setForm({ ...form, tags: event.target.value })}
+                  />
+                </Field>
+              </div>
+              <div className="inline" data-testid="authoring-tags-preview">
+                {parsed.tags.length === 0 ? null : (
+                  parsed.tags.map((tag) => (
+                    <span className="pill pill--idle" key={tag}>
+                      {tag}
+                    </span>
+                  ))
+                )}
+              </div>
+              {parsed.invalid.length > 0 ? (
+                <Banner tone="warn" testId="authoring-tags-invalid">
+                  {t("authoring.tagsInvalid", { tags: parsed.invalid.join(", ") })}
+                </Banner>
+              ) : null}
+              {questionId === null ? (
+                <LoadMoreActions
+                  loadedCount={courseOptions.length}
+                  hasNextPage={courses.hasNextPage}
+                  isFetchingNextPage={courses.isFetchingNextPage}
+                  onLoadMore={() => {
+                    void courses.fetchNextPage();
+                  }}
+                  testId="authoring-courses"
+                />
+              ) : null}
+              {courses.isError ? <ErrorState error={courses.error} /> : null}
+              {newestVersion.isError ? <ErrorState error={newestVersion.error} /> : null}
+              {questionId !== null ? (
+                <Banner tone="info" testId="authoring-version-mode">
+                  {asNewVersion
+                    ? t("authoring.newVersionNotice")
+                    : t("authoring.draftVersionNotice")}
+                </Banner>
+              ) : null}
+              {saveRow}
+            </Panel>
           ) : null}
-        </Panel>
-      ) : null}
 
-      {/* 8. 信号：题目自查、AI 建议（P09 才有对象可检查）。 */}
+          {step === "stem" ? (
+            <Panel
+              title={stepDefinition.label()}
+              testId="step-stem"
+              actions={
+                questionId === null ? (
+                  <button
+                    type="button"
+                    className="button button--ghost"
+                    data-testid="authoring-ai"
+                    onClick={() => onAiViewChange(true)}
+                  >
+                    {t("authoring.ai.open")}
+                  </button>
+                ) : null
+              }
+            >
+              <div className="grid-2">
+                <div>
+                  <Field label={t("authoring.stem")} htmlFor="authoring-stem">
+                    <textarea
+                      id="authoring-stem"
+                      rows={14}
+                      value={form.stemMarkdown}
+                      onChange={(event) => setForm({ ...form, stemMarkdown: event.target.value })}
+                    />
+                  </Field>
+                </div>
+                <div data-testid="authoring-stem-preview">
+                  <h3>{t("authoring.stemPreview")}</h3>
+                  {form.stemMarkdown.trim() === "" ? (
+                    <p className="muted">{t("authoring.stemEmpty")}</p>
+                  ) : (
+                    <SafeMarkdown source={form.stemMarkdown} testId="authoring-preview-stem" />
+                  )}
+                </div>
+              </div>
+
+              {/* 保存草稿放在题干图片**之前**：先存草稿，再插入图片（图片地址要靠草稿的 id）。 */}
+              {saveRow}
+
+              <div className="inline">
+                <h3>{t("authoring.image.title")}</h3>
+                <span className="muted" data-testid="image-need-draft">
+                  {t("authoring.image.needDraft")}
+                </span>
+              </div>
+              <ImageUploader
+                questionId={targetQuestionId}
+                // 新建并已保存之后不再允许上传：本页的「插入题干」不会写库，而保存按钮已停用，
+                // 插入的地址会随着离开而丢失。要插图请进 P09（那里是 PATCH，插入能保存）。
+                disabled={targetQuestionId === null || asNewVersion || alreadyCreated}
+                disabledReason={
+                  targetQuestionId === null
+                    ? t("authoring.image.needDraft")
+                    : asNewVersion
+                      ? t("authoring.image.publishedFrozen")
+                      : t("authoring.image.createdHint")
+                }
+                onInsert={(snippet) =>
+                  setForm({ ...form, stemMarkdown: insertIntoStem(form.stemMarkdown, snippet) })
+                }
+              />
+            </Panel>
+          ) : null}
+
+          {step === "reference" ? (
+            <Panel title={stepDefinition.label()} testId="step-reference">
+              <Field label={t("authoring.referenceAnswer")} htmlFor="authoring-reference">
+                <textarea
+                  id="authoring-reference"
+                  rows={12}
+                  value={form.referenceAnswer}
+                  onChange={(event) => setForm({ ...form, referenceAnswer: event.target.value })}
+                />
+              </Field>
+              {saveRow}
+            </Panel>
+          ) : null}
+
+          {step === "cases" ? (
+            <Panel title={stepDefinition.label()} testId="step-cases">
+              <CaseEditor
+                cases={form.cases}
+                onChange={(cases) => {
+                  setForm({ ...form, cases });
+                }}
+              />
+              {/* 编辑时提交用例 = 整体替换一份本页读不到的集合。必须由人显式确认一次。 */}
+              {questionId !== null && form.cases.length > 0 ? (
+                <div className="field" data-testid="authoring-cases-replace">
+                  <label className="inline" htmlFor="authoring-confirm-cases">
+                    <input
+                      id="authoring-confirm-cases"
+                      type="checkbox"
+                      checked={form.confirmCaseReplacement}
+                      onChange={(event) =>
+                        setForm({ ...form, confirmCaseReplacement: event.target.checked })
+                      }
+                    />
+                    {t("authoring.casesReplace")}
+                  </label>
+                  <span className="muted">{t("authoring.casesReplaceHint")}</span>
+                </div>
+              ) : null}
+              {saveRow}
+            </Panel>
+          ) : null}
+
+          {step === "comparison" ? (
+            <Panel title={t("authoring.comparison")} testId="step-comparison">
+              <div className="form-grid">
+                <Field label={t("authoring.comparisonStdout")} htmlFor="authoring-comparison-stdout">
+                  <select
+                    id="authoring-comparison-stdout"
+                    value={form.comparisonStdout}
+                    onChange={(event) =>
+                      setForm({
+                        ...form,
+                        comparisonStdout: event.target.value as DraftForm["comparisonStdout"],
+                      })
+                    }
+                  >
+                    <option value="">{t("common.selectPrompt")}</option>
+                    {STDOUT_COMPARISONS.map((policy) => (
+                      <option key={policy} value={policy}>
+                        {t(`authoring.comparison.${policy}`)}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label={t("authoring.comparisonStderr")} htmlFor="authoring-comparison-stderr">
+                  <select
+                    id="authoring-comparison-stderr"
+                    value={form.comparisonStderr}
+                    onChange={(event) =>
+                      setForm({
+                        ...form,
+                        comparisonStderr: event.target.value as DraftForm["comparisonStderr"],
+                      })
+                    }
+                  >
+                    <option value="">{t("authoring.comparisonStderr.unset")}</option>
+                    {STDERR_COMPARISONS.map((policy) => (
+                      <option key={policy} value={policy}>
+                        {t(`authoring.comparison.${policy}`)}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
+                <Field label={t("authoring.numericTolerance")} htmlFor="authoring-tolerance">
+                  {/*
+                    只有选中「数值容差」时这个输入框才可填：其他模式下容差不会进载荷，
+                    允许输入只会让人以为它生效了。
+                  */}
+                  <input
+                    id="authoring-tolerance"
+                    inputMode="decimal"
+                    value={form.numericTolerance}
+                    disabled={form.comparisonStdout !== "numeric_tolerance"}
+                    onChange={(event) => setForm({ ...form, numericTolerance: event.target.value })}
+                  />
+                </Field>
+              </div>
+              <p className="muted" data-testid="authoring-tolerance-hint">
+                {t("authoring.numericToleranceHint")}
+              </p>
+
+              {/*
+                运行配置属于进阶设置：普通出题不用碰它，所以默认收起。
+                `<details>` 自带键盘与读屏语义，不必自造折叠逻辑。
+              */}
+              <details className="panel" data-testid="runtime-config">
+                <summary className="panel__title">{t("authoring.adapter")}</summary>
+                <div className="stack">
+                  <div className="form-grid">
+                    <Field label={t("authoring.adapterKind")} htmlFor="authoring-adapter-kind">
+                      <select
+                        id="authoring-adapter-kind"
+                        value={form.adapterKind}
+                        onChange={(event) =>
+                          setForm({
+                            ...form,
+                            adapterKind: event.target.value as DraftForm["adapterKind"],
+                          })
+                        }
+                      >
+                        {SELECTABLE_ADAPTER_KINDS.map((kind) => (
+                          <option key={kind} value={kind}>
+                            {t(`questions.adapter.${kind}`)}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                    <Field label={t("authoring.maxFiles")} htmlFor="authoring-max-files">
+                      <input
+                        id="authoring-max-files"
+                        inputMode="numeric"
+                        value={form.maxFiles}
+                        onChange={(event) => setForm({ ...form, maxFiles: event.target.value })}
+                      />
+                    </Field>
+                    <Field label={t("authoring.maxTotalBytes")} htmlFor="authoring-max-total-bytes">
+                      <input
+                        id="authoring-max-total-bytes"
+                        inputMode="numeric"
+                        value={form.maxTotalBytes}
+                        onChange={(event) => setForm({ ...form, maxTotalBytes: event.target.value })}
+                      />
+                    </Field>
+                  </div>
+
+                  {form.adapterKind === "stdin" ? (
+                    <div className="form-grid">
+                      <Field label={t("authoring.adapterArgs")} htmlFor="authoring-adapter-args">
+                        <input
+                          id="authoring-adapter-args"
+                          value={form.adapterArgs}
+                          onChange={(event) => setForm({ ...form, adapterArgs: event.target.value })}
+                        />
+                      </Field>
+                      <Field
+                        label={t("authoring.adapterExpectExitCode")}
+                        htmlFor="authoring-adapter-exit"
+                      >
+                        <input
+                          id="authoring-adapter-exit"
+                          inputMode="numeric"
+                          value={form.adapterExpectExitCode}
+                          onChange={(event) =>
+                            setForm({ ...form, adapterExpectExitCode: event.target.value })
+                          }
+                        />
+                      </Field>
+                      <Field
+                        label={t("authoring.adapterStdin")}
+                        htmlFor="authoring-adapter-stdin"
+                        trailing={
+                          <span title={t("authoring.adapterStdinHelp")} data-testid="adapter-stdin-help">
+                            ⓘ
+                          </span>
+                        }
+                      >
+                        <textarea
+                          id="authoring-adapter-stdin"
+                          rows={3}
+                          value={form.adapterStdin}
+                          onChange={(event) => setForm({ ...form, adapterStdin: event.target.value })}
+                        />
+                      </Field>
+                    </div>
+                  ) : null}
+
+                  {form.adapterKind === "callable" ? (
+                    <div className="form-grid">
+                      <Field label={t("authoring.callableModule")} htmlFor="authoring-callable-module">
+                        <input
+                          id="authoring-callable-module"
+                          value={form.callableModule}
+                          onChange={(event) =>
+                            setForm({ ...form, callableModule: event.target.value })
+                          }
+                        />
+                      </Field>
+                      <Field
+                        label={t("authoring.callableAttribute")}
+                        htmlFor="authoring-callable-attribute"
+                      >
+                        <input
+                          id="authoring-callable-attribute"
+                          value={form.callableAttribute}
+                          onChange={(event) =>
+                            setForm({ ...form, callableAttribute: event.target.value })
+                          }
+                        />
+                      </Field>
+                      <Field
+                        label={t("authoring.callableArgumentsJson")}
+                        htmlFor="authoring-callable-arguments"
+                      >
+                        <input
+                          id="authoring-callable-arguments"
+                          value={form.callableArgumentsJson}
+                          onChange={(event) =>
+                            setForm({ ...form, callableArgumentsJson: event.target.value })
+                          }
+                        />
+                      </Field>
+                    </div>
+                  ) : null}
+
+                  {form.adapterKind === "file" ? (
+                    <>
+                      <h3>{t("authoring.fixture.title")}</h3>
+                      <p className="muted" data-testid="fixture-explanation">
+                        {targetQuestionId === null
+                          ? t("authoring.fixture.saveFirst")
+                          : t("authoring.fixture.explanation")}
+                      </p>
+                      <FixtureEditor
+                        versionId={newestVersionId ?? savedVersionId ?? createdVersionId}
+                        questionId={targetQuestionId}
+                        fixtures={form.fixtures}
+                        onChange={(fixtures) => setForm({ ...form, fixtures })}
+                        // 已保存过的新建页同样停用：夹具声明是 manifest 的一部分，而本页保存已停用，
+                        // 上传后无法写进题目——要保住这次声明请进 P09 上传并保存。
+                        disabled={
+                          (newestVersionId ?? savedVersionId ?? createdVersionId) === null ||
+                          asNewVersion ||
+                          alreadyCreated
+                        }
+                        disabledReason={
+                          asNewVersion
+                            ? t("authoring.fixture.publishedFrozen")
+                            : alreadyCreated
+                              ? t("authoring.fixture.createdHint")
+                              : t("authoring.fixture.needVersion")
+                        }
+                        onlyInputMounts
+                      />
+                    </>
+                  ) : null}
+                </div>
+              </details>
+
+              {/* 已发布版本另存新版本时，版本说明是必填的：放在最后一步的保存按钮之前。 */}
+              {asNewVersion ? (
+                <div className="stack" data-testid="authoring-revision-note">
+                  <Field label={t("authoring.revisionNote")} htmlFor="authoring-revision-note">
+                    <textarea
+                      id="authoring-revision-note"
+                      rows={2}
+                      value={form.revisionNote}
+                      onChange={(event) => setForm({ ...form, revisionNote: event.target.value })}
+                    />
+                  </Field>
+                  {form.revisionNote.trim() === "" ? (
+                    <Banner tone="warn" testId="authoring-revision-note-required">
+                      {t("authoring.revisionNoteRequired")}
+                    </Banner>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {saveRow}
+            </Panel>
+          ) : null}
+        </div>
+      </div>
+
+      {/* 信号：题目自查、AI 建议（P09 才有对象可检查）。 */}
       {targetQuestionId ? (
         <>
           <ComparisonDiagnosticsPanel questionId={targetQuestionId} />
@@ -738,7 +825,7 @@ export function AuthoringPage({
         </>
       ) : null}
 
-      {/* 9. 检验并发布：只有已保存的草稿才谈得上检验。 */}
+      {/* 检验并发布：只有已保存的草稿才谈得上检验。 */}
       {publishVersion ? (
         <ReferenceVerificationPanel version={publishVersion} questionId={targetQuestionId} />
       ) : null}

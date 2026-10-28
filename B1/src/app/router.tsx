@@ -111,12 +111,17 @@ const questionDetailRoute = createRoute({
  * `generation_id` 存在的理由（教师尚未保存的字段编辑不持久化，恢复的是模型给出的那一份）。
  * 键可选：多数入口是裸的 `/questions/new`。
  */
-type AuthoringNewSearch = { generation?: string };
+type AuthoringNewSearch = { generation?: string; ai?: boolean };
 
 function validateAuthoringNewSearch(search: Record<string, unknown>): AuthoringNewSearch {
   const parsed: AuthoringNewSearch = {};
   if (typeof search.generation === "string" && search.generation !== "") {
     parsed.generation = search.generation;
+  }
+  // `ai=1` 打开「AI 出题」视图：写进 URL 是为了刷新/后退能回到同一处，
+  // 且不会像独立路由那样把内存里的表单丢掉。
+  if (search.ai === "1" || search.ai === 1 || search.ai === true) {
+    parsed.ai = true;
   }
   return parsed;
 }

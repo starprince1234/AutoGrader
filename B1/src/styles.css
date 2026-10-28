@@ -1896,6 +1896,114 @@ samp {
   }
 }
 
+/* ---------------------------------------------------------------------------
+   出题向导：左侧步骤导航 + 右侧一步内容。
+   只新增 .wizard* / .step-dot* 这几个类，不改动上面任何既有规则。
+--------------------------------------------------------------------------- */
+.wizard {
+  display: grid;
+  grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.wizard__nav {
+  position: sticky;
+  top: 16px;
+}
+
+.wizard__steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.wizard__step {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  grid-template-areas:
+    "dot label"
+    "dot state";
+  gap: 2px 10px;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.wizard__step:hover {
+  background: rgba(37, 99, 235, 0.06);
+}
+
+.wizard__step.is-active {
+  background: rgba(37, 99, 235, 0.1);
+  border-color: rgba(37, 99, 235, 0.35);
+}
+
+.wizard__step:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.wizard__step-label {
+  grid-area: label;
+  font-weight: 600;
+}
+
+.wizard__step-state {
+  grid-area: state;
+  font-size: 12px;
+  color: #64748b;
+}
+
+/* 完成：蓝色实心圆点 + 对勾；未完成：蓝色空心圆圈。 */
+.step-dot {
+  grid-area: dot;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid #2563eb;
+  background: transparent;
+  color: #ffffff;
+  font-size: 12px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.step-dot--done {
+  background: #2563eb;
+}
+
+.wizard__body {
+  min-width: 0;
+}
+
+/* 每一步底部的「保存草稿」：右下角对齐，说明文字在按钮左边。 */
+.wizard__save {
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+@media (max-width: 860px) {
+  .wizard {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .wizard__nav {
+    position: static;
+  }
+}
+
 /* 低动态模式：关闭滑动/循环动画，但保留状态反馈（颜色、焦点环立刻可见）。 */
 @media (prefers-reduced-motion: reduce) {
   *,

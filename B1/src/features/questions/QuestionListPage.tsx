@@ -24,17 +24,20 @@ import { useQuestionList } from "./useQuestions";
 /**
  * 题库列表（P06，`listQuestions` + `getQuestionTagCoverage`）。
  *
+ * 版面顺序是产品定义的一部分：筛选 → **题目列表** → 知识点覆盖。教师进这一页的第一件事是
+ * 看"题库里有哪些题"，所以列表必须在分析面板之前。
+ *
  * 三条与角色相关的规则，都由服务端再次判定、这里只决定"要不要显示和请求"：
  *
  * 1. **学生不浏览全量题库**：这一页只对教师/助教/管理员开放；学生从作业详情进入 P07 看被布置的
- *    那一个已发布版本。对非出题角色，本页**不请求课程列表、不请求题目列表、也不请求覆盖度**，
- *    而不是先请求再把结果藏起来。
- * 2. **标签覆盖度是教师分析**：面板与请求都只对出题角色存在（覆盖度聚合对备课有用，对学生没有任何
- *    意义，而"学生也能看到"曾经是线上缺陷）。
- * 3. **草稿开关同理**：`published_only` 默认 true，只有出题角色能把它关掉。
+ *    那一个已发布版本。对非出题角色，本页不请求课程列表、不请求题目列表、也不请求覆盖度。
+ * 2. **标签覆盖度是教师分析**：面板与请求都只对出题角色存在。
+ * 3. **草稿一并显示**：原来的「包含草稿」开关已移除，列表固定取 `published_only=false`，
+ *    否则刚建的草稿会从列表里消失，教师再也进不去它的编辑页。
  *
- * 表格列顺序是产品定义的一部分：课程、题目、语言、状态、标签、图示数、操作。长 UUID 不直接展示，
- * 课程显示课程代码与名称（拿不到时退回短 id，而不是空白）。
+ * 题干搜索在**已加载的题目**里做：契约 `listQuestions` 没有文本参数（只有 `course_id` /
+ * `language` / `published_only` / `tags` / 游标），所以这里不声称"搜遍全库"；继续加载更多页后
+ * 搜索范围随之扩大。
  */
 
 function statusTone(status: QuestionPublic["status"]): "ok" | "warn" | "idle" {
@@ -50,7 +53,7 @@ export function QuestionListPage() {
   const courseOptions = loadedCourses(courses.data?.pages);
   const [courseId, setCourseId] = useState("");
   const [tagFilter, setTagFilter] = useState("");
-  const [includeDrafts, setIncludeDrafts] = useState(false);
+  const [stemQuery, setStemQuery] = useState("");
 
   const parsedTags = useMemo(() => parseTags(tagFilter), [tagFilter]);
   // 标签输入非法时不发请求：契约里 tags 有形态约束，发一个畸形值只会换来一个看起来像
@@ -59,17 +62,26 @@ export function QuestionListPage() {
   const questions = useQuestionList(
     author ? (courseId === "" ? null : courseId) : null,
     {
-      // 契约 `published_only` 默认 true。草稿只有出题角色会需要，因此开关也只给他们。
-      publishedOnly: !includeDrafts,
+      // 开关已移除：草稿必须一起列出来，否则教师无法再进入自己的草稿。
+      publishedOnly: false,
       tags: parsedTags.tags,
     },
     // 非出题角色连请求都不发（不是"发了再藏起来"）。
     { enabled: author && tagsValid },
   );
   // 分页结果摊平成一张表：游标只用于"还有没有下一页"，页面本身不暴露游标。
-  const rows = useMemo(
+  const loadedRows = useMemo(
     () => (questions.data?.pages ?? []).flatMap((page) => page.items),
     [questions.data],
+  );
+
+  const query = stemQuery.trim().toLowerCase();
+  const rows = useMemo(
+    () =>
+      query === ""
+        ? loadedRows
+        : loadedRows.filter((row) => row.stem_markdown.toLowerCase().includes(query)),
+    [loadedRows, query],
   );
 
   // 课程显示"代码 · 名称"；查不到就留白，绝不把内部编号贴到界面上。
@@ -91,16 +103,14 @@ export function QuestionListPage() {
 
   return (
     <div className="stack">
-      <PageTitle>{t("nav.questions")}</PageTitle>
+      <div className="inline">
+        <PageTitle>{t("nav.questions")}</PageTitle>
+        <Link className="button" to="/questions/new" data-testid="question-new">
+          {t("questions.newQuestion")}
+        </Link>
+      </div>
 
-      <Panel
-        title={t("questions.filter")}
-        actions={
-          <Link className="button" to="/questions/new" data-testid="question-new">
-            {t("questions.newQuestion")}
-          </Link>
-        }
-      >
+      <Panel title={t("questions.filter")}>
         <div className="form-grid">
           <Field label={t("import.course")} htmlFor="question-course">
             <select
@@ -124,63 +134,37 @@ export function QuestionListPage() {
               onChange={(event) => setTagFilter(event.target.value)}
             />
           </Field>
-          <div className="field">
-            <label className="inline" htmlFor="question-include-drafts">
-              <input
-                id="question-include-drafts"
-                type="checkbox"
-                checked={includeDrafts}
-                onChange={(event) => setIncludeDrafts(event.target.checked)}
-              />
-              {t("questions.includeDrafts")}
-            </label>
-            <span className="muted">{t("questions.includeDraftsHint")}</span>
-          </div>
+          <Field label={t("questions.searchStem")} htmlFor="question-stem-search">
+            <input
+              id="question-stem-search"
+              value={stemQuery}
+              placeholder={t("questions.searchStemPlaceholder")}
+              onChange={(event) => setStemQuery(event.target.value)}
+            />
+          </Field>
         </div>
-        <p className="muted" data-testid="question-tag-help">
-          {t("questions.tagHelp")}
-        </p>
         {parsedTags.invalid.length > 0 ? (
           <Banner tone="warn" testId="question-tags-invalid">
             {t("questions.tagFilterInvalid", { tags: parsedTags.invalid.join(", ") })}
           </Banner>
         ) : null}
-        <div className="inline">
-          <span className="muted" data-testid="question-courses-count">
-            {t("common.coursesLoaded", { count: courseOptions.length })}
-          </span>
-          <LoadMoreActions
-            loadedCount={courseOptions.length}
-            hasNextPage={courses.hasNextPage}
-            isFetchingNextPage={courses.isFetchingNextPage}
-            onLoadMore={() => {
-              void courses.fetchNextPage();
-            }}
-            testId="courses"
-          />
-        </div>
+        <LoadMoreActions
+          loadedCount={courseOptions.length}
+          hasNextPage={courses.hasNextPage}
+          isFetchingNextPage={courses.isFetchingNextPage}
+          onLoadMore={() => {
+            void courses.fetchNextPage();
+          }}
+          testId="courses"
+        />
         {courses.isError ? <ErrorState error={courses.error} /> : null}
       </Panel>
-
-      {/*
-        标签覆盖度（CHG-0020）与列表**共用**同一个课程作用域与同一个「包含草稿」开关：若让它各自
-        选一次课程，两个并排的数字就可能来自不同作用域，而那种矛盾看起来像"数据不对"。
-        只在出题角色下渲染——组件内部才发请求，因此非出题角色连这次请求都不会发生。
-        点一个标签即填进上面的标签筛选（复用既有实现，不另造筛选机制）。
-      */}
-      {author ? (
-        <QuestionCoveragePanel
-          courseId={courseId === "" ? null : courseId}
-          publishedOnly={!includeDrafts}
-          onSelectTag={(tag) => setTagFilter(tag)}
-        />
-      ) : null}
 
       <Panel
         title={t("questions.countLoaded", { count: rows.length })}
         actions={
           <LoadMoreActions
-            loadedCount={rows.length}
+            loadedCount={loadedRows.length}
             hasNextPage={questions.hasNextPage}
             isFetchingNextPage={questions.isFetchingNextPage}
             onLoadMore={() => {
@@ -202,7 +186,11 @@ export function QuestionListPage() {
           </Banner>
         ) : rows.length === 0 ? (
           <EmptyState>
-            {parsedTags.tags.length > 0 ? t("questions.noMatches") : t("questions.emptyBank")}
+            {query !== ""
+              ? t("questions.noStemMatch")
+              : parsedTags.tags.length > 0
+                ? t("questions.noMatches")
+                : t("questions.emptyBank")}
           </EmptyState>
         ) : (
           <Table<QuestionPublic>
@@ -302,6 +290,18 @@ export function QuestionListPage() {
           />
         )}
       </Panel>
+
+      {/*
+        标签覆盖度（CHG-0020）与列表**共用**同一个课程作用域与同一个发布范围：若让它各自
+        选一次课程，两个并排的数字就可能来自不同作用域，而那种矛盾看起来像"数据不对"。
+        只在出题角色下渲染——组件内部才发请求，因此非出题角色连这次请求都不会发生。
+        点一个标签即填进上面的标签筛选（复用既有实现，不另造筛选机制）。
+      */}
+      <QuestionCoveragePanel
+        courseId={courseId === "" ? null : courseId}
+        publishedOnly={false}
+        onSelectTag={(tag) => setTagFilter(tag)}
+      />
     </div>
   );
 }

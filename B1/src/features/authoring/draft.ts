@@ -157,7 +157,8 @@ export function emptyCase(): CaseForm {
     args: "",
     expectedStdout: "",
     expectedStderr: "",
-    expectedExitCode: "",
+    // 程序正常退出码几乎总是 0：预置它，省掉一次几乎不会填错的手工输入。
+    expectedExitCode: "0",
   };
 }
 
@@ -171,7 +172,8 @@ export function emptyDraftForm(): DraftForm {
     adapterKind: "stdin",
     adapterArgs: "",
     adapterStdin: "",
-    adapterExpectExitCode: "",
+    // 同 `emptyCase`：命令行题型的期望退出码预置 0。
+    adapterExpectExitCode: "0",
     callableModule: "",
     callableAttribute: "",
     callableArgumentsJson: "",
@@ -469,9 +471,9 @@ function buildAdapter(form: DraftForm, issues: DraftIssue[]): AdapterManifest | 
   }
 
   const tolerance = floatValue(form.numericTolerance);
+  // 容差只在「数值容差」模式下有意义：其他模式里那个输入框是禁用的，值也不进载荷，
+  // 因此这里只在数值模式下校验它（否则一个残留的旧值会挡住一次与它无关的保存）。
   if (form.comparisonStdout === "numeric_tolerance" && tolerance === null) {
-    issues.push({ key: "authoring.issue.numericTolerance" });
-  } else if (form.numericTolerance.trim() !== "" && tolerance === null) {
     issues.push({ key: "authoring.issue.numericTolerance" });
   }
 
@@ -560,9 +562,7 @@ function buildAdapter(form: DraftForm, issues: DraftIssue[]): AdapterManifest | 
 function buildCases(forms: CaseForm[], issues: DraftIssue[]): TestCaseInput[] {
   const cases: TestCaseInput[] = [];
   forms.forEach((item, ordinal) => {
-    if (item.name.trim() === "") {
-      issues.push({ key: "authoring.issue.caseName", params: { ordinal: ordinal + 1 } });
-    }
+    // 用例名是选填：留空时按序号自动生成「用例1、用例2…」，教师不必每次起名。
     const weight = floatValue(item.weight);
     if (weight === null || weight <= 0) {
       issues.push({ key: "authoring.issue.caseWeight", params: { ordinal: ordinal + 1 } });
@@ -574,7 +574,7 @@ function buildCases(forms: CaseForm[], issues: DraftIssue[]): TestCaseInput[] {
     const argv = parseArgv(item.args);
 
     cases.push({
-      name: item.name,
+      name: item.name.trim() === "" ? autoCaseName(ordinal) : item.name.trim(),
       ordinal,
       weight: weight ?? 1,
       visible_to_student: item.visibleToStudent,
@@ -587,6 +587,15 @@ function buildCases(forms: CaseForm[], issues: DraftIssue[]): TestCaseInput[] {
   });
 
   return cases;
+}
+
+/**
+ * 自动用例名：`ordinal` 是 0 基下标，显示名从 1 开始。
+ *
+ * 同一个函数既用于"留空保存时的名字"，也用于卡片标题与占位提示，三处不会漂。
+ */
+export function autoCaseName(ordinal: number): string {
+  return `用例${ordinal + 1}`;
 }
 
 /** 受控题干图片的 Markdown 地址：只用**服务端返回的** question_id 与 asset_id 拼。 */

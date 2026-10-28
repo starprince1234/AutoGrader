@@ -80,7 +80,6 @@ function ProposalPreview({
 
       <details data-testid="generation-protected">
         <summary>{t("authoring.generation.protectedSummary")}</summary>
-        <p className="muted">{t("authoring.generation.protectedHint")}</p>
 
         <h3>{t("authoring.referenceAnswer")}</h3>
         {proposal.reference_answer ? (
@@ -145,7 +144,6 @@ function ProposalPreview({
         <button type="button" className="button" data-testid="generation-apply" onClick={onApply}>
           {applied ? t("authoring.generation.reapply") : t("authoring.generation.apply")}
         </button>
-        <span className="muted">{t("authoring.generation.applyHint")}</span>
       </div>
     </div>
   );
@@ -153,16 +151,24 @@ function ProposalPreview({
 
 export function GenerationPanel({
   courseId,
+  courses,
+  onCourseChange,
   form,
   generationId,
   onGenerationId,
   onApply,
+  onApplied,
 }: {
   courseId: string | null;
+  /** 可选课程：面板自己带一个下拉，教师不必滚到下面的「基本信息」再回来。 */
+  courses: Array<{ course_id: string; course_code: string; title: string }>;
+  onCourseChange: (next: string) => void;
   form: DraftForm;
   generationId: string | null;
   onGenerationId: (next: string | null) => void;
   onApply: (proposal: QuestionDraftProposal) => void;
+  /** 教师**主动**点「填进编辑器」之后回调；刷新恢复候选时不触发。 */
+  onApplied?: () => void;
 }) {
   const capabilities = useGenerationCapabilities(courseId);
   const restored = useGeneration(generationId);
@@ -210,7 +216,7 @@ export function GenerationPanel({
     providerAvailable,
   });
   const missing = !courseId
-    ? t("authoring.generation.needCourseShort")
+    ? t("authoring.save.needCourse")
     : forbidden
       ? t("authoring.generation.noPermission")
       : capabilities.isError
@@ -221,6 +227,19 @@ export function GenerationPanel({
             ? t("authoring.generation.objectiveRequired")
             : overLimit;
   const canGenerate = ready && missing === null && !create.isPending;
+
+  /**
+   * 状态标签只说**这一屏能确定的事**：
+   * 还没选课程时不能说"AI 不可用"（那会把"缺一步操作"说成"功能坏了"），
+   * 选了课程但还没问到结果时也不能下结论。
+   */
+  const pill = !courseId
+    ? { tone: "idle" as const, label: t("authoring.generation.pickCoursePill") }
+    : capabilities.isPending
+      ? { tone: "idle" as const, label: t("authoring.generation.checkingPill") }
+      : ready
+        ? { tone: "ok" as const, label: t("authoring.generation.readyPill") }
+        : { tone: "warn" as const, label: t("authoring.generation.notReadyPill") };
 
   const submit = () => {
     if (!courseId || !canGenerate) return;
@@ -260,21 +279,11 @@ export function GenerationPanel({
 
   return (
     <Panel title={t("authoring.generation.title")} testId="generation-panel">
-      <p className="muted" data-testid="generation-disclaimer">
-        {t("authoring.generation.intro")}
-      </p>
-
       {/* 一句话状态：不可用只影响按钮，不影响你继续手动填写。 */}
       <div className="inline" data-testid="generation-status-line">
-        <StatusPill tone={ready ? "ok" : capabilityTone({ courseId, pending: capabilities.isPending })}>
-          {ready ? t("authoring.generation.readyPill") : t("authoring.generation.notReadyPill")}
+        <StatusPill tone={pill.tone} testId="generation-pill">
+          {pill.label}
         </StatusPill>
-        <span className="muted">
-          {t("authoring.generation.constraintNote", {
-            language: t(`questions.language.${form.language}`),
-            adapter: t(`questions.adapter.${form.adapterKind}`),
-          })}
-        </span>
         {capabilities.data?.requests_remaining === null ||
         capabilities.data?.requests_remaining === undefined ? null : (
           <span className="muted" data-testid="generation-budget">
@@ -284,9 +293,23 @@ export function GenerationPanel({
       </div>
 
       {!courseId ? (
-        <Banner tone="info" testId="generation-no-course">
-          {t("authoring.generation.needCourse")}
-        </Banner>
+        <div data-testid="generation-no-course">
+          <Field label={t("authoring.generation.courseField")} htmlFor="generation-course">
+            <select
+              id="generation-course"
+              value=""
+              onChange={(event) => onCourseChange(event.target.value)}
+            >
+              <option value="">{t("common.selectPrompt")}</option>
+              {courses.map((course) => (
+                <option key={course.course_id} value={course.course_id}>
+                  {course.course_code} · {course.title}
+                </option>
+              ))}
+            </select>
+          </Field>
+          <p className="muted">{t("authoring.generation.needCourse")}</p>
+        </div>
       ) : forbidden ? (
         <Banner tone="warn" testId="generation-forbidden">
           {t("authoring.generation.noPermission")}
@@ -364,9 +387,11 @@ export function GenerationPanel({
         >
           {create.isPending ? t("authoring.generation.generating") : t("authoring.generation.generate")}
         </button>
-        <span className="muted" data-testid="generation-reason">
-          {missing ?? t("authoring.generation.manualNote")}
-        </span>
+        {missing === null ? null : (
+          <span className="muted" data-testid="generation-reason">
+            {missing}
+          </span>
+        )}
       </div>
 
       {generationError !== null && generationError !== undefined ? (
@@ -440,7 +465,10 @@ export function GenerationPanel({
           {generation.proposal ? (
             <ProposalPreview
               proposal={generation.proposal}
-              onApply={() => onApply(generation.proposal as QuestionDraftProposal)}
+              onApply={() => {
+                onApply(generation.proposal as QuestionDraftProposal);
+                onApplied?.();
+              }}
               applied={appliedId === generation.generation_id}
             />
           ) : null}
@@ -472,8 +500,7 @@ export function GenerationPanel({
                 ? t("authoring.generation.discarding")
                 : t("authoring.generation.discard")}
             </button>
-            <span className="muted">{t("authoring.generation.discardHint")}</span>
-          </div>
+              </div>
 
           {discard.isError ? (
             <Banner tone="error" testId="generation-discard-error">
@@ -543,9 +570,4 @@ function capabilityReady(input: {
 }): boolean {
   if (!input.courseId || input.pending || input.error || input.forbidden) return false;
   return input.providerAvailable;
-}
-
-function capabilityTone(input: { courseId: string | null; pending: boolean }): "idle" | "warn" {
-  if (!input.courseId) return "idle";
-  return input.pending ? "idle" : "warn";
 }

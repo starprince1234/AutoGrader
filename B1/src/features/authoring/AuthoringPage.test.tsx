@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { useState } from "react";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
@@ -99,11 +100,28 @@ function baseRoutes(extra: StubbedRoute[] = []): StubbedRoute[] {
   ];
 }
 
+/** 出题页现在有「向导」与「AI 出题」两个视图，视图开关由父级持有（真实页面里是 URL 上的 ai）。 */
+function Harness({
+  questionId,
+  generationId = null,
+}: {
+  questionId: string | null;
+  generationId?: string | null;
+}) {
+  const [aiView, setAiView] = useState(false);
+  return (
+    <AuthoringPage
+      questionId={questionId}
+      generationId={generationId}
+      aiView={aiView}
+      onAiViewChange={setAiView}
+    />
+  );
+}
+
 function renderAuthoring(questionId: string | null, generationId: string | null = null) {
   const rootRoute = createRootRoute({
-    component: () => (
-      <AuthoringPage questionId={questionId} generationId={generationId} />
-    ),
+    component: () => <Harness questionId={questionId} generationId={generationId} />,
   });
   const detailRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -124,23 +142,62 @@ function renderAuthoring(questionId: string | null, generationId: string | null 
 
 /** 课程下拉的选项来自 B4，必须先等它渲染出来再选（否则 selectOptions 找不到该值）。 */
 async function selectCourse(user: ReturnType<typeof userEvent.setup>) {
+  await goToStep(user, "basic");
   const courseSelect = await screen.findByLabelText("课程");
   await waitFor(() => expect(within(courseSelect).getAllByRole("option")).toHaveLength(2));
   await user.selectOptions(courseSelect, UUID_A);
+}
+
+/** 向导一次只渲染一步：每次交互前先切到对应步骤。 */
+async function goToStep(
+  user: ReturnType<typeof userEvent.setup>,
+  id: "basic" | "stem" | "reference" | "cases" | "comparison",
+) {
+  await user.click(await screen.findByTestId(`wizard-step-${id}`));
+  await screen.findByTestId(`step-${id}`);
+}
+
+/** 「运行配置」默认收起：改运行方式 / 退出码 / 文件上限之前先展开它。 */
+async function openRuntimeConfig(user: ReturnType<typeof userEvent.setup>) {
+  const details = screen.getByTestId("runtime-config") as HTMLDetailsElement;
+  if (!details.open) {
+    await user.click(within(details).getByText("运行配置"));
+  }
+  await within(details).findByLabelText("运行方式");
+}
+
+/** 命令期望退出码现在预置 0：要验证自定义值必须先清空。 */
+async function setAdapterExitCode(user: ReturnType<typeof userEvent.setup>, value: string) {
+  await goToStep(user, "comparison");
+  await openRuntimeConfig(user);
+  const input = screen.getByLabelText("命令期望退出码");
+  await user.clear(input);
+  await user.type(input, value);
+}
+
+async function selectCourseInAiPanel(user: ReturnType<typeof userEvent.setup>) {
+  const panelSelect = await screen.findByLabelText("这道题出给哪门课");
+  await waitFor(() =>
+    expect(within(panelSelect).getAllByRole("option").length).toBeGreaterThan(1),
+  );
+  await user.selectOptions(panelSelect, UUID_A);
 }
 
 /** 填满一次合法的新建表单（POST 与 PATCH 都要求这四个必需字段，因此测试里都要填）。 */
 async function fillCreateForm(user: ReturnType<typeof userEvent.setup>) {
   await selectCourse(user);
   await user.type(screen.getByLabelText("题目标题"), "统计文件行数");
-  await user.type(screen.getByLabelText("题干"), "# 统计行数");
   await user.type(screen.getByLabelText("标签"), "Process Scheduling, unix");
+  await goToStep(user, "stem");
+  await user.type(screen.getByLabelText("题干"), "# 统计行数");
+  await goToStep(user, "reference");
   await user.type(screen.getByLabelText("参考答案"), "print(2)");
-  await user.type(screen.getByLabelText("用例名"), "基本用例");
+  await goToStep(user, "cases");
+  await user.type(screen.getByLabelText(/用例名/), "基本用例");
   await user.type(screen.getByLabelText("标准输入"), "a\nb\n");
   // `stdin` 题型必须在 manifest 上声明 args / stdin / 命令退出码之一（B3 的适配器校验），
   // 因此这里填退出码——只填用例级 stdin 会被服务端 422 拒绝。
-  await user.type(screen.getByLabelText("命令期望退出码"), "0");
+  await setAdapterExitCode(user, "0");
   await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
 }
 
@@ -149,15 +206,119 @@ async function fillCreateForm(user: ReturnType<typeof userEvent.setup>) {
  * 而提交用例会整体替换那份读不到的集合（CHG-0017），所以还必须勾选那次确认。
  */
 async function addCaseAndConfirm(user: ReturnType<typeof userEvent.setup>) {
+  await goToStep(user, "cases");
   await user.click(screen.getByTestId("case-add"));
-  await user.type(screen.getByLabelText("用例名"), "用例一");
+  await user.type(screen.getByLabelText(/用例名/), "用例一");
   await user.click(screen.getByLabelText(/我确认/));
 }
 
 /** `stdin` 题型的 manifest 必须声明 args / stdin / 退出码之一，编辑路径也要补上。 */
 async function fillAdapterExitCode(user: ReturnType<typeof userEvent.setup>) {
-  await user.type(screen.getByLabelText("命令期望退出码"), "0");
+  await setAdapterExitCode(user, "0");
 }
+
+describe("分步向导", () => {
+  it("一次只显示一步；完成基本信息后左导航的圆点变成实心对勾", async () => {
+    stub = installFetchStub(baseRoutes());
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+
+    // 初始：只有「基本信息」这一步的内容在页面上。
+    expect(await screen.findByTestId("step-basic")).toBeInTheDocument();
+    expect(screen.queryByTestId("step-stem")).toBeNull();
+    expect(screen.getByTestId("wizard-dot-basic")).toHaveAttribute("data-done", "false");
+    expect(screen.getByTestId("wizard-dot-basic")).toHaveTextContent("");
+
+    await selectCourse(user);
+    await user.type(screen.getByLabelText("题目标题"), "统计行数");
+
+    expect(screen.getByTestId("wizard-dot-basic")).toHaveAttribute("data-done", "true");
+    expect(screen.getByTestId("wizard-dot-basic")).toHaveTextContent("✓");
+    // 还没写题干，所以第二步仍是空心圆。
+    expect(screen.getByTestId("wizard-dot-stem")).toHaveAttribute("data-done", "false");
+  });
+
+  it("切换步骤不丢已经填的内容", async () => {
+    stub = installFetchStub(baseRoutes());
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+
+    await selectCourse(user);
+    await user.type(screen.getByLabelText("题目标题"), "统计行数");
+    await goToStep(user, "stem");
+    await user.type(screen.getByLabelText("题干"), "# 统计");
+
+    await goToStep(user, "basic");
+    expect(screen.getByLabelText("题目标题")).toHaveValue("统计行数");
+    await goToStep(user, "stem");
+    expect(screen.getByLabelText("题干")).toHaveValue("# 统计");
+  });
+
+  it("每一步底部都有「保存草稿」；缺课程/标题/题干时禁用并说明缺什么", async () => {
+    stub = installFetchStub(baseRoutes());
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+
+    // 第 1 步：没选课程。
+    expect(await screen.findByTestId("authoring-save")).toBeDisabled();
+    expect(screen.getByTestId("save-blocker")).toHaveTextContent("请先选择课程");
+
+    await selectCourse(user);
+    // 选了课程但没标题。
+    expect(screen.getByTestId("save-blocker")).toHaveTextContent("请先填写题目标题");
+    await user.type(screen.getByLabelText("题目标题"), "统计行数");
+    // 有标题但没题干：契约要求 stem_markdown 非空。
+    expect(screen.getByTestId("save-blocker")).toHaveTextContent("请先填写题干");
+
+    await goToStep(user, "stem");
+    expect(screen.getByTestId("authoring-save")).toBeDisabled();
+    await user.type(screen.getByLabelText("题干"), "# 统计");
+    expect(screen.getByTestId("authoring-save")).toBeEnabled();
+
+    // 其他步骤同样带一个保存按钮。
+    for (const step of ["reference", "cases", "comparison"] as const) {
+      await goToStep(user, step);
+      expect(screen.getByTestId("authoring-save")).toBeEnabled();
+    }
+  });
+
+  it("运行配置默认收起，展开后才是运行方式与文件上限", async () => {
+    stub = installFetchStub(baseRoutes());
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+
+    await goToStep(user, "comparison");
+    const details = screen.getByTestId("runtime-config") as HTMLDetailsElement;
+    expect(details.open).toBe(false);
+    expect(screen.getByLabelText("数值容差")).toBeDisabled();
+
+    await openRuntimeConfig(user);
+    expect(details.open).toBe(true);
+    expect(screen.getByLabelText("运行方式")).toBeInTheDocument();
+    expect(screen.getByLabelText("文件总大小上限")).toBeInTheDocument();
+  });
+
+  it("数值容差只在选中「数值容差」时可填", async () => {
+    stub = installFetchStub(baseRoutes());
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+
+    await goToStep(user, "comparison");
+    const tolerance = screen.getByLabelText("数值容差");
+    expect(tolerance).toBeDisabled();
+
+    await user.selectOptions(screen.getByLabelText("标准输出比较"), "numeric_tolerance");
+    expect(tolerance).toBeEnabled();
+
+    await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
+    expect(tolerance).toBeDisabled();
+  });
+});
 
 describe("新建题目（POST /api/v1/questions）", () => {
   it("course_id 走查询参数，受保护内容进入请求体，标签按契约形状归一化", async () => {
@@ -272,11 +433,15 @@ describe("新建题目（POST /api/v1/questions）", () => {
 
     await selectCourse(user);
     await user.type(screen.getByLabelText("题目标题"), "只有标题");
+    await goToStep(user, "stem");
     await user.type(screen.getByLabelText("题干"), "题干");
-    await user.type(screen.getByLabelText("命令期望退出码"), "0");
+    await setAdapterExitCode(user, "0");
+    await goToStep(user, "comparison");
     await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
     // 参考答案留空、用例留空（把新建时那一行邀请删掉）。
+    await goToStep(user, "cases");
     await user.click(screen.getByTestId("case-remove-0"));
+    await user.click(await screen.findByTestId("case-delete-confirm-action"));
     await user.click(screen.getByTestId("authoring-save"));
 
     const request = await waitFor(() => {
@@ -347,6 +512,7 @@ describe("新建题目（POST /api/v1/questions）", () => {
     expect(screen.getByTestId("authoring-save")).toBeDisabled();
     expect(screen.getByTestId("authoring-created-next")).toHaveTextContent("继续编辑");
     // 图片与夹具上传同样停用：本页的插入/声明不会被保存，去 P09 才能写进题目。
+    await goToStep(user, "stem");
     expect(screen.getByTestId("image-disabled")).toHaveTextContent("继续编辑");
     const posts = stub.requests.filter(
       (item) => item.method === "POST" && item.url.pathname === "/api/v1/questions",
@@ -361,16 +527,23 @@ describe("新建题目（POST /api/v1/questions）", () => {
     renderAuthoring(null);
 
     // file 不再是"不可选"的题型：夹具端点改用教师自己的令牌后，浏览器可以完整创建它。
-    await user.selectOptions(await screen.findByLabelText("测试框架"), "file");
+    await goToStep(user, "comparison");
+    await openRuntimeConfig(user);
+    await user.selectOptions(screen.getByLabelText("运行方式"), "file");
     expect(await screen.findByTestId("fixture-editor")).toBeInTheDocument();
     // 未保存草稿前没有版本 id，因此上传控件是禁用的并说明原因（不假装上传成功）。
     expect(await screen.findByTestId("fixture-disabled")).toHaveTextContent("先保存草稿");
 
     await selectCourse(user);
     await user.type(screen.getByLabelText("题目标题"), "文件题");
+    await goToStep(user, "stem");
     await user.type(screen.getByLabelText("题干"), "题干");
+    await goToStep(user, "reference");
+    await goToStep(user, "reference");
     await user.type(screen.getByLabelText("参考答案"), "print(2)");
-    await user.type(screen.getByLabelText("用例名"), "用例一");
+    await goToStep(user, "cases");
+    await user.type(screen.getByLabelText(/用例名/), "用例一");
+    await goToStep(user, "comparison");
     await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
     await user.click(screen.getByTestId("authoring-save"));
 
@@ -429,8 +602,9 @@ describe("修改草稿（PATCH /api/v1/questions/{question_id}）", () => {
     // 可读回的字段被预填；受保护字段保持为空并显式说明。
     await waitFor(() => expect(screen.getByLabelText("题目标题")).toHaveValue(questionPublic().title));
     expect(screen.getByLabelText("标签")).toHaveValue("unix");
+    await goToStep(user, "reference");
+    await goToStep(user, "reference");
     expect(screen.getByLabelText("参考答案")).toHaveValue("");
-    expect(screen.getByTestId("authoring-protected-unknown")).toBeInTheDocument();
     // 草稿就地修改时不显示「版本说明」：它只属于"另存为新版本"那一次写入。
     expect(screen.queryByLabelText("版本说明")).toBeNull();
 
@@ -505,10 +679,12 @@ describe("修改草稿（PATCH /api/v1/questions/{question_id}）", () => {
     expect(await screen.findByTestId("authoring-version-mode")).toHaveTextContent(
       "另存为一个新版本",
     );
+    await goToStep(user, "reference");
     await user.type(await screen.findByLabelText("参考答案"), "print(2)");
     await addCaseAndConfirm(user);
     await fillAdapterExitCode(user);
     await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
+    await goToStep(user, "comparison");
     await user.type(screen.getByLabelText("版本说明"), "例题的截止时间写错了");
     await user.click(screen.getByTestId("authoring-save"));
 
@@ -580,6 +756,7 @@ describe("修改草稿（PATCH /api/v1/questions/{question_id}）", () => {
       await signIn("teacher1", "pw");
       renderAuthoring(QUESTION_ID);
 
+      await goToStep(user, "reference");
       await user.type(await screen.findByLabelText("参考答案"), "print(2)");
       await addCaseAndConfirm(user);
       await fillAdapterExitCode(user);
@@ -587,7 +764,7 @@ describe("修改草稿（PATCH /api/v1/questions/{question_id}）", () => {
       await user.click(screen.getByTestId("authoring-save"));
       await screen.findByTestId("authoring-saved");
 
-      const updateLog = lines.find((line) => line.event === "question_draft_updated");
+      const updateLog = lines.filter((line) => line.event === "question_draft_updated").at(-1);
       expect(updateLog).toBeDefined();
       expect(updateLog?.question_version_id).toBe(DRAFT_VERSION);
       expect(updateLog?.version).toBe(1);
@@ -798,7 +975,8 @@ describe("两类信号（确定性规则 vs 模型建议）", () => {
 });
 
 async function openAi(user: ReturnType<typeof userEvent.setup>) {
-  // AI 面板默认收起：入口在标题栏，先点开再操作面板。
+  // AI 出题是独立视图：入口在「题干」步的标题右侧。
+  await goToStep(user, "stem");
   await user.click(await screen.findByTestId("authoring-ai"));
   await screen.findByTestId("generation-panel");
 }
@@ -834,6 +1012,38 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
     ];
   }
 
+  it("还没选课程时状态标签说「待选择课程」，而不是宣称 AI 不可用", async () => {
+    stub = installFetchStub(baseRoutes(generationRoutes()));
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+    await goToStep(user, "stem");
+    await user.click(await screen.findByTestId("authoring-ai"));
+
+    expect(await screen.findByTestId("generation-pill")).toHaveTextContent("待选择课程");
+    expect(screen.getByTestId("generation-pill").textContent ?? "").not.toContain("暂不可用");
+  });
+
+  it("课程下拉就在 AI 面板里：选完立刻可用，不用滚到下面的基本信息", async () => {
+    stub = installFetchStub(baseRoutes(generationRoutes()));
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+    await goToStep(user, "stem");
+    await user.click(await screen.findByTestId("authoring-ai"));
+
+    // 面板内的下拉有自己的标签，避免和「基本信息」里的同名控件互相遮盖。
+    await selectCourseInAiPanel(user);
+
+    // 选中后能力查询才会发出，标签随之变成可用；此时只差教学目标。
+    expect(await screen.findByTestId("generation-pill")).toHaveTextContent("AI 出题可用");
+    expect(screen.getByTestId("generation-reason")).toHaveTextContent("请先填写教学目标");
+    await user.type(screen.getByLabelText("教学目标"), "统计每个单词出现的次数");
+    expect(screen.getByTestId("generation-generate")).toBeEnabled();
+    // 选完课程后，面板里的"选课"下拉换成了生成表单（同一份状态，不是两份）。
+    expect(screen.queryByLabelText("这道题出给哪门课")).toBeNull();
+  });
+
   it("AI 入口就在标题栏：还没选课程也能看到，点开后有按钮并说明先选课程", async () => {
     stub = installFetchStub(baseRoutes(generationRoutes()));
     const user = userEvent.setup();
@@ -841,8 +1051,9 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
     renderAuthoring(null);
 
     // 第一屏（未选课程）就能看到入口，不需要滚到表单底部。
+    await goToStep(user, "stem");
     const entry = await screen.findByTestId("authoring-ai");
-    expect(entry).toHaveTextContent("让 AI 帮你出题");
+    expect(entry).toHaveTextContent("AI 出题");
 
     await user.click(entry);
     // 面板里「生成草稿」始终存在：禁用 + 说明原因，而不是整块消失。
@@ -869,8 +1080,9 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
     const user = userEvent.setup();
     await signIn("teacher1", "pw");
     renderAuthoring(null);
+    await goToStep(user, "stem");
     await user.click(await screen.findByTestId("authoring-ai"));
-    await selectCourse(user);
+    await selectCourseInAiPanel(user);
 
     expect(await screen.findByTestId("generation-forbidden")).toHaveTextContent("没有出题权限");
     expect(screen.getByTestId("generation-generate")).toBeDisabled();
@@ -905,7 +1117,7 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
     await signIn("teacher1", "pw");
     renderAuthoring(null);
     await openAi(user);
-    await selectCourse(user);
+    await selectCourseInAiPanel(user);
 
     const generate = await screen.findByTestId("generation-generate");
     expect(generate).toBeDisabled(); // 空目标不消耗任何 provider 调用
@@ -944,7 +1156,7 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
     await signIn("teacher1", "pw");
     renderAuthoring(null);
     await openAi(user);
-    await selectCourse(user);
+    await selectCourseInAiPanel(user);
 
     await user.type(screen.getByLabelText("教学目标"), "统计行数");
     await user.click(screen.getByTestId("generation-generate"));
@@ -961,14 +1173,19 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
     );
 
     // 候选被填进同一张表单：标题、题干、参考答案、用例都到位，权重为 null 的那个留空。
+    expect(screen.getByText("学生看不到")).toBeInTheDocument();
+    expect(screen.getByTestId("generation-protected")).toHaveTextContent("参考答案");
+    await user.click(screen.getByTestId("ai-back"));
+    await screen.findByTestId("wizard-nav");
+    await goToStep(user, "basic");
     expect(screen.getByLabelText("题目标题")).toHaveValue("统计标准输入的行数");
+    await goToStep(user, "reference");
     expect(screen.getByLabelText("参考答案")).toHaveValue(
       "import sys\nprint(len(sys.stdin.read().splitlines()))\n",
     );
+    await goToStep(user, "cases");
     expect(screen.getByTestId("case-1")).toBeInTheDocument();
     // 受保护内容只在教师侧展开区里出现，并明确标注学生看不到。
-    expect(screen.getByText("学生看不到")).toBeInTheDocument();
-    expect(screen.getByTestId("generation-protected")).toHaveTextContent("参考答案");
   });
 
   it("刷新后用 generation_id 恢复服务端原始候选", async () => {
@@ -976,9 +1193,13 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
     await signIn("teacher1", "pw");
     renderAuthoring(null, GENERATION_ID);
     await selectCourse(userEvent.setup());
+    await goToStep(userEvent.setup(), "stem");
+    await userEvent.setup().click(await screen.findByTestId("authoring-ai"));
 
-    // URL 带候选 id 时面板自动展开，不需要再点入口。
+    // 面板里带着 URL 上的候选 id：不需要再点一次"生成"。
     expect(await screen.findByTestId("generation-result")).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByTestId("ai-back"));
+    await goToStep(userEvent.setup(), "basic");
     await waitFor(() =>
       expect(screen.getByLabelText("题目标题")).toHaveValue("统计标准输入的行数"),
     );
@@ -997,6 +1218,8 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
     await signIn("teacher1", "pw");
     renderAuthoring(null, GENERATION_ID);
     await selectCourse(user);
+    await goToStep(user, "stem");
+    await user.click(await screen.findByTestId("authoring-ai"));
 
     await user.click(await screen.findByTestId("generation-discard"));
     // 关闭预览不等于删除：必须再确认一次。
@@ -1034,7 +1257,7 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
     await signIn("teacher1", "pw");
     renderAuthoring(null);
     await openAi(user);
-    await selectCourse(user);
+    await selectCourseInAiPanel(user);
 
     await user.type(await screen.findByLabelText("教学目标"), "生成一道题");
     await user.click(screen.getByTestId("generation-generate"));
@@ -1070,7 +1293,11 @@ describe("出题页的可见性前提", () => {  it("编辑页会取最新版本
     await signIn("teacher1", "pw");
     renderAuthoring(QUESTION_ID);
 
-    await waitFor(() => expect(screen.getByLabelText("合计字节上限")).toHaveValue("4096"));
+    await waitFor(() =>
+      expect(screen.getByLabelText("题目标题")).toHaveValue(questionPublic().title),
+    );
+    await goToStep(userEvent.setup(), "comparison");
+    expect(screen.getByLabelText("文件总大小上限")).toHaveValue("4096");
     const versionRequest = stub.requests.find((item) =>
       item.url.pathname.startsWith("/api/v1/question-versions/"),
     );

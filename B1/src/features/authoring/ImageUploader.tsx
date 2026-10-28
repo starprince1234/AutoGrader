@@ -86,15 +86,29 @@ export function ImageUploader({
         />
       </Field>
       <div className="inline">
+        {/*
+          原生 file 控件会自带一行「未选择文件」：那行字既不可去掉也不可样式化，所以把控件
+          藏起来（`hidden`），只留一个「选择文件」按钮。`htmlFor` 让点击按钮仍然打开同一个
+          文件对话框，键盘与读屏行为不变。
+        */}
         <input
           ref={inputRef}
           id="authoring-image-file"
           type="file"
           accept={IMAGE_CONTENT_TYPES.join(",")}
           data-testid="image-file"
+          hidden
           disabled={disabled || upload.isPending}
           onChange={(event) => pick(event.target.files?.[0])}
         />
+        <label
+          className="button button--ghost"
+          htmlFor="authoring-image-file"
+          aria-disabled={disabled || upload.isPending}
+          data-testid="image-pick"
+        >
+          {t("authoring.image.pick")}
+        </label>
         {upload.isPending ? <span className="muted">{t("authoring.image.uploading")}</span> : null}
       </div>
       <p className="muted">{t("authoring.image.hint")}</p>
