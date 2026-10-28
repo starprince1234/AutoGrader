@@ -46,6 +46,18 @@ export function StepNav({
                   {done ? t("authoring.steps.done") : t("authoring.steps.pending")}
                 </span>
               </button>
+              {/*
+                步骤之间的连接线：已完成的那一步下面是蓝色实线，未完成的是灰色虚线。
+                它把"从上往下的顺序 + 走到哪一步了"画出来，因此纯装饰（对读屏隐藏）。
+              */}
+              {index < STEPS.length - 1 ? (
+                <span
+                  className="wizard__line"
+                  data-done={done ? "true" : "false"}
+                  data-testid={`wizard-line-${step.id}`}
+                  aria-hidden="true"
+                />
+              ) : null}
             </li>
           );
         })}

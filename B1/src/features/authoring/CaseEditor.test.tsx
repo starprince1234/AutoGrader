@@ -22,11 +22,11 @@ function renderCases(initial: CaseForm[] = [emptyCase()]) {
 }
 
 describe("分值与退出码", () => {
-  it("分值仍是手输的数字输入框（不是下拉）", () => {
+  it("分值仍是手输的数字输入框（不是下拉），且不再预置 1", () => {
     renderCases();
     const weight = screen.getByLabelText("分值");
     expect(weight.tagName).toBe("INPUT");
-    expect(weight).toHaveValue("1");
+    expect(weight).toHaveValue("");
   });
 
   it("期望退出码预置为 0，收在高级配置里", async () => {

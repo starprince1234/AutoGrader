@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { emptyDraftForm, type DraftForm } from "./draft";
-import { STEPS, isStepComplete } from "./steps";
+import { emptyCase, emptyDraftForm, type DraftForm } from "./draft";
+import { STEPS, caseHasContent, isStepComplete } from "./steps";
 
 /**
  * 向导的五步只由这一份定义驱动：左侧导航的圆点、每一步的标题，以及"哪一步算完成"。
@@ -60,9 +60,25 @@ describe("步骤完成判据", () => {
     expect(isStepComplete("reference", form(), "", { editing: true })).toBe(true);
   });
 
-  it("测试用例：至少有一个用例", () => {
+  it("测试用例：默认那个空用例不算填过，写了内容才算", () => {
+    // 新建时默认就有一个空用例；它不构成"已完成"（否则一进页面第四步就是蓝勾）。
+    expect(isStepComplete("cases", form(), "", { editing: false })).toBe(false);
     expect(isStepComplete("cases", form({ cases: [] }), "", { editing: false })).toBe(false);
-    expect(isStepComplete("cases", form(), "", { editing: false })).toBe(true);
+    expect(
+      isStepComplete("cases", form({ cases: [{ ...emptyCase(), stdin: "a\n" }] }), "", {
+        editing: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("「填过了」只看教师写进去的内容，权值与预置退出码不算", () => {
+    expect(caseHasContent(emptyCase())).toBe(false);
+    // 只填了一个分值：仍然不算填过。
+    expect(caseHasContent({ ...emptyCase(), weight: "2" })).toBe(false);
+    expect(caseHasContent({ ...emptyCase(), name: "边界" })).toBe(true);
+    expect(caseHasContent({ ...emptyCase(), args: "-n" })).toBe(true);
+    expect(caseHasContent({ ...emptyCase(), expectedStdout: "2\n" })).toBe(true);
+    expect(caseHasContent({ ...emptyCase(), expectedStderr: "boom" })).toBe(true);
   });
 
   it("判分比对规则：选了标准输出比对方式才算完成", () => {

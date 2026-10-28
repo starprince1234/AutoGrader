@@ -269,11 +269,6 @@ export function AuthoringPage({
   const saveRow = (
     <div className="inline wizard__save" data-testid="step-save">
       {saveButton}
-      {saveBlocker === null ? null : (
-        <span className="muted" data-testid="save-blocker">
-          {saveBlocker}
-        </span>
-      )}
     </div>
   );
 
@@ -309,9 +304,10 @@ export function AuthoringPage({
           </Banner>
         ) : null}
         {questionId === null && courseId === "" ? (
-          <Banner tone="warn" testId="authoring-course-required">
+          // 只是一句提示语：按 2.0 的意见缩成一行小字，不再占一条横幅的高度。
+          <p className="muted" data-testid="authoring-course-required">
             {t("authoring.courseRequired")}
-          </Banner>
+          </p>
         ) : null}
         {dirty ? (
           <p className="muted" data-testid="authoring-dirty">
@@ -443,7 +439,8 @@ export function AuthoringPage({
                   {t("authoring.tagsInvalid", { tags: parsed.invalid.join(", ") })}
                 </Banner>
               ) : null}
-              {questionId === null ? (
+              {questionId === null && (courses.hasNextPage || courses.isFetchingNextPage) ? (
+                // 只在还有下一页时给入口；到末页什么都不显示（不再出现「已到末页」那行字）。
                 <LoadMoreActions
                   loadedCount={courseOptions.length}
                   hasNextPage={courses.hasNextPage}
@@ -469,20 +466,23 @@ export function AuthoringPage({
 
           {step === "stem" ? (
             <Panel
-              title={stepDefinition.label()}
-              testId="step-stem"
-              actions={
-                questionId === null ? (
-                  <button
-                    type="button"
-                    className="button button--ghost"
-                    data-testid="authoring-ai"
-                    onClick={() => onAiViewChange(true)}
-                  >
-                    {t("authoring.ai.open")}
-                  </button>
-                ) : null
+              title={
+                // AI 出题放在「题干」右边并做成蓝色主按钮：教师进这一步就能一眼看到。
+                <span className="inline">
+                  <span>{stepDefinition.label()}</span>
+                  {questionId === null ? (
+                    <button
+                      type="button"
+                      className="button"
+                      data-testid="authoring-ai"
+                      onClick={() => onAiViewChange(true)}
+                    >
+                      {t("authoring.ai.open")}
+                    </button>
+                  ) : null}
+                </span>
               }
+              testId="step-stem"
             >
               <div className="grid-2">
                 <div>
@@ -510,7 +510,7 @@ export function AuthoringPage({
 
               <div className="inline">
                 <h3>{t("authoring.image.title")}</h3>
-                <span className="muted" data-testid="image-need-draft">
+                <span className="hint-chip" data-testid="image-need-draft">
                   {t("authoring.image.needDraft")}
                 </span>
               </div>
@@ -520,8 +520,10 @@ export function AuthoringPage({
                 // 插入的地址会随着离开而丢失。要插图请进 P09（那里是 PATCH，插入能保存）。
                 disabled={targetQuestionId === null || asNewVersion || alreadyCreated}
                 disabledReason={
+                  // "保存草稿后再插入图片"已经在「题干图片」右侧用浅蓝标签说了，这里不再重复一条横幅；
+                  // 已发布 / 已创建这类原因仍然照实显示。
                   targetQuestionId === null
-                    ? t("authoring.image.needDraft")
+                    ? undefined
                     : asNewVersion
                       ? t("authoring.image.publishedFrozen")
                       : t("authoring.image.createdHint")

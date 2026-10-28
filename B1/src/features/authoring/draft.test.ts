@@ -43,6 +43,8 @@ function validForm(overrides: Partial<DraftForm> = {}): DraftForm {
       {
         ...emptyDraftForm().cases[0],
         name: "基本用例",
+        // 分值不再有默认值：一份合法表单必须由教师填一个合法分值。
+        weight: "1",
         stdin: "a\nb\n",
         expectedStdout: "2\n",
         expectedExitCode: "0",
@@ -290,13 +292,16 @@ describe("校验（不通过就不发请求）", () => {
     expect(keys).toContain("authoring.issue.caseWeight");
 
     // 留空的名字在提交时变成「用例N」，序号从 1 开始。
-    const input = built(validForm({ cases: [{ ...emptyDraftForm().cases[0], name: "" }] }));
+    const input = built(
+      validForm({ cases: [{ ...emptyDraftForm().cases[0], name: "", weight: "1" }] }),
+    );
     expect(input.cases?.[0].name).toBe("用例1");
   });
 
-  it("用例的期望退出码预置为 0（程序正常退出就是 0）", () => {
+  it("期望退出码预置为 0，但分值留空等教师自己填", () => {
     expect(emptyDraftForm().cases[0].expectedExitCode).toBe("0");
     expect(emptyDraftForm().adapterExpectExitCode).toBe("0");
+    expect(emptyDraftForm().cases[0].weight).toBe("");
   });
 
   it("数值容差只在「数值容差」模式下校验：其他模式里禁用的输入不该挡住保存", () => {

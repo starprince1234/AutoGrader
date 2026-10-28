@@ -151,7 +151,8 @@ export type DraftIssue = { key: MessageKey; params?: MessageParams };
 export function emptyCase(): CaseForm {
   return {
     name: "",
-    weight: "1",
+    // 分值不预置：留空让教师自己填（提交前仍校验"必须是大于 0 的数字"）。
+    weight: "",
     visibleToStudent: false,
     stdin: "",
     args: "",

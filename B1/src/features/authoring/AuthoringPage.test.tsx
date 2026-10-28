@@ -194,6 +194,8 @@ async function fillCreateForm(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByLabelText("参考答案"), "print(2)");
   await goToStep(user, "cases");
   await user.type(screen.getByLabelText(/用例名/), "基本用例");
+  // 分值不再预置 1：要保存就必须由教师填一个合法分值。
+  await user.type(screen.getByLabelText("分值"), "1");
   await user.type(screen.getByLabelText("标准输入"), "a\nb\n");
   // `stdin` 题型必须在 manifest 上声明 args / stdin / 命令退出码之一（B3 的适配器校验），
   // 因此这里填退出码——只填用例级 stdin 会被服务端 422 拒绝。
@@ -208,7 +210,8 @@ async function fillCreateForm(user: ReturnType<typeof userEvent.setup>) {
 async function addCaseAndConfirm(user: ReturnType<typeof userEvent.setup>) {
   await goToStep(user, "cases");
   await user.click(screen.getByTestId("case-add"));
-  await user.type(screen.getByLabelText(/用例名/), "用例一");
+  await user.type(screen.getAllByLabelText(/用例名/).at(-1) as HTMLElement, "用例一");
+  await user.type(screen.getAllByLabelText("分值").at(-1) as HTMLElement, "1");
   await user.click(screen.getByLabelText(/我确认/));
 }
 
@@ -256,7 +259,7 @@ describe("分步向导", () => {
     expect(screen.getByLabelText("题干")).toHaveValue("# 统计");
   });
 
-  it("每一步底部都有「保存草稿」；缺课程/标题/题干时禁用并说明缺什么", async () => {
+  it("每一步底部都有「保存草稿」；缺课程/标题/题干时只是禁用，不再写提示", async () => {
     stub = installFetchStub(baseRoutes());
     const user = userEvent.setup();
     await signIn("teacher1", "pw");
@@ -264,14 +267,13 @@ describe("分步向导", () => {
 
     // 第 1 步：没选课程。
     expect(await screen.findByTestId("authoring-save")).toBeDisabled();
-    expect(screen.getByTestId("save-blocker")).toHaveTextContent("请先选择课程");
+    // 2.0 的意见：保存按钮旁边不再挂"请先选择课程 / 请先填写题干"这类提示文字。
+    expect(screen.queryByTestId("save-blocker")).toBeNull();
 
     await selectCourse(user);
-    // 选了课程但没标题。
-    expect(screen.getByTestId("save-blocker")).toHaveTextContent("请先填写题目标题");
+    expect(screen.getByTestId("authoring-save")).toBeDisabled();
     await user.type(screen.getByLabelText("题目标题"), "统计行数");
-    // 有标题但没题干：契约要求 stem_markdown 非空。
-    expect(screen.getByTestId("save-blocker")).toHaveTextContent("请先填写题干");
+    expect(screen.getByTestId("authoring-save")).toBeDisabled();
 
     await goToStep(user, "stem");
     expect(screen.getByTestId("authoring-save")).toBeDisabled();
@@ -283,6 +285,71 @@ describe("分步向导", () => {
       await goToStep(user, step);
       expect(screen.getByTestId("authoring-save")).toBeEnabled();
     }
+  });
+
+  it("顶部只留一行小字提示「请先选择课程」，不再占一条横幅", async () => {
+    stub = installFetchStub(baseRoutes());
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+
+    const hint = await screen.findByTestId("authoring-course-required");
+    // 提示还在（教师要知道缺什么），但它只是一小段文字，不是整行横幅。
+    expect(hint.tagName).toBe("P");
+    expect(hint).toHaveTextContent("请先选择课程");
+    expect(screen.getByTestId("authoring-cancel")).toBeInTheDocument();
+  });
+
+  it("测试用例没填内容时第 4 步仍是空心圆，填了才算完成；步骤之间有连接线", async () => {
+    stub = installFetchStub(baseRoutes());
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+
+    // 新建时默认有一个空用例，那不算"填过"。
+    expect(await screen.findByTestId("wizard-dot-cases")).toHaveAttribute("data-done", "false");
+
+    await selectCourse(user);
+    await user.type(screen.getByLabelText("题目标题"), "统计行数");
+    await goToStep(user, "stem");
+    await user.type(screen.getByLabelText("题干"), "# 统计");
+    await goToStep(user, "reference");
+    await user.type(screen.getByLabelText("参考答案"), "print(1)");
+    await goToStep(user, "cases");
+    await user.type(screen.getByLabelText("标准输入"), "a\n");
+
+    expect(screen.getByTestId("wizard-dot-cases")).toHaveAttribute("data-done", "true");
+    expect(screen.getByTestId("wizard-dot-cases")).toHaveTextContent("✓");
+
+    // 连接线：上一步完成了就是实线，没完成是虚线（data-done 同时给出可断言的钩子）。
+    expect(screen.getByTestId("wizard-line-basic")).toHaveAttribute("data-done", "true");
+    expect(screen.getByTestId("wizard-line-cases")).toHaveAttribute("data-done", "true");
+    expect(screen.queryByTestId("wizard-line-comparison")).toBeNull();
+  });
+
+  it("课程到末页时不再显示「已到末页」", async () => {
+    stub = installFetchStub(baseRoutes());
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+
+    await screen.findByTestId("step-basic");
+    // 夹具里只有一门课程且没有下一页：分页器整块不渲染。
+    expect(screen.queryByTestId("authoring-courses-end")).toBeNull();
+    expect(screen.queryByTestId("authoring-courses-load-more")).toBeNull();
+  });
+
+  it("「AI 出题」是蓝色主按钮，紧挨着「题干」标题", async () => {
+    stub = installFetchStub(baseRoutes());
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+
+    await goToStep(user, "stem");
+    const ai = await screen.findByTestId("authoring-ai");
+    expect(ai).toHaveTextContent("AI 出题");
+    expect(ai.className).toContain("button");
+    expect(ai.className).not.toContain("button--ghost");
+    // 和标题在同一个标题元素里，所以视觉上紧挨着「题干」两个字。
+    expect(ai.closest(".panel__title")).not.toBeNull();
   });
 
   it("运行配置默认收起，展开后才是运行方式与文件上限", async () => {

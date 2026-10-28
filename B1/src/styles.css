@@ -1900,6 +1900,17 @@ samp {
    出题向导：左侧步骤导航 + 右侧一步内容。
    只新增 .wizard* / .step-dot* 这几个类，不改动上面任何既有规则。
 --------------------------------------------------------------------------- */
+/* 一行说明的浅蓝底小标签（例如「题干图片」右侧的"保存草稿后再插入图片"）。 */
+.hint-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: rgba(37, 99, 235, 0.1);
+  color: #1d4ed8;
+  font-size: 13px;
+}
+
 .wizard {
   display: grid;
   grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
@@ -1917,7 +1928,21 @@ samp {
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 4px;
+  gap: 0;
+}
+
+/* 步骤之间的连接线：已完成 → 蓝色实线；未完成 → 灰色虚线。 */
+.wizard__line {
+  display: block;
+  height: 26px;
+  /* 与圆点中心对齐：卡片左内边距 16px + 圆点半径 11px - 边框半宽 1px。 */
+  margin-left: 26px;
+  border-left: 2px solid #2563eb;
+}
+
+.wizard__line[data-done="false"] {
+  border-left-style: dashed;
+  border-left-color: #cbd5e1;
 }
 
 .wizard__step {
@@ -1929,7 +1954,8 @@ samp {
     "dot state";
   gap: 2px 10px;
   align-items: center;
-  padding: 10px 12px;
+  /* 五个步骤之间的距离拉开：页面利用率更高，也更容易扫读进度。 */
+  padding: 14px 16px;
   border: 1px solid transparent;
   border-radius: 10px;
   background: transparent;
@@ -1967,8 +1993,8 @@ samp {
 /* 完成：蓝色实心圆点 + 对勾；未完成：蓝色空心圆圈。 */
 .step-dot {
   grid-area: dot;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   border: 2px solid #2563eb;
   background: transparent;

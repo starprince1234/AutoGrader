@@ -107,6 +107,9 @@ export function CaseEditor({
                   id={`case-name-${index}`}
                   value={item.name}
                   placeholder={t("authoring.caseNamePlaceholder", { ordinal: index + 1 })}
+                  // 浏览器会把以前输入过的词当「自动填充建议」弹出来（截图里那个 mixed_lines），
+                  // 对老师来说就是一段看不懂的浮层：关掉它。
+                  autoComplete="off"
                   onChange={(event) => update(index, { name: event.target.value })}
                 />
               </Field>
