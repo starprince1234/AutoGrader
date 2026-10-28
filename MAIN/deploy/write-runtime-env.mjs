@@ -1,6 +1,6 @@
 import { chmodSync, writeFileSync } from "node:fs";
 import { llmEnvEntries } from "./llm-env.mjs";
-import { mailEnvEntries } from "./mail-env.mjs";
+import { imapEnvEntries, mailEnvEntries } from "./mail-env.mjs";
 
 const runtimeEnvPath = process.argv[2];
 const setupEnvPath = process.argv[3];
@@ -46,6 +46,7 @@ const apiUrl = "http://127.0.0.1:18000";
 // same entries for an existing host; omitting it here is what made the first deployment
 // report the channel as unconfigured while Doppler held every value.
 const mailEntries = mailEnvEntries(process.env);
+const imapEntries = imapEnvEntries(process.env);
 
 // Same arrangement for the model provider: `sync-llm-config` renders the identical block for a
 // host whose environment file already exists, and this render covers a fresh one.
@@ -81,6 +82,7 @@ const runtimeEntries = {
   AUTOGRADER_CORS_ORIGINS: "https://www.91idc.me",
   ...llmEntries,
   ...mailEntries,
+  ...imapEntries,
 };
 
 const setupEntries = {

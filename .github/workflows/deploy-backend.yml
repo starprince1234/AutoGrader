@@ -281,7 +281,7 @@ jobs:
           fi
           REMOTE
 
-      - name: Render mail channel variables
+      - name: Render mail channel variables (SMTP + IMAP intake)
         if: github.event_name == 'workflow_dispatch' && inputs.operation == 'sync-mail-channel'
         env:
           SMTP_HOST: ${{ steps.doppler.outputs.SMTP_HOST }}
@@ -292,6 +292,16 @@ jobs:
           SMTP_FROM_NAME: ${{ steps.doppler.outputs.SMTP_FROM_NAME }}
           SMTP_TLS_MODE: ${{ steps.doppler.outputs.SMTP_TLS_MODE }}
           SMTP_TIMEOUT_SECONDS: ${{ steps.doppler.outputs.SMTP_TIMEOUT_SECONDS }}
+          # 收信通道（B2 IMAP）：Doppler 里没配就整体跳过；配了就必须成套，
+          # 半配置由 write-mail-env.mjs 直接拒绝。
+          B2_IMAP_HOST: ${{ steps.doppler.outputs.B2_IMAP_HOST }}
+          B2_IMAP_PORT: ${{ steps.doppler.outputs.B2_IMAP_PORT }}
+          B2_IMAP_USERNAME: ${{ steps.doppler.outputs.B2_IMAP_USERNAME }}
+          B2_IMAP_PASSWORD: ${{ steps.doppler.outputs.B2_IMAP_PASSWORD }}
+          B2_IMAP_MAILBOX: ${{ steps.doppler.outputs.B2_IMAP_MAILBOX }}
+          B2_IMAP_USE_SSL: ${{ steps.doppler.outputs.B2_IMAP_USE_SSL }}
+          B2_IMAP_PROCESSED_MAILBOX: ${{ steps.doppler.outputs.B2_IMAP_PROCESSED_MAILBOX }}
+          B2_IMAP_MATCHING_JSON: ${{ steps.doppler.outputs.B2_IMAP_MATCHING_JSON }}
         run: node MAIN/deploy/write-mail-env.mjs "$RUNNER_TEMP/mail.env"
 
       - name: Install mail channel variables on the host

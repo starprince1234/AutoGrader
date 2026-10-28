@@ -88,3 +88,44 @@ export function mailEnvFile(env, options) {
       .join("") + ""
   );
 }
+
+/**
+ * B2 的 IMAP 收信配置。
+ *
+ * 与 SMTP 同一个坑：write-runtime-env.mjs 是按白名单渲染的，Doppler 里新增的键不会自动
+ * 出现在 /etc/autograder/runtime.env，进程永远读不到。所以收信通道也走同一条合并通道。
+ *
+ * 校验规则与 SMTP 略有不同：**一个都没有** = 收信未启用（合法状态，email-intake: not-configured
+ * 就是它）；**给了但缺关键项** = 配置错误，直接拒绝，因为半配置的收信入口比关着更危险
+ * （健康检查会显示"已配置"，而实际拉不到邮件）。
+ */
+const IMAP_REQUIRED = ["B2_IMAP_HOST", "B2_IMAP_USERNAME", "B2_IMAP_PASSWORD"];
+const IMAP_OPTIONAL = [
+  "B2_IMAP_PORT",
+  "B2_IMAP_MAILBOX",
+  "B2_IMAP_USE_SSL",
+  "B2_IMAP_PROCESSED_MAILBOX",
+  "B2_IMAP_MATCHING_JSON",
+  "B2_IMAP_MATCHING_PATH",
+  "B2_IMAP_MAX_MESSAGES",
+  "B2_IMAP_MAX_MESSAGE_BYTES",
+];
+
+export function imapEnvEntries(env) {
+  const present = IMAP_REQUIRED.filter((name) => (env[name] ?? "").trim() !== "");
+  if (present.length === 0) {
+    return {};
+  }
+  const missing = IMAP_REQUIRED.filter((name) => (env[name] ?? "").trim() === "");
+  if (missing.length > 0) {
+    throw new Error("the IMAP intake is half-configured; missing " + missing.join(", "));
+  }
+  const entries = {};
+  for (const name of [...IMAP_REQUIRED, ...IMAP_OPTIONAL]) {
+    const value = (env[name] ?? "").trim();
+    if (value !== "") {
+      entries[name] = value;
+    }
+  }
+  return entries;
+}

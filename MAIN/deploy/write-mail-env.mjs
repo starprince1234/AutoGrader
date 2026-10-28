@@ -9,14 +9,18 @@
  */
 
 import { writeFileSync } from "node:fs";
-import { mailEnvFile } from "./mail-env.mjs";
+import { imapEnvEntries, mailEnvFile } from "./mail-env.mjs";
 
 const target = process.argv[2];
 if (!target) {
   throw new Error("usage: node write-mail-env.mjs <output-path>");
 }
 
-const body = mailEnvFile(process.env, { mode: "strict" });
+const smtp = mailEnvFile(process.env, { mode: "strict" });
+const imap = Object.entries(imapEnvEntries(process.env))
+  .map(([name, value]) => name + '=' + JSON.stringify(value) + '\n')
+  .join("");
+const body = smtp + imap;
 if (body.trim() === "") {
   throw new Error("the mail channel fragment would be empty");
 }
