@@ -327,6 +327,16 @@ jobs:
           for name in mail.env merge-env-keys.py; do
             [[ -f "$staging/$name" && ! -L "$staging/$name" && -s "$staging/$name" ]]
           done
+          # 上一轮同步写进去、如今不该存在的键要先删：合并工具只增不删，而收信入口在缺少
+          # 上一轮同步写进去、如今不该存在的键要先删：合并工具只增不删，而收信入口在缺少
+          # 匹配规则时是 unavailable，会把整机 readiness 拉红。渲染器现在不会再写它们，
+          # 这里负责把历史遗留清掉。
+          if grep -q '^B2_IMAP_' /etc/autograder/runtime.env; then
+            grep -v '^B2_IMAP_' /etc/autograder/runtime.env > "$staging/runtime.clean.env"
+            install -m 0600 "$staging/runtime.clean.env" /etc/autograder/runtime.env
+            rm -f -- "$staging/runtime.clean.env"
+            printf 'dropped stale B2_IMAP_* keys\n'
+          fi
           python3 "$staging/merge-env-keys.py" \
             --target /etc/autograder/runtime.env --fragment "$staging/mail.env"
           rm -f -- "$staging/mail.env" "$staging/merge-env-keys.py"

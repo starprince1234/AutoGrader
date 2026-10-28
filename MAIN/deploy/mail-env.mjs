@@ -165,6 +165,20 @@ export function imapEnvEntries(env) {
       "the IMAP intake is half-configured; missing " + missing.join(", "),
     );
   }
+  // 收信入口只有在能路由邮件时才值得打开：B2 的 intake 没有 matching 规则会判 unavailable，
+  // 而 unavailable 会把整个 /health/ready 拉成 false。所以缺规则 = 保持关闭（not-configured），
+  // 并在部署日志里说清楚，而不是写一份"看起来配好了"的半配置。
+  const hasMatching =
+    (resolved.B2_IMAP_MATCHING_JSON ?? "").trim() !== "" ||
+    (resolved.B2_IMAP_MATCHING_JSON ?? "") === "{}";
+  if (!hasMatching) {
+    console.warn(
+      "IMAP intake skipped: no matching rules (set B2_IMAP_MATCHING_JSON); " +
+        "the mailbox stays disabled instead of reporting an unusable intake",
+    );
+    return {};
+  }
+
   if (resolved.B2_IMAP_MAILBOX === undefined) {
     resolved.B2_IMAP_MAILBOX = "INBOX";
   }
