@@ -468,6 +468,110 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/submissions/{submission_id}/manual-grade": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the current manual grade (204 when the submission is not graded yet)
+         * @description The drawer needs two things this read provides: whether a manual score already exists
+         *     (a changed score requires a `reason`) and its `updated_at`, which is the value the next
+         *     write must echo as `expected_updated_at`. Letting the client invent that value would hand
+         *     the optimistic lock back to the caller.
+         *
+         *     `204` means "no manual score yet", not "error": a submission waiting for its first grade
+         *     is the normal state of a mailed-in assignment.
+         */
+        get: operations["getManualGrade"];
+        put?: never;
+        /**
+         * Record a teacher's score for a submission (manual grading)
+         * @description Manual grading exists because some assignments cannot be judged by execution — the
+         *     Unix homework asks for command lines mailed in, and their output depends on the machine
+         *     they run on. The score is the teacher's; B2 stores it with its author, its time and its
+         *     history, and reports `score_source: manual` so no export can present it as a machine
+         *     result.
+         *
+         *     Authorization is the course scope of the section the submission belongs to: a teacher of
+         *     another course gets 403, and a student cannot grade anything (the token's roles decide,
+         *     not the request body).
+         */
+        post: operations["setManualGrade"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/submissions/{submission_id}/manual-grade/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Withdraw a manual score and return the submission to "awaiting manual"
+         * @description Needed for the mis-click case: a score entered against the wrong submission has to be
+         *     removable without editing the database. The prior score stays in the history table.
+         */
+        post: operations["releaseManualGrade"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/submissions/{submission_id}/files": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Download one file of a submission (teacher review)
+         * @description Students must be able to see how their work is judged, and teachers must be able to read
+         *     what was actually submitted — including attachments that arrived by mail. Content is
+         *     served from the content-addressed store; the response never includes other files, and
+         *     every download is audited as `submission.file_downloaded`.
+         */
+        get: operations["downloadSubmissionFile"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/submissions/{submission_id}/intake-message": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the message a submission arrived in (subject, sender, body excerpt)
+         * @description Returns the bounded excerpt described on `IntakeMessageView`. A submission created
+         *     through the API has no message, and that is reported as 404 rather than an empty object,
+         *     so the caller can tell "mailed in" from "uploaded".
+         */
+        get: operations["getSubmissionIntakeMessage"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/grades": {
         parameters: {
             query?: never;
@@ -948,6 +1052,64 @@ export interface components {
             finished_at?: components["schemas"]["Timestamp"] | null;
         };
         /**
+         * @description `deterministic` — the machine score is the grade (default for API submissions);
+         *     `awaiting_manual` — only a human can grade this submission, and **no score exists
+         *     yet**, so it must not be counted as "not submitted";
+         *     `graded` — a manual score exists and is what the student sees.
+         * @enum {string}
+         */
+        GradeStatus: "deterministic" | "awaiting_manual" | "graded";
+        /**
+         * @description A teacher's score for one submission. `comment` is optional because the product asks
+         *     for an optional remark; `reason` is required **only when changing an existing score**,
+         *     because a change without a reason is the change that cannot be defended later.
+         *     `expected_updated_at` is an optimistic lock: two teachers editing the same grade at
+         *     once would otherwise silently overwrite each other.
+         */
+        ManualGradeRequest: {
+            /** @description One decimal place. */
+            score: number;
+            comment?: string;
+            reason?: string;
+            expected_updated_at: components["schemas"]["Timestamp"];
+        };
+        ManualGradeRelease: {
+            submission_id: components["schemas"]["Uuid"];
+            /** @enum {string} */
+            grade_status: "awaiting_manual";
+        };
+        /**
+         * @description The grade as stored. `revision` increments on every change, so a client that saw
+         *     revision N knows its write of N+1 landed rather than being overwritten.
+         */
+        ManualGradeView: {
+            submission_id: components["schemas"]["Uuid"];
+            score: number;
+            /** @enum {string} */
+            score_source: "manual";
+            grade_status: components["schemas"]["GradeStatus"];
+            comment?: string | null;
+            graded_by?: components["schemas"]["Uuid"];
+            graded_at: components["schemas"]["Timestamp"];
+            updated_at: components["schemas"]["Timestamp"];
+            revision: number;
+        };
+        /**
+         * @description The message a submission arrived in, for the teacher to read. The body is a **bounded
+         *     excerpt** (leading 4000 characters, contact details redacted), never the full message:
+         *     the grader only needs enough context to understand what the student meant, and storing
+         *     whole mailboxes would turn the platform into an archive of unrelated correspondence.
+         */
+        IntakeMessageView: {
+            subject: string | null;
+            sender: string;
+            received_at: components["schemas"]["Timestamp"];
+            body_excerpt: string;
+            /** @default false */
+            truncated: boolean;
+            attachment_names?: string[];
+        };
+        /**
          * @description One grade record. `score` is null while the run is unfinished; the row then
          *     reports its `state` instead, so an incomplete evaluation is never displayed
          *     as a zero.
@@ -966,6 +1128,14 @@ export interface components {
             score?: number | null;
             max_score?: number | null;
             is_pass?: boolean | null;
+            grade_status?: components["schemas"]["GradeStatus"];
+            /**
+             * @description Where the score came from. `deterministic` is recomputable from the submission
+             *     and the cases; `manual` is a teacher's judgement and carries an author. Null while
+             *     no score exists. Without this field an export cannot answer "who produced this
+             *     number", which is the first question a disputed grade raises.
+             */
+            score_source?: ("deterministic" | "manual") | null;
             submitted_at?: components["schemas"]["Timestamp"];
             evaluation_run_id?: components["schemas"]["Uuid"] | null;
         };
@@ -1688,6 +1858,167 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EvaluationQualitySummary"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getManualGrade: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                submission_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The stored manual grade. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManualGradeView"];
+                };
+            };
+            /** @description No manual grade exists yet. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    setManualGrade: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                submission_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ManualGradeRequest"];
+            };
+        };
+        responses: {
+            /** @description Grade stored (created or updated). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManualGradeView"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /**
+             * @description The grade changed since `expected_updated_at` (someone else graded it first), or a
+             *     score change arrived without a `reason`.
+             */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    releaseManualGrade: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                submission_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Score withdrawn; `grade_status` is `awaiting_manual` again. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ManualGradeRelease"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description No manual score exists to withdraw. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    downloadSubmissionFile: {
+        parameters: {
+            query: {
+                /**
+                 * @description The submission-relative path recorded in `submission_files.path` (for the Unix
+                 *     homework this is the attachment name, e.g. `2024141460192.txt`). It is a path
+                 *     rather than an id because that table is keyed by `(submission_id, path)`.
+                 */
+                path: string;
+            };
+            header?: never;
+            path: {
+                submission_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description File bytes. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getSubmissionIntakeMessage: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                submission_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The intake message. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntakeMessageView"];
                 };
             };
             401: components["responses"]["Unauthorized"];

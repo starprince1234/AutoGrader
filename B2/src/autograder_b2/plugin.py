@@ -41,6 +41,7 @@ from fastapi import APIRouter
 
 from autograder_b2.api.evaluation_routes import build_evaluation_router
 from autograder_b2.api.grades_routes import build_grades_router
+from autograder_b2.api.manual_grade_routes import build_manual_grade_router
 from autograder_b2.api.reference_routes import build_reference_router
 from autograder_b2.intake.api import build_router as build_intake_router
 from autograder_b2.runtime import B2Runtime, build_b2_runtime
@@ -49,7 +50,7 @@ from autograder_b2.runtime import B2Runtime, build_b2_runtime
 class B2Module:
     descriptor = ModuleDescriptor(
         module="B2",
-        contract_version="0.23.0",
+        contract_version="0.22.0",
         provides=("b2-submissions",),
         requires=("host", "b4-auth", "b3-questions"),
         routes=(
@@ -92,6 +93,7 @@ class B2Module:
         router.include_router(build_intake_router(runtime.intake))
         router.include_router(build_evaluation_router(runtime))
         router.include_router(build_grades_router(runtime))
+        router.include_router(build_manual_grade_router(runtime))
         router.include_router(build_reference_router(runtime))
         return router
 

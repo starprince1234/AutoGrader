@@ -143,6 +143,9 @@ MESSAGE_ID_LONG_PREFIX_LENGTH = MAX_MESSAGE_ID_LENGTH + 8
 #: 长标识附带的对**完整原值**的摘要长度：截断因此不构成碰撞。
 MESSAGE_ID_DIGEST_LENGTH = 16
 #: `parse_message` 在未显式给上限时使用的具名部件上限（= 契约的 `files.maxItems`）。
+#: 正文摘录上限（与 `b2.yaml` 的 `IntakeMessageView.body_excerpt.maxLength` 一致）。
+MAX_BODY_EXCERPT = 4000
+
 DEFAULT_MAX_ATTACHMENTS = MAX_FILES
 #: 邮件主题的落库上限（与 `IntakeQuarantineView.subject.maxLength` 一致）。
 MAX_SUBJECT_LENGTH = 200
@@ -390,6 +393,10 @@ class EmailMessage:
     #: 邮件主题头，已折叠空白、只保留可打印字符、最多 200 字；**不是正文**。
     #: 复核列表要老师"一眼认出这封邮件"，只靠邮箱/UID 认不出来；主题是唯一可用的有界元数据。
     subject: str | None = None
+    #: 正文摘录：仅 `text/plain`、折叠空白、脱敏后最多 4000 字（`MAX_BODY_EXCERPT`）。
+    #: 它不是"整封信"，`body_truncated` 为真时必须让读者知道这一点。
+    body_excerpt: str | None = None
+    body_truncated: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -492,6 +499,7 @@ def parse_message(raw: bytes, *, max_attachments: int = DEFAULT_MAX_ATTACHMENTS)
 
     sender = parseaddr(str(message.get("From") or ""))[1].strip().lower()
     attachments, nested, overflow = _collect_parts(message, max_attachments=max_attachments)
+    body_excerpt, body_truncated = _body_excerpt(message)
     return EmailMessage(
         message_id=message_id_for_storage(_raw_message_id(message)),
         sender=sender,
@@ -499,6 +507,8 @@ def parse_message(raw: bytes, *, max_attachments: int = DEFAULT_MAX_ATTACHMENTS)
         nested_attachments=nested,
         attachments_overflow=overflow,
         subject=_subject_for_storage(message),
+        body_excerpt=body_excerpt,
+        body_truncated=body_truncated,
     )
 
 
@@ -1350,3 +1360,48 @@ def _zip64_uncompressed_size(extra: bytes, extra_length: int) -> int | None:
             return int.from_bytes(body[0:8], "little")
         position += 4 + size
     return None
+
+
+_EMAIL_PATTERN = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+_PHONE_PATTERN = re.compile(r"(?<!\d)(?:\+?86[- ]?)?1[3-9]\d{9}(?!\d)")
+
+
+def _redact(text: str) -> str:
+    """去掉邮箱与手机号：老师需要的是内容，不是学生的联系方式副本。"""
+    return _PHONE_PATTERN.sub("[手机号]", _EMAIL_PATTERN.sub("[邮箱]", text))
+
+
+def _body_excerpt(message: Message) -> tuple[str | None, bool]:
+    """取 `text/plain` 正文的有界摘录。
+
+    只取**没有文件名**的 `text/plain` 部件：带文件名的是附件（正文位置不该混入附件内容），
+    `text/html` 也不取——把标签剥掉得到的"正文"既不可靠又容易被构造。
+    """
+    collected: list[str] = []
+    for part in message.walk():
+        if part.get_content_type() != "text/plain":
+            continue
+        if part.get_filename():
+            continue
+        if part.is_multipart():
+            continue
+        # 编码损坏的正文不应让整封邮件不可处理；也不记日志——日志是白名单事件，
+        # 异常消息里可能夹带原文片段。
+        payload: object | None = None
+        try:
+            payload = part.get_content()
+        except Exception:  # noqa: BLE001 - 见上
+            payload = None
+        if isinstance(payload, str) and payload.strip():
+            collected.append(payload)
+    if not collected:
+        return None, False
+
+    # 引用历史（"On ... wrote:"之后）保留：老师判断学生意图时它常常就是上下文。
+    collapsed = " ".join(" ".join(collected).split())
+    if not collapsed:
+        return None, False
+    redacted = _redact(collapsed)
+    if len(redacted) <= MAX_BODY_EXCERPT:
+        return redacted, False
+    return redacted[:MAX_BODY_EXCERPT], True

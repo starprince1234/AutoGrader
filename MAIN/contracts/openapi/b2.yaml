@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AutoGrader B2 Evaluation API
-  version: 0.23.0
+  version: 0.22.0
   description: |
     Submission intake (API and email), content-addressed storage, static legality,
     security confirmation, sandboxed dynamic execution, explainable and replayable
@@ -574,6 +574,140 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/EvaluationQualitySummary'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
+  /api/v1/submissions/{submission_id}/manual-grade:
+    post:
+      operationId: setManualGrade
+      summary: Record a teacher's score for a submission (manual grading)
+      description: |
+        Manual grading exists because some assignments cannot be judged by execution — the
+        Unix homework asks for command lines mailed in, and their output depends on the machine
+        they run on. The score is the teacher's; B2 stores it with its author, its time and its
+        history, and reports `score_source: manual` so no export can present it as a machine
+        result.
+
+        Authorization is the course scope of the section the submission belongs to: a teacher of
+        another course gets 403, and a student cannot grade anything (the token's roles decide,
+        not the request body).
+      tags: [grades]
+      parameters:
+        - {name: submission_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ManualGradeRequest'}
+      responses:
+        '200':
+          description: Grade stored (created or updated).
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManualGradeView'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '409':
+          description: |
+            The grade changed since `expected_updated_at` (someone else graded it first), or a
+            score change arrived without a `reason`.
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+
+    get:
+      operationId: getManualGrade
+      summary: Read the current manual grade (204 when the submission is not graded yet)
+      description: |
+        The drawer needs two things this read provides: whether a manual score already exists
+        (a changed score requires a `reason`) and its `updated_at`, which is the value the next
+        write must echo as `expected_updated_at`. Letting the client invent that value would hand
+        the optimistic lock back to the caller.
+
+        `204` means "no manual score yet", not "error": a submission waiting for its first grade
+        is the normal state of a mailed-in assignment.
+      tags: [grades]
+      parameters:
+        - {name: submission_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+      responses:
+        '200':
+          description: The stored manual grade.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManualGradeView'}
+        '204': {description: No manual grade exists yet.}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
+  /api/v1/submissions/{submission_id}/manual-grade/release:
+    post:
+      operationId: releaseManualGrade
+      summary: Withdraw a manual score and return the submission to "awaiting manual"
+      description: |
+        Needed for the mis-click case: a score entered against the wrong submission has to be
+        removable without editing the database. The prior score stays in the history table.
+      tags: [grades]
+      parameters:
+        - {name: submission_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+      responses:
+        '200':
+          description: Score withdrawn; `grade_status` is `awaiting_manual` again.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ManualGradeRelease'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '409': {description: No manual score exists to withdraw.}
+
+  /api/v1/submissions/{submission_id}/files:
+    get:
+      operationId: downloadSubmissionFile
+      summary: Download one file of a submission (teacher review)
+      description: |
+        Students must be able to see how their work is judged, and teachers must be able to read
+        what was actually submitted — including attachments that arrived by mail. Content is
+        served from the content-addressed store; the response never includes other files, and
+        every download is audited as `submission.file_downloaded`.
+      tags: [submissions]
+      parameters:
+        - {name: submission_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+        - name: path
+          in: query
+          required: true
+          schema: {type: string, maxLength: 500}
+          description: |
+            The submission-relative path recorded in `submission_files.path` (for the Unix
+            homework this is the attachment name, e.g. `2024141460192.txt`). It is a path
+            rather than an id because that table is keyed by `(submission_id, path)`.
+      responses:
+        '200':
+          description: File bytes.
+          content:
+            application/octet-stream:
+              schema: {type: string, format: binary}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
+  /api/v1/submissions/{submission_id}/intake-message:
+    get:
+      operationId: getSubmissionIntakeMessage
+      summary: Read the message a submission arrived in (subject, sender, body excerpt)
+      description: |
+        Returns the bounded excerpt described on `IntakeMessageView`. A submission created
+        through the API has no message, and that is reported as 404 rather than an empty object,
+        so the caller can tell "mailed in" from "uploaded".
+      tags: [submissions]
+      parameters:
+        - {name: submission_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+      responses:
+        '200':
+          description: The intake message.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/IntakeMessageView'}
         '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
         '403': {$ref: './common.yaml#/components/responses/Forbidden'}
         '404': {$ref: './common.yaml#/components/responses/NotFound'}
@@ -1163,6 +1297,76 @@ components:
         finished_at: {anyOf: [{$ref: './common.yaml#/components/schemas/Timestamp'}, {type: "null"}]}
       additionalProperties: false
 
+    GradeStatus:
+      type: string
+      enum: [deterministic, awaiting_manual, graded]
+      description: |
+        `deterministic` — the machine score is the grade (default for API submissions);
+        `awaiting_manual` — only a human can grade this submission, and **no score exists
+        yet**, so it must not be counted as "not submitted";
+        `graded` — a manual score exists and is what the student sees.
+
+    ManualGradeRequest:
+      type: object
+      description: |
+        A teacher's score for one submission. `comment` is optional because the product asks
+        for an optional remark; `reason` is required **only when changing an existing score**,
+        because a change without a reason is the change that cannot be defended later.
+        `expected_updated_at` is an optimistic lock: two teachers editing the same grade at
+        once would otherwise silently overwrite each other.
+      required: [score, expected_updated_at]
+      properties:
+        score: {type: number, minimum: 0, maximum: 100, description: "One decimal place."}
+        comment: {type: string, maxLength: 2000}
+        reason: {type: string, maxLength: 500}
+        expected_updated_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+      additionalProperties: false
+
+    ManualGradeRelease:
+      type: object
+      required: [submission_id, grade_status]
+      properties:
+        submission_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        grade_status: {type: string, enum: [awaiting_manual]}
+      additionalProperties: false
+
+    ManualGradeView:
+      type: object
+      description: |
+        The grade as stored. `revision` increments on every change, so a client that saw
+        revision N knows its write of N+1 landed rather than being overwritten.
+      required: [submission_id, score, score_source, grade_status, graded_at, updated_at, revision]
+      properties:
+        submission_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        score: {type: number}
+        score_source: {type: string, enum: [manual]}
+        grade_status: {$ref: '#/components/schemas/GradeStatus'}
+        comment: {anyOf: [{type: string}, {type: "null"}]}
+        graded_by: {$ref: './common.yaml#/components/schemas/Uuid'}
+        graded_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+        updated_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+        revision: {type: integer, minimum: 1}
+      additionalProperties: false
+
+    IntakeMessageView:
+      type: object
+      description: |
+        The message a submission arrived in, for the teacher to read. The body is a **bounded
+        excerpt** (leading 4000 characters, contact details redacted), never the full message:
+        the grader only needs enough context to understand what the student meant, and storing
+        whole mailboxes would turn the platform into an archive of unrelated correspondence.
+      required: [subject, sender, received_at, body_excerpt]
+      properties:
+        subject: {anyOf: [{type: string}, {type: "null"}]}
+        sender: {type: string}
+        received_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+        body_excerpt: {type: string, maxLength: 4000}
+        truncated: {type: boolean, default: false}
+        attachment_names:
+          type: array
+          items: {type: string}
+      additionalProperties: false
+
     GradeRow:
       type: object
       description: |
@@ -1182,6 +1386,16 @@ components:
         score: {anyOf: [{type: number}, {type: "null"}]}
         max_score: {anyOf: [{type: number}, {type: "null"}]}
         is_pass: {anyOf: [{type: boolean}, {type: "null"}]}
+        grade_status: {$ref: '#/components/schemas/GradeStatus'}
+        score_source:
+          anyOf:
+            - {type: string, enum: [deterministic, manual]}
+            - {type: "null"}
+          description: |
+            Where the score came from. `deterministic` is recomputable from the submission
+            and the cases; `manual` is a teacher's judgement and carries an author. Null while
+            no score exists. Without this field an export cannot answer "who produced this
+            number", which is the first question a disputed grade raises.
         submitted_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
         evaluation_run_id: {anyOf: [{$ref: './common.yaml#/components/schemas/Uuid'}, {type: "null"}]}
       additionalProperties: false

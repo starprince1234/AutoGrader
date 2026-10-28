@@ -6,6 +6,7 @@ import { loadedCourses, useCourses, useSections } from "../../api/directory";
 import { useSession } from "../../auth/sessionContext";
 import {
   canExportGrades,
+  canGradeSubmission,
   canViewCohortGrades,
   canViewTeacherEvidence,
 } from "../../auth/visibility";
@@ -30,6 +31,7 @@ import { GradesChart } from "./GradesChart";
 import type { EChartsLoader } from "./echartsLoader";
 import { SubmissionMatrix } from "./SubmissionMatrix";
 import { downloadGradesExport, loadedGrades, useGrades, type ExportFormat } from "./useGrades";
+import { ManualGradeDrawer } from "./ManualGradeDrawer";
 
 const STATE_TONE: Record<GradeRow["state"], "ok" | "warn" | "bad" | "idle"> = {
   received: "idle",
@@ -57,6 +59,8 @@ export function GradesPage({ chartLoader }: { chartLoader?: EChartsLoader } = {}
   const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [tab, setTab] = useState<GradesTab>("detail");
+  // 打分抽屉只记哪一次提交，其余状态由抽屉自己读（含乐观锁需要的 updated_at）。
+  const [gradeTarget, setGradeTarget] = useState<string | null>(null);
 
   // 默认选中第一个可见课程：成绩列表需要一个课程作用域，而多数用户只被授权一门课。
   // 留空会让页面首屏显示"已加载 0 行"，看起来像没有成绩，而不是"还没选课程"。
@@ -228,12 +232,23 @@ export function GradesPage({ chartLoader }: { chartLoader?: EChartsLoader } = {}
                 header: t("grades.score"),
                 align: "right",
                 // 未完成的行 score 为 null：显示状态，不显示 0 分。
-                render: (row) =>
-                  typeof row.score === "number" ? row.score : (
+                render: (row) => {
+                  // awaiting_manual 既不是 0 分也不是“未完成”：它表示“等老师打分”。
+                  if (row.grade_status === "awaiting_manual") {
+                    return (
+                      <span className="muted" data-testid="awaiting-grade">
+                        {t("grades.gradeStatus.awaiting_manual")}
+                      </span>
+                    );
+                  }
+                  return typeof row.score === "number" ? (
+                    row.score
+                  ) : (
                     <span className="muted" data-testid="unfinished-score">
                       {t("grades.unfinished")}
                     </span>
-                  ),
+                  );
+                },
               },
               {
                 key: "max_score",
@@ -245,6 +260,25 @@ export function GradesPage({ chartLoader }: { chartLoader?: EChartsLoader } = {}
                 key: "submitted_at",
                 header: t("grades.submittedAt"),
                 render: (row) => formatDateTime(row.submitted_at, t("common.none")),
+              },
+              {
+                key: "grade_action",
+                header: t("grades.gradeAction"),
+                render: (row) =>
+                  canGradeSubmission(session) ? (
+                    <button
+                      type="button"
+                      className="button button--ghost"
+                      data-testid={`grade-${row.submission_id}`}
+                      onClick={() => setGradeTarget(row.submission_id)}
+                    >
+                      {t("grades.gradeAction")}
+                    </button>
+                  ) : (
+                    <span className="muted">
+                      {t(`grades.gradeStatus.${row.grade_status ?? "deterministic"}`)}
+                    </span>
+                  ),
               },
               {
                 key: "evidence",
@@ -266,6 +300,9 @@ export function GradesPage({ chartLoader }: { chartLoader?: EChartsLoader } = {}
             ]}
           />
         )}
+        {gradeTarget ? (
+          <ManualGradeDrawer submissionId={gradeTarget} onClose={() => setGradeTarget(null)} />
+        ) : null}
       </Panel>
     </>
   );

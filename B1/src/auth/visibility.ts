@@ -31,6 +31,11 @@ export function canManageUsers(state: SessionState): boolean {
 }
 
 /** 成绩导出（教师、助教、管理员）；学生即使直接调用也会得到 403。 */
+/** 人工评分：教师与管理员。与 `canExportGrades` 同一角色集，单独命名以便将来区分。 */
+export function canGradeSubmission(state: SessionState): boolean {
+  return canExportGrades(state);
+}
+
 export function canExportGrades(state: SessionState): boolean {
   return has(state, ["teacher", "assistant", "admin"]);
 }

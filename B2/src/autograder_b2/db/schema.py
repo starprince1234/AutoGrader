@@ -54,6 +54,9 @@ submissions = sa.Table(
     sa.Column("uidvalidity", sa.BigInteger(), nullable=True),
     sa.Column("uid", sa.BigInteger(), nullable=True),
     sa.Column("message_id", sa.Text(), nullable=True),
+    # 迁移 0017：机器判定为 deterministic；awaiting_manual 表示只能人工评分，
+    # 这种提交"尚未评分"，不能被读成"未提交"。
+    sa.Column("grade_status", sa.Text(), nullable=False),
     sa.CheckConstraint(
         "(intake = 'api' AND request_id IS NOT NULL"
         " AND mailbox IS NULL AND uidvalidity IS NULL AND uid IS NULL AND message_id IS NULL)"
@@ -333,4 +336,48 @@ evaluation_commentaries = sa.Table(
     sa.Column("advisory_max_score", sa.Numeric(), nullable=True),
     sa.Column("advisory_rationale", sa.Text(), nullable=True),
     sa.Column("advisory_confidence", sa.Text(), nullable=True),
+)
+
+# 迁移 0017：教师给的分数是判断而不是计算，所以与确定性分数并列存放，而不是替换它。
+# `uq_manual_grades_submission_id` 让"一次提交只有一个当前评分"在数据库层成立。
+manual_grades = sa.Table(
+    "manual_grades",
+    metadata,
+    sa.Column("manual_grade_id", sa.Uuid(), primary_key=True),
+    sa.Column("submission_id", sa.Uuid(), nullable=False),
+    sa.Column("score", sa.Numeric(5, 1), nullable=False),
+    sa.Column("comment", sa.Text(), nullable=True),
+    sa.Column("graded_by", sa.Uuid(), nullable=False),
+    sa.Column("graded_at", sa.DateTime(timezone=True), nullable=False),
+    sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+    sa.Column("revision", sa.Integer(), nullable=False),
+    sa.UniqueConstraint("submission_id", name="uq_manual_grades_submission_id"),
+)
+
+# 每次改分都留下旧分与理由，这样"谁改的、为什么改"不会随着覆盖而消失。
+manual_grade_history = sa.Table(
+    "manual_grade_history",
+    metadata,
+    sa.Column("history_id", sa.Uuid(), primary_key=True),
+    sa.Column("submission_id", sa.Uuid(), nullable=False),
+    sa.Column("previous_score", sa.Numeric(5, 1), nullable=True),
+    sa.Column("score", sa.Numeric(5, 1), nullable=False),
+    sa.Column("reason", sa.Text(), nullable=False),
+    sa.Column("graded_by", sa.Uuid(), nullable=False),
+    sa.Column("recorded_at", sa.DateTime(timezone=True), nullable=False),
+)
+
+# 迁移 0018：提交所来自那封信的有界、脱敏摘录；API 提交没有这一行。
+intake_messages = sa.Table(
+    "intake_messages",
+    metadata,
+    sa.Column("intake_message_id", sa.Uuid(), primary_key=True),
+    sa.Column("submission_id", sa.Uuid(), nullable=False),
+    sa.Column("subject", sa.Text(), nullable=True),
+    sa.Column("sender", sa.Text(), nullable=False),
+    sa.Column("body_excerpt", sa.Text(), nullable=False),
+    sa.Column("truncated", sa.Boolean(), nullable=False),
+    sa.Column("received_at", sa.DateTime(timezone=True), nullable=False),
+    sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+    sa.UniqueConstraint("submission_id", name="uq_intake_messages_submission_id"),
 )

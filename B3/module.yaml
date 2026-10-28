@@ -1,6 +1,6 @@
 schema_version: 1
 module: B3
-contract_version: 0.23.0
+contract_version: 0.22.0
 entry_point: autograder_b3.plugin:create_module
 provides: [b3-questions]
 requires: [host, b4-course]

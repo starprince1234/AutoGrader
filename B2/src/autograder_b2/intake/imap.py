@@ -44,11 +44,11 @@ from datetime import datetime
 from typing import Literal, Self
 
 import sqlalchemy as sa
-from sqlalchemy import Connection, Engine
+from sqlalchemy import Connection, Engine, insert
 from sqlalchemy.exc import IntegrityError
 
 from autograder_b2.config import ImapSettings
-from autograder_b2.db.schema import email_checkpoints, intake_quarantines
+from autograder_b2.db.schema import email_checkpoints, intake_messages, intake_quarantines
 from autograder_b2.domain.clock import sha256_hex, utc_now
 from autograder_b2.domain.envelope import EmailProvenance
 from autograder_b2.intake.attachments import (
@@ -655,16 +655,15 @@ class EmailIntakeService:
             result = self._intake.persist(
                 envelope,
                 files,
-                on_persist=lambda connection, created: self._checkpoints.record(
+                on_persist=lambda connection, created: _persist_message(
                     connection,
+                    created=created,
+                    message=message,
+                    checkpoints=self._checkpoints,
                     mailbox=mailbox,
                     uidvalidity=uidvalidity,
                     uid=uid,
                     message_id=message_id,
-                    status="processed",
-                    reason_code=None,
-                    submission_id=created,
-                    now=utc_now(),
                 ),
             )
         except IntegrityError as error:
@@ -989,3 +988,46 @@ __all__ = [
     "email_idempotency_key",
     "security_logger",
 ]
+
+
+def _persist_message(
+    connection: Connection,
+    *,
+    created: str,
+    message: object,
+    checkpoints: EmailCheckpointStore,
+    mailbox: str,
+    uidvalidity: int,
+    uid: int,
+    message_id: str,
+) -> None:
+    """记录 checkpoint，并在同一事务里写下正文摘录。
+
+    放在 `on_persist` 里的理由：提交与它的来信必须是**同一次提交的产物**。分开写会出现
+    "有提交、没来信"（老师看不到学生写了什么）或"有来信、没提交"（脏数据）这两种半成品，
+    而它们都只在出事之后才被发现。
+    """
+    checkpoints.record(
+        connection,
+        mailbox=mailbox,
+        uidvalidity=uidvalidity,
+        uid=uid,
+        message_id=message_id,
+        status="processed",
+        reason_code=None,
+        submission_id=created,
+        now=utc_now(),
+    )
+    excerpt = getattr(message, "body_excerpt", None)
+    if excerpt:
+        connection.execute(
+            insert(intake_messages).values(
+                intake_message_id=str(uuid.uuid4()),
+                submission_id=created,
+                subject=getattr(message, "subject", None),
+                sender=message.sender,
+                body_excerpt=excerpt,
+                truncated=bool(getattr(message, "body_truncated", False)),
+                received_at=utc_now(),
+            )
+        )

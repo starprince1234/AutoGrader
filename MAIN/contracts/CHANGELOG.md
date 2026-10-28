@@ -612,6 +612,21 @@ uff、pytest、pnpm * 都无法运行。
 
 ---
 
+## 0.22.0 - 人工评分（老师亲自打分）与邮件正文可见
+
+- **级别**：P1（新增 operation 与字段）
+- **状态**：已生效
+- **动机**：部分作业无法由执行判定（Unix 作业以邮件提交命令行，who/uname/ls -i 的输出依赖机器）。
+  这类作业只能由教师判定，而此前分数只来自确定性评测，系统里没有"老师给分"的位置，也没有
+  "待评分"状态——"交了但没评"于是被显示成"未交"。
+- **新增 operation**：setManualGrade、
+eleaseManualGrade、downloadSubmissionFile、
+  getSubmissionIntakeMessage。
+- **字段**：GradeRow.grade_status（deterministic|awaiting_manual|graded）、GradeRow.score_source。
+- **原则**：人工分与机器分分表存储，带作者/时间/理由/历史；导出必须能回答"这个分谁给的"；
+  waiting_manual 不计入未交；正文只留前 4000 字并脱敏。
+- **影响模块**：B2（存储与写路径）、B1（待评分列表与打分表单）
+
 ## 0.21.0 — 合并两条 0.20.0 分支：P13 复核范围 + 名单导入 CSV
 
 - **级别**：P1（**版本号冲突后的合并**，无新增字段）

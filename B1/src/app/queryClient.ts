@@ -47,6 +47,9 @@ export const queryKeys = {
   questionDiagnostics: (questionId: string) =>
     ["question-diagnostics", questionId] as const,
   grades: (filter: Record<string, string | undefined>) => ["grades", filter] as const,
+  /** 来信正文：一次提交一封，按 submission_id 缓存即可。 */
+  intakeMessage: (submissionId: string) => ["intake-message", submissionId] as const,
+  manualGrade: (submissionId: string) => ["manual-grade", submissionId] as const,
   submission: (submissionId: string) => ["submission", submissionId] as const,
   evaluationReport: (runId: string, view: string) =>
     ["evaluation-report", runId, view] as const,
