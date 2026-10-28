@@ -16,7 +16,7 @@ SCHEMA = "b2"
 #: 本代码期望的迁移版本（必须与 `module.yaml: database.migration_head` 和 Alembic head 三者一致）。
 #: 用途：readyness 探测据此判断"库结构与代码是否匹配"——连接得上但版本落后同样是**不可用**，
 #: 否则 health 会谎报健康而受权读请求全线 500。三者一致性由 `tests/test_migrations.py` 断言。
-EXPECTED_SCHEMA_REVISION = "20260916_0016"
+EXPECTED_SCHEMA_REVISION = "20261028_0018"
 
 metadata = sa.MetaData(schema=SCHEMA)
 
