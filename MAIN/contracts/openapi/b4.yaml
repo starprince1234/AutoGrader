@@ -660,6 +660,40 @@ paths:
         '403': {$ref: './common.yaml#/components/responses/Forbidden'}
         '409': {$ref: './common.yaml#/components/responses/Conflict'}
 
+  /api/v1/courses/{course_id}:
+    parameters:
+      - {name: course_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    patch:
+      operationId: updateCourse
+      summary: Rename a course (teacher of that course, or admin)
+      description: |
+        Only the title is writable. The course code is an identity: rosters, assignments and
+        exports match on it, so renaming it in place would silently break references rather than
+        rename a course. A wrong code is fixed by creating the right course, not by editing this
+        one.
+
+        `expected_updated_at` is an optimistic lock. Two teachers renaming the same course at the
+        same time must not have one edit vanish; the stale writer gets `409` and re-reads.
+      tags: [courses]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CourseRename'}
+      responses:
+        '200':
+          description: The course as stored after the rename.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CoursePublic'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '409':
+          description: |
+            The course changed since `expected_updated_at` (someone else renamed it first).
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+
   /api/v1/courses/{course_id}/sections:
     parameters:
       - {name: course_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
@@ -1006,17 +1040,32 @@ components:
         created_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
       additionalProperties: false
 
+    CourseRename:
+      type: object
+      description: |
+        Rename request. `title` is the only writable field (see `updateCourse`); an empty or
+        whitespace-only title is refused rather than coerced, because a blank course name is
+        indistinguishable from a rendering bug later.
+      required: [title, expected_updated_at]
+      properties:
+        title: {type: string, minLength: 1, maxLength: 200}
+        expected_updated_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+      additionalProperties: false
+
     CoursePublic:
       type: object
       description: |
         A course as the API returns it, for reads and for the create response. The create
         response previously carried only `course_id`, so a client could not show the new
         course without a second round trip.
-      required: [course_id, course_code, title]
+      required: [course_id, course_code, title, updated_at]
       properties:
         course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
         course_code: {type: string}
         title: {type: string}
+        # `updateCourse.expected_updated_at` is compared against this value: without it a
+        # client can only overwrite unconditionally, which makes the lock decorative.
+        updated_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
       additionalProperties: false
 
     SectionPublic:

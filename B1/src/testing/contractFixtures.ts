@@ -64,7 +64,7 @@ export function problem(overrides?: Partial<ProblemDetails>): ProblemDetails {
 }
 
 export function courseSummary(overrides?: Partial<CoursePublic>): CoursePublic {
-  return { course_id: UUID_A, course_code: "OS-2026", title: "操作系统", ...overrides };
+  return { course_id: UUID_A, course_code: "OS-2026", title: "操作系统", updated_at: "2026-10-01T00:00:00.000Z", ...overrides };
 }
 
 export function coursePage(courses: CoursePublic[], nextCursor: string | null = null) {

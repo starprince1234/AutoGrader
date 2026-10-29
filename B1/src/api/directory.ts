@@ -87,6 +87,25 @@ export function useCreateCourse() {
 }
 
 /** 创建课序：响应体即存储后的课序，直接加入当前课程的课序列表。 */
+/** 重命名课程：只改 title；`expected_updated_at` 是乐观锁，避免两人同时改互相覆盖。 */
+export function useRenameCourse() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      courseId: string;
+      title: string;
+      expectedUpdatedAt: string;
+    }): Promise<CoursePublic> =>
+      apiRequest<CoursePublic>(`/api/v1/courses/${encodeURIComponent(input.courseId)}`, {
+        method: "PATCH",
+        body: { title: input.title, expected_updated_at: input.expectedUpdatedAt },
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.courses });
+    },
+  });
+}
+
 export function useCreateSection(courseId: string | null) {
   const queryClient = useQueryClient();
   return useMutation({

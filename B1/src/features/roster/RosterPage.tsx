@@ -24,6 +24,7 @@ import {
   loadedCourses,
   useCourses,
   useCreateCourse,
+  useRenameCourse,
   useSections,
 } from "../../api/directory";
 import { RosterImportPanel } from "../roster-import/RosterImportPanel";
@@ -64,6 +65,10 @@ export function RosterPage() {
   const importId = search.import_id ?? null;
 
   const courses = useCourses();
+  // 重命名课程：选中课程后可用；标题按当前值预填，保存时带上它的 updated_at 作为乐观锁。
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameTitle, setRenameTitle] = useState("");
+  const renameCourse = useRenameCourse();
   const courseOptions = useMemo(() => loadedCourses(courses.data?.pages), [courses.data]);
   const sections = useSections(courseId === "" ? null : courseId);
   const enrollments = useEnrollments(sectionId === "" ? null : sectionId);
@@ -272,6 +277,23 @@ export function RosterPage() {
               ))}
             </select>
           </Field>
+          {courseId !== "" && canCreateCourse(session) ? (
+            <Field label={t("roster.rename.entry")} htmlFor="roster-rename">
+              <button
+                id="roster-rename"
+                type="button"
+                className="button button--ghost"
+                data-testid="roster-rename-entry"
+                onClick={() => {
+                  const current = courseOptions.find((option) => option.course_id === courseId);
+                  setRenameTitle(current?.title ?? "");
+                  setRenameOpen(true);
+                }}
+              >
+                {t("roster.rename.entry")}
+              </button>
+            </Field>
+          ) : null}
           <Field label={t("import.section")} htmlFor="roster-section">
             <select
               id="roster-section"
@@ -334,6 +356,53 @@ export function RosterPage() {
             setScope({ course_id: course.course_id, section_id: "" });
           }}
         />
+      ) : null}
+
+      {renameOpen ? (
+        <Modal
+          title={t("roster.rename.title")}
+          testId="rename-course"
+          onClose={() => setRenameOpen(false)}
+        >
+          <div className="stack">
+            <Field label={t("roster.rename.titleLabel")} htmlFor="rename-course-title">
+              <input
+                id="rename-course-title"
+                value={renameTitle}
+                data-testid="rename-course-title"
+                onChange={(event) => setRenameTitle(event.target.value)}
+              />
+            </Field>
+            <p className="muted">{t("roster.rename.hint")}</p>
+            {renameCourse.isError ? (
+              <p className="form-error" data-testid="rename-course-error">
+                {t("roster.rename.failed")}
+              </p>
+            ) : null}
+            <div className="row">
+              <button
+                type="button"
+                className="button button--primary"
+                data-testid="rename-course-save"
+                disabled={renameTitle.trim() === "" || renameCourse.isPending}
+                onClick={() => {
+                  const current = courseOptions.find((option) => option.course_id === courseId);
+                  if (!current) {
+                    return;
+                  }
+                  renameCourse.mutate({
+                    courseId: current.course_id,
+                    title: renameTitle.trim(),
+                    expectedUpdatedAt: current.updated_at,
+                  });
+                  setRenameOpen(false);
+                }}
+              >
+                {t("roster.rename.save")}
+              </button>
+            </div>
+          </div>
+        </Modal>
       ) : null}
 
       {removing ? (

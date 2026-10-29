@@ -17,6 +17,7 @@ from sqlalchemy import Connection, and_, select, update
 
 from ..audit import (
     ACTION_COURSE_CREATED,
+    ACTION_COURSE_RENAMED,
     ACTION_ENROLLMENT_DELETED,
     ACTION_ENROLLMENT_UPDATED,
     ACTION_SECTION_CREATED,
@@ -63,6 +64,15 @@ class CourseCreate(BaseModel):
 
     course_code: str = Field(min_length=1, max_length=MAX_CODE_LENGTH)
     title: str = Field(min_length=1, max_length=MAX_TITLE_LENGTH)
+
+
+class CourseRename(BaseModel):
+    """Rename request: `title` only (see `update_course`), plus the optimistic lock."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=MAX_TITLE_LENGTH)
+    expected_updated_at: datetime
 
 
 class SectionCreate(BaseModel):
@@ -114,6 +124,9 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
                 "course_id": str(row.course_id),
                 "course_code": row.course_code,
                 "title": row.title,
+                # The rename lock compares against this timestamp;
+                # without it a client can only overwrite.
+                "updated_at": _rfc3339(row.updated_at),
             }
             for row in rows
         ]
@@ -183,6 +196,60 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
             "course_id": str(course_id),
             "course_code": code,
             "title": title,
+            "updated_at": _rfc3339(now),
+        }
+
+    @router.patch("/api/v1/courses/{course_id}")
+    def update_course(
+        course_id: uuid.UUID,
+        payload: CourseRename,
+        caller=Depends(dependencies.principal),
+        connection: Connection = Depends(dependencies.connection),
+    ) -> dict[str, object]:
+        """Rename one course; the code is an identity and is not writable here."""
+        row = connection.execute(
+            select(courses).where(courses.c.course_id == course_id)
+        ).fetchone()
+        if row is None:
+            raise not_found("The course does not exist.")
+        try:
+            ensure_course_write(caller, course_id=course_id)
+        except Exception as error:
+            audit_denial(
+                engine,
+                principal=caller,
+                detail="renaming a course requires write access to that course",
+            )
+            raise error
+
+        title = payload.title.strip()
+        if not title:
+            raise bad_request("The course title must not be blank.")
+        if not _same_instant(row.updated_at, payload.expected_updated_at):
+            raise conflict("The course changed since it was read; reload before saving.")
+
+        now = _now()
+        with engine.begin() as write_connection:
+            write_connection.execute(
+                update(courses)
+                .where(courses.c.course_id == course_id)
+                .values(title=title, updated_at=now)
+            )
+            AuditLog(write_connection).record(
+                action=ACTION_COURSE_RENAMED,
+                outcome=OUTCOME_SUCCESS,
+                actor=actor_of(caller),
+                target_type="course",
+                target_id=course_id,
+                course_id=course_id,
+                detail=f"renamed course title: {row.title!r} -> {title!r}",
+                digest=change_digest({"title": title}),
+            )
+        return {
+            "course_id": str(course_id),
+            "course_code": row.course_code,
+            "title": title,
+            "updated_at": _rfc3339(now),
         }
 
     @router.get("/api/v1/courses/{course_id}/sections")

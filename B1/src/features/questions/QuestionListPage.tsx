@@ -40,6 +40,31 @@ import { useQuestionList } from "./useQuestions";
  * 搜索范围随之扩大。
  */
 
+type QuestionGroup = { key: string; label: string; rows: QuestionPublic[] };
+
+/**
+ * 按**课程名称**分组（不是按 code）：老师认的是课程名，code 是给系统看的标识。
+ *
+ * 组内保持原有顺序，组间按名称排序——折叠状态下老师按字母序找课程，展开后看到的是原顺序，
+ * 两种顺序各自服务于不同的使用方式。
+ */
+function groupByCourse(
+  rows: QuestionPublic[],
+  labelOf: (courseId: string) => string,
+): QuestionGroup[] {
+  const groups = new Map<string, QuestionGroup>();
+  for (const row of rows) {
+    const label = labelOf(row.course_id);
+    const existing = groups.get(label);
+    if (existing) {
+      existing.rows.push(row);
+    } else {
+      groups.set(label, { key: label, label, rows: [row] });
+    }
+  }
+  return [...groups.values()].sort((left, right) => left.label.localeCompare(right.label, "zh"));
+}
+
 function statusTone(status: QuestionPublic["status"]): "ok" | "warn" | "idle" {
   if (status === "published") return "ok";
   if (status === "draft") return "warn";
@@ -52,6 +77,8 @@ export function QuestionListPage() {
   const courses = useCourses();
   const courseOptions = loadedCourses(courses.data?.pages);
   const [courseId, setCourseId] = useState("");
+  // 折叠状态按课程名称保存：切换筛选后同一门课保持老师上次的展开/收起选择。
+  const [collapsedCourses, setCollapsedCourses] = useState<ReadonlySet<string>>(new Set());
   const [tagFilter, setTagFilter] = useState("");
   const [stemQuery, setStemQuery] = useState("");
 
@@ -193,19 +220,38 @@ export function QuestionListPage() {
                 : t("questions.emptyBank")}
           </EmptyState>
         ) : (
+          <div data-testid="question-table">
+            {groupByCourse(rows, courseLabel).map((group, index) => {
+              const collapsed = collapsedCourses.has(group.key);
+              return (
+                <div key={group.key} className="question-group">
+                  <button
+                    type="button"
+                    className="question-group__toggle"
+                    data-testid={`question-group-toggle-${index}`}
+                    aria-expanded={!collapsed}
+                    onClick={() =>
+                      setCollapsedCourses((previous) => {
+                        const next = new Set(previous);
+                        if (next.has(group.key)) {
+                          next.delete(group.key);
+                        } else {
+                          next.add(group.key);
+                        }
+                        return next;
+                      })
+                    }
+                  >
+                    <span aria-hidden="true">{collapsed ? "▸" : "▾"}</span> {group.label}
+                    <span className="muted"> （{group.rows.length}）</span>
+                  </button>
+                  {collapsed ? null : (
           <Table<QuestionPublic>
-            testId="question-table"
-            label={t("questions.title")}
-            rows={rows}
+            testId={`question-group-${index}`}
+            label={group.label}
+            rows={group.rows}
             getRowKey={(row) => row.question_id}
             columns={[
-              {
-                key: "course",
-                header: t("import.course"),
-                render: (row) => (
-                  <span data-testid={`course-${row.question_id}`}>{courseLabel(row.course_id)}</span>
-                ),
-              },
               {
                 key: "title",
                 header: t("questions.title"),
@@ -288,6 +334,11 @@ export function QuestionListPage() {
               },
             ]}
           />
+                  )}
+                </div>
+              );
+            })}
+          </div>
         )}
       </Panel>
 

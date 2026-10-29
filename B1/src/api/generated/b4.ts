@@ -358,6 +358,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/courses/{course_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                course_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Rename a course (teacher of that course, or admin)
+         * @description Only the title is writable. The course code is an identity: rosters, assignments and
+         *     exports match on it, so renaming it in place would silently break references rather than
+         *     rename a course. A wrong code is fixed by creating the right course, not by editing this
+         *     one.
+         *
+         *     `expected_updated_at` is an optimistic lock. Two teachers renaming the same course at the
+         *     same time must not have one edit vanish; the stale writer gets `409` and re-reads.
+         */
+        patch: operations["updateCourse"];
+        trace?: never;
+    };
     "/api/v1/courses/{course_id}/sections": {
         parameters: {
             query?: never;
@@ -635,6 +663,15 @@ export interface components {
             created_at?: components["schemas"]["Timestamp"];
         };
         /**
+         * @description Rename request. `title` is the only writable field (see `updateCourse`); an empty or
+         *     whitespace-only title is refused rather than coerced, because a blank course name is
+         *     indistinguishable from a rendering bug later.
+         */
+        CourseRename: {
+            title: string;
+            expected_updated_at: components["schemas"]["Timestamp"];
+        };
+        /**
          * @description A course as the API returns it, for reads and for the create response. The create
          *     response previously carried only `course_id`, so a client could not show the new
          *     course without a second round trip.
@@ -643,6 +680,7 @@ export interface components {
             course_id: components["schemas"]["Uuid"];
             course_code: string;
             title: string;
+            updated_at: components["schemas"]["Timestamp"];
         };
         /**
          * @description A section (课序) of a course. Defined here because the read and create responses
@@ -1479,6 +1517,43 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             409: components["responses"]["Conflict"];
+        };
+    };
+    updateCourse: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                course_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CourseRename"];
+            };
+        };
+        responses: {
+            /** @description The course as stored after the rename. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoursePublic"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The course changed since `expected_updated_at` (someone else renamed it first). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            422: components["responses"]["UnprocessableEntity"];
         };
     };
     listSections: {
