@@ -54,6 +54,7 @@ on:
           - sync-llm-config
           - preflight
           - diagnose
+          - check-mail
           - deploy
         default: preflight
 
@@ -106,6 +107,33 @@ jobs:
           doppler-project: autograder
           doppler-config: prd
           inject-env-vars: false
+
+      - name: Check the mail channel (no secret is printed)
+        if: github.event_name == 'workflow_dispatch' && inputs.operation == 'check-mail'
+        env:
+          IMAP_HOST: ${{ steps.doppler.outputs.IMAP_HOST }}
+          IMAP_PORT: ${{ steps.doppler.outputs.IMAP_PORT }}
+          IMAP_USER: ${{ steps.doppler.outputs.IMAP_USER }}
+          IMAP_PASS: ${{ steps.doppler.outputs.IMAP_PASS }}
+          B2_IMAP_MAILBOX: ${{ steps.doppler.outputs.B2_IMAP_MAILBOX }}
+        run: |
+          set -euo pipefail
+          # 端点可达性不需要任何凭据，先跑它：把"网络不通"与"授权码不对"分开。
+          python3 MAIN/scripts/probe_mail_endpoints.py \
+            --imap-host "${IMAP_HOST:-imap.qq.com}" \
+            --imap-port "${IMAP_PORT:-993}"
+          if [[ -z "${IMAP_USER:-}" || -z "${IMAP_PASS:-}" ]]; then
+            echo "::warning::IMAP_USER / IMAP_PASS are not present in Doppler; login not attempted."
+            exit 0
+          fi
+          # 登录探测只打印状态：欢迎语、ID 是否被接受、最近邮件数与主题。
+          # 口令从环境读取，脚本从不回显它。
+          B2_IMAP_PASSWORD="$IMAP_PASS" python3 MAIN/scripts/probe_imap_mailbox.py \
+            --host "${IMAP_HOST:-imap.qq.com}" \
+            --port "${IMAP_PORT:-993}" \
+            --username "$IMAP_USER" \
+            --mailbox "${B2_IMAP_MAILBOX:-INBOX}" \
+            --limit 3
 
       - name: Validate deployment credentials and SSH host fingerprint
         env:
@@ -300,6 +328,10 @@ jobs:
           IMAP_USER: ${{ steps.doppler.outputs.IMAP_USER }}
           IMAP_PASS: ${{ steps.doppler.outputs.IMAP_PASS }}
           IMAP_TLS_MODE: ${{ steps.doppler.outputs.IMAP_TLS_MODE }}
+          # 收信身份查询：本次作业目标由运维给出，服务令牌复用 B2→B3 的那一枚。
+          B2_IMAP_TARGET_JSON: ${{ steps.doppler.outputs.B2_IMAP_TARGET_JSON }}
+          B2_IDENTITY_URL: ${{ steps.doppler.outputs.B2_IDENTITY_URL }}
+          B2_B3_SERVICE_TOKEN: ${{ secrets.B2_B3_SERVICE_TOKEN }}
         run: node MAIN/deploy/write-mail-env.mjs "$RUNNER_TEMP/mail.env"
 
       - name: Install mail channel variables on the host

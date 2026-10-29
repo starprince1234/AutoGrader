@@ -54,6 +54,8 @@ def request(
     body = None if payload is None else json.dumps(payload).encode("utf-8")
     request_object = urllib.request.Request(url, data=body, method=method)
     request_object.add_header("authorization", f"Bearer {token}")
+    # Cloudflare 会拦掉 stdlib 默认 UA（error 1010），显式声明客户端身份。
+    request_object.add_header("user-agent", "autograder-seed/1.0")
     if body is not None:
         request_object.add_header("content-type", "application/json")
     try:
@@ -80,19 +82,17 @@ def draft_payload(entry: dict) -> dict:
             "args": [],
             "stdin": None,
             "expect_exit_code": 0,
-            "comparison": {"stdout": "exact", "stderr": "ignore"},
+            "comparison": {"stdout": "exact", "stderr": "ignored"},
         },
     }
     if entry.get("reference_answer"):
         payload["reference_answer"] = entry["reference_answer"]
     if entry.get("cases"):
+        # 逐字段透传：`TestCaseInput` 要求 name/ordinal，`expect_exit_code` 不属于用例
+        # （退出码在 adapter 上声明），传错字段整个请求会被 422 拒掉。
+        allowed = ("name", "ordinal", "stdin", "args", "expected_stdout", "expected_stderr")
         payload["cases"] = [
-            {
-                "stdin": case.get("stdin"),
-                "expected_stdout": case["expected_stdout"],
-                "expect_exit_code": case.get("expect_exit_code", 0),
-            }
-            for case in entry["cases"]
+            {key: case[key] for key in allowed if key in case} for case in entry["cases"]
         ]
     return payload
 
@@ -104,13 +104,23 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--course-id", required=True)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--publish", action="store_true")
+    parser.add_argument(
+        "--only-index",
+        type=int,
+        default=None,
+        help="seed only the question at this 0-based index (re-runs stay idempotent)",
+    )
     arguments = parser.parse_args(argv)
 
     data = json.loads(DATA.read_text(encoding="utf-8"))
     base = arguments.base_url.rstrip("/")
     created: list[tuple[str, str, bool]] = []
 
-    for entry in data["questions"]:
+    entries = data["questions"]
+    if arguments.only_index is not None:
+        entries = [entries[arguments.only_index]]
+
+    for entry in entries:
         payload = draft_payload(entry)
         if arguments.dry_run:
             print(f"[dry-run] {entry['title']}: {len(payload.get('cases', []))} case(s)")

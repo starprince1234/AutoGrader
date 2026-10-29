@@ -9,7 +9,7 @@
  */
 
 import { writeFileSync } from "node:fs";
-import { imapEnvEntries, mailEnvFile } from "./mail-env.mjs";
+import { imapEnvEntries, intakeEnvEntries, mailEnvFile } from "./mail-env.mjs";
 
 const target = process.argv[2];
 if (!target) {
@@ -17,10 +17,13 @@ if (!target) {
 }
 
 const smtp = mailEnvFile(process.env, { mode: "strict" });
+const intake = Object.entries(intakeEnvEntries(process.env))
+  .map(([name, value]) => name + '=' + JSON.stringify(value) + '\n')
+  .join("");
 const imap = Object.entries(imapEnvEntries(process.env))
   .map(([name, value]) => name + '=' + JSON.stringify(value) + '\n')
   .join("");
-const body = smtp + imap;
+const body = smtp + imap + intake;
 if (body.trim() === "") {
   throw new Error("the mail channel fragment would be empty");
 }

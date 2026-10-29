@@ -409,6 +409,8 @@ class ImapSettings:
     max_message_bytes: int
     timeout_seconds: float
     processed_mailbox: str | None = None
+    #: 发件人 → 账号 的查询配置；存在时不再需要 `B2_IMAP_MATCHING_*` 规则表。
+    identity: IdentitySettings | None = None
 
 
 def load_imap_settings(environ: Mapping[str, str] | None = None) -> ImapSettings | None:
@@ -451,7 +453,12 @@ def load_imap_settings(environ: Mapping[str, str] | None = None) -> ImapSettings
         password=_imap_password(source),
         mailbox=mailbox,
         use_ssl=use_ssl,
-        matching=load_imap_matching(source),
+        matching=(
+            load_imap_matching(source)
+            if load_identity_settings(source) is None
+            else {}
+        ),
+        identity=load_identity_settings(source),
         max_messages_per_pull=_positive_int(
             source, "B2_IMAP_MAX_MESSAGES", DEFAULT_IMAP_MAX_MESSAGES
         ),
@@ -549,3 +556,56 @@ def _positive_float(source: Mapping[str, str], name: str, default: float) -> flo
     if value <= 0:
         raise ConfigurationError(f"{name} must be positive")
     return value
+
+
+@dataclass(frozen=True, slots=True)
+class IdentitySettings:
+    """按发件人查账号所需的配置（B4 内部端点 + 本次作业的统一目标）。
+
+    `target` 是"这次收的作业要挂到哪门课、哪个课序、哪个题目版本"，与具体学生无关；学生身份
+    由发件人地址查询得到。这样每周只需要改一次目标，而不是为每个学生维护一条规则。
+    """
+
+    base_url: str
+    authorization: str
+    target: dict[str, str]
+
+    @property
+    def display(self) -> str:
+        """用于健康/日志的可读描述：只含主机与目标，不含凭据。"""
+        return f"{self.base_url} -> {self.target.get('question_version_id', '?')}"
+
+
+IDENTITY_VARIABLES = ("B2_IDENTITY_URL", "B2_IDENTITY_AUTHORIZATION", "B2_IMAP_TARGET_JSON")
+
+
+def load_identity_settings(environ: Mapping[str, str] | None = None) -> IdentitySettings | None:
+    """读取身份查询配置。三项都没给返回 `None`；给了任意一项却缺别项则当场报错。"""
+    source = os.environ if environ is None else environ
+    values = {name: (source.get(name) or "").strip() for name in IDENTITY_VARIABLES}
+    present = [name for name, value in values.items() if value]
+    if not present:
+        return None
+    missing = [name for name, value in values.items() if not value]
+    if missing:
+        raise ConfigurationError(
+            "identity lookup is half-configured; missing " + ", ".join(missing)
+        )
+
+    try:
+        document = json.loads(values["B2_IMAP_TARGET_JSON"])
+    except json.JSONDecodeError as error:
+        raise ConfigurationError("B2_IMAP_TARGET_JSON is not valid JSON") from error
+    if not isinstance(document, dict):
+        raise ConfigurationError("B2_IMAP_TARGET_JSON must be a JSON object")
+    target: dict[str, str] = {}
+    for name in ("course_id", "section_id", "question_version_id"):
+        value = document.get(name)
+        if not isinstance(value, str) or not value.strip():
+            raise ConfigurationError(f"B2_IMAP_TARGET_JSON.{name} must be a non-empty string")
+        target[name] = value.strip()
+    return IdentitySettings(
+        base_url=values["B2_IDENTITY_URL"].rstrip("/"),
+        authorization=values["B2_IDENTITY_AUTHORIZATION"],
+        target=target,
+    )

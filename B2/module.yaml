@@ -1,6 +1,6 @@
 schema_version: 1
 module: B2
-contract_version: 0.22.0
+contract_version: 0.24.0
 entry_point: autograder_b2.plugin:create_module
 provides: [b2-submissions]
 requires: [host, b4-auth, b3-questions]

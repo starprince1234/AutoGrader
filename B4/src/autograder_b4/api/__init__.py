@@ -10,6 +10,7 @@ from .audit import build_audit_router
 from .auth import build_auth_router
 from .courses import build_courses_router
 from .dependencies import B4State, build_dependencies
+from .internal import build_internal_router
 from .modules import build_modules_router
 from .password_reset import build_password_reset_router
 from .registrations import build_registration_router
@@ -39,6 +40,7 @@ def build_api_router(state: B4State) -> APIRouter:
     router.include_router(build_registration_router(state, dependencies))
     router.include_router(build_password_reset_router(state))
     router.include_router(build_users_router(state, dependencies))
+    router.include_router(build_internal_router(state, dependencies))
     router.include_router(build_courses_router(state, dependencies))
     router.include_router(build_roster_router(state, dependencies))
     router.include_router(build_audit_router(state, dependencies))

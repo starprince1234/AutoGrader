@@ -1,6 +1,6 @@
 import { chmodSync, writeFileSync } from "node:fs";
 import { llmEnvEntries } from "./llm-env.mjs";
-import { imapEnvEntries, mailEnvEntries } from "./mail-env.mjs";
+import { imapEnvEntries, intakeEnvEntries, mailEnvEntries } from "./mail-env.mjs";
 
 const runtimeEnvPath = process.argv[2];
 const setupEnvPath = process.argv[3];
@@ -47,6 +47,7 @@ const apiUrl = "http://127.0.0.1:18000";
 // report the channel as unconfigured while Doppler held every value.
 const mailEntries = mailEnvEntries(process.env);
 const imapEntries = imapEnvEntries(process.env);
+const intakeEntries = intakeEnvEntries(process.env);
 
 // Same arrangement for the model provider: `sync-llm-config` renders the identical block for a
 // host whose environment file already exists, and this render covers a fresh one.
@@ -78,11 +79,14 @@ const runtimeEntries = {
   B3_JWT_AUDIENCE: "autograder-api",
   B3_SERVICE_TOKEN: serviceToken,
   JWT_PRIVATE_KEY_FILE: "/var/lib/autograder/jwt/jwt-ed25519.pem",
+  // B2 的邮件收信查账号时调用 B4 内部端点，B4 用它校验预共享凭证。
+  B4_SERVICE_TOKEN: serviceToken,
   B4_REFRESH_COOKIE_SECURE: "true",
   AUTOGRADER_CORS_ORIGINS: "https://www.91idc.me",
   ...llmEntries,
   ...mailEntries,
   ...imapEntries,
+  ...intakeEntries,
 };
 
 const setupEntries = {

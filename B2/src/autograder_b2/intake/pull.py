@@ -39,6 +39,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="B2 mail intake puller.")
     parser.add_argument("--once", action="store_true", help="one pass, then exit")
     parser.add_argument(
+        "--allow-unconfigured",
+        action="store_true",
+        help=(
+            "exit 0 when the mailbox is not configured; used by the systemd timer so that "
+            "'nothing to do' is not reported as a failed unit"
+        ),
+    )
+    parser.add_argument(
         "--idle-exit",
         action="store_true",
         help="exit as soon as a pass finds nothing to do (handy for checks)",
@@ -56,7 +64,8 @@ def main(argv: list[str] | None = None) -> int:
         # Not configured is a legitimate state (the platform reports `not-configured`); the
         # CLI says so on stderr and exits 2 so the timer's status is honest.
         print(f"mail intake unavailable: {runtime.email_unavailable_reason}", file=sys.stderr)
-        return 2
+        # 定时器场景下"邮箱未配置"是正常状态；命令行的默认语义仍是 2（明确不可用）。
+        return 0 if arguments.allow_unconfigured else 2
 
     while True:
         report = runtime.email.pull()

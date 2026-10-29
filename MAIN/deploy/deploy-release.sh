@@ -47,10 +47,14 @@ chmod -R g+rX,o-rwx "$release"
 chmod 0755 "$release"
 install -m 0644 "$release/MAIN/deploy/autograder.service" /etc/systemd/system/autograder.service
 install -m 0644 "$release/MAIN/deploy/cloudflared.service" /etc/systemd/system/cloudflared.service
+install -m 0644 "$release/MAIN/deploy/autograder-intake.service" /etc/systemd/system/autograder-intake.service
+install -m 0644 "$release/MAIN/deploy/autograder-intake.timer" /etc/systemd/system/autograder-intake.timer
 systemctl daemon-reload
 ln -sfn "$release" "$root/current.next"
 mv -Tf "$root/current.next" "$root/current"
 systemctl enable autograder.service
+# 邮件收信由定时器驱动（见 autograder-intake.service 的说明）。
+systemctl enable --now autograder-intake.timer
 systemctl restart autograder.service
 
 wait_ready() {

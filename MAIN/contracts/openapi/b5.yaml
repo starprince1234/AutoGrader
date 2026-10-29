@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AutoGrader B5 Conformance API
-  version: 0.22.0
+  version: 0.24.0
   description: |
     Platform conformance audit. Owned by B5.
 

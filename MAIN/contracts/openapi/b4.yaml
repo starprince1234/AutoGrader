@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AutoGrader B4 Platform API
-  version: 0.22.0
+  version: 0.24.0
   description: |
     Identity, courses, sections, enrollments, roster import, audit and the runtime
     module registry. Owned by B4 (RQ-B-4-10/20/30/40/50/99).
@@ -416,6 +416,45 @@ paths:
                 additionalProperties: false
         '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
         '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+
+  /api/v1/internal/identities/by-email:
+    get:
+      operationId: lookupIdentityByEmail
+      summary: Resolve a registered e-mail address to its account (internal)
+      description: |
+        Purpose: the mail intake (B2) receives a message whose sender is an e-mail address, and
+        must turn that address into the account that submitted the work. B4 owns the address,
+        so the lookup lives here rather than duplicating a copy of the user table in B2.
+
+        Why an internal endpoint rather than a wider teacher-facing one: this answers "which
+        account has this address" for **any** address on the platform, which is exactly the
+        question an enumeration attack wants. It therefore requires the pre-shared service
+        credential and is never reachable with a user session.
+
+        The response deliberately omits the address itself: the caller already knows the
+        address it asked about, and echoing it back would put a second copy of personal data
+        into B2's database for no functional gain.
+
+        Not found is `404`, not an empty object: the intake turns that into a quarantine record
+        ("sender does not match any account"), which is a decision it can only make if "no such
+        account" is distinguishable from "malformed request".
+      tags: [internal, users]
+      security: [{serviceToken: []}]
+      parameters:
+        - name: email
+          in: query
+          required: true
+          schema: {type: string, minLength: 3, maxLength: 320}
+          description: The sender address, matched case-insensitively after trimming.
+      responses:
+        '200':
+          description: The account registered with that address.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/InternalIdentity'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
 
   /api/v1/users:
     get:
@@ -894,6 +933,24 @@ paths:
 
 components:
   schemas:
+    InternalIdentity:
+      type: object
+      description: |
+        The minimum B2 needs to attach a submission to its owner: a stable id, the student
+        number for cross-checking the attachment name, and the display name for the review
+        list. No e-mail address is returned (see `lookupIdentityByEmail`).
+      required: [user_id, username, display_name, roles, is_active]
+      properties:
+        user_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        username: {type: string}
+        display_name: {type: string}
+        student_number: {type: [string, "null"]}
+        roles:
+          type: array
+          items: {$ref: './common.yaml#/components/schemas/Role'}
+        is_active: {type: boolean}
+      additionalProperties: false
+
     EnrollmentPublic:
       type: object
       description: |

@@ -168,9 +168,11 @@ export function imapEnvEntries(env) {
   // 收信入口只有在能路由邮件时才值得打开：B2 的 intake 没有 matching 规则会判 unavailable，
   // 而 unavailable 会把整个 /health/ready 拉成 false。所以缺规则 = 保持关闭（not-configured），
   // 并在部署日志里说清楚，而不是写一份"看起来配好了"的半配置。
+  // "能路由邮件"有两种合法来源：显式规则表，或按发件人查账号（B2_IDENTITY_* + 目标作业）。
+  // 只认规则表会让"已配好身份查询"的部署被误判成不可用，于是收信永远打不开。
   const hasMatching =
     (resolved.B2_IMAP_MATCHING_JSON ?? "").trim() !== "" ||
-    (resolved.B2_IMAP_MATCHING_JSON ?? "") === "{}";
+    (env.B2_IMAP_TARGET_JSON ?? "").trim() !== "";
   if (!hasMatching) {
     console.warn(
       "IMAP intake skipped: no matching rules (set B2_IMAP_MATCHING_JSON); " +
@@ -186,4 +188,30 @@ export function imapEnvEntries(env) {
     resolved.B2_IMAP_PORT = "993";
   }
   return resolved;
+}
+
+/**
+ * 邮件收信所需的身份查询配置。
+ *
+ * 三项必须成套：缺任何一项，B2 的收信入口就应当保持关闭（而不是退化成"任何邮件都收"）。
+ * `B2_IMAP_TARGET_JSON` 由运维给出（本次作业的课程/课序/题目版本），其余两项在这里派生：
+ * B4 与本服务同机，URL 固定；服务令牌复用 B2 调 B3 用的那一枚，B4 也认它。
+ */
+export function intakeEnvEntries(env) {
+  const target = (env.B2_IMAP_TARGET_JSON ?? "").trim();
+  if (!target) {
+    return {};
+  }
+  const token = (env.B2_B4_SERVICE_TOKEN ?? env.B2_B3_SERVICE_TOKEN ?? "").trim();
+  if (!token) {
+    throw new Error(
+      "B2_IMAP_TARGET_JSON is set but no service token is available " +
+        "(set B2_B4_SERVICE_TOKEN or B2_B3_SERVICE_TOKEN)",
+    );
+  }
+  return {
+    B2_IDENTITY_URL: (env.B2_IDENTITY_URL ?? "http://127.0.0.1:18000").trim(),
+    B2_IDENTITY_AUTHORIZATION: "Bearer " + token,
+    B2_IMAP_TARGET_JSON: target,
+  };
 }

@@ -1,6 +1,6 @@
 schema_version: 1
 module: B4
-contract_version: 0.22.0
+contract_version: 0.24.0
 entry_point: autograder_b4.plugin:create_module
 provides: [b4-auth, b4-course, postgres, nats]
 requires: [host]
@@ -13,6 +13,8 @@ routes:
   - /api/v1/roster-imports
   - /api/v1/audit-records
   - /api/v1/modules
+  # 内部服务端点（B2 邮件收信按发件人查账号）：以 serviceToken 鉴权，不对浏览器开放。
+  - /api/v1/internal
   - /api/v1/registration-allowlists
 events:
   publishes: [autograder.v1.roster.import.completed]

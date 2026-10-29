@@ -229,6 +229,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/internal/identities/by-email": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Resolve a registered e-mail address to its account (internal)
+         * @description Purpose: the mail intake (B2) receives a message whose sender is an e-mail address, and
+         *     must turn that address into the account that submitted the work. B4 owns the address,
+         *     so the lookup lives here rather than duplicating a copy of the user table in B2.
+         *
+         *     Why an internal endpoint rather than a wider teacher-facing one: this answers "which
+         *     account has this address" for **any** address on the platform, which is exactly the
+         *     question an enumeration attack wants. It therefore requires the pre-shared service
+         *     credential and is never reachable with a user session.
+         *
+         *     The response deliberately omits the address itself: the caller already knows the
+         *     address it asked about, and echoing it back would put a second copy of personal data
+         *     into B2's database for no functional gain.
+         *
+         *     Not found is `404`, not an empty object: the intake turns that into a quarantine record
+         *     ("sender does not match any account"), which is a decision it can only make if "no such
+         *     account" is distinguishable from "malformed request".
+         */
+        get: operations["lookupIdentityByEmail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/users": {
         parameters: {
             query?: never;
@@ -541,6 +576,19 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * @description The minimum B2 needs to attach a submission to its owner: a stable id, the student
+         *     number for cross-checking the attachment name, and the display name for the review
+         *     list. No e-mail address is returned (see `lookupIdentityByEmail`).
+         */
+        InternalIdentity: {
+            user_id: components["schemas"]["Uuid"];
+            username: string;
+            display_name: string;
+            student_number?: string | null;
+            roles: components["schemas"]["Role"][];
+            is_active: boolean;
+        };
         /**
          * @description One row of a section's roster. Recorded by CHG-0007: the operation previously
          *     returned an undocumented body ("Page of enrollments.").
@@ -1172,6 +1220,32 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    lookupIdentityByEmail: {
+        parameters: {
+            query: {
+                /** @description The sender address, matched case-insensitively after trimming. */
+                email: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The account registered with that address. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalIdentity"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
             422: components["responses"]["UnprocessableEntity"];
         };
     };

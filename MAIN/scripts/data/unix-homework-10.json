@@ -57,13 +57,22 @@
       "title": "第10题 shell 打印 2~100 内的非素数",
       "stem_markdown": "使用 shell 脚本编程计算并打印 2 至 100（包含 100）以内的非素数。\n\n- 输出时每个数以半角逗号 `,` 隔开，在同一行输出，不换行；\n- 最后一个数字后不应有逗号；\n- 在答案的行尾需要包含一个换行符；\n- **直接打印预先计算的结果判为不通过**。\n\n输出形式类似：`4,6,8,9,10,12,14\\n`",
       "gradable": true,
-      "adapter": {"kind": "stdin", "args": [], "stdin": "", "expect_exit_code": 0, "comparison": {"stdout": "exact", "stderr": "ignore"}},
+      "adapter": {
+        "kind": "stdin",
+        "args": [],
+        "expect_exit_code": 0,
+        "comparison": {
+          "stdout": "exact",
+          "stderr": "ignored"
+        }
+      },
       "reference_answer": "#!/bin/sh\nfirst=1\nfor n in $(seq 2 100); do\n  is_prime=1\n  i=2\n  while [ $i -le $((n / i)) ]; do\n    if [ $((n % i)) -eq 0 ]; then is_prime=0; break; fi\n    i=$((i + 1))\n  done\n  if [ $is_prime -eq 0 ]; then\n    if [ $first -eq 1 ]; then printf '%s' \"$n\"; first=0; else printf ',%s' \"$n\"; fi\n  fi\ndone\nprintf '\\n'\n",
       "cases": [
         {
           "stdin": "",
           "expected_stdout": "4,6,8,9,10,12,14,15,16,18,20,21,22,24,25,26,27,28,30,32,33,34,35,36,38,39,40,42,44,45,46,48,49,50,51,52,54,55,56,57,58,60,62,63,64,65,66,68,69,70,72,74,75,76,77,78,80,81,82,84,85,86,87,88,90,91,92,93,94,95,96,98,99,100\n",
-          "expect_exit_code": 0
+          "name": "case-1",
+          "ordinal": 0
         }
       ]
     }

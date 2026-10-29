@@ -121,6 +121,10 @@ class Settings:
     registration_email_hourly_limit: int
     registration_client_hourly_limit: int
     registration_allowlist_max_bytes: int
+    #: Pre-shared credential for internal endpoints (B2's mail intake calls
+    #: `/api/v1/internal/identities/by-email`). Empty means the internal surface is
+    #: closed: a missing token must not degrade into "anyone may enumerate accounts".
+    internal_service_token: str
 
     @property
     def is_production(self) -> bool:
@@ -229,6 +233,7 @@ class Settings:
                 "B4_REGISTRATION_CLIENT_HOURLY_LIMIT",
                 DEFAULT_REGISTRATION_CLIENT_HOURLY_LIMIT,
             ),
+            internal_service_token=_env_str(source, "B4_SERVICE_TOKEN"),
             registration_allowlist_max_bytes=_env_int(
                 source,
                 "B4_REGISTRATION_ALLOWLIST_MAX_BYTES",
