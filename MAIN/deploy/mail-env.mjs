@@ -175,8 +175,10 @@ export function imapEnvEntries(env) {
     (env.B2_IMAP_TARGET_JSON ?? "").trim() !== "";
   if (!hasMatching) {
     console.warn(
-      "IMAP intake skipped: no matching rules (set B2_IMAP_MATCHING_JSON); " +
-        "the mailbox stays disabled instead of reporting an unusable intake",
+      "IMAP intake skipped: no routing source. Set either B2_IMAP_MATCHING_JSON " +
+        "(per-sender rules) or B2_IMAP_TARGET_JSON (this assignment's course/section/" +
+        "question-version, with the sender resolved by B4). Without one the mailbox " +
+        "stays disabled rather than reporting an unusable intake.",
     );
     return {};
   }
