@@ -29,6 +29,8 @@ MAIN/compose.production.yaml
 MAIN/contracts
 MAIN/deploy/autograder.service
 MAIN/deploy/cloudflared.service
+MAIN/deploy/autograder-intake.service
+MAIN/deploy/autograder-intake.timer
 MAIN/deploy/deploy-release.sh
 MAIN/deploy/check-readiness.py
 MAIN/deploy/reset-database.sh
