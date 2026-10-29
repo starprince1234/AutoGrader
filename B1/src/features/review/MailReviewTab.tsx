@@ -5,6 +5,7 @@ import type { IntakeQuarantineView } from "../../api/types";
 import { loadedCourses, useCourses, useSections } from "../../api/directory";
 import { useEnrollments } from "../roster/useEnrollments";
 import { useSession } from "../../auth/sessionContext";
+import { courseLabel as formatCourseLabel } from "../../api/directory";
 import {
   Banner,
   EmptyState,
@@ -55,7 +56,7 @@ function truncate(value: string, limit: number): string {
 
 function scopeText(
   row: IntakeQuarantineView,
-  courseMap: Map<string, { course_code: string; title: string }>,
+  courseMap: Map<string, { course_code: string | null; title: string }>,
   sectionMap: Map<string, string>,
 ): string {
   // `undefined` 只可能来自旧版服务端（字段未返回）：如实显示"未提供"，不能读成"未关联"。
@@ -369,7 +370,7 @@ export function MailReviewTab({
                 ) : null}
                 {courseOptions.map((course) => (
                   <option key={course.course_id} value={course.course_id}>
-                    {course.course_code} · {course.title}
+                    {formatCourseLabel(course)}
                   </option>
                 ))}
               </select>
@@ -663,7 +664,7 @@ export function MailReviewTab({
                     <option value="">{t("common.selectPrompt")}</option>
                     {courseOptions.map((course) => (
                       <option key={course.course_id} value={course.course_id}>
-                        {course.course_code} · {course.title}
+                        {formatCourseLabel(course)}
                       </option>
                     ))}
                   </select>

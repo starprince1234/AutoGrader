@@ -60,9 +60,11 @@ MAX_DISPLAY_NAME_LENGTH = 200
 
 
 class CourseCreate(BaseModel):
+    """A course needs a title; the code is an optional label (see `update_course`)."""
+
     model_config = ConfigDict(extra="forbid")
 
-    course_code: str = Field(min_length=1, max_length=MAX_CODE_LENGTH)
+    course_code: str | None = Field(default=None, max_length=MAX_CODE_LENGTH)
     title: str = Field(min_length=1, max_length=MAX_TITLE_LENGTH)
 
 
@@ -72,6 +74,8 @@ class CourseRename(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     title: str = Field(min_length=1, max_length=MAX_TITLE_LENGTH)
+    #: Omitted = keep the stored code; `None`/empty = clear it.
+    course_code: str | None = Field(default=None, max_length=MAX_CODE_LENGTH)
     expected_updated_at: datetime
 
 
@@ -148,14 +152,16 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
             raise error
         course_id = uuid.uuid4()
         now = _now()
-        code = payload.course_code.strip()
+        raw_code = (payload.course_code or "").strip()
+        code = raw_code or None
         title = payload.title.strip()
         with engine.begin() as connection:
-            existing = connection.execute(
-                select(courses.c.course_id).where(courses.c.course_code == code)
-            ).fetchone()
-            if existing is not None:
-                raise conflict("A course with that code already exists.")
+            if code is not None:
+                existing = connection.execute(
+                    select(courses.c.course_id).where(courses.c.course_code == code)
+                ).fetchone()
+                if existing is not None:
+                    raise conflict("A course with that code already exists.")
             connection.execute(
                 courses.insert().values(
                     course_id=course_id,
@@ -229,11 +235,23 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
             raise conflict("The course changed since it was read; reload before saving.")
 
         now = _now()
+        values: dict[str, object] = {"title": title, "updated_at": now}
+        if "course_code" in payload.model_fields_set:
+            raw_code = (payload.course_code or "").strip()
+            values["course_code"] = raw_code or None
+            if raw_code:
+                clash = connection.execute(
+                    select(courses.c.course_id).where(
+                        courses.c.course_code == raw_code,
+                        courses.c.course_id != course_id,
+                    )
+                ).fetchone()
+                if clash is not None:
+                    raise conflict("A course with that code already exists.")
+
         with engine.begin() as write_connection:
             write_connection.execute(
-                update(courses)
-                .where(courses.c.course_id == course_id)
-                .values(title=title, updated_at=now)
+                update(courses).where(courses.c.course_id == course_id).values(**values)
             )
             AuditLog(write_connection).record(
                 action=ACTION_COURSE_RENAMED,
@@ -247,7 +265,7 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
             )
         return {
             "course_id": str(course_id),
-            "course_code": row.course_code,
+            "course_code": values.get("course_code", row.course_code),
             "title": title,
             "updated_at": _rfc3339(now),
         }

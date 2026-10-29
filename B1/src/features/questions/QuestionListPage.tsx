@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { t } from "../../i18n";
-import { loadedCourses, useCourses } from "../../api/directory";
+import { courseLabel as formatCourseLabel, loadedCourses, useCourses } from "../../api/directory";
 import { useSession } from "../../auth/sessionContext";
 import { canAuthorQuestions } from "../../auth/visibility";
 import {
@@ -148,7 +148,7 @@ export function QuestionListPage() {
               <option value="">{t("questions.selectCourse")}</option>
               {courseOptions.map((course) => (
                 <option key={course.course_id} value={course.course_id}>
-                  {course.course_code} · {course.title}
+                  {formatCourseLabel(course)}
                 </option>
               ))}
             </select>

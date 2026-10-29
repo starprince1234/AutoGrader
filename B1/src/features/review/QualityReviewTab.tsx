@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { t } from "../../i18n";
 import { isApiError } from "../../api/problem";
 import type { EvaluationQualitySummary } from "../../api/types";
-import { loadedCourses, useCourses } from "../../api/directory";
+import { courseLabel as formatCourseLabel, loadedCourses, useCourses } from "../../api/directory";
 import { useSession } from "../../auth/sessionContext";
 import {
   Banner,
@@ -340,7 +340,7 @@ export function QualityReviewTab({
                 <option value="">{t("common.selectPrompt")}</option>
                 {courseOptions.map((course) => (
                   <option key={course.course_id} value={course.course_id}>
-                    {course.course_code} · {course.title}
+                    {formatCourseLabel(course)}
                   </option>
                 ))}
               </select>

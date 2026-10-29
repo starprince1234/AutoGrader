@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { t } from "../../i18n";
-import { loadedCourses, useCourses } from "../../api/directory";
+import { courseLabel as formatCourseLabel, loadedCourses, useCourses } from "../../api/directory";
 import type { QuestionDraftProposal } from "../../api/types";
 import {
   Banner,
@@ -389,7 +389,7 @@ export function AuthoringPage({
                       <option value="">{t("common.selectPrompt")}</option>
                       {courseOptions.map((course) => (
                         <option key={course.course_id} value={course.course_id}>
-                          {course.course_code} · {course.title}
+                          {formatCourseLabel(course)}
                         </option>
                       ))}
                     </select>

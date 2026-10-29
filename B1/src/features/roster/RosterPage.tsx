@@ -5,6 +5,7 @@ import type { EnrollmentPublic } from "../../api/types";
 import { describeApiError, isApiError } from "../../api/problem";
 import { useSession } from "../../auth/sessionContext";
 import { canCreateCourse, canImportRoster } from "../../auth/visibility";
+import { courseLabel as formatCourseLabel } from "../../api/directory";
 import {
   Banner,
   Drawer,
@@ -272,7 +273,7 @@ export function RosterPage() {
               <option value="">{t("common.selectPrompt")}</option>
               {courseOptions.map((course) => (
                 <option key={course.course_id} value={course.course_id}>
-                  {course.course_code} · {course.title}
+                  {formatCourseLabel(course)}
                 </option>
               ))}
             </select>
@@ -541,9 +542,8 @@ function CreateCourseDrawer({
   onCreated,
 }: {
   onClose: () => void;
-  onCreated: (course: { course_id: string; course_code: string; title: string }) => void;
+  onCreated: (course: { course_id: string; course_code?: string | null; title: string }) => void;
 }) {
-  const [code, setCode] = useState("");
   const [title, setTitle] = useState("");
   const [error, setError] = useState<string | null>(null);
   const create = useCreateCourse();
@@ -559,17 +559,13 @@ function CreateCourseDrawer({
         className="stack"
         onSubmit={(event) => {
           event.preventDefault();
-          if (code.trim() === "") {
-            setError(t("roster.createCourse.codeRequired"));
-            return;
-          }
           if (title.trim() === "") {
             setError(t("roster.createCourse.titleRequired"));
             return;
           }
           setError(null);
           create.mutate(
-            { course_code: code.trim(), title: title.trim() },
+            { title: title.trim() },
             {
               onSuccess: (created) => onCreated(created),
               onError: (failure) => {
@@ -589,14 +585,6 @@ function CreateCourseDrawer({
             value={title}
             maxLength={200}
             onChange={(event) => setTitle(event.target.value)}
-          />
-        </Field>
-        <Field label={t("roster.createCourse.code")} htmlFor="course-code">
-          <input
-            id="course-code"
-            value={code}
-            maxLength={64}
-            onChange={(event) => setCode(event.target.value)}
           />
         </Field>
         {error ? (

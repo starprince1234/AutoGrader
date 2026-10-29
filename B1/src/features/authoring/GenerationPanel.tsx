@@ -6,6 +6,7 @@ import { formatDateTime } from "../../ui/format";
 import { Banner, Field, Modal, Panel, StatusPill } from "../../ui/components";
 import { SafeMarkdown } from "../questions/SafeMarkdown";
 import { fieldLabel, parseArgv, parseTags, type DraftForm } from "./draft";
+import { courseLabel as formatCourseLabel } from "../../api/directory";
 import {
   useCreateGeneration,
   useDiscardGeneration,
@@ -164,7 +165,7 @@ export function GenerationPanel({
 }: {
   courseId: string | null;
   /** 可选课程：面板自己带一个下拉，教师不必滚到下面的「基本信息」再回来。 */
-  courses: Array<{ course_id: string; course_code: string; title: string }>;
+  courses: Array<{ course_id: string; course_code: string | null; title: string }>;
   onCourseChange: (next: string) => void;
   form: DraftForm;
   generationId: string | null;
@@ -307,7 +308,7 @@ export function GenerationPanel({
               <option value="">{t("common.selectPrompt")}</option>
               {courses.map((course) => (
                 <option key={course.course_id} value={course.course_id}>
-                  {course.course_code} · {course.title}
+                  {formatCourseLabel(course)}
                 </option>
               ))}
             </select>

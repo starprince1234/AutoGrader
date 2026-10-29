@@ -21,4 +21,4 @@ events:
   subscribes: []
 database:
   schema: b4
-  migration_head: "20261027_0005"
+  migration_head: "20261029_0006"

@@ -4,6 +4,7 @@ import type { GradeRow } from "../../api/types";
 import { isApiError } from "../../api/problem";
 import { loadedCourses, useCourses, useSections } from "../../api/directory";
 import { useSession } from "../../auth/sessionContext";
+import { courseLabel as formatCourseLabel } from "../../api/directory";
 import {
   canExportGrades,
   canGradeSubmission,
@@ -326,7 +327,7 @@ export function GradesPage({ chartLoader }: { chartLoader?: EChartsLoader } = {}
                   只会得到一个永远选不中的条目。 */}
               {courseOptions.map((course) => (
                 <option key={course.course_id} value={course.course_id}>
-                  {course.course_code} · {course.title}
+                  {formatCourseLabel(course)}
                 </option>
               ))}
             </select>

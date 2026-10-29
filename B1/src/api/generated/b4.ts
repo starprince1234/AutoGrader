@@ -669,6 +669,12 @@ export interface components {
          */
         CourseRename: {
             title: string;
+            /**
+             * @description Optional. **Omitted** leaves the stored code unchanged; `null` (or an empty string)
+             *     clears it. The distinction matters because clearing a label is a deliberate act,
+             *     while a rename that happens not to mention the code must not silently drop it.
+             */
+            course_code?: string | null;
             expected_updated_at: components["schemas"]["Timestamp"];
         };
         /**
@@ -678,7 +684,8 @@ export interface components {
          */
         CoursePublic: {
             course_id: components["schemas"]["Uuid"];
-            course_code: string;
+            /** @description Optional label; null means the course was created without one. */
+            course_code: string | null;
             title: string;
             updated_at: components["schemas"]["Timestamp"];
         };
@@ -1499,7 +1506,12 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    course_code: string;
+                    /**
+                     * @description Optional label. Omit it (or send null) and the course has no code; the course
+                     *     is still identified by `course_id`, which is what rosters, assignments and
+                     *     exports use. Codes that are present must be unique.
+                     */
+                    course_code?: string | null;
                     title: string;
                 };
             };

@@ -6,6 +6,7 @@ import type { AssignmentPublic, GradeRow } from "../../api/types";
 import { useSession } from "../../auth/sessionContext";
 import { canReviewQuarantine, canViewCohortGrades } from "../../auth/visibility";
 import { formatDateTime, shortenId } from "../../ui/format";
+import { courseLabel as formatCourseLabel } from "../../api/directory";
 import {
   Banner,
   EmptyState,
@@ -605,7 +606,7 @@ export function AssignmentsPage() {
                 >
                   {courseOptions.map((course) => (
                     <option key={course.course_id} value={course.course_id}>
-                      {course.course_code} · {course.title}
+                      {formatCourseLabel(course)}
                     </option>
                   ))}
                 </select>

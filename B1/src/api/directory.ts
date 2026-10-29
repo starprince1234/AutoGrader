@@ -87,6 +87,17 @@ export function useCreateCourse() {
 }
 
 /** 创建课序：响应体即存储后的课序，直接加入当前课程的课序列表。 */
+/**
+ * 课程显示名：有编号时"编号 · 名称"，没有编号时只显示名称。
+ *
+ * 编号是可选的标签（`updateCourse` 可以清空它），所以显示层必须容忍 null——否则清空之后
+ * 每一屏都会出现一个孤零零的" · 软件工程"。
+ */
+export function courseLabel(course: { course_code?: string | null; title: string }): string {
+  const code = (course.course_code ?? "").trim();
+  return code === "" ? course.title : `${code} · ${course.title}`;
+}
+
 /** 重命名课程：只改 title；`expected_updated_at` 是乐观锁，避免两人同时改互相覆盖。 */
 export function useRenameCourse() {
   const queryClient = useQueryClient();

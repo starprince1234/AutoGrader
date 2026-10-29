@@ -645,9 +645,16 @@ paths:
           application/json:
             schema:
               type: object
-              required: [course_code, title]
+              required: [title]
               properties:
-                course_code: {type: string, minLength: 1, maxLength: 64}
+                course_code:
+                  type: [string, "null"]
+                  minLength: 1
+                  maxLength: 64
+                  description: |
+                    Optional label. Omit it (or send null) and the course has no code; the course
+                    is still identified by `course_id`, which is what rosters, assignments and
+                    exports use. Codes that are present must be unique.
                 title: {type: string, minLength: 1, maxLength: 200}
               additionalProperties: false
       responses:
@@ -1049,6 +1056,12 @@ components:
       required: [title, expected_updated_at]
       properties:
         title: {type: string, minLength: 1, maxLength: 200}
+        course_code:
+          type: [string, "null"]
+          description: |
+            Optional. **Omitted** leaves the stored code unchanged; `null` (or an empty string)
+            clears it. The distinction matters because clearing a label is a deliberate act,
+            while a rename that happens not to mention the code must not silently drop it.
         expected_updated_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
       additionalProperties: false
 
@@ -1061,7 +1074,9 @@ components:
       required: [course_id, course_code, title, updated_at]
       properties:
         course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
-        course_code: {type: string}
+        course_code:
+          type: [string, "null"]
+          description: "Optional label; null means the course was created without one."
         title: {type: string}
         # `updateCourse.expected_updated_at` is compared against this value: without it a
         # client can only overwrite unconditionally, which makes the lock decorative.

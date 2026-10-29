@@ -25,7 +25,7 @@ export function AiAuthoringView({
   onBack,
 }: {
   courseId: string | null;
-  courses: Array<{ course_id: string; course_code: string; title: string }>;
+  courses: Array<{ course_id: string; course_code: string | null; title: string }>;
   onCourseChange: (next: string) => void;
   form: DraftForm;
   generationId: string | null;
