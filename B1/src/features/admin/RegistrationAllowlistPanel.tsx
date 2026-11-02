@@ -96,25 +96,30 @@ export function RegistrationAllowlistPanel() {
             {items.map((batch) => (
               <li key={batch.batch_id} data-testid={`allowlist-batch-${batch.batch_id}`}>
                 <div className="allowlist-batch__head">
+                  {/* 整行（除删除按钮）都是展开开关：可见区域与可点击区域一致。 */}
                   <button
                     type="button"
-                    className="button button--ghost"
+                    className="allowlist-batch__toggle"
                     aria-expanded={expanded === batch.batch_id}
                     data-testid={`allowlist-expand-${batch.batch_id}`}
                     onClick={() =>
                       setExpanded(expanded === batch.batch_id ? null : batch.batch_id)
                     }
                   >
-                    <span aria-hidden="true">{expanded === batch.batch_id ? "▾" : "▸"}</span>{" "}
-                    {batch.class_name}
+                    <span className="allowlist-batch__name">
+                      <span aria-hidden="true">{expanded === batch.batch_id ? "▾" : "▸"}</span>{" "}
+                      {batch.class_name}
+                    </span>
+                    <span className="muted" data-testid={`allowlist-count-${batch.batch_id}`}>
+                      {t("allowlist.students", { count: batch.row_count })}
+                    </span>
+                    <span className="muted">
+                      {batch.uploaded_at.slice(0, 19).replace("T", " ")}
+                    </span>
                   </button>
-                  <span className="muted" data-testid={`allowlist-count-${batch.batch_id}`}>
-                    {t("allowlist.students", { count: batch.row_count })}
-                  </span>
-                  <span className="muted">{batch.uploaded_at.slice(0, 19).replace("T", " ")}</span>
                   <button
                     type="button"
-                    className="button button--ghost"
+                    className="button button--ghost allowlist-batch__delete"
                     data-testid={`allowlist-delete-${batch.batch_id}`}
                     onClick={() => {
                       setError(null);
@@ -157,26 +162,28 @@ function BatchEntries({ batchId }: { batchId: string }) {
     return <p className="muted">{t("allowlist.noStudents")}</p>;
   }
   return (
-    <table className="allowlist-entries" data-testid={`allowlist-entries-${batchId}`}>
-      <tbody>
-        {rows.map((entry) => (
-          <tr key={entry.entry_id} data-testid={`allowlist-entry-${entry.entry_id}`}>
-            <td>{entry.display_name}</td>
-            <td className="mono-id">{entry.student_number}</td>
-            <td className="allowlist-entries__action">
-              <button
-                type="button"
-                className="button button--ghost"
-                aria-label={t("allowlist.deleteStudent", { name: entry.display_name })}
-                data-testid={`allowlist-delete-entry-${entry.entry_id}`}
-                onClick={() => removeEntry.mutate(entry.entry_id)}
-              >
-                ✕
-              </button>
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <ul className="allowlist-entries" data-testid={`allowlist-entries-${batchId}`}>
+      {rows.map((entry) => (
+        <li key={entry.entry_id} className="allowlist-entry" data-testid={`allowlist-entry-${entry.entry_id}`}>
+          <span className="allowlist-entry__name">{entry.display_name}</span>
+          <span className="mono-id allowlist-entry__number">{entry.student_number}</span>
+          <button
+            type="button"
+            className="button button--ghost allowlist-entry__delete"
+            aria-label={t("allowlist.deleteStudent", { name: entry.display_name })}
+            title={t("allowlist.deleteStudent", { name: entry.display_name })}
+            data-testid={`allowlist-delete-entry-${entry.entry_id}`}
+            onClick={() => removeEntry.mutate(entry.entry_id)}
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+              <path
+                d="M9 3h6l1 2h4v2H4V5h4l1-2zm-3 6h12l-1 12H7L6 9zm3 2v8h2v-8H9zm4 0v8h2v-8h-2z"
+                fill="currentColor"
+              />
+            </svg>
+          </button>
+        </li>
+      ))}
+    </ul>
   );
 }

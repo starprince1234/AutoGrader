@@ -2053,3 +2053,90 @@ samp {
     transition-duration: 0.001ms !important;
   }
 }
+
+/* 注册名单：一班一行。
+   班级 / 人数 / 时间 三个字段在一行内均匀分开（space-between），删除按钮固定在右侧；
+   除删除按钮外整行都是展开开关，所以可点击区域与看起来可点的区域一致。 */
+.allowlist-batches {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.allowlist-batch__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.allowlist-batch__toggle {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 40px;
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.allowlist-batch__toggle:hover {
+  background: var(--color-surface-hover, rgba(0, 0, 0, 0.03));
+}
+
+.allowlist-batch__name {
+  font-weight: 600;
+}
+
+.allowlist-batch__delete {
+  flex: 0 0 auto;
+}
+
+/* 学生：一行 3–4 个，按可用宽度自动决定列数。 */
+.allowlist-entries {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0 4px 4px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 6px 16px;
+}
+
+.allowlist-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 8px;
+}
+
+.allowlist-entry:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.allowlist-entry__name {
+  flex: 0 0 auto;
+}
+
+.allowlist-entry__number {
+  flex: 1 1 auto;
+  color: var(--color-text-muted, #666);
+  font-size: 0.9em;
+}
+
+.allowlist-entry__delete {
+  flex: 0 0 auto;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 2px 4px;
+  color: var(--color-danger, #c0392b);
+}
