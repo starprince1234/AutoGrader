@@ -347,9 +347,89 @@ paths:
         '204': {description: Password replaced; every refresh session of the account revoked.}
         '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
 
+  /api/v1/registration-allowlists/batches:
+    get:
+      operationId: listRegistrationAllowlistBatches
+      summary: List every imported allowlist (one per class)
+      description: |
+        Each uploaded file is a **class**; the class name is the file name. Listing them is what
+        lets an administrator keep several cohorts on the platform at once instead of replacing
+        one snapshot with another.
+      tags: [registration]
+      responses:
+        '200':
+          description: Batches, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/AllowlistBatch'}
+                additionalProperties: false
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+
+  /api/v1/registration-allowlists/batches/{batch_id}/entries:
+    parameters:
+      - {name: batch_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    get:
+      operationId: listRegistrationAllowlistEntries
+      summary: Students of one class, ordered by student number
+      tags: [registration]
+      responses:
+        '200':
+          description: Entries of the batch.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [batch_id, items]
+                properties:
+                  batch_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/AllowlistEntry'}
+                additionalProperties: false
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
+  /api/v1/registration-allowlists/batches/{batch_id}:
+    parameters:
+      - {name: batch_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    delete:
+      operationId: deleteRegistrationAllowlistBatch
+      summary: Delete a whole class (its students lose the right to register)
+      description: |
+        Deleting a class must not silently keep its students registrable: the entries are removed
+        with the batch, so a student who is no longer in any class can no longer self-register.
+        Accounts already created are unaffected -- they are users, not allowlist rows.
+      tags: [registration]
+      responses:
+        '204': {description: Deleted.}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
+  /api/v1/registration-allowlists/entries/{entry_id}:
+    parameters:
+      - {name: entry_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    delete:
+      operationId: deleteRegistrationAllowlistEntry
+      summary: Remove one student from a class
+      tags: [registration]
+      responses:
+        '204': {description: Removed.}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
   /api/v1/registration-allowlists:
     post:
-      operationId: replaceRegistrationAllowlist
+      operationId: addRegistrationAllowlistBatch
       summary: Replace the registration allowlist from a CSV file (admin only)
       description: |
         The CSV carries the identity anchor used by self-service registration: a
@@ -1045,6 +1125,29 @@ components:
             against, so it is required here: without it a client can only send a timestamp it
             guessed, and concurrent administrator edits either always conflict or never do.
         created_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+      additionalProperties: false
+
+    AllowlistBatch:
+      type: object
+      description: |
+        One imported allowlist, i.e. one class. `class_name` is derived from the file name: a
+        teacher names the file after the class, so there is no second place to type it.
+      required: [batch_id, class_name, row_count, uploaded_at]
+      properties:
+        batch_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        class_name: {type: string}
+        filename: {type: string}
+        row_count: {type: integer, minimum: 0}
+        uploaded_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+      additionalProperties: false
+
+    AllowlistEntry:
+      type: object
+      required: [entry_id, student_number, display_name]
+      properties:
+        entry_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        student_number: {type: string}
+        display_name: {type: string}
       additionalProperties: false
 
     CourseRename:

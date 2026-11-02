@@ -99,7 +99,7 @@ export type RegistrationAllowlistState = JsonBody<
  * 服务端事务，页面不自己数。
  */
 export type RegistrationAllowlistReplacement = JsonBody<
-  B4Operations["replaceRegistrationAllowlist"],
+  B4Operations["addRegistrationAllowlistBatch"],
   200
 >;
 

@@ -200,6 +200,90 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/registration-allowlists/batches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List every imported allowlist (one per class)
+         * @description Each uploaded file is a **class**; the class name is the file name. Listing them is what
+         *     lets an administrator keep several cohorts on the platform at once instead of replacing
+         *     one snapshot with another.
+         */
+        get: operations["listRegistrationAllowlistBatches"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registration-allowlists/batches/{batch_id}/entries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batch_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        /** Students of one class, ordered by student number */
+        get: operations["listRegistrationAllowlistEntries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registration-allowlists/batches/{batch_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batch_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete a whole class (its students lose the right to register)
+         * @description Deleting a class must not silently keep its students registrable: the entries are removed
+         *     with the batch, so a student who is no longer in any class can no longer self-register.
+         *     Accounts already created are unaffected -- they are users, not allowlist rows.
+         */
+        delete: operations["deleteRegistrationAllowlistBatch"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registration-allowlists/entries/{entry_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entry_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove one student from a class */
+        delete: operations["deleteRegistrationAllowlistEntry"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/registration-allowlists": {
         parameters: {
             query?: never;
@@ -222,7 +306,7 @@ export interface paths {
          *     something other than 13-digit student numbers is rejected rather than imported
          *     partially. Columns are located by header name, never by position.
          */
-        post: operations["replaceRegistrationAllowlist"];
+        post: operations["addRegistrationAllowlistBatch"];
         delete?: never;
         options?: never;
         head?: never;
@@ -663,6 +747,22 @@ export interface components {
             created_at?: components["schemas"]["Timestamp"];
         };
         /**
+         * @description One imported allowlist, i.e. one class. `class_name` is derived from the file name: a
+         *     teacher names the file after the class, so there is no second place to type it.
+         */
+        AllowlistBatch: {
+            batch_id: components["schemas"]["Uuid"];
+            class_name: string;
+            filename?: string;
+            row_count: number;
+            uploaded_at: components["schemas"]["Timestamp"];
+        };
+        AllowlistEntry: {
+            entry_id: components["schemas"]["Uuid"];
+            student_number: string;
+            display_name: string;
+        };
+        /**
          * @description Rename request. `title` is the only writable field (see `updateCourse`); an empty or
          *     whitespace-only title is refused rather than coerced, because a blank course name is
          *     indistinguishable from a rendering bug later.
@@ -794,16 +894,16 @@ export interface components {
             /** @description Request path or trace identifier */
             instance: string;
         };
-        /** @description Cursor pagination envelope. Offset pagination is forbidden for large tables. */
-        CursorPage: {
-            items: unknown[];
-            next_cursor?: string | null;
-        };
         /**
          * Format: date-time
          * @description UTC RFC 3339 with millisecond precision, e.g. 2026-09-15T08:30:00.000Z.
          */
         Timestamp: string;
+        /** @description Cursor pagination envelope. Offset pagination is forbidden for large tables. */
+        CursorPage: {
+            items: unknown[];
+            next_cursor?: string | null;
+        };
     };
     responses: {
         /** @description Missing, malformed or expired credentials. Does not reveal whether the principal exists. */
@@ -860,8 +960,8 @@ export interface components {
                 "application/problem+json": components["schemas"]["ProblemDetails"];
             };
         };
-        /** @description File, aggregate or attachment size limit exceeded. */
-        PayloadTooLarge: {
+        /** @description Authenticated and authorized, but the resource does not exist. */
+        NotFound: {
             headers: {
                 [name: string]: unknown;
             };
@@ -869,8 +969,8 @@ export interface components {
                 "application/problem+json": components["schemas"]["ProblemDetails"];
             };
         };
-        /** @description Authenticated and authorized, but the resource does not exist. */
-        NotFound: {
+        /** @description File, aggregate or attachment size limit exceeded. */
+        PayloadTooLarge: {
             headers: {
                 [name: string]: unknown;
             };
@@ -1192,6 +1292,104 @@ export interface operations {
             422: components["responses"]["UnprocessableEntity"];
         };
     };
+    listRegistrationAllowlistBatches: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Batches, newest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["AllowlistBatch"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listRegistrationAllowlistEntries: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batch_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Entries of the batch. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        batch_id: components["schemas"]["Uuid"];
+                        items: components["schemas"]["AllowlistEntry"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteRegistrationAllowlistBatch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batch_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteRegistrationAllowlistEntry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entry_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     getRegistrationAllowlist: {
         parameters: {
             query?: never;
@@ -1226,7 +1424,7 @@ export interface operations {
             403: components["responses"]["Forbidden"];
         };
     };
-    replaceRegistrationAllowlist: {
+    addRegistrationAllowlistBatch: {
         parameters: {
             query?: never;
             header?: {

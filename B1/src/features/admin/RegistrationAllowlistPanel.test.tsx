@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, screen, waitFor, within } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "../../testing/renderWithProviders";
 import {
@@ -9,21 +9,18 @@ import {
   type FetchStub,
   type StubbedRoute,
 } from "../../testing/httpBoundary";
-import {
-  UUID_A,
-  UUID_B,
-  allowlistReplacement,
-  allowlistState,
-  sessionCreated,
-} from "../../testing/contractFixtures";
+import { sessionCreated } from "../../testing/contractFixtures";
 import { signIn } from "../../auth/sessionStore";
 import { RegistrationAllowlistPanel } from "./RegistrationAllowlistPanel";
 
 /**
- * 注册名单标签：一次上传就是一次**全量替换**。
+ * 注册名单标签：一个文件 = 一个班级，点开看学生，行内可删。
  *
- * 这里断言的是副作用边界：选择文件不算上传、打开确认框不算上传、取消不发请求、
- * 失败不改变当前生效批次、连接中断不宣称成功也不自动重发。
+ * 断言的是行为边界而不是外观：
+ * - 「添加名单」直接开文件选择器，选中即上传（没有中转确认）；
+ * - 班级列表显示文件名派生的班级名与人数；
+ * - 展开后才读该班学生，且学生行可以单个删除；
+ * - 删除班级是整体删除（连带名单行），界面上有明确文案。
  */
 
 let stub: FetchStub | null = null;
@@ -34,361 +31,156 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-const CSV = "姓名,学号\n张三,2026000000001\n李四,2026000000002\n";
+const BATCH = "11111111-1111-4111-8111-111111111111";
+const ENTRY_A = "22222222-2222-4222-8222-222222222222";
+const ENTRY_B = "33333333-3333-4333-8333-333333333333";
 
-function csvFile(name = "allowlist-new.csv"): File {
-  return new File([CSV], name, { type: "text/csv" });
+function csvFile(name = "软工01班.csv"): File {
+  const content = "姓名,学号\n黄俊杰,2024141460192\n李四,2024141460193\n";
+  return new File([content], name, { type: "text/csv" });
 }
 
-function withSession(routes: StubbedRoute[]): StubbedRoute[] {
+function routes(options: { batches?: unknown[]; entriesStatus?: number } = {}): StubbedRoute[] {
   return [
     {
       method: "POST",
       path: "/api/v1/auth/session",
-      respond: () =>
-        jsonResponse(
-          sessionCreated({ roles: ["admin"], scope: [{ course_id: UUID_A, section_id: UUID_B }] }),
-        ),
+      respond: () => jsonResponse(sessionCreated({ roles: ["admin"], access_token: "t" })),
     },
-    ...routes,
+    {
+      method: "GET",
+      path: "/api/v1/registration-allowlists/batches",
+      respond: () =>
+        jsonResponse({
+          items: options.batches ?? [
+            {
+              batch_id: BATCH,
+              class_name: "软工01班",
+              filename: "软工01班.csv",
+              row_count: 2,
+              uploaded_at: "2026-10-29T12:00:00.000Z",
+            },
+          ],
+        }),
+    },
+    {
+      method: "GET",
+      path: `/api/v1/registration-allowlists/batches/${BATCH}/entries`,
+      respond: () =>
+        options.entriesStatus === 500
+          ? problemResponse({ status: 500, title: "Server Error", detail: "boom" })
+          : jsonResponse({
+              batch_id: BATCH,
+              items: [
+                { entry_id: ENTRY_A, student_number: "2024141460192", display_name: "黄俊杰" },
+                { entry_id: ENTRY_B, student_number: "2024141460193", display_name: "李四" },
+              ],
+            }),
+    },
+    {
+      method: "POST",
+      path: "/api/v1/registration-allowlists",
+      respond: () =>
+        jsonResponse({
+          batch_id: BATCH,
+          class_name: "软工01班",
+          row_count: 2,
+          skipped_row_count: 0,
+          duplicate_student_numbers: [],
+          content_sha256: "a".repeat(64),
+        }),
+    },
+    {
+      method: "DELETE",
+      path: `/api/v1/registration-allowlists/batches/${BATCH}`,
+      respond: () => new Response(null, { status: 204 }),
+    },
+    {
+      method: "DELETE",
+      path: `/api/v1/registration-allowlists/entries/${ENTRY_A}`,
+      respond: () => new Response(null, { status: 204 }),
+    },
   ];
 }
 
-function uploadCount(): number {
-  const requests = stub?.requests ?? [];
-  return requests.filter(
-    (request) =>
-      request.method === "POST" && request.url.pathname === "/api/v1/registration-allowlists",
-  ).length;
+async function openPanel() {
+  stub = installFetchStub(routes());
+  await signIn("root", "pw");
+  renderWithProviders(<RegistrationAllowlistPanel />);
+  return screen.findByTestId("allowlist-panel");
 }
 
-describe("注册名单：当前批次", () => {
-  it("显示文件名、人数与导入时间，数字来自服务端响应", async () => {
-    stub = installFetchStub(
-      withSession([
-        { method: "GET", path: "/api/v1/registration-allowlists", respond: () => jsonResponse(allowlistState()) },
-      ]),
-    );
-    await signIn("admin1", "pw");
-    renderWithProviders(<RegistrationAllowlistPanel />);
-
-    const batch = await screen.findByTestId("allowlist-current");
-    expect(batch).toHaveTextContent("allowlist-2026.csv");
-    expect(screen.getByTestId("allowlist-row-count")).toHaveTextContent("36");
-    expect(screen.queryByTestId("allowlist-empty")).toBeNull();
+describe("注册名单面板", () => {
+  it("列出导入的班级：班级名来自文件名，显示人数", async () => {
+    await openPanel();
+    const list = await screen.findByTestId("allowlist-batches");
+    expect(within(list).getByText("软工01班")).toBeInTheDocument();
+    expect(screen.getByTestId(`allowlist-count-${BATCH}`)).toHaveTextContent("2 人");
   });
 
-  it("零批次显示「尚未导入注册名单」，选文件前「继续」禁用", async () => {
-    stub = installFetchStub(
-      withSession([
-        {
-          method: "GET",
-          path: "/api/v1/registration-allowlists",
-          respond: () =>
-            jsonResponse({ batch_id: null, filename: null, row_count: 0, uploaded_at: null }),
-        },
-      ]),
-    );
-    const user = userEvent.setup();
-    await signIn("admin1", "pw");
+  it("没有班级时提示去添加名单", async () => {
+    stub = installFetchStub(routes({ batches: [] }));
+    await signIn("root", "pw");
     renderWithProviders(<RegistrationAllowlistPanel />);
-
-    expect(await screen.findByTestId("allowlist-empty")).toHaveTextContent(
-      "尚未导入注册名单。",
-    );
-    const submit = screen.getByTestId("allowlist-continue");
-    expect(submit).toBeDisabled();
-
-    await user.upload(screen.getByTestId("allowlist-file"), csvFile());
-    expect(screen.getByTestId("allowlist-continue")).toBeEnabled();
-    expect(screen.getByTestId("allowlist-selected")).toHaveTextContent("allowlist-new.csv");
-    // 选文件不是上传。
-    expect(uploadCount()).toBe(0);
+    expect(await screen.findByTestId("allowlist-empty")).toHaveTextContent("添加名单");
   });
 
-  it("读取失败显示错误并可重试，不把失败说成「没有批次」", async () => {
-    stub = installFetchStub(
-      withSession([
-        {
-          method: "GET",
-          path: "/api/v1/registration-allowlists",
-          respond: () =>
-            problemResponse({ status: 503, title: "Service Unavailable", detail: "database is unavailable" }),
-        },
-      ]),
+  it("添加名单：选中文件即上传，成功后提示班级与人数", async () => {
+    const panel = await openPanel();
+    const input = within(panel).getByTestId("allowlist-add") as HTMLInputElement;
+    await userEvent.upload(input, csvFile());
+    expect(await screen.findByTestId("allowlist-notice")).toHaveTextContent("已添加「软工01班」");
+    const posted = stub?.requests.find(
+      (request) =>
+        request.method === "POST" &&
+        request.url.pathname === "/api/v1/registration-allowlists",
     );
-    await signIn("admin1", "pw");
-    renderWithProviders(<RegistrationAllowlistPanel />);
-
-    expect(await screen.findByTestId("allowlist-load-error")).toBeInTheDocument();
-    expect(screen.queryByTestId("allowlist-empty")).toBeNull();
-    expect(screen.getByTestId("allowlist-retry-load")).toBeInTheDocument();
+    expect(posted).toBeTruthy();
   });
 
-  it("读取 403 显示权限问题", async () => {
-    stub = installFetchStub(
-      withSession([
-        {
-          method: "GET",
-          path: "/api/v1/registration-allowlists",
-          respond: () =>
-            problemResponse({ status: 403, title: "Forbidden", detail: "administrator only" }),
-        },
-      ]),
-    );
-    await signIn("admin1", "pw");
-    renderWithProviders(<RegistrationAllowlistPanel />);
-
-    expect(await screen.findByTestId("allowlist-forbidden")).toBeInTheDocument();
-    expect(screen.queryByTestId("allowlist-empty")).toBeNull();
+  it("展开班级才读学生，并显示姓名与学号", async () => {
+    await openPanel();
+    await userEvent.click(await screen.findByTestId(`allowlist-expand-${BATCH}`));
+    const entries = await screen.findByTestId(`allowlist-entries-${BATCH}`);
+    expect(within(entries).getByText("黄俊杰")).toBeInTheDocument();
+    expect(within(entries).getByText("2024141460192")).toBeInTheDocument();
+    expect(within(entries).getByText("李四")).toBeInTheDocument();
   });
-});
 
-describe("注册名单：全量替换确认", () => {
-  it("只接受 CSV：选 XLSX 提示「注册名单使用 CSV 文件」且不发请求", async () => {
-    stub = installFetchStub(
-      withSession([
-        { method: "GET", path: "/api/v1/registration-allowlists", respond: () => jsonResponse(allowlistState()) },
-      ]),
-    );
-    await signIn("admin1", "pw");
-    renderWithProviders(<RegistrationAllowlistPanel />);
-
-    await screen.findByTestId("allowlist-current");
-    // `user.upload` 会按 `accept` 过滤掉不匹配的文件，而这里要验的正是"用户绕过选择框
-    // 塞进来一个 XLSX"时页面自己的判断，所以直接触发 change。
-    fireEvent.change(screen.getByTestId("allowlist-file"), {
-      target: {
-        files: [
-          new File(["x"], "roster.xlsx", {
-            type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-          }),
-        ],
-      },
+  it("学生行右侧的删除按钮发 DELETE，删的是这一个学生", async () => {
+    await openPanel();
+    await userEvent.click(await screen.findByTestId(`allowlist-expand-${BATCH}`));
+    await screen.findByTestId(`allowlist-entries-${BATCH}`);
+    await userEvent.click(screen.getByTestId(`allowlist-delete-entry-${ENTRY_A}`));
+    await waitFor(() => {
+      const deleted = stub?.requests.some(
+        (request) =>
+          request.method === "DELETE" &&
+          request.url.pathname === `/api/v1/registration-allowlists/entries/${ENTRY_A}`,
+      );
+      expect(deleted).toBe(true);
     });
-
-    expect(screen.getByText("注册名单使用 CSV 文件。")).toBeInTheDocument();
-    expect(screen.getByTestId("allowlist-continue")).toBeDisabled();
-    expect(screen.queryByTestId("allowlist-selected")).toBeNull();
-    expect(uploadCount()).toBe(0);
   });
 
-  it("确认框写明当前批次与文件名；打开确认框不发请求", async () => {
-    stub = installFetchStub(
-      withSession([
-        { method: "GET", path: "/api/v1/registration-allowlists", respond: () => jsonResponse(allowlistState()) },
-      ]),
-    );
-    const user = userEvent.setup();
-    await signIn("admin1", "pw");
-    renderWithProviders(<RegistrationAllowlistPanel />);
-
-    await screen.findByTestId("allowlist-current");
-    await user.upload(screen.getByTestId("allowlist-file"), csvFile());
-    await user.click(screen.getByTestId("allowlist-continue"));
-
-    const modal = await screen.findByTestId("allowlist-confirm-modal");
-    expect(within(modal).getByTestId("allowlist-confirm-current")).toHaveTextContent(
-      "allowlist-2026.csv",
-    );
-    expect(within(modal).getByTestId("allowlist-confirm-current")).toHaveTextContent("36 人");
-    expect(within(modal).getByTestId("allowlist-confirm-file")).toHaveTextContent(
-      "allowlist-new.csv",
-    );
-    // 三段静态说明已删除；批次信息、文件信息与两个按钮仍在。
-    expect(within(modal).queryByText(/文件中没有的学号将不能注册/)).toBeNull();
-    expect(within(modal).queryByText(/全量替换在一个事务里完成/)).toBeNull();
-    expect(within(modal).queryByText(/确认后只发送一个替换请求/)).toBeNull();
-    expect(within(modal).getByTestId("allowlist-confirm")).toHaveTextContent("确认替换名单");
-    expect(within(modal).getByTestId("allowlist-cancel")).toHaveTextContent("取消");
-    expect(uploadCount()).toBe(0);
+  it("删除班级发 DELETE /batches/{id} 并提示已删除", async () => {
+    await openPanel();
+    await userEvent.click(await screen.findByTestId(`allowlist-delete-${BATCH}`));
+    await waitFor(() => {
+      const deleted = stub?.requests.some(
+        (request) =>
+          request.method === "DELETE" &&
+          request.url.pathname === `/api/v1/registration-allowlists/batches/${BATCH}`,
+      );
+      expect(deleted).toBe(true);
+    });
+    expect(await screen.findByTestId("allowlist-notice")).toHaveTextContent("已删除班级");
   });
 
-  it("取消不发 POST，保留已选文件与当前批次", async () => {
-    stub = installFetchStub(
-      withSession([
-        { method: "GET", path: "/api/v1/registration-allowlists", respond: () => jsonResponse(allowlistState()) },
-      ]),
-    );
-    const user = userEvent.setup();
-    await signIn("admin1", "pw");
+  it("学生读取失败时显示错误，而不是空的名单", async () => {
+    stub = installFetchStub(routes({ entriesStatus: 500 }));
+    await signIn("root", "pw");
     renderWithProviders(<RegistrationAllowlistPanel />);
-
-    await screen.findByTestId("allowlist-current");
-    await user.upload(screen.getByTestId("allowlist-file"), csvFile());
-    await user.click(screen.getByTestId("allowlist-continue"));
-    await user.click(await screen.findByTestId("allowlist-cancel"));
-
-    expect(screen.queryByTestId("allowlist-confirm-modal")).toBeNull();
-    expect(uploadCount()).toBe(0);
-    expect(screen.getByTestId("allowlist-selected")).toHaveTextContent("allowlist-new.csv");
-    expect(screen.getByTestId("allowlist-current")).toHaveTextContent("allowlist-2026.csv");
-  });
-
-  it("确认后只发一个 multipart 请求，成功后显示服务端行数并刷新批次", async () => {
-    let replaced = false;
-    const pending: { resolve: (() => void) | null } = { resolve: null };
-    stub = installFetchStub(
-      withSession([
-        {
-          method: "GET",
-          path: "/api/v1/registration-allowlists",
-          respond: () => {
-            if (!replaced) return jsonResponse(allowlistState());
-            return jsonResponse(
-              allowlistState({
-                batch_id: UUID_B,
-                filename: "allowlist-new.csv",
-                row_count: 38,
-                uploaded_at: "2026-09-16T02:00:00.000Z",
-              }),
-            );
-          },
-        },
-        {
-          method: "POST",
-          path: "/api/v1/registration-allowlists",
-          respond: ({ request }) => {
-            // 请求体必须是 multipart 且带上了所选文件。
-            expect(request.formData?.get("file")).toBeInstanceOf(File);
-            expect((request.formData?.get("file") as File).name).toBe("allowlist-new.csv");
-            return new Promise<Response>((resolve) => {
-              pending.resolve = () => {
-                replaced = true;
-                resolve(jsonResponse(allowlistReplacement()));
-              };
-            });
-          },
-        },
-      ]),
-    );
-    const user = userEvent.setup();
-    await signIn("admin1", "pw");
-    renderWithProviders(<RegistrationAllowlistPanel />);
-
-    await screen.findByTestId("allowlist-current");
-    await user.upload(screen.getByTestId("allowlist-file"), csvFile());
-    await user.click(screen.getByTestId("allowlist-continue"));
-    await user.click(await screen.findByTestId("allowlist-confirm"));
-
-    // pending 期间第二次点击不得再造一个批次。
-    await user.click(screen.getByTestId("allowlist-confirm"));
-    expect(uploadCount()).toBe(1);
-    expect(screen.getByTestId("allowlist-pending")).toHaveTextContent("正在替换…");
-
-    pending.resolve?.();
-
-    expect(await screen.findByTestId("allowlist-notice")).toHaveTextContent("本次 38 行");
-    await waitFor(() =>
-      expect(screen.getByTestId("allowlist-current")).toHaveTextContent("allowlist-new.csv"),
-    );
-    await waitFor(() =>
-      expect(screen.getByTestId("allowlist-row-count")).toHaveTextContent("38"),
-    );
-    expect(uploadCount()).toBe(1);
-  });
-
-  it("422 显示服务端原因、保留文件选择与当前批次，不显示成功", async () => {
-    stub = installFetchStub(
-      withSession([
-        { method: "GET", path: "/api/v1/registration-allowlists", respond: () => jsonResponse(allowlistState()) },
-        {
-          method: "POST",
-          path: "/api/v1/registration-allowlists",
-          respond: () =>
-            problemResponse({
-              status: 422,
-              title: "Unprocessable Entity",
-              detail: "第 3 行的学号不是 13 位数字。",
-            }),
-        },
-      ]),
-    );
-    const user = userEvent.setup();
-    await signIn("admin1", "pw");
-    renderWithProviders(<RegistrationAllowlistPanel />);
-
-    await screen.findByTestId("allowlist-current");
-    await user.upload(screen.getByTestId("allowlist-file"), csvFile());
-    await user.click(screen.getByTestId("allowlist-continue"));
-    await user.click(await screen.findByTestId("allowlist-confirm"));
-
-    const invalid = await screen.findByTestId("allowlist-error-invalid");
-    expect(invalid).toHaveTextContent("第 3 行的学号不是 13 位数字。");
-    expect(screen.queryByTestId("allowlist-notice")).toBeNull();
-    // 当前生效批次没有被改，文件选择也还在，可以修正后重新确认。
-    expect(screen.getByTestId("allowlist-current")).toHaveTextContent("allowlist-2026.csv");
-    expect(screen.getByTestId("allowlist-selected")).toHaveTextContent("allowlist-new.csv");
-    expect(screen.getByTestId("allowlist-continue")).toBeEnabled();
-  });
-
-  it("403 报权限不足而不是文件格式错", async () => {
-    stub = installFetchStub(
-      withSession([
-        { method: "GET", path: "/api/v1/registration-allowlists", respond: () => jsonResponse(allowlistState()) },
-        {
-          method: "POST",
-          path: "/api/v1/registration-allowlists",
-          respond: () =>
-            problemResponse({ status: 403, title: "Forbidden", detail: "administrator only" }),
-        },
-      ]),
-    );
-    const user = userEvent.setup();
-    await signIn("admin1", "pw");
-    renderWithProviders(<RegistrationAllowlistPanel />);
-
-    await screen.findByTestId("allowlist-current");
-    await user.upload(screen.getByTestId("allowlist-file"), csvFile());
-    await user.click(screen.getByTestId("allowlist-continue"));
-    await user.click(await screen.findByTestId("allowlist-confirm"));
-
-    expect(await screen.findByTestId("allowlist-error-forbidden")).toBeInTheDocument();
-    expect(screen.queryByTestId("allowlist-error-invalid")).toBeNull();
-    expect(screen.queryByTestId("allowlist-notice")).toBeNull();
-  });
-
-  it("连接中断不宣称成功也不自动重发：提示状态待确认并可刷新当前名单", async () => {
-    stub = installFetchStub(
-      withSession([
-        { method: "GET", path: "/api/v1/registration-allowlists", respond: () => jsonResponse(allowlistState()) },
-        {
-          method: "POST",
-          path: "/api/v1/registration-allowlists",
-          respond: () => {
-            throw new TypeError("network error");
-          },
-        },
-      ]),
-    );
-    const user = userEvent.setup();
-    await signIn("admin1", "pw");
-    renderWithProviders(<RegistrationAllowlistPanel />);
-
-    await screen.findByTestId("allowlist-current");
-    await user.upload(screen.getByTestId("allowlist-file"), csvFile());
-    await user.click(screen.getByTestId("allowlist-continue"));
-    await user.click(await screen.findByTestId("allowlist-confirm"));
-
-    const uncertain = await screen.findByTestId("allowlist-uncertain");
-    expect(uncertain).toHaveTextContent("替换结果未确认");
-    expect(screen.queryByTestId("allowlist-notice")).toBeNull();
-
-    const before = stub.requests.filter(
-      (request) => request.method === "GET" && request.url.pathname === "/api/v1/registration-allowlists",
-    ).length;
-    await user.click(within(uncertain).getByRole("button"));
-
-    await waitFor(() =>
-      expect(
-        stub?.requests.filter(
-          (request) =>
-            request.method === "GET" &&
-            request.url.pathname === "/api/v1/registration-allowlists",
-        ).length,
-      ).toBe(before + 1),
-    );
-    // 不自动重放写请求。
-    expect(uploadCount()).toBe(1);
+    await userEvent.click(await screen.findByTestId(`allowlist-expand-${BATCH}`));
+    expect(await screen.findByText(/boom|请求失败|错误/i)).toBeInTheDocument();
   });
 });
