@@ -176,22 +176,50 @@ jobs:
           set -euo pipefail
           scan_file="$RUNNER_TEMP/autograder-hostkey-scan"
           known_hosts_file="$RUNNER_TEMP/autograder-known-hosts"
-          ssh-keyscan -T 10 -p "$DEPLOY_SSH_PORT" -t ed25519 "$DEPLOY_SSH_HOST" \
-            > "$scan_file" 2>/dev/null
           : > "$known_hosts_file"
-          while IFS= read -r key_line; do
-            read -r scanned_host key_type key_data _ <<<"$key_line"
-            fingerprint="$(printf '%s %s\n' "$key_type" "$key_data" \
-              | ssh-keygen -lf - -E sha256 | awk 'NR == 1 { print $2 }')"
+
+          # ssh-keyscan 还会输出 `# host:port SSH-2.0-...` 这类注释行；它们不是公钥，
+          # 一旦被当成公钥喂给 ssh-keygen，整个步骤会因为 `set -e` 在打印真实原因前退出。
+          # ssh-keyscan 在部分失败时也返回非零，所以这里只要求"仍拿到了内容"；
+          # 真正是否有可用密钥由下面的 key_lines 判断。
+          ssh-keyscan -T 10 -p "$DEPLOY_SSH_PORT" -t ed25519 "$DEPLOY_SSH_HOST" \
+            > "$scan_file" 2>/dev/null || true
+          if [[ ! -s "$scan_file" ]]; then
+            echo "::error::ssh-keyscan could not reach ${DEPLOY_SSH_HOST}:${DEPLOY_SSH_PORT}."
+            exit 1
+          fi
+
+          key_lines=0
+          live_fingerprints=""
+          while read -r scanned_host key_type key_data _; do
+            case "${key_type:-}" in
+              ssh-ed25519|sk-ssh-ed25519@openssh.com) ;;
+              *) continue ;;
+            esac
+            [[ -n "${key_data:-}" ]] || continue
+            key_lines=$((key_lines + 1))
+            candidate="$RUNNER_TEMP/autograder-hostkey-candidate"
+            printf '%s %s\n' "$key_type" "$key_data" > "$candidate"
+            # 单行解析失败只丢这一行，不终止步骤。
+            fingerprint="$(ssh-keygen -lf "$candidate" -E sha256 2>/dev/null \
+              | awk 'NR == 1 { print $2 }' || true)"
+            rm -f "$candidate"
+            [[ -n "$fingerprint" ]] || continue
+            live_fingerprints="${live_fingerprints:+$live_fingerprints, }$fingerprint"
             if [[ "$fingerprint" == "$DEPLOY_SSH_HOSTKEY" ]]; then
               printf '%s %s %s\n' "$scanned_host" "$key_type" "$key_data" \
                 >> "$known_hosts_file"
             fi
           done < "$scan_file"
+
+          if [[ "$key_lines" -eq 0 ]]; then
+            echo "::error::ssh-keyscan returned no ED25519 host key for ${DEPLOY_SSH_HOST}:${DEPLOY_SSH_PORT}."
+            echo "The host may be unreachable from the runner, or may not offer ED25519."
+            exit 1
+          fi
           if [[ ! -s "$known_hosts_file" ]]; then
-            live_fingerprints="$(ssh-keygen -lf "$scan_file" -E sha256 2>/dev/null \
-              | awk '{ print $2 }' | sort -u | paste -sd ',')"
             echo "::error::The live ED25519 host key does not match the pinned fingerprint."
+            echo "Pinned: $DEPLOY_SSH_HOSTKEY"
             echo "Live ED25519 fingerprints: $live_fingerprints"
             exit 1
           fi
