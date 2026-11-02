@@ -66,7 +66,7 @@ export function AuthoringNewRoute() {
     <RequireAuth>
       <RequirePermission
         allow={canAuthorQuestions}
-        allowedRoles={["teacher", "assistant", "admin"]}
+        allowedRoles={["teacher", "admin"]}
       >
         <AuthoringPage
           questionId={null}
@@ -98,7 +98,7 @@ export function AuthoringEditRoute() {
     <RequireAuth>
       <RequirePermission
         allow={canAuthorQuestions}
-        allowedRoles={["teacher", "assistant", "admin"]}
+        allowedRoles={["teacher", "admin"]}
       >
         <AuthoringPage questionId={questionId} />
       </RequirePermission>
@@ -145,7 +145,7 @@ export function AssignmentDetailRoute() {
 export function RosterRoute() {
   return (
     <RequireAuth>
-      <RequirePermission allow={canViewRoster} allowedRoles={["teacher", "assistant", "admin"]}>
+      <RequirePermission allow={canViewRoster} allowedRoles={["teacher", "admin"]}>
         <RosterPage />
       </RequirePermission>
     </RequireAuth>
@@ -189,7 +189,7 @@ export function ReviewRoute() {
     <RequireAuth>
       <RequirePermission
         allow={canReviewQuarantine}
-        allowedRoles={["teacher", "assistant", "admin"]}
+        allowedRoles={["teacher", "admin"]}
       >
         <ReviewPage
           search={search}

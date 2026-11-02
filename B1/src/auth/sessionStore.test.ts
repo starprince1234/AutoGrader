@@ -90,12 +90,12 @@ describe("会话状态机", () => {
   it("刷新响应里带角色声明时被解析出来（只读、不替代服务端授权）", () => {
     const token = tokenWith({
       sub: "00000000-0000-4000-8000-0000000000a1",
-      role: ["assistant"],
+      role: ["teacher"],
       scope: [{ course_id: "00000000-0000-4000-8000-0000000000a2" }],
     });
     expect(readClaimsFromToken(token)).toEqual({
       subject: "00000000-0000-4000-8000-0000000000a1",
-      roles: ["assistant"],
+      roles: ["teacher"],
       scope: [{ course_id: "00000000-0000-4000-8000-0000000000a2" }],
       rolesKnown: true,
     });

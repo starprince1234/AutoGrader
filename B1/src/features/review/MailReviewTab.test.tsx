@@ -58,7 +58,7 @@ const ENROLLMENTS = `/api/v1/sections/${UUID_B}/enrollments`;
 
 function routesFor(options: {
   rows?: ReturnType<typeof intakeQuarantineView>[];
-  roles?: ("teacher" | "assistant" | "admin")[];
+  roles?: ("teacher" | "admin")[];
   scope?: { course_id: string; section_id: string }[];
   quarantineRespond?: () => Response;
   enrollments?: ReturnType<typeof enrollmentPublic>[];

@@ -21,17 +21,15 @@ PASSWORD = "correct horse battery staple"
 
 @pytest.fixture
 def world(factory):
-    """A course with a teacher, an outside teacher, an assistant, a student and an admin."""
+    """A course with a teacher, an outside teacher, a student and an admin."""
     admin = factory.user(username="admin", password=PASSWORD, roles=("admin",))
     owner = factory.user(username="owner", password=PASSWORD, roles=("teacher",))
     outsider = factory.user(username="outsider", password=PASSWORD, roles=("teacher",))
-    assistant = factory.user(username="assistant", password=PASSWORD, roles=("assistant",))
     student = factory.user(
         username="student", password=PASSWORD, roles=("student",), student_number="20230001"
     )
     course_id = factory.course(code="CS101", title="Intro", created_by=owner)
     factory.grant(user_id=owner, course_id=course_id, role="teacher")
-    factory.grant(user_id=assistant, course_id=course_id, role="assistant")
     section_id = factory.section(course_id=course_id, code="01", term="2026F")
     factory.enrollment(
         section_id=section_id, student_number="20230001", display_name="Student", user_id=student
@@ -42,7 +40,6 @@ def world(factory):
         "admin": admin,
         "owner": owner,
         "outsider": outsider,
-        "assistant": assistant,
         "student": student,
         "course_id": course_id,
         "section_id": section_id,
@@ -67,13 +64,6 @@ def test_student_cannot_list_platform_users(client, world, sign_in_as) -> None:
     assert response.headers["content-type"].startswith("application/problem+json")
 
 
-def test_assistant_is_not_a_platform_administrator(client, world, sign_in_as) -> None:
-    assert client.get("/api/v1/users", headers=sign_in_as("assistant").headers).status_code == 403
-    assert client.post(
-        "/api/v1/users",
-        headers=sign_in_as("assistant").headers,
-        json={"display_name": "X", "username": "x", "roles": ["student"]},
-    ).status_code == 403
 
 
 def test_teacher_outside_the_course_cannot_write_to_it(client, world, sign_in_as) -> None:
@@ -108,13 +98,6 @@ def test_course_owner_can_write_and_read(client, world, sign_in_as) -> None:
     assert roster.status_code == 200, roster.text
 
 
-def test_course_scoped_assistant_has_write_access(client, world, sign_in_as) -> None:
-    response = client.post(
-        f"/api/v1/courses/{world['course_id']}/sections",
-        headers=sign_in_as("assistant").headers,
-        json={"section_code": "03"},
-    )
-    assert response.status_code == 201, response.text
 
 
 def test_enrolled_student_can_read_but_not_write(client, world, sign_in_as, factory) -> None:

@@ -60,18 +60,18 @@ export function clearPortalIntent(): void {
   }
 }
 
-/** 教师端包含教师/助教/管理员；学生端只认学生。角色未知时 fail-closed。 */
+/** 教师端包含教师与管理员；学生端只认学生。角色未知时 fail-closed。 */
 export function portalAllows(session: SessionState, portal: Portal): boolean {
   if (!session.rolesKnown) return false;
   if (portal === "student") {
     // 同时持有教师侧角色的账号一律走教师端：页面按教师角色渲染，
     // 不能再从学生端点进去看到"教师视图"。
     const hasStaffRole = session.roles.some(
-      (role) => role === "teacher" || role === "assistant" || role === "admin",
+      (role) => role === "teacher" || role === "admin",
     );
     return session.roles.includes("student") && !hasStaffRole;
   }
   return session.roles.some(
-    (role) => role === "teacher" || role === "assistant" || role === "admin",
+    (role) => role === "teacher" || role === "admin",
   );
 }

@@ -186,11 +186,6 @@ def tokens() -> dict[str, dict]:
             "roles": ["student"],
             "scope": [{"course_id": str(COURSE_A), "section_id": str(SECTION_A)}],
         },
-        "assistant-a": {
-            "sub": str(uuid.uuid4()),
-            "roles": ["assistant"],
-            "scope": [{"course_id": str(COURSE_A)}],
-        },
     }
 
 

@@ -177,7 +177,7 @@ def _question_extras(
             return [], []
         published = next((item for item in versions if item.status == "published"), None)
         is_staff = context.principal is not None and context.principal.has_role(
-            "teacher", "assistant", "admin"
+            "teacher", "admin"
         )
         target = published or (versions[0] if is_staff else None)
         assets = (

@@ -144,7 +144,7 @@ def test_update_user_changes_roles_and_audits_the_change(
     response = client.patch(
         f"/api/v1/users/{target}",
         headers=headers,
-        json={"display_name": "Alice Z", "roles": ["student", "assistant"]},
+        json={"display_name": "Alice Z", "roles": ["student", "teacher"]},
     )
     assert response.status_code == 200, response.text
     assert set(response.json()["changed_fields"]) == {"display_name", "roles"}
@@ -161,7 +161,7 @@ def test_update_user_changes_roles_and_audits_the_change(
             .where(audit_records.c.target_id == target)
             .order_by(audit_records.c.occurred_at.desc())
         ).fetchone()
-    assert role_values == {"student", "assistant"}
+    assert role_values == {"student", "teacher"}
     assert audit.action == "user.updated"
     assert audit.change_digest and len(audit.change_digest) == 64
     # The audit names the fields, and stores no values.
@@ -420,7 +420,7 @@ def test_reassigning_roles_advances_the_concurrency_stamp(
     stale = client.patch(
         f"/api/v1/users/{target}",
         headers=headers,
-        json={"roles": ["assistant"], "expected_updated_at": before["updated_at"]},
+        json={"roles": ["teacher"], "expected_updated_at": before["updated_at"]},
     )
     assert stale.status_code == 409
 

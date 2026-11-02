@@ -214,7 +214,7 @@ class _World:
         """只覆盖课序 A 的助教（用于验证"未指名课序不得扩大范围"）。"""
         return signer.token(
             user_id=str(uuid.uuid4()),
-            roles=("assistant",),
+            roles=("teacher",),
             scope=[{"course_id": self.course, "section_id": self.section_a}],
         )
 
@@ -1923,26 +1923,26 @@ def test_export_enforces_the_same_scope_rules_as_the_query(
 ) -> None:
     """C：越界课序 → 403（查询与导出都拦）；覆盖范围内的教师与管理员 → 200（两条路径都通）。"""
     _seed_grade_rows(engine, world, count_a=1, count_b=2)
-    assistant = _auth(world.section_teacher_token(signer))
+    scoped_teacher = _auth(world.section_teacher_token(signer))
     out_of_scope = {"course_id": world.course, "section_id": world.section_b}
     for path in (GRADES, GRADES_EXPORT):
-        _assert_problem(client.get(path, params=out_of_scope, headers=assistant), 403)
+        _assert_problem(client.get(path, params=out_of_scope, headers=scoped_teacher), 403)
         in_scope = client.get(
             path,
             params={"course_id": world.course, "section_id": world.section_a},
-            headers=assistant,
+            headers=scoped_teacher,
         )
         assert in_scope.status_code == 200, in_scope.text
         # 未指名课序时按已覆盖课序收敛（既不放行整门课，也不是 403）
         if path == GRADES:
-            narrowed = client.get(path, params={"course_id": world.course}, headers=assistant)
+            narrowed = client.get(path, params={"course_id": world.course}, headers=scoped_teacher)
             assert narrowed.status_code == 200, narrowed.text
             assert [item["section_id"] for item in narrowed.json()["items"]] == [world.section_a]
         else:
             narrowed = client.get(
                 path,
                 params={"course_id": world.course, "format": "csv"},
-                headers=assistant,
+                headers=scoped_teacher,
             )
             assert narrowed.status_code == 200, narrowed.text
             _, records = _csv_records(narrowed.content)

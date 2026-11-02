@@ -187,9 +187,9 @@ def test_malformed_scope_is_rejected(key_pair):
 def test_single_role_claim_is_accepted(key_pair):
     private_key, jwk = key_pair
     payload = claims()
-    payload["role"] = "assistant"
+    payload["role"] = "teacher"
     principal = verifier_with(jwk).verify(sign(private_key, payload))
-    assert principal.roles == frozenset({"assistant"})
+    assert principal.roles == frozenset({"teacher"})
 
 
 def test_jwks_is_cached_across_calls(key_pair):
@@ -293,10 +293,10 @@ def test_statistics_requires_a_privileged_role(client, auth_headers, published_q
     assert student.status_code == 403
     assert student.json()["type"].endswith("/forbidden")
 
-    assistant = client.get(
-        f"/api/v1/questions/{question_id}/statistics", headers=auth_headers("assistant-a")
+    privileged = client.get(
+        f"/api/v1/questions/{question_id}/statistics", headers=auth_headers("teacher-a")
     )
-    assert assistant.status_code == 200
+    assert privileged.status_code == 200
 
     teacher = client.get(
         f"/api/v1/questions/{question_id}/statistics", headers=auth_headers("teacher-a")

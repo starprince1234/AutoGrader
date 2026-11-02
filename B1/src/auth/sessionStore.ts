@@ -173,8 +173,7 @@ export function readClaimsFromToken(token: string): {
       (value): value is Role =>
         value === "student" ||
         value === "teacher" ||
-        value === "assistant" ||
-        value === "admin",
+            value === "admin",
     );
 
     const rawScope = record.scope ?? record.course_scope;

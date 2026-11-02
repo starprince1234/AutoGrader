@@ -301,14 +301,6 @@ def test_teacher_in_course_scope_can_read(client: TestClient, signer: _Signer, c
     assert response.status_code == 200, response.text
 
 
-def test_assistant_in_course_scope_can_read(client: TestClient, signer: _Signer, course: tuple[str, str]) -> None:
-    student_id = str(uuid.uuid4())
-    submission_id = _submit(client, signer, student_id, course)
-    response = client.get(
-        f"{ENDPOINT}/{submission_id}",
-        headers=_auth(_staff_token(signer, str(uuid.uuid4()), course[0], role="assistant")),
-    )
-    assert response.status_code == 200, response.text
 
 
 def test_teacher_from_another_course_is_403(

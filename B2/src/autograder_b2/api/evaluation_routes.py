@@ -83,7 +83,7 @@ logger = logging.getLogger("autograder_b2.autograder_b2.api.evaluation_routes")
 #: 契约 `getEvaluationReport.view` 的取值域（默认 `student`）。
 REPORT_VIEWS = ("student", "teacher")
 #: 教师视图的判定角色（`Principal` 的既有判定）；管理员不受课程限制。
-_TEACHER_VIEW_ROLES = ("teacher", "assistant")
+_TEACHER_VIEW_ROLES = ("teacher",)
 
 
 def build_evaluation_router(runtime: B2Runtime) -> APIRouter:

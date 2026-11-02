@@ -113,7 +113,6 @@ export const messages = {
 
     "role.student": "学生",
     "role.teacher": "教师",
-    "role.assistant": "助教",
     "role.admin": "管理员",
 
     "login.title": "登录",

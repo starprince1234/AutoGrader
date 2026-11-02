@@ -27,10 +27,9 @@ describe("按角色的主导航（体验层，服务端仍判权）", () => {
     expect(paths(session(["student"]))).toEqual(["/assignments", "/grades"]);
   });
 
-  it("教师/助教看到作业、题库、成绩、课程", () => {
+  it("教师看到作业、题库、成绩、课程", () => {
     const expected = ["/assignments", "/questions", "/grades", "/roster"];
     expect(paths(session(["teacher"]))).toEqual(expected);
-    expect(paths(session(["assistant"]))).toEqual(expected);
   });
 
   it("管理员在教学侧入口之后多一个用户管理", () => {
@@ -51,14 +50,6 @@ describe("按角色的主导航（体验层，服务端仍判权）", () => {
     expect(paths(session([], false, "anonymous"))).toEqual(["/assignments", "/grades"]);
   });
 
-  it("多重角色取并集：学生 + 助教仍看到完整教学入口", () => {
-    expect(paths(session(["student", "assistant"]))).toEqual([
-      "/assignments",
-      "/questions",
-      "/grades",
-      "/roster",
-    ]);
-  });
 });
 
 describe("导航激活态", () => {

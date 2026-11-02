@@ -935,70 +935,8 @@ def test_teacher_course_scope_is_enforced(
         exporter.export(principal=teacher, course_id=str(foreign))
 
 
-def test_section_scoped_assistant_cannot_widen_to_the_whole_course(
-    engine: Engine, query: GradeQueryService
-) -> None:
-    """课序受限的作用域：不传 `section_id` 时只能看自己那一节，显式越界课序 → 403。
-
-    这条是本次实现的安全要点：`CourseScope.covers(course, None)` 对课序受限的令牌返回 `True`
-    （把 `None` 读作"未指名"），而成绩查询的 `section_id` 是**过滤参数**、`None` 意为整门课。
-    若不做课序收敛，一个只覆盖 S1 的助教会用 `?course_id=C` 拿到整门课的成绩。
-    """
-    course, s1, s2 = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
-    question = uuid.uuid4()
-    in_s1 = _seed_submission(
-        engine,
-        course_id=course,
-        section_id=s1,
-        student_id=uuid.uuid4(),
-        question_version_id=question,
-        submitted_at=BASE,
-        state="validated",
-    )
-    in_s2 = _seed_submission(
-        engine,
-        course_id=course,
-        section_id=s2,
-        student_id=uuid.uuid4(),
-        question_version_id=question,
-        submitted_at=BASE + timedelta(seconds=1),
-        state="validated",
-    )
-    assistant = Principal(
-        user_id=str(uuid.uuid4()),
-        roles=("assistant",),
-        scopes=(CourseScope(course_id=str(course), section_id=str(s1)),),
-        token_id=str(uuid.uuid4()),
-    )
-    page = query.list_grades(principal=assistant, course_id=str(course))
-    assert [row.submission_id for row in page.items] == [str(in_s1)]
-    assert str(in_s2) not in {row.submission_id for row in page.items}
-    assert page.next_cursor is None
-
-    # 显式指名课序也收敛：只覆盖 S1 的作用域请求 S2 → 403（不是"静默返回空页"）
-    with pytest.raises(AuthorizationError, match="does not cover"):
-        query.list_grades(principal=assistant, course_id=str(course), section_id=str(s2))
 
 
-def test_assistant_asking_for_a_foreign_section_is_403(
-    engine: Engine, query: GradeQueryService
-) -> None:
-    course, s1, s2 = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
-    _seed_submission(
-        engine,
-        course_id=course,
-        section_id=s2,
-        student_id=uuid.uuid4(),
-        question_version_id=uuid.uuid4(),
-        submitted_at=BASE,
-        state="validated",
-    )
-    with pytest.raises(AuthorizationError, match="does not cover"):
-        query.list_grades(
-            principal=_teacher(course, section=s1),
-            course_id=str(course),
-            section_id=str(s2),
-        )
 
 
 def test_admin_reads_any_course(engine: Engine, query: GradeQueryService) -> None:

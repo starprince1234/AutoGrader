@@ -73,7 +73,7 @@ components:
 
     Role:
       type: string
-      enum: [student, teacher, assistant, admin]
+      enum: [student, teacher, admin]
 
     CourseScope:
       type: object

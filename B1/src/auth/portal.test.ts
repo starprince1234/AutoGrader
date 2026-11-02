@@ -24,9 +24,8 @@ afterEach(() => {
 });
 
 describe("导览页入口端与角色", () => {
-  it("教师端只对教师/助教/管理员开放", () => {
+  it("教师端只对教师与管理员开放", () => {
     expect(portalAllows(session(["teacher"]), "teacher")).toBe(true);
-    expect(portalAllows(session(["assistant"]), "teacher")).toBe(true);
     expect(portalAllows(session(["admin"]), "teacher")).toBe(true);
     expect(portalAllows(session(["student"]), "teacher")).toBe(false);
     expect(portalAllows(session([], false), "teacher")).toBe(false);

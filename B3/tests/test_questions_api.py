@@ -1010,7 +1010,7 @@ def test_archive_then_publish_is_conflict(client, auth_headers):
 
 def test_evaluation_package_requires_service_credentials(client, auth_headers, published_question):
     _question, version = published_question
-    for token in ("teacher-a", "student-a", "assistant-a"):
+    for token in ("teacher-a", "student-a", "teacher-a"):
         response = client.get(
             f"/api/v1/question-versions/{version['question_version_id']}/evaluation-package",
             headers=auth_headers(token),
@@ -1398,7 +1398,7 @@ def test_reference_answer_is_never_readable_by_a_user_token(
     _question, version = published_question
     path = _reference_answer_path(version["question_version_id"])
 
-    for token in ("teacher-a", "assistant-a", "student-a", "teacher-b"):
+    for token in ("teacher-a", "teacher-a", "student-a", "teacher-b"):
         refused = client.get(path, headers=auth_headers(token))
         assert refused.status_code == 403, token
         assert refused.json()["type"].endswith("/forbidden")
@@ -1975,7 +1975,7 @@ def test_diagnostics_require_the_authoring_role_and_course_scope(
     assert client.get(path).status_code == 401
     assert client.get(path, headers=auth_headers("student-a")).status_code == 403
     assert client.get(path, headers=auth_headers("teacher-b")).status_code == 403
-    assert client.get(path, headers=auth_headers("assistant-a")).status_code == 200
+    assert client.get(path, headers=auth_headers("teacher-a")).status_code == 200
     assert (
         client.get(f"/api/v1/questions/{uuid.uuid4()}/diagnostics", headers=auth_headers("teacher-a"))
         .status_code

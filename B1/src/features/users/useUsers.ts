@@ -161,7 +161,6 @@ export function useActivateUser() {
 export const ASSIGNABLE_ROLES: readonly Role[] = [
   "student",
   "teacher",
-  "assistant",
   "admin",
 ] as const;
 

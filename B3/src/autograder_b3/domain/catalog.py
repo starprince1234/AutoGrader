@@ -22,7 +22,7 @@ from ..infra.db import Database
 from ..infra.models import Question, QuestionAsset, QuestionVersion
 from ..infra.repositories import QuestionBankRepository
 
-STAFF_ROLES = frozenset({"teacher", "assistant", "admin"})
+STAFF_ROLES = frozenset({"teacher", "admin"})
 
 
 def _is_staff(principal: Principal) -> bool:

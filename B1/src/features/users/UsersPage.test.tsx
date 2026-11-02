@@ -220,7 +220,7 @@ describe("用户标签：列表与状态（P14 / RQ-B-4-50）", () => {
     expect(created).toHaveBeenCalledTimes(1);
 
     items = [userSummary({ roles: ["student"] })];
-    await user.selectOptions(screen.getByTestId("user-role-filter"), "assistant");
+    await user.selectOptions(screen.getByTestId("user-role-filter"), "teacher");
     expect(await screen.findByTestId("users-no-results")).toHaveTextContent(
       "没有符合条件的用户。",
     );

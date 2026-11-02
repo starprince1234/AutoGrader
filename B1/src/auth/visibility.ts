@@ -17,7 +17,7 @@ function has(state: SessionState, roles: Role[]): boolean {
 
 /** 名单/课序读取入口（与编辑同集合：读取名单本身也是敏感操作）。 */
 export function canViewRoster(state: SessionState): boolean {
-  return has(state, ["teacher", "assistant", "admin"]);
+  return has(state, ["teacher", "admin"]);
 }
 
 /** 名单导入（教师、管理员）。 */
@@ -37,12 +37,12 @@ export function canGradeSubmission(state: SessionState): boolean {
 }
 
 export function canExportGrades(state: SessionState): boolean {
-  return has(state, ["teacher", "assistant", "admin"]);
+  return has(state, ["teacher", "admin"]);
 }
 
 /** 全班成绩视图（教师、助教、管理员）；学生只看本人。 */
 export function canViewCohortGrades(state: SessionState): boolean {
-  return has(state, ["teacher", "assistant", "admin"]);
+  return has(state, ["teacher", "admin"]);
 }
 
 /** 代码提交（学生）；管理员可用于排障但不作为默认入口。 */
@@ -52,7 +52,7 @@ export function canSubmitAnswer(state: SessionState): boolean {
 
 /** 教师视图的证据下钻（可看到可见用例的期望输出）。 */
 export function canViewTeacherEvidence(state: SessionState): boolean {
-  return has(state, ["teacher", "assistant", "admin"]);
+  return has(state, ["teacher", "admin"]);
 }
 
 /**
@@ -69,7 +69,7 @@ export function canCreateCourse(state: SessionState): boolean {
 }
 
 export function canAuthorQuestions(state: SessionState): boolean {
-  return has(state, ["teacher", "assistant", "admin"]);
+  return has(state, ["teacher", "admin"]);
 }
 
 /**
@@ -80,7 +80,7 @@ export function canAuthorQuestions(state: SessionState): boolean {
  * 保持同一集合。这是**可见性**，不是授权：B2 对越权调用返回 403，页面原样展示。
  */
 export function canGenerateCommentary(state: SessionState): boolean {
-  return has(state, ["teacher", "assistant", "admin"]);
+  return has(state, ["teacher", "admin"]);
 }
 
 /**
@@ -89,7 +89,7 @@ export function canGenerateCommentary(state: SessionState): boolean {
  * 与其它可见性一样，这**不是**授权：B2 对越权调用返回 403，页面原样展示。
  */
 export function canReviewQuarantine(state: SessionState): boolean {
-  return has(state, ["teacher", "assistant", "admin"]);
+  return has(state, ["teacher", "admin"]);
 }
 
 /**
@@ -98,7 +98,7 @@ export function canReviewQuarantine(state: SessionState): boolean {
  * 与同族的成绩证据视图（`canViewTeacherEvidence`）保持同一集合。
  */
 export function canViewQuestionQuality(state: SessionState): boolean {
-  return has(state, ["teacher", "assistant", "admin"]);
+  return has(state, ["teacher", "admin"]);
 }
 
 /**
@@ -115,7 +115,7 @@ export function appealPackView(state: SessionState): AppealPackView | null {
   if (!state.rolesKnown) return null;
   if (
     state.roles.some(
-      (role) => role === "teacher" || role === "assistant" || role === "admin",
+      (role) => role === "teacher" || role === "admin",
     )
   ) {
     return "teacher";

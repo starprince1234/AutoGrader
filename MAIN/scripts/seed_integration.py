@@ -149,7 +149,7 @@ def _require_course_scope(base: str, token: str, course_id: str) -> None:
         f"question write would fail with 403. The contract has no endpoint that grants a "
         f"course-scoped role on an existing course, so grant it with B4's operator CLI:\n"
         f"  cd B4 && uv run python -m autograder_b4.ops.roles grant "
-        f"--user-id <teacher_id> --course-id {course_id} --role teacher --assistant "
+        f"--user-id <teacher_id> --course-id {course_id} --role teacher "
         f"--granted-by <admin_id>",
     )
 
@@ -218,7 +218,7 @@ def main(argv: list[str] | None = None) -> int:
         admin,
         username="t.zhang",
         display_name=TEACHER_NAME,
-        roles=["teacher", "assistant"],
+        roles=["teacher"],
         password=PASSWORD_TEACHER,
     )
     student_id = ensure_user(

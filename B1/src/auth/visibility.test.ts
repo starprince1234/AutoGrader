@@ -31,22 +31,15 @@ describe("角色可见性（RQ-B-1-20）", () => {
     expect(canExportGrades(student)).toBe(false);
     expect(canViewCohortGrades(student)).toBe(false);
     expect(canManageUsers(student)).toBe(false);
-    // 出题入口与契约"Teacher/assistant only, inside the authoring flow"一致。
     expect(canAuthorQuestions(student)).toBe(false);
     // 学生可以作答
     expect(canSubmitAnswer(student)).toBe(true);
   });
 
-  it("教师与助教可看授权作用域内的名单，但只有教师可导入", () => {
+  it("教师可看授权作用域内的名单并可导入", () => {
     const teacher = session(["teacher"]);
-    const assistant = session(["assistant"]);
-    expect(canViewRoster(teacher)).toBe(true);
+        expect(canViewRoster(teacher)).toBe(true);
     expect(canImportRoster(teacher)).toBe(true);
-    expect(canViewRoster(assistant)).toBe(true);
-    expect(canImportRoster(assistant)).toBe(false);
-    expect(canExportGrades(assistant)).toBe(true);
-    expect(canViewTeacherEvidence(assistant)).toBe(true);
-    expect(canViewCohortGrades(assistant)).toBe(true);
     // 教师/助教不是作答角色
     expect(canSubmitAnswer(teacher)).toBe(false);
   });

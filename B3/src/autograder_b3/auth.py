@@ -32,10 +32,10 @@ from uuid import UUID
 
 from .errors import Forbidden, Unauthenticated
 
-ROLES = frozenset({"student", "teacher", "assistant", "admin"})
-READ_ROLES = frozenset({"student", "teacher", "assistant", "admin"})
+ROLES = frozenset({"student", "teacher", "admin"})
+READ_ROLES = frozenset({"student", "teacher", "admin"})
 WRITE_ROLES = frozenset({"teacher", "admin"})
-STATISTICS_ROLES = frozenset({"teacher", "assistant", "admin"})
+STATISTICS_ROLES = frozenset({"teacher", "admin"})
 CLOCK_SKEW_SECONDS = 30
 
 
@@ -71,7 +71,7 @@ SERVICE_PRINCIPAL = Principal(subject="service:B2", is_service=True, roles=froze
 #: Roles allowed to ask for authoring advice (``RQ-T-10``, ``CHG-0011``): the people who
 #: write questions. A student is not refused for lack of scope but for lack of the role,
 #: and that check runs before any configuration is inspected.
-AUTHORING_ROLES = frozenset({"teacher", "assistant", "admin"})
+AUTHORING_ROLES = frozenset({"teacher", "admin"})
 
 
 class TokenVerifier(Protocol):
@@ -112,7 +112,7 @@ def require_statistics_read(principal: Principal | None, course_id: UUID) -> Pri
     if actor.is_service:
         return actor
     if not actor.has_role(*STATISTICS_ROLES):
-        raise Forbidden("question statistics require a teacher or assistant role")
+        raise Forbidden("question statistics require a teacher role")
     if not actor.in_course(course_id):
         raise Forbidden("the requested course is outside the caller's authorization scope")
     return actor
@@ -138,7 +138,7 @@ def require_authoring_reader(principal: Principal | None) -> Principal:
     actor = require_authenticated(principal)
     if actor.is_service or actor.has_role(*AUTHORING_ROLES):
         return actor
-    raise Forbidden("only a teacher or assistant may request authoring assistance")
+    raise Forbidden("only a teacher may request authoring assistance")
 
 
 # --- JWT / JWKS -----------------------------------------------------------
