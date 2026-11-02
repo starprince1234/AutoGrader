@@ -194,7 +194,7 @@ export interface paths {
         put?: never;
         /**
          * Ask for authoring suggestions on a draft question (RQ-T-10)
-         * @description Teacher/assistant only, inside the authoring flow. The model reviews the question the
+         * @description Teacher only, inside the authoring flow. The model reviews the question the
          *     teacher is **currently writing** and returns advice: quality observations, comparison
          *     policy fitness, ambiguous wording, difficulty estimate.
          *

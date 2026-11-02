@@ -166,7 +166,7 @@ export interface paths {
         put?: never;
         /**
          * Generate (or regenerate) the teaching commentary for a run (RQ-T-20)
-         * @description Teacher/assistant only: generating commentary is an editorial act, and `ADR-0009`
+         * @description Teacher only: generating commentary is an editorial act, and `ADR-0009`
          *     decision 5 keeps student visibility a course-level policy that defaults to off -- so
          *     the request is not the student's to make.
          *
@@ -196,7 +196,7 @@ export interface paths {
          *     plainly: unmatched mail was, from a teacher's point of view, disappearing without a
          *     trace. This is the read path.
          *
-         *     Authorization: teacher/assistant/admin within the row's course scope. Rows carry a
+         *     Authorization: teacher/admin within the row's course scope. Rows carry a
          *     `reason_code`, an already-redacted `detail`, the record's own
          *     `scope_course_id/scope_section_id`, and a bounded `subject` header (printable characters
          *     only, at most 200 characters; bodies and attachments are still never stored); they never
@@ -417,7 +417,7 @@ export interface paths {
          *       already see; producing one must not become a way to obtain hidden cases or expected
          *       outputs.
          *
-         *     Authorization: teacher/assistant/admin, plus the student for their own run.
+         *     Authorization: teacher/admin, plus the student for their own run.
          */
         get: operations["getAppealPack"];
         put?: never;
