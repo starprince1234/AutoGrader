@@ -235,6 +235,8 @@ export const messages = {
     "allowlist.add": "添加名单",
     "allowlist.added": "已添加「{name}」，共 {count} 人。",
     "allowlist.addedWithSkipped": "已添加「{name}」，新增 {count} 人；{skipped} 人已在其他班级中，已跳过。",
+    "allowlist.updated": "已更新「{name}」：{count} 人。",
+    "allowlist.updatedWithSkipped": "已更新「{name}」：{count} 人；{skipped} 人已在其他班级中，已跳过。",
     "allowlist.deleted": "已删除班级「{name}」及其名单。",
     "allowlist.deleteClass": "删除",
     "allowlist.deleteStudent": "删除 {name}",

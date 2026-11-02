@@ -1445,7 +1445,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Allowlist replaced. */
+            /** @description Allowlist batch added (or the same-named class replaced). */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -1454,8 +1454,11 @@ export interface operations {
                     "application/json": {
                         /** Format: uuid */
                         batch_id: string;
+                        class_name: string;
                         row_count: number;
-                        replaced_row_count: number;
+                        skipped_row_count: number;
+                        duplicate_student_numbers?: string[];
+                        replaced: boolean;
                         content_sha256: string;
                     };
                 };

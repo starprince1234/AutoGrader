@@ -457,16 +457,26 @@ paths:
               additionalProperties: false
       responses:
         '200':
-          description: Allowlist replaced.
+          description: Allowlist batch added (or the same-named class replaced).
           content:
             application/json:
               schema:
                 type: object
-                required: [batch_id, row_count, replaced_row_count, content_sha256]
+                required: [batch_id, class_name, row_count, skipped_row_count, replaced, content_sha256]
                 properties:
                   batch_id: {type: string, format: uuid}
+                  #: 班级名来自文件名（去掉扩展名）。
+                  class_name: {type: string}
+                  #: 实际写入的学生人数（不是文件行数：与其他班级重复的学号会被跳过）。
                   row_count: {type: integer, minimum: 0}
-                  replaced_row_count: {type: integer, minimum: 0}
+                  #: 因"已在其他班级中"而跳过的行数。
+                  skipped_row_count: {type: integer, minimum: 0}
+                  duplicate_student_numbers:
+                    type: array
+                    items: {type: string}
+                    maxItems: 20
+                  #: 同名班级已存在时为 true，表示这次是**更新**该班而不是新增一个班。
+                  replaced: {type: boolean}
                   content_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
                 additionalProperties: false
         '401': {$ref: './common.yaml#/components/responses/Unauthorized'}

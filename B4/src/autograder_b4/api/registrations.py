@@ -385,7 +385,8 @@ def build_registration_router(state: B4State, dependencies: Dependencies) -> API
                 target_id=result["batch_id"],
                 detail=(
                     f"class={result['class_name']!r} rows={result['row_count']} "
-                    f"skipped={result['skipped_row_count']} sha256={result['content_sha256'][:12]}"
+                    f"skipped={result['skipped_row_count']} replaced={result['replaced']} "
+                    f"sha256={result['content_sha256'][:12]}"
                 ),
             )
         logger.info(
@@ -403,6 +404,7 @@ def build_registration_router(state: B4State, dependencies: Dependencies) -> API
             "row_count": result["row_count"],
             "skipped_row_count": result["skipped_row_count"],
             "duplicate_student_numbers": result["duplicate_student_numbers"],
+            "replaced": result["replaced"],
             "content_sha256": result["content_sha256"],
         }
 

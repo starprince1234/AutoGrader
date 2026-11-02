@@ -53,17 +53,20 @@ export function RegistrationAllowlistPanel() {
                 setError(null);
                 addBatch.mutate(file, {
                   onSuccess: (result) => {
+                    // "更新了某班"与"新增了某班"必须说清楚：两者对名单的影响完全不同。
+                    const key = result.replaced
+                      ? result.skipped_row_count > 0
+                        ? "allowlist.updatedWithSkipped"
+                        : "allowlist.updated"
+                      : result.skipped_row_count > 0
+                        ? "allowlist.addedWithSkipped"
+                        : "allowlist.added";
                     setNotice(
-                      result.skipped_row_count > 0
-                        ? t("allowlist.addedWithSkipped", {
-                            name: result.class_name,
-                            count: result.row_count,
-                            skipped: result.skipped_row_count,
-                          })
-                        : t("allowlist.added", {
-                            name: result.class_name,
-                            count: result.row_count,
-                          }),
+                      t(key, {
+                        name: result.class_name,
+                        count: result.row_count,
+                        skipped: result.skipped_row_count,
+                      }),
                     );
                   },
                   onError: (failure) => setError(failure),

@@ -19,9 +19,13 @@ export type AllowlistEntriesBody = { batch_id: string; items: AllowlistEntry[] }
 export type AddBatchResult = {
   batch_id: string;
   class_name: string;
+  /** 实际写入的人数（重复学号与同班重复行都不计入）。 */
   row_count: number;
+  /** 因已在其他班级中而跳过的行数。 */
   skipped_row_count: number;
-  duplicate_student_numbers: string[];
+  duplicate_student_numbers?: string[];
+  /** 同名班级已存在：这次是更新该班，而不是新增一个班。 */
+  replaced: boolean;
   content_sha256: string;
 };
 

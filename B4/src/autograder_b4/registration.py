@@ -423,10 +423,66 @@ def add_allowlist_batch(
     rows: list[AllowlistRow],
     uploaded_by: uuid.UUID | None,
 ) -> dict[str, object]:
-    """Append one class; student numbers already present are refused, never overwritten."""
-    batch_id = uuid.uuid4()
+    """Add one class, or replace it when a class with the same name already exists.
+
+    Students already present in *another* class are still refused (one student, one class); rows
+    that collide only with the class being replaced are not duplicates -- that is just an updated
+    list for the same class.
+    """
+    class_name = class_name_of(filename)
     digest = hashlib.sha256(content).hexdigest()
     now = datetime.now(UTC).replace(microsecond=0)
+
+    same_class = connection.execute(
+        select(registration_allowlist_batches.c.batch_id).where(
+            registration_allowlist_batches.c.filename == filename
+        )
+    ).fetchone()
+    if same_class is None:
+        # Same class even with a different extension, otherwise a .CSV copy becomes a second class.
+        same_class = next(
+            (
+                candidate
+                for candidate in connection.execute(
+                    select(
+                        registration_allowlist_batches.c.batch_id,
+                        registration_allowlist_batches.c.filename,
+                    )
+                ).fetchall()
+                if class_name_of(candidate.filename) == class_name
+            ),
+            None,
+        )
+
+    replaced = same_class is not None
+    batch_id = same_class[0] if replaced else uuid.uuid4()
+
+    if replaced:
+        connection.execute(
+            delete(registration_allowlist).where(registration_allowlist.c.batch_id == batch_id)
+        )
+        connection.execute(
+            update(registration_allowlist_batches)
+            .where(registration_allowlist_batches.c.batch_id == batch_id)
+            .values(
+                filename=filename,
+                content_sha256=digest,
+                row_count=0,
+                uploaded_by=uploaded_by,
+                created_at=now,
+            )
+        )
+    else:
+        connection.execute(
+            insert(registration_allowlist_batches).values(
+                batch_id=batch_id,
+                filename=filename,
+                content_sha256=digest,
+                row_count=0,
+                uploaded_by=uploaded_by,
+                created_at=now,
+            )
+        )
 
     wanted = [row.student_number for row in rows]
     existing = {
@@ -439,20 +495,12 @@ def add_allowlist_batch(
     }
     duplicates = sorted(set(wanted) & existing)
 
-    connection.execute(
-        insert(registration_allowlist_batches).values(
-            batch_id=batch_id,
-            filename=filename,
-            content_sha256=digest,
-            row_count=len(rows),
-            uploaded_by=uploaded_by,
-            created_at=now,
-        )
-    )
     inserted = 0
+    seen: set[str] = set()
     for row in rows:
-        if row.student_number in existing:
+        if row.student_number in existing or row.student_number in seen:
             continue
+        seen.add(row.student_number)
         connection.execute(
             insert(registration_allowlist).values(
                 entry_id=uuid.uuid4(),
@@ -463,25 +511,46 @@ def add_allowlist_batch(
             )
         )
         inserted += 1
+
+    connection.execute(
+        update(registration_allowlist_batches)
+        .where(registration_allowlist_batches.c.batch_id == batch_id)
+        .values(row_count=inserted)
+    )
     return {
         "batch_id": batch_id,
-        "class_name": class_name_of(filename),
+        "class_name": class_name,
         "row_count": inserted,
         "skipped_row_count": len(duplicates),
         "duplicate_student_numbers": duplicates[:20],
+        "replaced": replaced,
         "content_sha256": digest,
     }
 
 
 def list_allowlist_batches(connection: Connection) -> list[dict[str, object]]:
     """Every imported class, newest first."""
+    entry_count = (
+        select(
+            registration_allowlist.c.batch_id,
+            func.count().label("entry_count"),
+        )
+        .group_by(registration_allowlist.c.batch_id)
+        .subquery()
+    )
     rows = connection.execute(
         select(
             registration_allowlist_batches.c.batch_id,
             registration_allowlist_batches.c.filename,
-            registration_allowlist_batches.c.row_count,
+            func.coalesce(entry_count.c.entry_count, 0).label("row_count"),
             registration_allowlist_batches.c.created_at,
-        ).order_by(
+        )
+        .select_from(
+            registration_allowlist_batches.outerjoin(
+                entry_count, entry_count.c.batch_id == registration_allowlist_batches.c.batch_id
+            )
+        )
+        .order_by(
             registration_allowlist_batches.c.created_at.desc(),
             registration_allowlist_batches.c.batch_id.desc(),
         )
