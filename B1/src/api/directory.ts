@@ -105,11 +105,17 @@ export function useRenameCourse() {
     mutationFn: async (input: {
       courseId: string;
       title: string;
+      /** `null` 表示清空序号；`undefined` 表示不改动（契约里两者语义不同）。 */
+      courseCode?: string | null;
       expectedUpdatedAt: string;
     }): Promise<CoursePublic> =>
       apiRequest<CoursePublic>(`/api/v1/courses/${encodeURIComponent(input.courseId)}`, {
         method: "PATCH",
-        body: { title: input.title, expected_updated_at: input.expectedUpdatedAt },
+        body: {
+          title: input.title,
+          ...(input.courseCode === undefined ? {} : { course_code: input.courseCode }),
+          expected_updated_at: input.expectedUpdatedAt,
+        },
       }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: queryKeys.courses });

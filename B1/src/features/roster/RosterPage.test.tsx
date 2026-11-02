@@ -87,9 +87,11 @@ async function openRoster(role: "teacher" | "student" = "teacher") {
   const user = userEvent.setup();
   await signIn(`${role}1`, "pw");
   renderWithRouter(<RosterPage />, { path: "/roster", linkTargets: ["/roster/import"] });
-  const courseSelect = await screen.findByLabelText("课程");
-  await waitFor(() => expect(within(courseSelect).getAllByRole("option")).toHaveLength(2));
-  await user.selectOptions(courseSelect, UUID_A);
+  const coursesTable = await screen.findByTestId("courses-table");
+  await waitFor(() =>
+    expect(within(coursesTable).getByTestId(`course-open-${UUID_A}`)).toBeInTheDocument(),
+  );
+  await user.click(within(coursesTable).getByTestId(`course-open-${UUID_A}`));
 
   const sectionSelect = screen.getByLabelText("课序");
   await waitFor(() => expect(within(sectionSelect).getAllByRole("option")).toHaveLength(2));
@@ -216,35 +218,34 @@ describe("名单读取与编辑（RQ-B-1-20）", () => {
 });
 
 describe("课程与名单工作区（P12）", () => {
-  it("新建课程只提交课程名称（编号是可选的标签，不再由表单填写）", async () => {
+  it("新建课程提交课程名称与课程序号（模态框的两个必填字段）", async () => {
     const stub = installFetchStub(rosterRoutes({ role: "teacher" }));
     const user = await openRoster("teacher");
 
     await user.click(await screen.findByTestId("create-course-entry"));
-    const drawer = await screen.findByTestId("create-course");
-    await user.type(within(drawer).getByLabelText("课程名称"), "新课程");
-    await user.click(within(drawer).getByRole("button", { name: "创建课程" }));
+    const modal = await screen.findByTestId("create-course");
+    await user.type(within(modal).getByTestId("create-course-title"), "新课程");
+    await user.type(within(modal).getByTestId("create-course-code"), "C99");
+    await user.click(within(modal).getByTestId("create-course-save"));
 
     await waitFor(() => {
       const request = stub.requests.find(
         (candidate) => candidate.method === "POST" && candidate.url.pathname === "/api/v1/courses",
       );
-      expect(request?.body).toEqual({ title: "新课程" });
+      expect(request?.body).toEqual({ title: "新课程", course_code: "C99" });
     });
     stub.restore();
   });
 
-  it("课程名称为空时不发请求，只提示必填", async () => {
+  it("两个必填字段缺一个时「确认创建」不可用，也不发请求", async () => {
     const stub = installFetchStub(rosterRoutes({ role: "teacher" }));
     const user = await openRoster("teacher");
 
     await user.click(await screen.findByTestId("create-course-entry"));
-    const drawer = await screen.findByTestId("create-course");
-    await user.click(within(drawer).getByRole("button", { name: "创建课程" }));
+    const modal = await screen.findByTestId("create-course");
+    await user.type(within(modal).getByTestId("create-course-title"), "只有名称");
 
-    expect(await screen.findByTestId("create-course-error")).toHaveTextContent(
-      "请输入课程名称。",
-    );
+    expect(within(modal).getByTestId("create-course-save")).toBeDisabled();
     expect(
       stub.requests.some(
         (candidate) => candidate.method === "POST" && candidate.url.pathname === "/api/v1/courses",
@@ -252,6 +253,7 @@ describe("课程与名单工作区（P12）", () => {
     ).toBe(false);
     stub.restore();
   });
+
 
   it("导入名单是同一页的第二个标签，选好作用域后不再要求补选", async () => {
     const stub = installFetchStub(rosterRoutes({ role: "teacher" }));

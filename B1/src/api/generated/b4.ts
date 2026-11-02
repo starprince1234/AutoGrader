@@ -786,6 +786,7 @@ export interface components {
             course_id: components["schemas"]["Uuid"];
             /** @description Optional label; null means the course was created without one. */
             course_code: string | null;
+            section_count: number;
             title: string;
             updated_at: components["schemas"]["Timestamp"];
         };

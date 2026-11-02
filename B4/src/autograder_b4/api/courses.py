@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import Connection, and_, select, update
+from sqlalchemy import Connection, and_, func, select, update
 
 from ..audit import (
     ACTION_COURSE_CREATED,
@@ -112,13 +112,24 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
     ) -> dict[str, object]:
         size = clamp_limit(limit)
         visible = visible_course_ids(connection, caller)
-        if visible is None:
-            statement = select(courses)
-        else:
+        # The per-course section count is aggregated in the same query: one subquery
+        # instead of one listSections call per course (N+1) for the course table.
+        section_count = (
+            select(sections.c.course_id, func.count().label("section_count"))
+            .group_by(sections.c.course_id)
+            .subquery()
+        )
+        statement = (
+            select(courses, func.coalesce(section_count.c.section_count, 0).label("section_count"))
+            .select_from(
+                courses.outerjoin(section_count, section_count.c.course_id == courses.c.course_id)
+            )
+            .order_by(courses.c.created_at.desc(), courses.c.course_id.desc())
+        )
+        if visible is not None:
             if not visible:
                 return {"items": [], "next_cursor": None}
-            statement = select(courses).where(courses.c.course_id.in_(visible))
-        statement = statement.order_by(courses.c.created_at.desc(), courses.c.course_id.desc())
+            statement = statement.where(courses.c.course_id.in_(visible))
         cursor_filter = descending_page_filter(courses.c.created_at, courses.c.course_id, cursor)
         if cursor_filter is not None:
             statement = statement.where(cursor_filter)
@@ -128,9 +139,8 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
                 "course_id": str(row.course_id),
                 "course_code": row.course_code,
                 "title": row.title,
-                # The rename lock compares against this timestamp;
-                # without it a client can only overwrite.
                 "updated_at": _rfc3339(row.updated_at),
+                "section_count": row.section_count,
             }
             for row in rows
         ]
@@ -203,6 +213,7 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
             "course_code": code,
             "title": title,
             "updated_at": _rfc3339(now),
+            "section_count": 0,
         }
 
     @router.patch("/api/v1/courses/{course_id}")
@@ -263,11 +274,15 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
                 detail=f"renamed course title: {row.title!r} -> {title!r}",
                 digest=change_digest({"title": title}),
             )
+        section_total = connection.execute(
+            select(func.count()).select_from(sections).where(sections.c.course_id == course_id)
+        ).scalar_one()
         return {
             "course_id": str(course_id),
             "course_code": values.get("course_code", row.course_code),
             "title": title,
             "updated_at": _rfc3339(now),
+            "section_count": int(section_total),
         }
 
     @router.get("/api/v1/courses/{course_id}/sections")

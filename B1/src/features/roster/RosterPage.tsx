@@ -1,14 +1,12 @@
 import { useMemo, useState } from "react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { t } from "../../i18n";
-import type { EnrollmentPublic } from "../../api/types";
+import type { CoursePublic, EnrollmentPublic } from "../../api/types";
 import { describeApiError, isApiError } from "../../api/problem";
 import { useSession } from "../../auth/sessionContext";
 import { canCreateCourse, canImportRoster } from "../../auth/visibility";
-import { courseLabel as formatCourseLabel } from "../../api/directory";
 import {
   Banner,
-  Drawer,
   EmptyState,
   ErrorState,
   Field,
@@ -29,6 +27,7 @@ import {
   useSections,
 } from "../../api/directory";
 import { RosterImportPanel } from "../roster-import/RosterImportPanel";
+import { useCreateRosterImport } from "../roster-import/useRosterImport";
 import {
   useDeleteEnrollment,
   useEnrollments,
@@ -68,8 +67,23 @@ export function RosterPage() {
   const courses = useCourses();
   // 重命名课程：选中课程后可用；标题按当前值预填，保存时带上它的 updated_at 作为乐观锁。
   const [renameOpen, setRenameOpen] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<CoursePublic | null>(null);
   const [renameTitle, setRenameTitle] = useState("");
+  const [renameCode, setRenameCode] = useState("");
   const renameCourse = useRenameCourse();
+
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createTitle, setCreateTitle] = useState("");
+  const [createCode, setCreateCode] = useState("");
+  const createCourse = useCreateCourse();
+
+  // 导入名单：先选已注册的课序（班级），再上传文件；上传后进入既有的"映射→确认"流程。
+  const [importOpen, setImportOpen] = useState(false);
+  const [importTarget, setImportTarget] = useState<CoursePublic | null>(null);
+  const [importSectionId, setImportSectionId] = useState("");
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const importSections = useSections(importTarget ? importTarget.course_id : null);
+  const createImport = useCreateRosterImport();
   const courseOptions = useMemo(() => loadedCourses(courses.data?.pages), [courses.data]);
   const sections = useSections(courseId === "" ? null : courseId);
   const enrollments = useEnrollments(sectionId === "" ? null : sectionId);
@@ -78,7 +92,6 @@ export function RosterPage() {
 
   const [edit, setEdit] = useState<EditState | null>(null);
   const [removing, setRemoving] = useState<RemoveState | null>(null);
-  const [courseDrawer, setCourseDrawer] = useState(false);
 
   const rows = useMemo(
     () => (enrollments.data?.pages ?? []).flatMap((page) => page.items),
@@ -248,73 +261,25 @@ export function RosterPage() {
     <div className="stack">
       <div className="inline">
         <PageTitle>{t("roster.workspaceTitle")}</PageTitle>
-        {view === "roster" && canCreateCourse(session) ? (
-          <>
-            <button
-              type="button"
-              className="button button--ghost"
-              data-testid="create-course-entry"
-              onClick={() => setCourseDrawer(true)}
-            >
-              {t("roster.createCourse.entry")}
-            </button>
-          </>
+        {canCreateCourse(session) ? (
+          <button
+            type="button"
+            className="button button--primary"
+            data-testid="create-course-entry"
+            onClick={() => {
+              setCreateTitle("");
+              setCreateCode("");
+              setCreateOpen(true);
+            }}
+          >
+            {t("roster.create.open")}
+          </button>
         ) : null}
       </div>
 
-      <Panel title={t("roster.filter")}>
-        <div className="form-grid">
-          <Field label={t("import.course")} htmlFor="roster-course">
-            <select
-              id="roster-course"
-              value={courseId}
-              onChange={(event) => setScope({ course_id: event.target.value, section_id: "" })}
-            >
-              <option value="">{t("common.selectPrompt")}</option>
-              {courseOptions.map((course) => (
-                <option key={course.course_id} value={course.course_id}>
-                  {formatCourseLabel(course)}
-                </option>
-              ))}
-            </select>
-          </Field>
-          {courseId !== "" && canCreateCourse(session) ? (
-            <Field label={t("roster.rename.entry")} htmlFor="roster-rename">
-              <button
-                id="roster-rename"
-                type="button"
-                className="button button--ghost"
-                data-testid="roster-rename-entry"
-                onClick={() => {
-                  const current = courseOptions.find((option) => option.course_id === courseId);
-                  setRenameTitle(current?.title ?? "");
-                  setRenameOpen(true);
-                }}
-              >
-                {t("roster.rename.entry")}
-              </button>
-            </Field>
-          ) : null}
-          <Field label={t("import.section")} htmlFor="roster-section">
-            <select
-              id="roster-section"
-              value={sectionId}
-              onChange={(event) => setScope({ section_id: event.target.value })}
-              disabled={courseId === ""}
-            >
-              <option value="">{t("common.selectPrompt")}</option>
-              {(sections.data ?? []).map((option) => (
-                <option key={option.sectionId} value={option.sectionId}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </Field>
-        </div>
-        <div className="inline">
-          <span className="muted" data-testid="roster-courses-count">
-            {t("common.coursesLoaded", { count: courseOptions.length })}
-          </span>
+      <Panel
+        title={t("roster.coursesTitle")}
+        actions={
           <LoadMoreActions
             loadedCount={courseOptions.length}
             hasNextPage={courses.hasNextPage}
@@ -324,13 +289,109 @@ export function RosterPage() {
             }}
             testId="courses"
           />
-          {courseId !== "" && sectionText !== "" ? (
-            <span className="muted" data-testid="roster-scope">
-              {courseLabel} · {sectionText}
-            </span>
-          ) : null}
-        </div>
-        {courses.isError ? <ErrorState error={courses.error} /> : null}
+        }
+      >
+        {courses.isPending ? (
+          <Spinner />
+        ) : courses.isError ? (
+          <ErrorState error={courses.error} />
+        ) : courseOptions.length === 0 ? (
+          <EmptyState>{t("roster.emptyNoCourse")}</EmptyState>
+        ) : (
+          <Table<CoursePublic>
+            testId="courses-table"
+            label={t("roster.coursesTitle")}
+            rows={courseOptions}
+            getRowKey={(row) => row.course_id}
+            columns={[
+              {
+                key: "title",
+                header: t("roster.column.title"),
+                render: (row) => (
+                  <button
+                    type="button"
+                    className="button button--ghost"
+                    data-testid={`course-open-${row.course_id}`}
+                    onClick={() => setScope({ course_id: row.course_id, section_id: "" })}
+                  >
+                    {row.title}
+                  </button>
+                ),
+              },
+              {
+                key: "code",
+                header: t("roster.column.code"),
+                render: (row) => row.course_code ?? t("roster.column.noCode"),
+              },
+              {
+                key: "sections",
+                header: t("roster.column.classes"),
+                render: (row) => (
+                  <span data-testid={`course-classes-${row.course_id}`}>{row.section_count}</span>
+                ),
+              },
+              {
+                key: "actions",
+                header: t("roster.column.actions"),
+                render: (row) => (
+                  <span className="inline">
+                    <button
+                      type="button"
+                      className="button button--ghost"
+                      data-testid={`course-rename-${row.course_id}`}
+                      onClick={() => {
+                        setRenameTarget(row);
+                        setRenameTitle(row.title);
+                        setRenameCode(row.course_code ?? "");
+                        setRenameOpen(true);
+                      }}
+                    >
+                      {t("roster.rename.entry")}
+                    </button>
+                    <button
+                      type="button"
+                      className="button button--ghost"
+                      data-testid={`course-import-${row.course_id}`}
+                      onClick={() => {
+                        setImportTarget(row);
+                        setImportSectionId("");
+                        setImportFile(null);
+                        setScope({ course_id: row.course_id, section_id: "" });
+                        setImportOpen(true);
+                      }}
+                    >
+                      {t("roster.import.entry")}
+                    </button>
+                  </span>
+                ),
+              },
+            ]}
+          />
+        )}
+        {courseId !== "" ? (
+          <p className="muted" data-testid="roster-scope">
+            {courseLabel}
+            {sectionText === "" ? "" : ` · ${sectionText}`}
+          </p>
+        ) : null}
+      </Panel>
+
+      <Panel title={t("roster.filter")}>
+        <Field label={t("import.section")} htmlFor="roster-section">
+          <select
+            id="roster-section"
+            value={sectionId}
+            onChange={(event) => setScope({ section_id: event.target.value })}
+            disabled={courseId === ""}
+          >
+            <option value="">{t("common.selectPrompt")}</option>
+            {(sections.data ?? []).map((option) => (
+              <option key={option.sectionId} value={option.sectionId}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </Field>
         {sections.isError ? <ErrorState error={sections.error} /> : null}
       </Panel>
 
@@ -349,23 +410,100 @@ export function RosterPage() {
         ]}
       />
 
-      {courseDrawer ? (
-        <CreateCourseDrawer
-          onClose={() => setCourseDrawer(false)}
-          onCreated={(course) => {
-            setCourseDrawer(false);
-            setScope({ course_id: course.course_id, section_id: "" });
-          }}
-        />
+      {createOpen ? (
+        <Modal
+          title={t("roster.create.title")}
+          testId="create-course"
+          onClose={() => setCreateOpen(false)}
+        >
+          <form
+            className="stack"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (createTitle.trim() === "" || createCode.trim() === "") {
+                return;
+              }
+              createCourse.mutate(
+                { title: createTitle.trim(), course_code: createCode.trim() },
+                {
+                  onSuccess: (created) => {
+                    setCreateOpen(false);
+                    setScope({ course_id: created.course_id, section_id: "" });
+                  },
+                },
+              );
+            }}
+          >
+            <Field label={t("roster.create.titleLabel")} htmlFor="create-course-title">
+              <input
+                id="create-course-title"
+                value={createTitle}
+                data-testid="create-course-title"
+                onChange={(event) => setCreateTitle(event.target.value)}
+              />
+            </Field>
+            <Field label={t("roster.create.codeLabel")} htmlFor="create-course-code">
+              <input
+                id="create-course-code"
+                value={createCode}
+                data-testid="create-course-code"
+                onChange={(event) => setCreateCode(event.target.value)}
+              />
+            </Field>
+            {createCourse.isError ? (
+              <p className="form-error" data-testid="create-course-error">
+                {isApiError(createCourse.error) && createCourse.error.status === 409
+                  ? t("roster.create.duplicate")
+                  : t("common.requestFailed")}
+              </p>
+            ) : null}
+            <div className="inline">
+              <button
+                type="submit"
+                className="button button--primary"
+                data-testid="create-course-save"
+                disabled={
+                  createTitle.trim() === "" || createCode.trim() === "" || createCourse.isPending
+                }
+              >
+                {t("roster.create.submit")}
+              </button>
+              <button
+                type="button"
+                className="button button--ghost"
+                onClick={() => setCreateOpen(false)}
+              >
+                {t("common.cancel")}
+              </button>
+            </div>
+          </form>
+        </Modal>
       ) : null}
 
-      {renameOpen ? (
+      {renameOpen && renameTarget ? (
         <Modal
           title={t("roster.rename.title")}
           testId="rename-course"
           onClose={() => setRenameOpen(false)}
         >
-          <div className="stack">
+          <form
+            className="stack"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (renameTitle.trim() === "") {
+                return;
+              }
+              renameCourse.mutate(
+                {
+                  courseId: renameTarget.course_id,
+                  title: renameTitle.trim(),
+                  courseCode: renameCode.trim() === "" ? null : renameCode.trim(),
+                  expectedUpdatedAt: renameTarget.updated_at,
+                },
+                { onSuccess: () => setRenameOpen(false) },
+              );
+            }}
+          >
             <Field label={t("roster.rename.titleLabel")} htmlFor="rename-course-title">
               <input
                 id="rename-course-title"
@@ -374,35 +512,130 @@ export function RosterPage() {
                 onChange={(event) => setRenameTitle(event.target.value)}
               />
             </Field>
+            <Field label={t("roster.rename.codeLabel")} htmlFor="rename-course-code">
+              <input
+                id="rename-course-code"
+                value={renameCode}
+                data-testid="rename-course-code"
+                onChange={(event) => setRenameCode(event.target.value)}
+              />
+            </Field>
             <p className="muted">{t("roster.rename.hint")}</p>
             {renameCourse.isError ? (
               <p className="form-error" data-testid="rename-course-error">
                 {t("roster.rename.failed")}
               </p>
             ) : null}
-            <div className="row">
+            <div className="inline">
               <button
-                type="button"
+                type="submit"
                 className="button button--primary"
                 data-testid="rename-course-save"
                 disabled={renameTitle.trim() === "" || renameCourse.isPending}
-                onClick={() => {
-                  const current = courseOptions.find((option) => option.course_id === courseId);
-                  if (!current) {
-                    return;
-                  }
-                  renameCourse.mutate({
-                    courseId: current.course_id,
-                    title: renameTitle.trim(),
-                    expectedUpdatedAt: current.updated_at,
-                  });
-                  setRenameOpen(false);
-                }}
               >
                 {t("roster.rename.save")}
               </button>
+              <button
+                type="button"
+                className="button button--ghost"
+                onClick={() => setRenameOpen(false)}
+              >
+                {t("common.cancel")}
+              </button>
             </div>
-          </div>
+          </form>
+        </Modal>
+      ) : null}
+
+      {importOpen && importTarget ? (
+        <Modal
+          title={t("roster.import.title")}
+          testId="import-roster"
+          onClose={() => setImportOpen(false)}
+        >
+          <form
+            className="stack"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!importFile || importSectionId === "") {
+                return;
+              }
+              createImport.mutate(
+                {
+                  file: importFile,
+                  courseId: importTarget.course_id,
+                  sectionId: importSectionId,
+                },
+                {
+                  onSuccess: (preview) => {
+                    setImportOpen(false);
+                    setImportSectionId(importSectionId);
+                    setScope({ course_id: importTarget.course_id, section_id: importSectionId });
+                    void navigate({
+                      search: (previous) => ({
+                        ...previous,
+                        view: "import",
+                        import_id: preview.roster_import_id,
+                      }),
+                    });
+                  },
+                },
+              );
+            }}
+          >
+            <Field label={t("roster.import.classLabel")} htmlFor="import-class">
+              <select
+                id="import-class"
+                value={importSectionId}
+                data-testid="import-class"
+                onChange={(event) => setImportSectionId(event.target.value)}
+              >
+                <option value="">{t("roster.import.classPrompt")}</option>
+                {(importSections.data ?? []).map((option) => (
+                  <option key={option.sectionId} value={option.sectionId}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            {importSectionId === "" ? (
+              <p className="muted">{t("roster.import.classRequired")}</p>
+            ) : null}
+            <Field label={t("roster.import.fileLabel")} htmlFor="import-file">
+              <input
+                id="import-file"
+                type="file"
+                accept=".csv,.xlsx"
+                data-testid="import-file"
+                onChange={(event) => setImportFile(event.target.files?.[0] ?? null)}
+              />
+            </Field>
+            {importFile ? <p className="muted">{importFile.name}</p> : null}
+            {createImport.isError ? (
+              <p className="form-error" data-testid="import-roster-error">
+                {describeApiError(createImport.error)}
+              </p>
+            ) : null}
+            <div className="inline">
+              <button
+                type="submit"
+                className="button button--primary"
+                data-testid="import-roster-save"
+                disabled={
+                  importFile === null || importSectionId === "" || createImport.isPending
+                }
+              >
+                {t("roster.import.submit")}
+              </button>
+              <button
+                type="button"
+                className="button button--ghost"
+                onClick={() => setImportOpen(false)}
+              >
+                {t("common.cancel")}
+              </button>
+            </div>
+          </form>
         </Modal>
       ) : null}
 
@@ -537,70 +770,3 @@ export function RosterPage() {
   );
 }
 
-function CreateCourseDrawer({
-  onClose,
-  onCreated,
-}: {
-  onClose: () => void;
-  onCreated: (course: { course_id: string; course_code?: string | null; title: string }) => void;
-}) {
-  const [title, setTitle] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const create = useCreateCourse();
-
-  return (
-    <Drawer
-      title={t("roster.createCourse.entry")}
-      onClose={onClose}
-      testId="create-course"
-      hideCloseButton
-    >
-      <form
-        className="stack"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (title.trim() === "") {
-            setError(t("roster.createCourse.titleRequired"));
-            return;
-          }
-          setError(null);
-          create.mutate(
-            { title: title.trim() },
-            {
-              onSuccess: (created) => onCreated(created),
-              onError: (failure) => {
-                if (isApiError(failure) && failure.status === 409) {
-                  setError(t("roster.createCourse.duplicate"));
-                  return;
-                }
-                setError(t("common.requestFailed"));
-              },
-            },
-          );
-        }}
-      >
-        <Field label={t("roster.createCourse.title")} htmlFor="course-title">
-          <input
-            id="course-title"
-            value={title}
-            maxLength={200}
-            onChange={(event) => setTitle(event.target.value)}
-          />
-        </Field>
-        {error ? (
-          <Banner tone="error" testId="create-course-error">
-            {error}
-          </Banner>
-        ) : null}
-        <div className="inline">
-          <button type="submit" className="button" disabled={create.isPending}>
-            {create.isPending ? t("roster.createCourse.saving") : t("roster.createCourse.submit")}
-          </button>
-          <button type="button" className="button button--ghost" onClick={onClose}>
-            {t("common.cancel")}
-          </button>
-        </div>
-      </form>
-    </Drawer>
-  );
-}

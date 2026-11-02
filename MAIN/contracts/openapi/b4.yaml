@@ -1184,12 +1184,15 @@ components:
         A course as the API returns it, for reads and for the create response. The create
         response previously carried only `course_id`, so a client could not show the new
         course without a second round trip.
-      required: [course_id, course_code, title, updated_at]
+      required: [course_id, course_code, title, updated_at, section_count]
       properties:
         course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
         course_code:
           type: [string, "null"]
           description: "Optional label; null means the course was created without one."
+        #: 该课程下已创建的课序（班级）数量。课程列表直接用它显示"已注册班级数"，
+        #: 否则前端要为每一门课再发一次 `listSections`（N+1）。
+        section_count: {type: integer, minimum: 0}
         title: {type: string}
         # `updateCourse.expected_updated_at` is compared against this value: without it a
         # client can only overwrite unconditionally, which makes the lock decorative.
