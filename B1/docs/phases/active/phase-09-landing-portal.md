@@ -60,7 +60,7 @@
 | `node node_modules/eslint/bin/eslint.js . --max-warnings 0`（B1） | 通过（0 error / 0 warning） |
 | `node node_modules/vitest/vitest.mjs run`（B1 全量） | **51 个测试文件 / 452 个用例全部通过**（exit 0；含上游合入用例） |
 | `node node_modules/vite/bin/vite.js build`（B1） | 通过 |
-| 线上入口复核（提交 `9c3e14a`） | `https://www.91idc.me/app/` HTTP 200，页面引用 `/app/assets/index-DWwU-G25.js` 与 `/app/assets/index-D_UAGaES.css`；bundle 含「教学管理」「学习任务」「当前账号没有教师端权限」与 `portal-mismatch`，**不含**页脚提示文案；DOM 中无 `<footer>`；`https://api.91idc.me/health/ready` 四个模块均 healthy，B4 迁移头 `20261027_0005` |
+| 线上入口复核（提交 `8b66c3f`） | `https://www.91idc.me/app/` HTTP 200，页面引用 `/app/assets/index-BlNt63qZ.js` 与 `/app/assets/index-BY-1nChA.css`；bundle 含「教师端登录」「学生端登录」「account__logout」，**不含** `account-menu`；Vercel 部署状态 `success`；`https://api.91idc.me/health/ready` 四个模块均 healthy |
 
 契约由上游合并升到 `0.24.0`（含课程/名单、人工评分与用户管理相关接口）；B1 已重新生成
 `src/api/generated/*` 并通过 `api:check`。本功能的浮窗登录与账户区不改变契约。
