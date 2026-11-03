@@ -1205,12 +1205,14 @@ components:
         A section (课序) of a course. Defined here because the read and create responses
         had no schema, which forced the client to guess which key carried the identifier
         and which one carried the label.
-      required: [section_id, course_id, section_code]
+      required: [section_id, course_id, section_code, enrollment_count]
       properties:
         section_id: {$ref: './common.yaml#/components/schemas/Uuid'}
         course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
         section_code: {type: string, minLength: 1, maxLength: 64}
         term: {type: [string, 'null'], maxLength: 64}
+        #: 该课序下已导入的学生人数。
+        enrollment_count: {type: integer, minimum: 0}
         created_at:
           anyOf: [{$ref: './common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]
       additionalProperties: false

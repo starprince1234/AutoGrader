@@ -1,10 +1,9 @@
 import { useMemo, useState } from "react";
 import { useNavigate, useSearch } from "@tanstack/react-router";
 import { t } from "../../i18n";
-import type { CoursePublic, EnrollmentPublic } from "../../api/types";
 import { describeApiError, isApiError } from "../../api/problem";
 import { useSession } from "../../auth/sessionContext";
-import { canCreateCourse, canImportRoster } from "../../auth/visibility";
+import { canCreateCourse } from "../../auth/visibility";
 import {
   Banner,
   EmptyState,
@@ -15,10 +14,9 @@ import {
   PageTitle,
   Panel,
   Spinner,
-  StatusPill,
   Table,
-  Tabs,
 } from "../../ui/components";
+import type { CoursePublic } from "../../api/types";
 import {
   loadedCourses,
   useCourses,
@@ -26,236 +24,52 @@ import {
   useRenameCourse,
   useSections,
 } from "../../api/directory";
-import { RosterImportPanel } from "../roster-import/RosterImportPanel";
-import { useCreateRosterImport } from "../roster-import/useRosterImport";
-import {
-  useDeleteEnrollment,
-  useEnrollments,
-  useUpdateEnrollment,
-} from "./useEnrollments";
-
-type EditState = {
-  enrollmentId: string;
-  displayName: string;
-  studentNumber: string;
-  expectedUpdatedAt: string;
-  conflict: boolean;
-};
-
-type RemoveState = { enrollmentId: string; displayName: string; studentNumber: string };
+import { useDeleteEnrollment, useEnrollments } from "./useEnrollments";
 
 /**
- * 课程与名单工作区（P12）：`/roster?view=roster|import`。
+ * 课程与名单（P12）：一张课程表 + 新建/重命名两个居中弹窗。
  *
- * 三件事住在 URL 里，因此刷新、前进后退、复制链接都回到同一处状态：
- * `view`（名单 / 导入名单）、`course_id` + `section_id`（当前作用域）、`import_id`（导入任务）。
- * 组件 state 只保存“还没提交的输入”（编辑草稿、待确认的移出对象、待上传的文件）。
+ * 为什么去掉"查询条件"：课程是这一页唯一的主体，先选课程再选课序等于让老师每次进来都先做
+ * 一次"进入状态"的操作，而表格本身就能把课程、序号、班级数一次呈现出来。
  *
- * 并发保护：编辑必须带服务端返回的 `updated_at` 作为 `expected_updated_at`；没给就禁用编辑，
- * 不做“尽力保存”。
+ * 为什么这里不再有"导入名单"：班级名单在「用户管理 → 注册名单」维护（一个文件一个班级），
+ * 课程这页不再提供第二个文件上传入口——同一件事有两个入口，迟早会出现"这份名单是从哪边导入的"。
  */
 export function RosterPage() {
   const session = useSession();
   const search = useSearch({ from: "/roster" });
   const navigate = useNavigate({ from: "/roster" });
 
-  const view = search.view === "import" ? "import" : "roster";
-  const courseId = search.course_id ?? "";
-  const sectionId = search.section_id ?? "";
-  const importId = search.import_id ?? null;
-
   const courses = useCourses();
-  // 重命名课程：选中课程后可用；标题按当前值预填，保存时带上它的 updated_at 作为乐观锁。
-  const [renameOpen, setRenameOpen] = useState(false);
-  const [renameTarget, setRenameTarget] = useState<CoursePublic | null>(null);
-  const [renameTitle, setRenameTitle] = useState("");
-  const [renameCode, setRenameCode] = useState("");
-  const renameCourse = useRenameCourse();
+  const courseOptions = useMemo(() => loadedCourses(courses.data?.pages), [courses.data]);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [createTitle, setCreateTitle] = useState("");
   const [createCode, setCreateCode] = useState("");
   const createCourse = useCreateCourse();
 
-  // 导入名单：先选已注册的课序（班级），再上传文件；上传后进入既有的"映射→确认"流程。
-  const [importOpen, setImportOpen] = useState(false);
-  const [importTarget, setImportTarget] = useState<CoursePublic | null>(null);
-  const [importSectionId, setImportSectionId] = useState("");
-  const [importFile, setImportFile] = useState<File | null>(null);
-  const importSections = useSections(importTarget ? importTarget.course_id : null);
-  const createImport = useCreateRosterImport();
-  const courseOptions = useMemo(() => loadedCourses(courses.data?.pages), [courses.data]);
-  const sections = useSections(courseId === "" ? null : courseId);
-  const enrollments = useEnrollments(sectionId === "" ? null : sectionId);
-  const updateEnrollment = useUpdateEnrollment(sectionId);
-  const deleteEnrollment = useDeleteEnrollment(sectionId);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [renameTarget, setRenameTarget] = useState<CoursePublic | null>(null);
+  const [renameTitle, setRenameTitle] = useState("");
+  const [renameCode, setRenameCode] = useState("");
+  const renameCourse = useRenameCourse();
 
-  const [edit, setEdit] = useState<EditState | null>(null);
-  const [removing, setRemoving] = useState<RemoveState | null>(null);
+  const selectedCourseId = search.course_id ?? "";
+  const classes = useSections(selectedCourseId === "" ? null : selectedCourseId);
+  const [expandedClass, setExpandedClass] = useState<string | null>(null);
 
-  const rows = useMemo(
-    () => (enrollments.data?.pages ?? []).flatMap((page) => page.items),
-    [enrollments.data],
-  );
-
-  const setScope = (next: { course_id?: string; section_id?: string }) =>
-    void navigate({
-      search: (previous) => ({
-        ...previous,
-        ...next,
-        // 换课程/换课序都会使旧导入任务失效：不把 A 课序的预览显示在 B 课序下。
-        import_id: undefined,
-      }),
-    });
-
-  const courseLabel =
-    courseOptions.find((course) => course.course_id === courseId)?.title ?? courseId;
-  const sectionText = sections.data?.find((option) => option.sectionId === sectionId)?.label ?? "";
-
-  const rosterTab = (
-    <div className="stack">
-      {courseId === "" ? (
-        <EmptyState>{t("roster.emptyNoCourse")}</EmptyState>
-      ) : sections.isPending ? (
-        <Spinner />
-      ) : sections.isError ? (
-        <ErrorState error={sections.error} />
-      ) : (sections.data ?? []).length === 0 ? (
-        <EmptyState>{t("roster.emptyNoSection")}</EmptyState>
-      ) : sectionId === "" ? (
-        <EmptyState>{t("roster.emptyNoSectionSelected")}</EmptyState>
-      ) : enrollments.isPending ? (
-        <Spinner label={t("roster.loading")} />
-      ) : enrollments.isError ? (
-        <ErrorState error={enrollments.error} testId="roster-error" />
-      ) : rows.length === 0 ? (
-        <EmptyState>{t("roster.emptySection")}</EmptyState>
-      ) : (
-        <Panel
-          title={t("roster.countLoaded", { count: rows.length })}
-          actions={
-            <LoadMoreActions
-              loadedCount={rows.length}
-              hasNextPage={enrollments.hasNextPage}
-              isFetchingNextPage={enrollments.isFetchingNextPage}
-              onLoadMore={() => {
-                void enrollments.fetchNextPage();
-              }}
-              testId="enrollments"
-            />
-          }
-        >
-          <Table<EnrollmentPublic>
-            testId="enrollments-table"
-            label={t("roster.countLoaded", { count: rows.length })}
-            rows={rows}
-            getRowKey={(row) => row.enrollment_id}
-            columns={[
-              {
-                key: "display_name",
-                header: t("roster.displayName"),
-                render: (row) => row.display_name,
-              },
-              {
-                key: "student_number",
-                header: t("roster.studentNumber"),
-                render: (row) => row.student_number,
-              },
-              {
-                // 账号状态与名单状态是两件事：名单里有这个人 ≠ 他已经注册了账号。
-                key: "account",
-                header: t("roster.accountStatus"),
-                render: (row) =>
-                  row.student_id ? (
-                    <StatusPill tone="ok">{t("roster.accountBound")}</StatusPill>
-                  ) : (
-                    <span className="muted" data-testid="student-unbound">
-                      {t("roster.studentUnbound")}
-                    </span>
-                  ),
-              },
-              {
-                key: "roster_status",
-                header: t("roster.rosterStatus"),
-                render: (row) => (
-                  <StatusPill tone={row.is_active ? "ok" : "idle"}>
-                    {row.is_active ? t("roster.statusActive") : t("roster.statusInactive")}
-                  </StatusPill>
-                ),
-              },
-              {
-                key: "__actions",
-                header: t("roster.actions"),
-                render: (row) => {
-                  const updatedAt = row.updated_at ?? null;
-                  return (
-                    <div className="row-actions">
-                      <button
-                        type="button"
-                        className="button button--ghost"
-                        disabled={!updatedAt}
-                        title={updatedAt ? undefined : t("roster.missingUpdatedAt")}
-                        onClick={() =>
-                          setEdit({
-                            enrollmentId: row.enrollment_id,
-                            displayName: row.display_name,
-                            studentNumber: row.student_number,
-                            expectedUpdatedAt: updatedAt ?? "",
-                            conflict: false,
-                          })
-                        }
-                      >
-                        {t("roster.edit")}
-                      </button>
-                      <button
-                        type="button"
-                        className="button button--danger"
-                        data-testid={`remove-${row.enrollment_id}`}
-                        onClick={() =>
-                          setRemoving({
-                            enrollmentId: row.enrollment_id,
-                            displayName: row.display_name,
-                            studentNumber: row.student_number,
-                          })
-                        }
-                      >
-                        {t("roster.remove")}
-                      </button>
-                    </div>
-                  );
-                },
-              },
-            ]}
-          />
-          {!rows.every((row) => row.updated_at) ? (
-            <Banner tone="warn" testId="missing-updated-at">
-              {t("roster.missingUpdatedAt")}
-            </Banner>
-          ) : null}
-          {updateEnrollment.isSuccess ? (
-            <Banner tone="success" testId="roster-saved">
-              {t("roster.saved")}
-            </Banner>
-          ) : null}
-          {deleteEnrollment.isSuccess ? (
-            <Banner tone="success" testId="roster-removed">
-              {t("roster.removed")}
-            </Banner>
-          ) : null}
-          {deleteEnrollment.isError ? <ErrorState error={deleteEnrollment.error} /> : null}
-        </Panel>
-      )}
-    </div>
-  );
-
-  const importTab = <RosterImportPanel
-    courseId={courseId}
-    sectionId={sectionId}
-    importId={importId}
-    onImportId={(next) =>
-      void navigate({ search: (previous) => ({ ...previous, import_id: next ?? undefined }) })
-    }
-  />;
+  const openRename = async (row: CoursePublic) => {
+    // 用刚拉取到的行做乐观锁：列表可能是几分钟前读的，拿旧 `updated_at` 保存会被服务端 409
+    // 拒绝，而用户看到的只是"重命名没反应"。刷新一次再打开弹窗，失败率显著降低。
+    const refreshed = await courses.refetch();
+    const latest = loadedCourses(refreshed.data?.pages).find(
+      (course) => course.course_id === row.course_id,
+    );
+    setRenameTarget(latest ?? row);
+    setRenameTitle((latest ?? row).title);
+    setRenameCode((latest ?? row).course_code ?? "");
+    setRenameOpen(true);
+  };
 
   return (
     <div className="stack">
@@ -312,7 +126,11 @@ export function RosterPage() {
                     type="button"
                     className="button button--ghost"
                     data-testid={`course-open-${row.course_id}`}
-                    onClick={() => setScope({ course_id: row.course_id, section_id: "" })}
+                    onClick={() =>
+                      void navigate({
+                        search: (previous) => ({ ...previous, course_id: row.course_id }),
+                      })
+                    }
                   >
                     {row.title}
                   </button>
@@ -334,81 +152,69 @@ export function RosterPage() {
                 key: "actions",
                 header: t("roster.column.actions"),
                 render: (row) => (
-                  <span className="inline">
-                    <button
-                      type="button"
-                      className="button button--ghost"
-                      data-testid={`course-rename-${row.course_id}`}
-                      onClick={() => {
-                        setRenameTarget(row);
-                        setRenameTitle(row.title);
-                        setRenameCode(row.course_code ?? "");
-                        setRenameOpen(true);
-                      }}
-                    >
-                      {t("roster.rename.entry")}
-                    </button>
-                    <button
-                      type="button"
-                      className="button button--ghost"
-                      data-testid={`course-import-${row.course_id}`}
-                      onClick={() => {
-                        setImportTarget(row);
-                        setImportSectionId("");
-                        setImportFile(null);
-                        setScope({ course_id: row.course_id, section_id: "" });
-                        setImportOpen(true);
-                      }}
-                    >
-                      {t("roster.import.entry")}
-                    </button>
-                  </span>
+                  <button
+                    type="button"
+                    className="button button--ghost"
+                    data-testid={`course-rename-${row.course_id}`}
+                    onClick={() => void openRename(row)}
+                  >
+                    {t("roster.rename.entry")}
+                  </button>
                 ),
               },
             ]}
           />
         )}
-        {courseId !== "" ? (
-          <p className="muted" data-testid="roster-scope">
-            {courseLabel}
-            {sectionText === "" ? "" : ` · ${sectionText}`}
-          </p>
+        {selectedCourseId !== "" ? (
+          <div className="stack" data-testid="course-classes">
+            <p className="muted" data-testid="roster-scope">
+              {courseOptions.find((course) => course.course_id === selectedCourseId)?.title ??
+                selectedCourseId}
+            </p>
+            {classes.isPending ? (
+              <Spinner />
+            ) : classes.isError ? (
+              <ErrorState error={classes.error} />
+            ) : (classes.data ?? []).length === 0 ? (
+              <EmptyState>{t("roster.classes.empty")}</EmptyState>
+            ) : (
+              <ul className="allowlist-batches">
+                {(classes.data ?? []).map((option) => {
+                  const row = option.row;
+                  const isOpen = expandedClass === option.sectionId;
+                  return (
+                    <li key={option.sectionId} data-testid={`class-row-${option.sectionId}`}>
+                      <div className="allowlist-batch__head">
+                        <button
+                          type="button"
+                          className="allowlist-batch__toggle"
+                          aria-expanded={isOpen}
+                          data-testid={`class-expand-${option.sectionId}`}
+                          onClick={() => setExpandedClass(isOpen ? null : option.sectionId)}
+                        >
+                          <span className="allowlist-batch__name">
+                            <span aria-hidden="true">{isOpen ? "▾" : "▸"}</span> {option.label}
+                          </span>
+                          <span
+                            className="muted"
+                            data-testid={`class-count-${option.sectionId}`}
+                          >
+                            {t("allowlist.students", { count: row.enrollment_count })}
+                          </span>
+                          <span className="muted">
+                            {(row.created_at ?? "").slice(0, 19).replace("T", " ")}
+                          </span>
+                        </button>
+                      </div>
+                      {isOpen ? <ClassStudents sectionId={option.sectionId} /> : null}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
         ) : null}
       </Panel>
-
-      <Panel title={t("roster.filter")}>
-        <Field label={t("import.section")} htmlFor="roster-section">
-          <select
-            id="roster-section"
-            value={sectionId}
-            onChange={(event) => setScope({ section_id: event.target.value })}
-            disabled={courseId === ""}
-          >
-            <option value="">{t("common.selectPrompt")}</option>
-            {(sections.data ?? []).map((option) => (
-              <option key={option.sectionId} value={option.sectionId}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </Field>
-        {sections.isError ? <ErrorState error={sections.error} /> : null}
-      </Panel>
-
-      <Tabs
-        label={t("roster.tabs.label")}
-        testId="roster-tabs"
-        activeId={view}
-        onChange={(id) =>
-          void navigate({ search: (previous) => ({ ...previous, view: id as "roster" | "import" }) })
-        }
-        tabs={[
-          { id: "roster", label: t("roster.tabs.roster"), content: rosterTab },
-          ...(canImportRoster(session)
-            ? [{ id: "import", label: t("roster.tabs.import"), content: importTab }]
-            : []),
-        ]}
-      />
 
       {createOpen ? (
         <Modal
@@ -428,7 +234,9 @@ export function RosterPage() {
                 {
                   onSuccess: (created) => {
                     setCreateOpen(false);
-                    setScope({ course_id: created.course_id, section_id: "" });
+                    void navigate({
+                      search: (previous) => ({ ...previous, course_id: created.course_id }),
+                    });
                   },
                 },
               );
@@ -451,11 +259,11 @@ export function RosterPage() {
               />
             </Field>
             {createCourse.isError ? (
-              <p className="form-error" data-testid="create-course-error">
+              <Banner tone="error" testId="create-course-error">
                 {isApiError(createCourse.error) && createCourse.error.status === 409
                   ? t("roster.create.duplicate")
-                  : t("common.requestFailed")}
-              </p>
+                  : describeApiError(createCourse.error)}
+              </Banner>
             ) : null}
             <div className="inline">
               <button
@@ -497,6 +305,7 @@ export function RosterPage() {
                 {
                   courseId: renameTarget.course_id,
                   title: renameTitle.trim(),
+                  // 空字符串 = 清空序号；保持不变则原样回传。
                   courseCode: renameCode.trim() === "" ? null : renameCode.trim(),
                   expectedUpdatedAt: renameTarget.updated_at,
                 },
@@ -522,9 +331,9 @@ export function RosterPage() {
             </Field>
             <p className="muted">{t("roster.rename.hint")}</p>
             {renameCourse.isError ? (
-              <p className="form-error" data-testid="rename-course-error">
-                {t("roster.rename.failed")}
-              </p>
+              <Banner tone="error" testId="rename-course-error">
+                {describeApiError(renameCourse.error)}
+              </Banner>
             ) : null}
             <div className="inline">
               <button
@@ -533,7 +342,7 @@ export function RosterPage() {
                 data-testid="rename-course-save"
                 disabled={renameTitle.trim() === "" || renameCourse.isPending}
               >
-                {t("roster.rename.save")}
+                {renameCourse.isPending ? t("roster.rename.saving") : t("roster.rename.save")}
               </button>
               <button
                 type="button"
@@ -546,227 +355,57 @@ export function RosterPage() {
           </form>
         </Modal>
       ) : null}
-
-      {importOpen && importTarget ? (
-        <Modal
-          title={t("roster.import.title")}
-          testId="import-roster"
-          onClose={() => setImportOpen(false)}
-        >
-          <form
-            className="stack"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (!importFile || importSectionId === "") {
-                return;
-              }
-              createImport.mutate(
-                {
-                  file: importFile,
-                  courseId: importTarget.course_id,
-                  sectionId: importSectionId,
-                },
-                {
-                  onSuccess: (preview) => {
-                    setImportOpen(false);
-                    setImportSectionId(importSectionId);
-                    setScope({ course_id: importTarget.course_id, section_id: importSectionId });
-                    void navigate({
-                      search: (previous) => ({
-                        ...previous,
-                        view: "import",
-                        import_id: preview.roster_import_id,
-                      }),
-                    });
-                  },
-                },
-              );
-            }}
-          >
-            <Field label={t("roster.import.classLabel")} htmlFor="import-class">
-              <select
-                id="import-class"
-                value={importSectionId}
-                data-testid="import-class"
-                onChange={(event) => setImportSectionId(event.target.value)}
-              >
-                <option value="">{t("roster.import.classPrompt")}</option>
-                {(importSections.data ?? []).map((option) => (
-                  <option key={option.sectionId} value={option.sectionId}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            {importSectionId === "" ? (
-              <p className="muted">{t("roster.import.classRequired")}</p>
-            ) : null}
-            <Field label={t("roster.import.fileLabel")} htmlFor="import-file">
-              <input
-                id="import-file"
-                type="file"
-                accept=".csv,.xlsx"
-                data-testid="import-file"
-                onChange={(event) => setImportFile(event.target.files?.[0] ?? null)}
-              />
-            </Field>
-            {importFile ? <p className="muted">{importFile.name}</p> : null}
-            {createImport.isError ? (
-              <p className="form-error" data-testid="import-roster-error">
-                {describeApiError(createImport.error)}
-              </p>
-            ) : null}
-            <div className="inline">
-              <button
-                type="submit"
-                className="button button--primary"
-                data-testid="import-roster-save"
-                disabled={
-                  importFile === null || importSectionId === "" || createImport.isPending
-                }
-              >
-                {t("roster.import.submit")}
-              </button>
-              <button
-                type="button"
-                className="button button--ghost"
-                onClick={() => setImportOpen(false)}
-              >
-                {t("common.cancel")}
-              </button>
-            </div>
-          </form>
-        </Modal>
-      ) : null}
-
-      {removing ? (
-        <Modal
-          title={t("roster.removeTitle")}
-          testId="remove-enrollment"
-          onClose={() => setRemoving(null)}
-        >
-          <div className="stack">
-            <p>
-              {t("roster.removeConfirm", {
-                name: removing.displayName,
-                number: removing.studentNumber,
-              })}
-            </p>
-            <p className="muted">{t("roster.removeHint")}</p>
-            <div className="inline">
-              <button
-                type="button"
-                className="button button--ghost"
-                onClick={() => setRemoving(null)}
-              >
-                {t("common.cancel")}
-              </button>
-              <button
-                type="button"
-                className="button button--danger"
-                data-testid="confirm-remove"
-                disabled={deleteEnrollment.isPending}
-                onClick={() =>
-                  deleteEnrollment.mutate(removing.enrollmentId, {
-                    onSuccess: () => setRemoving(null),
-                  })
-                }
-              >
-                {t("roster.remove")}
-              </button>
-            </div>
-          </div>
-        </Modal>
-      ) : null}
-
-      {edit ? (
-        <Modal title={t("roster.editTitle")} testId="enrollment-edit" onClose={() => setEdit(null)}>
-          <form
-            className="stack"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (edit.expectedUpdatedAt === "") return;
-              updateEnrollment.mutate(
-                {
-                  enrollmentId: edit.enrollmentId,
-                  body: {
-                    display_name: edit.displayName,
-                    student_number: edit.studentNumber,
-                    expected_updated_at: edit.expectedUpdatedAt,
-                  },
-                },
-                {
-                  onSuccess: () => setEdit(null),
-                  onError: (error) => {
-                    if (isApiError(error) && error.isConflict) {
-                      setEdit((previous) => (previous ? { ...previous, conflict: true } : previous));
-                    }
-                  },
-                },
-              );
-            }}
-          >
-            <Field label={t("roster.displayName")} htmlFor="edit-display-name">
-              <input
-                id="edit-display-name"
-                value={edit.displayName}
-                onChange={(event) =>
-                  setEdit((previous) =>
-                    previous ? { ...previous, displayName: event.target.value } : previous,
-                  )
-                }
-              />
-            </Field>
-            <Field label={t("roster.studentNumber")} htmlFor="edit-student-number">
-              <input
-                id="edit-student-number"
-                value={edit.studentNumber}
-                onChange={(event) =>
-                  setEdit((previous) =>
-                    previous ? { ...previous, studentNumber: event.target.value } : previous,
-                  )
-                }
-              />
-            </Field>
-
-            {edit.conflict ? (
-              <Banner tone="error" testId="conflict-banner">
-                <strong>{t("roster.conflict.title")}</strong>
-                <p>{t("roster.conflict.body")}</p>
-                <button
-                  type="button"
-                  className="button button--ghost"
-                  onClick={() => {
-                    setEdit(null);
-                    void enrollments.refetch();
-                  }}
-                >
-                  {t("roster.conflict.reload")}
-                </button>
-              </Banner>
-            ) : null}
-
-            {updateEnrollment.isError && !edit.conflict ? (
-              <Banner tone="error">{describeApiError(updateEnrollment.error)}</Banner>
-            ) : null}
-
-            <div className="inline">
-              <button
-                type="submit"
-                className="button"
-                data-testid="save-enrollment"
-                disabled={updateEnrollment.isPending || edit.expectedUpdatedAt === ""}
-              >
-                {t("common.save")}
-              </button>
-              <button type="button" className="button button--ghost" onClick={() => setEdit(null)}>
-                {t("common.cancel")}
-              </button>
-            </div>
-          </form>
-        </Modal>
-      ) : null}
     </div>
   );
 }
 
+/**
+ * 一个班级的学生，排布与「注册名单」展开后完全一致：姓名、学号、右侧垃圾桶。
+ *
+ * 垃圾桶删的是"这个学生在名单里的记录"（退课），而不是账号——判断依据来自 API 的
+ * `DELETE /enrollments/{id}`，页面只是它的入口。
+ */
+function ClassStudents({ sectionId }: { sectionId: string }) {
+  const enrollments = useEnrollments(sectionId);
+  const removeEnrollment = useDeleteEnrollment(sectionId);
+
+  if (enrollments.isPending) {
+    return <Spinner />;
+  }
+  if (enrollments.isError) {
+    return <ErrorState error={enrollments.error} />;
+  }
+  const rows = (enrollments.data?.pages ?? []).flatMap((page) => page.items);
+  if (rows.length === 0) {
+    return <p className="muted">{t("roster.classes.noStudents")}</p>;
+  }
+  return (
+    <ul className="allowlist-entries" data-testid={`class-students-${sectionId}`}>
+      {rows.map((row) => (
+        <li
+          key={row.enrollment_id}
+          className="allowlist-entry"
+          data-testid={`class-student-${row.enrollment_id}`}
+        >
+          <span className="allowlist-entry__name">{row.display_name}</span>
+          <span className="mono-id allowlist-entry__number">{row.student_number}</span>
+          <button
+            type="button"
+            className="button button--ghost allowlist-entry__delete"
+            aria-label={t("roster.classes.remove", { name: row.display_name })}
+            title={t("roster.classes.remove", { name: row.display_name })}
+            data-testid={`class-student-delete-${row.enrollment_id}`}
+            onClick={() => removeEnrollment.mutate(row.enrollment_id)}
+          >
+            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+              <path
+                d="M9 3h6l1 2h4v2H4V5h4l1-2zm-3 6h12l1 12H7L6 9zm3 2v8h2v-8H9zm4 0v8h2v-8h-2z"
+                fill="currentColor"
+              />
+            </svg>
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}

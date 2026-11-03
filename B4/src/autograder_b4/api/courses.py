@@ -297,8 +297,21 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
         if exists is None:
             raise not_found("The course does not exist.")
         ensure_course_read(principal=caller, course_id=course_id, dependencies=dependencies)
+        enrollment_count = (
+            select(enrollments.c.section_id, func.count().label("enrollment_count"))
+            .group_by(enrollments.c.section_id)
+            .subquery()
+        )
         rows = connection.execute(
-            select(sections)
+            select(
+                sections,
+                func.coalesce(enrollment_count.c.enrollment_count, 0).label("enrollment_count"),
+            )
+            .select_from(
+                sections.outerjoin(
+                    enrollment_count, enrollment_count.c.section_id == sections.c.section_id
+                )
+            )
             .where(sections.c.course_id == course_id)
             .order_by(sections.c.section_code)
         ).fetchall()
@@ -309,6 +322,7 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
                     "course_id": str(row.course_id),
                     "section_code": row.section_code,
                     "term": row.term,
+                    "enrollment_count": row.enrollment_count,
                     "created_at": _rfc3339(row.created_at),
                 }
                 for row in rows
@@ -379,6 +393,7 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
             "section_code": code,
             "term": term,
             "created_at": _rfc3339(now),
+            "enrollment_count": 0,
         }
 
     @router.get("/api/v1/sections/{section_id}/enrollments")

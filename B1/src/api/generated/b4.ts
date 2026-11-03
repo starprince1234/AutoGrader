@@ -800,6 +800,7 @@ export interface components {
             course_id: components["schemas"]["Uuid"];
             section_code: string;
             term?: string | null;
+            enrollment_count: number;
             created_at?: components["schemas"]["Timestamp"] | null;
         };
         /**
