@@ -22,6 +22,7 @@
 | 决策 | `adr/` | 本模块不可逆决策 |
 | 运行手册 | `runbooks/local-development.md`、`runbooks/troubleshooting.md` | 可复制执行的命令与排障 |
 | 阶段记录 | `phases/active/`、`phases/archive/` | 真实完成证据 |
+| 设计系统 | `design/DESIGN.md` | 视觉语言、token、状态色、组件形态与动效的唯一真源（含浅/深两套截图） |
 | 协作 | `collaboration/*` | 冷启动、工作包、接口冻结、DoD、术语 |
 | 知识笔记 | `knowledge/README.md` | 可复用结论索引 |
 
@@ -59,9 +60,14 @@
 | 真实 ESLint | `已完成` | `eslint . --max-warnings 0`：0 error / 0 warning |
 | API 类型生成（ADR-0002） | `已完成` | `node scripts/generate-api-types.mjs` / `--check`（契约 **`0.24.0`**，`API types match MAIN/contracts.`） |
 | 端到端（真实后端） | `部分`（覆盖度**已打通**；其余按页说明） | 真实 MAIN host `http://127.0.0.1:18000` + B2/B3/B4。**本轮真实浏览器复核**：`/app/questions` 的覆盖度面板渲染真实 B3 数据（`total=102 / tagged=4 / untagged=98`，逐标签与独立 SQL 一致）⇒ **覆盖度端到端成立**；旧隔离区与旧质量页当时正常渲染（空列表/筛选面板），但**已随 P13 合并删除，新 `/review` 尚未部署**；`/app/questions/<id>/edit` 的验证面板可用，但对**草稿**得到 B2 `422`（评测包只对已发布版本编译 → 该跨模块缺口已由 `CHG-0028` 处理，待 B3 落地后复测）。**证据包面板未在浏览器里打开**。**AI 参考分的非空渲染、`unavailable` 态、学生视图仍未做端到端**（原因见 phase-03 的"未验证项"） |
+| 设计系统（P10，Linear 式） | `已完成`（浅/深两套实拍；登录后业务页未截） | `src/styles.css` 整体重写、**类名未改**；`tsc -b`、`eslint --max-warnings 0`、`vitest`（51 文件 / 456 用例）与 `vite build` 通过；真实构建产物经无头 Chromium 实拍导览页、登录浮窗与组件总览（浅/深），见 `design/screenshots/`；`api:check` 本轮**失败**（生成类型与契约漂移，既有状态，本轮未触碰）；未验证项见 `phases/active/phase-10-linear-design-system.md` |
 
 > 归档门禁与完成定义见 `collaboration/definition-of-done.md` 与 `phases/archive/README.md`。
-> 当前阶段记录：`phases/active/phase-09-landing-portal.md`（导览页与登录记忆：根路径 `/`
+> 当前阶段记录：`phases/active/phase-10-linear-design-system.md`（Linear 设计系统重做：
+> 视觉语言由 Apple 式换成派生自 Linear 的工程克制风格，只改 `src/styles.css`、**类名未动**；
+> 按钮/输入/表格/状态胶囊/提示条/页签/弹窗的形态、字体层级与动效一并调整；浅色为主、深色跟随
+> 系统，渐变只做光；含真实门禁结果、浅/深两套实拍截图与未验证项）；上一阶段：
+> `phases/active/phase-09-landing-portal.md`（导览页与登录记忆：根路径 `/`
 > 由重定向改为双列导览页，教师/学生各列各自入口；未登录时在当前页打开登录浮窗，登录后直达
 > 所点功能；最近登录用户跳过登录；门户意图只存角色与目标路径，角色不匹配时阻断；系统内右上角
 > 直接显示用户名和退出按钮，**退出后回到导览页**；独立登录页已删除，`/login` 只作旧地址重定向；
