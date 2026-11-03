@@ -163,6 +163,39 @@ describe("P01 导览页", () => {
     expect(readPortalIntent()).toEqual({ portal: "student", path: "/grades" });
   });
 
+  it("教师端入口用学生账号登录：留在浮窗并提示没有教师端权限", async () => {
+    const user = userEvent.setup();
+    const router = renderLanding();
+    stub = installFetchStub([
+      {
+        method: "POST",
+        path: "/api/v1/auth/session",
+        respond: () => jsonResponse(sessionCreated({ roles: ["student"] })),
+      },
+      {
+        method: "DELETE",
+        path: "/api/v1/auth/session/logout",
+        respond: () => new Response(null, { status: 204 }),
+      },
+    ]);
+
+    await screen.findByTestId("landing-page");
+    await user.click(screen.getByTestId("landing-teacher-assignments"));
+
+    const dialog = await screen.findByTestId("login-dialog");
+    await user.type(within(dialog).getByLabelText("用户名"), "student1");
+    await user.type(within(dialog).getByLabelText("密码"), "correct-password");
+    await user.click(within(dialog).getByTestId("login-submit"));
+
+    expect(await screen.findByTestId("login-error")).toHaveTextContent(
+      "该账号没有教师端权限，请使用教师账号登录。",
+    );
+    expect(router.state.location.pathname).toBe("/");
+    expect(screen.getByTestId("login-dialog")).toBeInTheDocument();
+    expect(getSessionState().status).toBe("anonymous");
+    expect(readPortalIntent()).toEqual({ portal: "teacher", path: "/assignments" });
+  });
+
   it("教师登录记忆：教师端入口可直接点，学生端入口禁用", async () => {
     await signedInAs("teacher");
     renderLanding();

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { t } from "../../i18n";
 import { useSession } from "../../auth/sessionContext";
-import { signOut } from "../../auth/sessionStore";
+import { signOut, type SessionState } from "../../auth/sessionStore";
 import { DEFAULT_AUTHENTICATED_PATH, safeRedirectTarget } from "../../auth/redirect";
 import { clearPortalIntent, portalAllows, rememberPortalIntent, type Portal } from "../../auth/portal";
 import { Modal } from "../../ui/components";
@@ -141,6 +141,15 @@ export function LandingPage() {
     await navigate({ href: target, replace: true });
   };
 
+  const authorizeLogin = (signedIn: SessionState): string | null => {
+    const portal = loginIntent?.portal;
+    if (!portal) return null;
+    if (portalAllows(signedIn, portal)) return null;
+    return portal === "teacher"
+      ? t("landing.teacherMismatch")
+      : t("landing.studentMismatch");
+  };
+
   return (
     <div className="landing" data-testid="landing-page">
       <header className="landing__head">
@@ -274,6 +283,7 @@ export function LandingPage() {
             reset={loginIntent.reset}
             onSuccess={completeLogin}
             onNavigateAway={closeLogin}
+            authorize={authorizeLogin}
           />
         </Modal>
       ) : null}
