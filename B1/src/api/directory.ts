@@ -98,6 +98,22 @@ export function courseLabel(course: { course_code?: string | null; title: string
   return code === "" ? course.title : `${code} · ${course.title}`;
 }
 
+/** 把「已注册名单」里的一个班级导入到课程：创建课序并复制该班学生。 */
+export function useAttachRegisteredClass(courseId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (batchId: string): Promise<SectionPublic> =>
+      apiRequest<SectionPublic>(
+        `/api/v1/courses/${encodeURIComponent(courseId ?? "")}/classes`,
+        { method: "POST", body: { batch_id: batchId } },
+      ),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.sections(courseId ?? "") });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.courses });
+    },
+  });
+}
+
 /** 删除课程：软删，课程从列表消失，但历史记录仍指向它。 */
 export function useDeleteCourse() {
   const queryClient = useQueryClient();

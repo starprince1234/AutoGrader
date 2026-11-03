@@ -36,7 +36,14 @@ from ..authorization import (
     resolve_principal,
     visible_course_ids,
 )
-from ..db.tables import courses, enrollments, roster_imports, sections
+from ..db.tables import (
+    courses,
+    enrollments,
+    registration_allowlist,
+    registration_allowlist_batches,
+    roster_imports,
+    sections,
+)
 from ..db.tables import roles as roles_table
 from ..errors import bad_request, conflict, forbidden, not_found
 from ..logging import get_logger
@@ -82,6 +89,15 @@ class CourseRename(BaseModel):
     expected_updated_at: datetime
 
 
+class RegisteredClassImport(BaseModel):
+    """Which registration-allowlist class to attach to the course."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    batch_id: uuid.UUID
+    section_code: str | None = Field(default=None, max_length=MAX_CODE_LENGTH)
+
+
 class SectionCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -95,6 +111,15 @@ class EnrollmentUpdate(BaseModel):
     student_number: str | None = Field(default=None, max_length=MAX_STUDENT_NUMBER_LENGTH)
     display_name: str | None = Field(default=None, min_length=1, max_length=MAX_DISPLAY_NAME_LENGTH)
     expected_updated_at: datetime | None = None
+
+
+def domain_class_name(filename: str) -> str:
+    """Class name = file name without the extension, same rule as the allowlist."""
+    stem = filename.strip().rsplit("/", 1)[-1]
+    for suffix in (".csv", ".CSV"):
+        if stem.endswith(suffix):
+            return stem[: -len(suffix)].strip() or stem
+    return stem
 
 
 def _now() -> datetime:
@@ -354,6 +379,117 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
                 }
                 for row in rows
             ]
+        }
+
+    @router.post("/api/v1/courses/{course_id}/classes", status_code=201)
+    def attach_registered_class(
+        course_id: uuid.UUID,
+        payload: RegisteredClassImport,
+        caller=Depends(dependencies.principal),
+    ) -> dict[str, object]:
+        """Create a class from an already-registered class (allowlist batch)."""
+        with engine.begin() as write:
+            course_row = write.execute(
+                select(courses).where(courses.c.course_id == course_id)
+            ).fetchone()
+            if course_row is None:
+                raise not_found("The course does not exist.")
+            try:
+                ensure_course_write(
+                    principal=caller, course_id=course_id, dependencies=dependencies
+                )
+            except Exception as error:
+                audit_denial(
+                    engine,
+                    principal=caller,
+                    detail="attaching a class requires write access to its course",
+                )
+                raise error
+
+            batch = write.execute(
+                select(registration_allowlist_batches).where(
+                    registration_allowlist_batches.c.batch_id == payload.batch_id
+                )
+            ).fetchone()
+            if batch is None:
+                raise not_found("The registered class does not exist.")
+
+            entries = write.execute(
+                select(
+                    registration_allowlist.c.student_number,
+                    registration_allowlist.c.display_name,
+                )
+                .where(registration_allowlist.c.batch_id == payload.batch_id)
+                .order_by(registration_allowlist.c.student_number)
+            ).fetchall()
+
+            base_code = (
+                payload.section_code.strip()
+                if payload.section_code and payload.section_code.strip()
+                else domain_class_name(batch.filename)
+            )
+            taken = {
+                row[0]
+                for row in write.execute(
+                    select(sections.c.section_code).where(sections.c.course_id == course_id)
+                ).fetchall()
+            }
+            code = base_code
+            suffix = 2
+            while code in taken:
+                code = f"{base_code}-{suffix}"
+                suffix += 1
+
+            section_id = uuid.uuid4()
+            now = _now()
+            write.execute(
+                sections.insert().values(
+                    section_id=section_id,
+                    course_id=course_id,
+                    section_code=code,
+                    term=None,
+                    created_by=caller.user_id,
+                    created_at=now,
+                )
+            )
+            if entries:
+                write.execute(
+                    enrollments.insert(),
+                    [
+                        {
+                            "enrollment_id": uuid.uuid4(),
+                            "section_id": section_id,
+                            "user_id": None,
+                            "student_number": entry.student_number,
+                            "display_name": entry.display_name,
+                            "source": "registered_class",
+                            "roster_import_id": None,
+                            "is_active": True,
+                            "created_at": now,
+                            "updated_at": now,
+                        }
+                        for entry in entries
+                    ],
+                )
+            AuditLog(write).record(
+                action=ACTION_SECTION_CREATED,
+                outcome=OUTCOME_SUCCESS,
+                actor=actor_of(caller),
+                target_type="section",
+                target_id=section_id,
+                course_id=course_id,
+                detail=(
+                    f"class {code!r} from registered class {batch.filename!r} "
+                    f"({len(entries)} students)"
+                ),
+            )
+        return {
+            "section_id": str(section_id),
+            "course_id": str(course_id),
+            "section_code": code,
+            "term": None,
+            "enrollment_count": len(entries),
+            "class_name": batch.filename,
         }
 
     @router.post("/api/v1/courses/{course_id}/sections", status_code=201)

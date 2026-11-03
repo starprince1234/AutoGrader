@@ -476,6 +476,33 @@ export interface paths {
         patch: operations["updateCourse"];
         trace?: never;
     };
+    "/api/v1/courses/{course_id}/classes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                course_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a class in this course from an already-registered class
+         * @description Copies the students of an existing registration allowlist batch ("已注册名单" 里的一个班级)
+         *     into a new section of this course. Students are stored unbound (`user_id` null) until they
+         *     register, which is the same state a CSV roster import leaves them in.
+         *
+         *     This exists so a teacher does not upload the same file twice: the class was already
+         *     imported once for registration, and the course only needs to reference it.
+         */
+        post: operations["attachRegisteredClass"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/courses/{course_id}/sections": {
         parameters: {
             query?: never;
@@ -792,6 +819,11 @@ export interface components {
             entry_id: components["schemas"]["Uuid"];
             student_number: string;
             display_name: string;
+        };
+        /** @description Which registered class to attach to the course. */
+        RegisteredClassImport: {
+            batch_id: components["schemas"]["Uuid"];
+            section_code?: string | null;
         };
         /**
          * @description Rename request. `title` is the only writable field (see `updateCourse`); an empty or
@@ -1824,6 +1856,36 @@ export interface operations {
                 content?: never;
             };
             422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    attachRegisteredClass: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                course_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegisteredClassImport"];
+            };
+        };
+        responses: {
+            /** @description The created section, with its student count. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SectionPublic"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
         };
     };
     listSections: {

@@ -804,6 +804,36 @@ paths:
         '403': {$ref: './common.yaml#/components/responses/Forbidden'}
         '404': {$ref: './common.yaml#/components/responses/NotFound'}
 
+  /api/v1/courses/{course_id}/classes:
+    parameters:
+      - {name: course_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    post:
+      operationId: attachRegisteredClass
+      summary: Create a class in this course from an already-registered class
+      description: |
+        Copies the students of an existing registration allowlist batch ("已注册名单" 里的一个班级)
+        into a new section of this course. Students are stored unbound (`user_id` null) until they
+        register, which is the same state a CSV roster import leaves them in.
+
+        This exists so a teacher does not upload the same file twice: the class was already
+        imported once for registration, and the course only needs to reference it.
+      tags: [courses]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RegisteredClassImport'}
+      responses:
+        '201':
+          description: The created section, with its student count.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SectionPublic'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
+
   /api/v1/courses/{course_id}/sections:
     parameters:
       - {name: course_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
@@ -1189,6 +1219,16 @@ components:
         entry_id: {$ref: './common.yaml#/components/schemas/Uuid'}
         student_number: {type: string}
         display_name: {type: string}
+      additionalProperties: false
+
+    RegisteredClassImport:
+      type: object
+      description: Which registered class to attach to the course.
+      required: [batch_id]
+      properties:
+        batch_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        #: 可选：指定课序号。省略时取班级名，重名时追加 -2、-3。
+        section_code: {type: [string, "null"], maxLength: 64}
       additionalProperties: false
 
     CourseRename:

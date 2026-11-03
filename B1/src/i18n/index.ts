@@ -372,6 +372,8 @@ export const messages = {
 "roster.import.classRequired": "先选择班级，再上传名单文件。",
 "roster.import.fileLabel": "上传名单文件（CSV / XLSX）",
 "roster.import.submit": "确认导入",
+"roster.import.classOption": "{name}（{count} 人）",
+"roster.import.noClasses": "还没有已注册的班级，请先到「用户管理 → 注册名单」添加。",
 "roster.rename.codeLabel": "课程序号",
 "roster.rename.entry": "重命名",
 "roster.rename.title": "重命名课程",

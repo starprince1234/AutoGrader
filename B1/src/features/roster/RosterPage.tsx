@@ -25,7 +25,9 @@ import {
   useSections,
   useDeleteCourse,
   useDeleteSection,
+  useAttachRegisteredClass,
 } from "../../api/directory";
+import { useAllowlistBatches } from "../admin/useAllowlist";
 import { useDeleteEnrollment, useEnrollments } from "./useEnrollments";
 
 /**
@@ -67,6 +69,11 @@ export function RosterPage() {
     | null
   >(null);
   const deleteSection = useDeleteSection(selectedCourseId === "" ? null : selectedCourseId);
+  // "导入名单"：从已注册名单里选一个班级挂到课程上。
+  const [attachTarget, setAttachTarget] = useState<CoursePublic | null>(null);
+  const [attachBatchId, setAttachBatchId] = useState("");
+  const batches = useAllowlistBatches();
+  const attachClass = useAttachRegisteredClass(attachTarget ? attachTarget.course_id : null);
   const [expandedClass, setExpandedClass] = useState<string | null>(null);
 
   const openRename = async (row: CoursePublic) => {
@@ -170,6 +177,20 @@ export function RosterPage() {
                 header: t("roster.column.actions"),
                 render: (row) => (
                   <span className="inline">
+                  <button
+                    type="button"
+                    className="button button--ghost"
+                    data-testid={`course-import-${row.course_id}`}
+                    onClick={() => {
+                      setAttachTarget(row);
+                      setAttachBatchId("");
+                      void navigate({
+                        search: (previous) => ({ ...previous, course_id: row.course_id }),
+                      });
+                    }}
+                  >
+                    {t("roster.import.entry")}
+                  </button>
                   <button
                     type="button"
                     className="button button--ghost"
@@ -413,6 +434,76 @@ export function RosterPage() {
           </form>
         </Modal>
       ) : null}
+      {attachTarget ? (
+        <Modal
+          title={t("roster.import.title")}
+          testId="import-roster"
+          onClose={() => setAttachTarget(null)}
+        >
+          <form
+            className="stack"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (attachBatchId === "") {
+                return;
+              }
+              attachClass.mutate(attachBatchId, {
+                onSuccess: () => {
+                  setAttachTarget(null);
+                  setAttachBatchId("");
+                },
+              });
+            }}
+          >
+            <Field label={t("roster.import.classLabel")} htmlFor="import-class">
+              <select
+                id="import-class"
+                value={attachBatchId}
+                data-testid="import-class"
+                onChange={(event) => setAttachBatchId(event.target.value)}
+              >
+                <option value="">{t("roster.import.classPrompt")}</option>
+                {(batches.data?.items ?? []).map((batch) => (
+                  <option key={batch.batch_id} value={batch.batch_id}>
+                    {t("roster.import.classOption", {
+                      name: batch.class_name,
+                      count: batch.row_count,
+                    })}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            {batches.isPending ? <Spinner /> : null}
+            {batches.isError ? <ErrorState error={batches.error} /> : null}
+            {(batches.data?.items ?? []).length === 0 && !batches.isPending ? (
+              <p className="muted">{t("roster.import.noClasses")}</p>
+            ) : null}
+            {attachClass.isError ? (
+              <Banner tone="error" testId="import-roster-error">
+                {describeApiError(attachClass.error)}
+              </Banner>
+            ) : null}
+            <div className="inline">
+              <button
+                type="submit"
+                className="button button--primary"
+                data-testid="import-roster-save"
+                disabled={attachBatchId === "" || attachClass.isPending}
+              >
+                {t("roster.import.submit")}
+              </button>
+              <button
+                type="button"
+                className="button button--ghost"
+                onClick={() => setAttachTarget(null)}
+              >
+                {t("common.cancel")}
+              </button>
+            </div>
+          </form>
+        </Modal>
+      ) : null}
+
       {pendingDelete ? (
         <Modal
           title={
