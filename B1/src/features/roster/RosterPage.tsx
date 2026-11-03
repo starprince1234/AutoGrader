@@ -59,6 +59,7 @@ export function RosterPage() {
   const selectedCourseId = search.course_id ?? "";
   const classes = useSections(selectedCourseId === "" ? null : selectedCourseId);
   const deleteCourse = useDeleteCourse();
+  const [deleteError, setDeleteError] = useState<unknown>(null);
   const deleteSection = useDeleteSection(selectedCourseId === "" ? null : selectedCourseId);
   const [expandedClass, setExpandedClass] = useState<string | null>(null);
 
@@ -94,6 +95,12 @@ export function RosterPage() {
           </button>
         ) : null}
       </div>
+
+      {deleteError ? (
+        <Banner tone="error" testId="roster-delete-error">
+          {describeApiError(deleteError)}
+        </Banner>
+      ) : null}
 
       <Panel
         title={t("roster.coursesTitle")}
@@ -171,7 +178,26 @@ export function RosterPage() {
                     aria-label={t("roster.course.delete", { name: row.title })}
                     title={t("roster.course.delete", { name: row.title })}
                     data-testid={`course-delete-${row.course_id}`}
-                    onClick={() => deleteCourse.mutate(row.course_id)}
+                    onClick={() => {
+                      if (!window.confirm(t("roster.course.deleteConfirm", { name: row.title }))) {
+                        return;
+                      }
+                      setDeleteError(null);
+                      deleteCourse.mutate(row.course_id, {
+                        onError: (failure) => setDeleteError(failure),
+                        onSuccess: () => {
+                          if (selectedCourseId === row.course_id) {
+                            void navigate({
+                              search: (previous) => ({
+                                ...previous,
+                                course_id: undefined,
+                                section_id: undefined,
+                              }),
+                            });
+                          }
+                        },
+                      });
+                    }}
                   >
                     <TrashIcon />
                   </button>
@@ -232,7 +258,16 @@ export function RosterPage() {
                             name: row.class_name ?? option.label,
                           })}
                           data-testid={`class-delete-${option.sectionId}`}
-                          onClick={() => deleteSection.mutate(option.sectionId)}
+                          onClick={() => {
+                            const name = row.class_name ?? option.label;
+                            if (!window.confirm(t("roster.classes.deleteConfirm", { name }))) {
+                              return;
+                            }
+                            setDeleteError(null);
+                            deleteSection.mutate(option.sectionId, {
+                              onError: (failure) => setDeleteError(failure),
+                            });
+                          }}
                         >
                           <TrashIcon />
                         </button>

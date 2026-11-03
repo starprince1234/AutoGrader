@@ -351,6 +351,8 @@ export const messages = {
     "roster.create.submit": "确认创建",
     "roster.create.duplicate": "该课程序号已被占用，请换一个。",
     "roster.coursesTitle": "课程列表",
+    "roster.course.deleteConfirm": "删除课程「{name}」？课程会从列表移除，历史数据保留。",
+    "roster.classes.deleteConfirm": "删除班级「{name}」？该班名单会一并删除。",
     "roster.course.delete": "删除课程 {name}",
     "roster.classes.delete": "删除班级 {name}",
     "roster.classes.empty": "这门课程还没有班级。",

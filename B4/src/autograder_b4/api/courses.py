@@ -14,13 +14,16 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Connection, and_, delete, func, select, update
+from sqlalchemy.exc import IntegrityError
 
 from ..audit import (
     ACTION_COURSE_CREATED,
     ACTION_COURSE_RENAMED,
+    ACTION_COURSE_RETIRED,
     ACTION_ENROLLMENT_DELETED,
     ACTION_ENROLLMENT_UPDATED,
     ACTION_SECTION_CREATED,
+    ACTION_SECTION_DELETED,
     OUTCOME_SUCCESS,
     AuditLog,
     change_digest,
@@ -231,7 +234,7 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
         if row is None:
             raise not_found("The course does not exist.")
         try:
-            ensure_course_write(caller, course_id=course_id)
+            ensure_course_write(principal=caller, course_id=course_id, dependencies=dependencies)
         except Exception as error:
             audit_denial(
                 engine,
@@ -586,7 +589,7 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
         if row is None:
             raise not_found("The section does not exist in this course.")
         try:
-            ensure_course_write(caller, course_id=course_id)
+            ensure_course_write(principal=caller, course_id=course_id, dependencies=dependencies)
         except Exception as error:
             audit_denial(
                 engine,
@@ -595,24 +598,27 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
             )
             raise error
 
-        with engine.begin() as write:
-            write.execute(delete(enrollments).where(enrollments.c.section_id == section_id))
-            write.execute(
-                delete(roles_table).where(
-                    roles_table.c.course_id == course_id, roles_table.c.section_id == section_id
+        try:
+            with engine.begin() as write:
+                # `roster_imports.section_id` is ON DELETE RESTRICT, so the import rows
+                # must go first; their files and parsed rows cascade from them.
+                write.execute(
+                    delete(roster_imports).where(roster_imports.c.section_id == section_id)
                 )
-            )
-            write.execute(delete(sections).where(sections.c.section_id == section_id))
-            AuditLog(write).record(
-                action=ACTION_SECTION_CREATED,
-                outcome=OUTCOME_SUCCESS,
-                actor=actor_of(caller),
-                target_type="section",
-                target_id=section_id,
-                course_id=course_id,
-                section_id=section_id,
-                detail=f"deleted class {row.section_code!r} with its roster rows",
-            )
+                write.execute(delete(enrollments).where(enrollments.c.section_id == section_id))
+                write.execute(delete(sections).where(sections.c.section_id == section_id))
+                AuditLog(write).record(
+                    action=ACTION_SECTION_DELETED,
+                    outcome=OUTCOME_SUCCESS,
+                    actor=actor_of(caller),
+                    target_type="section",
+                    target_id=section_id,
+                    course_id=course_id,
+                    detail=f"deleted class {row.section_code!r} with its roster rows",
+                )
+        except IntegrityError as error:
+            # A reference from another schema can still block it: report 409, not 500.
+            raise conflict("The class is still referenced and cannot be deleted.") from error
         return Response(status_code=204)
 
     @router.delete("/api/v1/courses/{course_id}", status_code=204)
@@ -628,7 +634,7 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
         if row is None:
             raise not_found("The course does not exist.")
         try:
-            ensure_course_write(caller, course_id=course_id)
+            ensure_course_write(principal=caller, course_id=course_id, dependencies=dependencies)
         except Exception as error:
             audit_denial(
                 engine,
@@ -645,7 +651,7 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
                 .values(is_active=False, updated_at=now)
             )
             AuditLog(write).record(
-                action=ACTION_COURSE_CREATED,
+                action=ACTION_COURSE_RETIRED,
                 outcome=OUTCOME_SUCCESS,
                 actor=actor_of(caller),
                 target_type="course",
