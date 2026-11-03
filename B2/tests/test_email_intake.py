@@ -1768,10 +1768,9 @@ def test_size_gate_uses_the_shared_intake_limits() -> None:
 
 
 def test_parsed_message_never_carries_the_body() -> None:
-    """解析结果里没有正文字段的落点（结构上就不存在"顺手把正文存下来"的可能）。
+    """解析结果的字段集固定：标识 + 具名部件 + 有界主题/正文摘录。
 
-    字段集是固定的五项：标识 + 具名部件 + **具名嵌套邮件名** + 计数溢出标志。后两项只带
-    **文件名与布尔**，因此"不得静默丢弃嵌套邮件"与"不得物化整封邮件"都没有引入正文字段。
+    正文只以 `body_excerpt`（≤4000 字、脱敏）出现，附件仍只带文件名与字节，不物化整封报文。
     """
     message = parse_message(build_message(body=f"top secret {BODY_MARKER}"))
     assert [field.name for field in fields(message)] == [
@@ -1781,9 +1780,12 @@ def test_parsed_message_never_carries_the_body() -> None:
         "nested_attachments",
         "attachments_overflow",
         "subject",
+        "body_excerpt",
+        "body_truncated",
     ]
     assert message.nested_attachments == () and message.attachments_overflow is False
-    assert BODY_MARKER not in repr(message)
+    # 0018 起正文以**有界摘录**进入来信视图；这里只确认标记确实来自正文，不把整封报文当输出。
+    assert message.body_excerpt is not None and BODY_MARKER in message.body_excerpt
 
 
 # --- 第二轮独立复核（P1–P8）：可打印容器、嵌套邮件、大小写重名、空文件、单射、空白、日志上界、解析期 DoS
@@ -3137,3 +3139,57 @@ def test_public_factory_builds_the_same_envelope_for_both_entries() -> None:
     )
     assert api.files == email.files
     assert api.submission_digest == email.submission_digest
+
+
+def test_ingest_raw_for_target_turns_the_original_message_into_a_submission(harness: Harness) -> None:
+    """匹配用户的底层路径：已有 quarantined checkpoint 时改成 processed，并生成真实提交。"""
+    from datetime import UTC, datetime
+
+    message_id = "<manual-complete@example.edu>"
+    raw = build_message(
+        message_id=message_id,
+        attachments=(("main.py", b"print('hello')\n"),),
+    )
+    with harness.engine.begin() as connection:
+        harness.checkpoints.record(
+            connection,
+            mailbox=MAILBOX,
+            uidvalidity=1,
+            uid=99,
+            message_id=message_id,
+            status="quarantined",
+            reason_code="ambiguous_match",
+            submission_id=None,
+            now=datetime.now(UTC),
+        )
+    service = harness.service()
+    submission_id = service.ingest_raw_for_target(
+        raw=raw,
+        student_id=STUDENT_ID,
+        course_id=COURSE_ID,
+        section_id=SECTION_ID,
+        question_version_id=QUESTION_ID,
+        mailbox=MAILBOX,
+        uidvalidity=1,
+        uid=99,
+        message_id=message_id,
+    )
+    with harness.engine.connect() as connection:
+        assert (
+            connection.execute(
+                sa.select(submissions.c.submission_id).where(
+                    submissions.c.submission_id == uuid.UUID(submission_id)
+                )
+            ).scalar_one()
+            == uuid.UUID(submission_id)
+        )
+        assert (
+            connection.execute(
+                sa.select(email_checkpoints.c.status).where(
+                    email_checkpoints.c.mailbox == MAILBOX,
+                    email_checkpoints.c.uidvalidity == 1,
+                    email_checkpoints.c.uid == 99,
+                )
+            ).scalar_one()
+            == "processed"
+        )

@@ -121,8 +121,16 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    # Dropping the tables loses teacher-authored grades, so the downgrade only removes the
-    # *state* column: the tables stay so nothing recorded by a human is silently discarded.
+    # Reversibility requires dropping the tables; keeping them leaves FKs into `submissions`
+    # and breaks every later downgrade (the baseline round-trip proved it). This is a
+    # destructive rollback by definition: export manual grades first.
+    op.drop_index(
+        "ix_manual_grade_history_submission_id_recorded_at",
+        table_name="manual_grade_history",
+        schema=SCHEMA,
+    )
+    op.drop_table("manual_grade_history", schema=SCHEMA)
+    op.drop_table("manual_grades", schema=SCHEMA)
     op.drop_index("ix_submissions_grade_status", table_name="submissions", schema=SCHEMA)
     op.drop_constraint("ck_submissions_grade_status", "submissions", schema=SCHEMA)
     op.drop_column("submissions", "grade_status", schema=SCHEMA)

@@ -275,6 +275,10 @@ export type ResolveIntakeQuarantineRequest =
   B2Operations["resolveIntakeQuarantine"]["requestBody"]["content"]["application/json"];
 export type DismissIntakeQuarantineRequest =
   B2Operations["dismissIntakeQuarantine"]["requestBody"]["content"]["application/json"];
+export type CompleteIntakeQuarantineRequest =
+  B2Operations["completeIntakeQuarantine"]["requestBody"]["content"]["application/json"];
+export type SetIntakeQuarantineHoldRequest =
+  B2Operations["setIntakeQuarantineHold"]["requestBody"]["content"]["application/json"];
 
 /**
  * 可移动的申诉证据包（`getAppealPack`）。`report` 受调用方 `view` 约束——

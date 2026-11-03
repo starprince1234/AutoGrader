@@ -16,7 +16,7 @@ SCHEMA = "b2"
 #: 本代码期望的迁移版本（必须与 `module.yaml: database.migration_head` 和 Alembic head 三者一致）。
 #: 用途：readyness 探测据此判断"库结构与代码是否匹配"——连接得上但版本落后同样是**不可用**，
 #: 否则 health 会谎报健康而受权读请求全线 500。三者一致性由 `tests/test_migrations.py` 断言。
-EXPECTED_SCHEMA_REVISION = "20261028_0018"
+EXPECTED_SCHEMA_REVISION = "20261029_0019"
 
 metadata = sa.MetaData(schema=SCHEMA)
 
@@ -116,6 +116,11 @@ intake_quarantines = sa.Table(
     sa.Column("resolution", sa.Text(), nullable=True),
     sa.Column("resolved_at", TIMESTAMP(timezone=True, precision=3), nullable=True),
     sa.Column("resolved_by", sa.Uuid(), nullable=True),
+    # 迁移 0019（老师复核闭环）：匹配用户后的提交、暂存标记与暂存留痕。
+    sa.Column("resolved_submission_id", sa.Uuid(), nullable=True),
+    sa.Column("held", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+    sa.Column("held_at", TIMESTAMP(timezone=True, precision=3), nullable=True),
+    sa.Column("held_by", sa.Uuid(), nullable=True),
 )
 
 artifact_gc_runs = sa.Table(
@@ -338,7 +343,6 @@ evaluation_commentaries = sa.Table(
     sa.Column("advisory_confidence", sa.Text(), nullable=True),
 )
 
-<<<<<<< HEAD
 #: 学生分层学习提示（AI-FLOW-01B，迁移 0015）。
 #:
 #: 与 `evaluation_commentaries` 分开：提示只能由 run owner 学生读写，且没有教师逐条查看的出口；
@@ -361,7 +365,9 @@ evaluation_learning_hints = sa.Table(
     sa.Column("request_id", sa.Text(), nullable=True),
     sa.Column("requested_at", sa.DateTime(timezone=True), nullable=False),
     sa.Column("generated_at", sa.DateTime(timezone=True), nullable=True),
-=======
+    sa.UniqueConstraint("evaluation_run_id", name="uq_evaluation_learning_hints_evaluation_run_id"),
+)
+
 # 迁移 0017：教师给的分数是判断而不是计算，所以与确定性分数并列存放，而不是替换它。
 # `uq_manual_grades_submission_id` 让"一次提交只有一个当前评分"在数据库层成立。
 manual_grades = sa.Table(
@@ -404,5 +410,4 @@ intake_messages = sa.Table(
     sa.Column("received_at", sa.DateTime(timezone=True), nullable=False),
     sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
     sa.UniqueConstraint("submission_id", name="uq_intake_messages_submission_id"),
->>>>>>> f4b9f8577780a71db289bfb676a7839bd6b2d217
 )

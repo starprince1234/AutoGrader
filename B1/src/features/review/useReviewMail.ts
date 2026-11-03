@@ -1,10 +1,12 @@
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "../../api/client";
 import type {
+  CompleteIntakeQuarantineRequest,
   DismissIntakeQuarantineRequest,
   IntakeQuarantinePage,
   IntakeQuarantineView,
   ResolveIntakeQuarantineRequest,
+  SetIntakeQuarantineHoldRequest,
 } from "../../api/types";
 import { queryKeys } from "../../app/queryClient";
 import { log, newRequestId } from "../../logging/logger";
@@ -33,9 +35,13 @@ export type MailQueryFilter = {
   sectionId: string | null;
   /** `null` = 全部状态（请求省略该参数）；否则显式发送布尔值。 */
   resolved: boolean | null;
+  /** `null` = 不按暂存筛选；`true` 只看暂存，`false` 排除暂存。 */
+  held?: boolean | null;
   reasonCode: string | null;
   /** 起始游标（URL 可承载）；后续翻页不写回 URL。 */
   cursor: string | null;
+  /** 页面大小；入口红点只需要 1 行。 */
+  limit?: number;
 };
 
 export type QuarantineListPage = {
@@ -60,8 +66,9 @@ export function useQuarantineMail(args: {
           section_id: filter.sectionId ?? undefined,
           // "全部"必须省略；`false` 不能省略（省略 = 不过滤）。
           resolved: filter.resolved === null ? undefined : filter.resolved,
+          held: filter.held === null || filter.held === undefined ? undefined : filter.held,
           reason_code: filter.reasonCode ?? undefined,
-          limit: REVIEW_PAGE_SIZE,
+          limit: filter.limit ?? REVIEW_PAGE_SIZE,
           cursor: pageParam ?? undefined,
         },
       });
@@ -132,6 +139,63 @@ export function useDismissQuarantine() {
         intake_quarantine_id: input.quarantineId,
         has_note: input.body.note !== null && input.body.note !== undefined,
         resolution: view.resolution,
+      });
+      return view;
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["review-quarantines"] });
+    },
+  });
+}
+
+/**
+ * 匹配用户（完整闭环）：服务端会按记录里的邮箱位置重新取回原邮件、重跑附件闸门，并把附件
+ * 生成该学生在该题目版本下的提交。前端只提交"选中的身份"，不提交任何附件字节。
+ */
+export function useCompleteQuarantine() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      quarantineId: string;
+      body: CompleteIntakeQuarantineRequest;
+    }): Promise<IntakeQuarantineView> => {
+      const requestId = newRequestId();
+      const view = await apiRequest<IntakeQuarantineView>(
+        `/api/v1/intake/quarantines/${encodeURIComponent(input.quarantineId)}/complete`,
+        { method: "POST", body: input.body, requestId },
+      );
+      log({
+        event: "intake_quarantine_completed",
+        request_id: requestId,
+        intake_quarantine_id: input.quarantineId,
+        resolved_submission_id: view.resolved_submission_id,
+      });
+      return view;
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["review-quarantines"] });
+    },
+  });
+}
+
+/** 暂存/恢复（仍未处理）。 */
+export function useSetQuarantineHold() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      quarantineId: string;
+      body: SetIntakeQuarantineHoldRequest;
+    }): Promise<IntakeQuarantineView> => {
+      const requestId = newRequestId();
+      const view = await apiRequest<IntakeQuarantineView>(
+        `/api/v1/intake/quarantines/${encodeURIComponent(input.quarantineId)}/hold`,
+        { method: "POST", body: input.body, requestId },
+      );
+      log({
+        event: "intake_quarantine_hold_changed",
+        request_id: requestId,
+        intake_quarantine_id: input.quarantineId,
+        held: view.held,
       });
       return view;
     },

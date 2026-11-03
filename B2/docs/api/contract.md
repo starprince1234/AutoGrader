@@ -137,13 +137,15 @@ B2 侧的四条纪律（每条都有测试，见 [../testing/cases.md](../testin
    之一为数字）的运行数，`wall_seconds` 不算（那是 B2 自测的墙钟）；三态之和**完整划分**
    `attempt_count`（显式 `not_checked` 与"从未走到安全判定阶段"的 NULL 同属"我们没看过"）。
 
-## 1d. 隔离区复核（`CHG-0014` 的 intake 端点；P13 补行级课程范围；0016 补处置留痕）
+## 1d. 隔离区复核（`CHG-0014` 的 intake 端点；P13 行级范围；0016 处置留痕；0019 匹配用户/暂存）
 
 | 方法 + 路径 | 语义 | 认证 / 角色 | 边界与取舍 |
 |---|---|---|---|
-| `GET /api/v1/intake/quarantines` | 分页列出**调用者可见**的隔离记录（按记录时间倒序），可按 `course_id`/`section_id`/`reason_code`/`resolved` 过滤；视图含 `subject`（主题头）与 `resolution`/`resolved_at`/`resolved_by` | 是（JWT）；教师/助教/管理员，且 staff 令牌必须携带**至少一个**课程作用域 | 行级谓词先于排序/limit/游标；`resolved` 缺省**不过滤**（契约没给它 `default`，见缺口 ④），`true` 表示归属**或**驳回；`course_id/section_id` 只缩小范围，越界 403；`section_id` 必须伴随 `course_id`（422） |
-| `POST .../{intake_quarantine_id}/resolve` | 人工归属；体 `{student_id, note?}`（`additionalProperties: false`） | 同上；行级判定在 `SELECT ... FOR UPDATE` 之后 | **只记录归属**：不建提交、不发事件、不评测；写 `resolution=attributed` + `resolved_at`/`resolved_by`；staff 对 NULL scope/跨课记录 403；管理员可处置未关联行（课程/课序选择只用于加载候选，不写回 scope） |
-| `POST .../{intake_quarantine_id}/dismiss` | 驳回（不归属学生）；体 `{note?}`（`additionalProperties: false`） | 同上；行级判定在 `SELECT ... FOR UPDATE` 之后 | **任何原因码都可驳回**（它不写学生身份）；写 `resolution=dismissed` + `resolved_at`/`resolved_by`，`resolved_student_id` 必须为空；同样只有一条 `UPDATE`，不建提交/不发事件/不评测 |
+| `GET /api/v1/intake/quarantines` | 分页列出**调用者可见**的隔离记录（按记录时间倒序），可按 `course_id`/`section_id`/`reason_code`/`resolved`/`held` 过滤；视图含 `subject`、`resolution`、`resolved_submission_id`、`held`/`held_at`/`held_by` | 是（JWT）；教师/助教/管理员，且 staff 令牌必须携带**至少一个**课程作用域 | 行级谓词先于排序/limit/游标；`resolved` 缺省**不过滤**，`true` 表示已完成**或**作废；`held` 单独筛暂存；`course_id/section_id` 只缩小范围，越界 403 |
+| `POST .../{intake_quarantine_id}/resolve` | 人工归属（legacy）；体 `{student_id, note?}` | 同上；行锁后判定 | **只记录归属**：不建提交；写 `resolution=attributed` + 留痕 |
+| `POST .../{intake_quarantine_id}/dismiss` | 标记作废；体 `{note?}` | 同上 | 任何原因码都可作废；写 `resolution=dismissed`、无学生、无提交；一条 `UPDATE`，不评测 |
+| `POST .../{intake_quarantine_id}/hold` | 暂存/恢复；体 `{held: boolean}` | 同上 | 暂存仍未处理、可继续匹配/作废；写 `held_at`/`held_by`；已处理 409 |
+| `POST .../{intake_quarantine_id}/complete` | 匹配用户：回邮箱取原邮件，按 `student_id` + 课程/课序/题目版本生成真实提交 | 同上；目标课程必须在调用者 scope 内；有 scope 的记录还要求目标与记录 scope 一致 | 需要 `B2_IMAP_*`；没有邮件入口明确 503；原邮件不可定位 409；附件仍按当前闸门校验（422）；写 `resolution=completed` + `resolved_submission_id`，checkpoint 同事务转 `processed` |
 
 **行的课程范围从哪来（P13 的核心）**：`b2.intake_quarantines.scope_course_id/scope_section_id`
 （迁移 `20260915_0015`，成对为空或非空）。写入侧只接受**匹配规则候选共识**——全部命中规则的

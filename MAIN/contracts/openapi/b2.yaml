@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AutoGrader B2 Evaluation API
-  version: 0.24.0
+  version: 0.25.0
   description: |
     Submission intake (API and email), content-addressed storage, static legality,
     security confirmation, sandboxed dynamic execution, explainable and replayable
@@ -352,6 +352,13 @@ paths:
         - {name: course_id, in: query, required: false, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
         - {name: section_id, in: query, required: false, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
         - {name: reason_code, in: query, required: false, schema: {type: string, maxLength: 64}}
+        - name: held
+          in: query
+          required: false
+          schema: {type: boolean}
+          description: |
+            `true` returns only rows the reviewer put on hold ("暂存"), `false` excludes held rows.
+            Omitting it filters neither. Held rows are still unresolved and remain processable.
         - name: resolved
           in: query
           required: false
@@ -515,6 +522,99 @@ paths:
         '404': {$ref: './common.yaml#/components/responses/NotFound'}
         '409': {$ref: './common.yaml#/components/responses/Conflict'}
         '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+
+  /api/v1/intake/quarantines/{intake_quarantine_id}/hold:
+    parameters:
+      - {name: intake_quarantine_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    post:
+      operationId: setIntakeQuarantineHold
+      summary: Put a quarantined message on hold, or resume it ("暂存")
+      description: |
+        A reviewer can defer a row without deciding it. A held row is **not** resolved: it keeps
+        its place in the review flow, can still be completed or dismissed, and can be resumed with
+        `held=false`. The hold itself records who and when (`held_at`/`held_by`).
+
+        Row authorization is identical to the other intake operations: staff only for rows covered
+        by their token scope, administrators for any row; a resolved row returns `409`.
+      tags: [intake]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [held]
+              properties:
+                held: {type: boolean}
+              additionalProperties: false
+      responses:
+        '200':
+          description: Hold state updated; the record itself is still unresolved.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/IntakeQuarantineView'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+
+  /api/v1/intake/quarantines/{intake_quarantine_id}/complete:
+    parameters:
+      - {name: intake_quarantine_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    post:
+      operationId: completeIntakeQuarantine
+      summary: Match the quarantined message to a student and create that student's submission
+      description: |
+        "Match user" closes the loop that `resolveIntakeQuarantine` deliberately left open: the
+        server re-reads the **original message** from the mailbox position stored on the row
+        (`mailbox`/`uidvalidity`/`uid`), re-runs the attachment gates, and persists a normal
+        submission for the explicitly chosen `student_id`/`course_id`/`section_id`/
+        `question_version_id`. The quarantine row becomes `resolution=completed` and carries the
+        new `resolved_submission_id`; `email_checkpoints` moves from `quarantined` to `processed`
+        in the same submission transaction.
+
+        Preconditions and refusals:
+
+        * the row must be visible and processable under the same row-level scope rules as the
+          other intake operations; for a scoped row the chosen course/section must equal the
+          record's proven scope (`422` otherwise), and staff must hold the target scope (`403`);
+        * a resolved row returns `409`; a row whose message is gone (UIDVALIDITY changed, deleted,
+          fetch failed) returns `409` -- the platform does not store attachment bytes, so it cannot
+          invent them;
+        * the original message must still pass the current attachment gates (`422` otherwise);
+        * if email intake is not configured in this deployment the operation returns `503`:
+          there is no cached copy to fall back to.
+
+        The operation writes a normal submission (same persist path as the automatic flow), so
+        evaluation/outbox behaviour is exactly that of a submission created at intake time.
+      tags: [intake]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [student_id, course_id, section_id, question_version_id]
+              properties:
+                student_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+                course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+                section_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+                question_version_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+                note: {type: [string, "null"], maxLength: 500}
+              additionalProperties: false
+      responses:
+        '200':
+          description: Submission created and the record marked completed.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/IntakeQuarantineView'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+        '503': {$ref: './common.yaml#/components/responses/ServiceUnavailable'}
 
   /api/v1/reference-verifications:
     post:
@@ -1050,7 +1150,7 @@ components:
         The pair is either both null or both non-null, and it is the field the server uses for
         row-level authorization: staff never see null-scope rows, and administrators are the
         only role that may read/process them.
-      required: [intake_quarantine_id, intake, reason_code, detail, mailbox, recorded_at, resolved, scope_course_id, scope_section_id, subject, resolution, resolved_at, resolved_by]
+      required: [intake_quarantine_id, intake, reason_code, detail, mailbox, recorded_at, resolved, scope_course_id, scope_section_id, subject, resolution, resolved_at, resolved_by, resolved_submission_id, held, held_at, held_by]
       properties:
         intake_quarantine_id: {$ref: './common.yaml#/components/schemas/Uuid'}
         intake: {type: string, enum: [email]}
@@ -1137,23 +1237,40 @@ components:
             before this field existed return `null`.
         resolution:
           type: [string, "null"]
-          enum: [attributed, dismissed, null]
+          enum: [attributed, completed, dismissed, null]
           description: |
-            The human decision: `attributed` (a student was named), `dismissed` (reviewed and
-            closed without attribution), or `null` for rows that are still pending or that were
-            resolved before the decision trail existed. `resolved` remains the boolean form so
-            older filtered pages keep their meaning.
+            The human decision: `completed` (the original mail was re-read and turned into the
+            chosen student's submission), `attributed` (legacy manual attribution that recorded a
+            student but did not create a submission), `dismissed` (marked invalid/作废), or `null`
+            for rows that are still pending/held or that were resolved before the trail existed.
+            `resolved` remains the boolean form so older filtered pages keep their meaning.
         resolved_at:
           anyOf: [{$ref: './common.yaml#/components/schemas/Timestamp'}, {type: "null"}]
           description: |
-            When the human decision was recorded (server clock). `null` for pending rows and for
-            rows resolved before this field existed.
+            When the human decision was recorded (server clock). `null` for pending/held rows and
+            for rows resolved before this field existed.
         resolved_by:
           anyOf: [{$ref: './common.yaml#/components/schemas/Uuid'}, {type: "null"}]
           description: |
             The platform user id (`sub` of the access token) that recorded the decision, so the
-            audit trail names an actor rather than only a time. `null` for pending rows and for
+            audit trail names an actor rather than only a time. `null` for pending/held rows and for
             rows resolved before this field existed.
+        resolved_submission_id:
+          anyOf: [{$ref: './common.yaml#/components/schemas/Uuid'}, {type: "null"}]
+          description: |
+            The submission created by "match user" (`resolution=completed`). Null for pending/held
+            rows, for dismissals and for the legacy `attributed` decision.
+        held:
+          type: boolean
+          description: |
+            "暂存": reviewed but deliberately deferred. A held row is **not** resolved; it stays
+            processable and can be resumed (`held=false`).
+        held_at:
+          anyOf: [{$ref: './common.yaml#/components/schemas/Timestamp'}, {type: "null"}]
+          description: "When the row was put on hold; null unless `held=true`."
+        held_by:
+          anyOf: [{$ref: './common.yaml#/components/schemas/Uuid'}, {type: "null"}]
+          description: "Who put the row on hold; null unless `held=true`."
       additionalProperties: false
 
     AppealPack:

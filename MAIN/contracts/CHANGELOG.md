@@ -889,6 +889,33 @@ eleaseManualGrade、downloadSubmissionFile、
   `relock_contracts.py`；版本回到 `0.18.0`。
 
 **详细裁决**：[CHG-0030](../docs/contracts/changes/CHG-0030-grades-identity-export-learning-hints.md)
+## 0.25.0 — 隔离区匹配用户、暂存与标记作废
+
+- **级别**：P1 增补（新增 2 个 operation 与 4 个视图字段）
+- **状态**：已生效
+- **动机**：0.23.0 的复核只能"记录决定"（归属/驳回），不能把隔离邮件真正变成学生的提交；
+  老师处置后仍然要手工补交。本次补齐闭环：选学生 + 课程 + 课序 + 作业题目版本后，服务端按
+  隔离记录里的邮箱位置重新取回原邮件、重跑附件闸门，并走与自动收信相同的 `persist` 生成提交。
+  同时增加"暂存"（先放着）与"标记作废"（垃圾/错发）两个状态。
+- **变更文件**：
+  - `openapi/b2.yaml`：`IntakeQuarantineView` 增加 `resolved_submission_id`/`held`/`held_at`/
+    `held_by`；新增 `setIntakeQuarantineHold` 与 `completeIntakeQuarantine`；列表增加 `held` 过滤；
+    `resolution` 增加 `completed`。
+  - 六份契约 `info.version`、五份 `contracts.lock`、模块清单同步到 `0.25.0`。
+- **受影响模块**：
+  - **B2**：迁移 `20261029_0019`（四列 + 处置/暂存约束）；`complete` 回邮箱取原始报文并生成提交，
+    checkpoint 同事务改为 `processed`；`hold` 记录暂存人与时间；`dismiss` 作为"标记作废"。
+  - **B1**：生成类型；复核页增加"返回作业"、管理员待处理红点、状态筛选（待处理/暂存/已处理）、
+    匹配用户弹窗（课程 + 作业 + 题目版本 + 本班学生）、暂存/恢复、标记作废。
+  - **B3/B4/B5**：无行为改动，仅锁与版本同步。
+- **是否破坏兼容**：否（新增字段/操作；旧 `resolve` 仍保留，语义为 legacy attribution）。
+- **迁移方式**：纯加列；历史行 `held=false`、`resolved_submission_id=NULL`，不回填。
+- **前置条件**：`complete` 需要本部署配置邮件入口（`B2_IMAP_*`）；没有配置时明确 `503`，
+  不从客户端/缓存补附件字节。
+- **验证**：见提交说明；真实 PostgreSQL 迁移与 B2 接口用例、B1 组件用例与构建均在本机执行。
+- **摘要**：见五份 `contracts.lock`（由官方 relock 脚本计算）。
+- **回滚方式**：还原契约与版本、回退迁移 `20261029_0019`、移除 B1 的匹配/暂存/作废入口，
+  重跑 `relock_contracts.py`；版本回到 `0.24.0`。
 
 ---
 
