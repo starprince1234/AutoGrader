@@ -16,7 +16,14 @@
 - 左栏教师端只列：作业管理、题库、班级成绩、课程与名单、复核工作区；
   右栏学生端只列：我的作业、我的成绩。两栏使用独立的数据数组，学生端不出现题库/课程/复核。
 - 未登录点击入口：**不离开导览页**，在当前页打开登录浮窗；登录成功后直达所点功能。
+- 从教师端入口用学生账号登录（或反过来）时，浮窗在导航前拒绝：撤销刚建立的会话、
+  清空密码并提示「该账号没有教师端/学生端权限」，不进入错误一端的页面。
 - 进入系统后右上角不设下拉菜单：直接显示用户名，旁边就是「退出登录」按钮。
+- 点击「退出登录」先回到导览页再清会话，不再退回独立登录页。
+- 独立登录页已删除：`/login` 只作为旧链接/收藏的兼容地址，带原查询串重定向回 `/`，
+  由导览页打开登录浮窗。
+- 注册成功、密码重置成功和匿名深链都回到 `/`，分别由 `registered`、`reset`、`redirect`
+  查询串触发浮窗；浮窗里的成功提示与深链目标保持不变。
 - 管理员多出的「用户管理」作为普通入口放进侧栏，不再藏在账户菜单里。
 - 最近登录过（refresh cookie 仍有效）：AppShell 恢复会话后，导览页显示已登录身份，
   点击本端入口直接进入，不额外登录。
@@ -42,15 +49,15 @@
 
 | 文件 | 作用 |
 |---|---|
-| `src/features/home/LandingPage.tsx` | 两栏导览页、功能列表、登录浮窗、登录记忆展示、退出登录 |
-| `src/features/auth/LoginForm.tsx` | 页面与浮窗共用的登录表单（校验、错误分类、密码可见性） |
+| `src/features/home/LandingPage.tsx` | 两栏导览页、功能列表、登录浮窗（含查询串触发的回跳/成功态）、登录记忆、退出登录 |
+| `src/features/auth/LoginForm.tsx` | 浮窗与回跳入口共用的登录表单（校验、错误分类、密码可见性） |
 | `src/auth/portal.ts` | 入口端类型、一次性意图存储/读取、角色匹配规则 |
-| `src/app/AppShell.tsx` | `/` 公开导览分支、入口端校验、角色不符说明页、切换账号 |
+| `src/app/AppShell.tsx` | `/` 公开导览分支、匿名深链回导览、入口端校验、角色不符说明页、退出回导览 |
 | `src/app/AccountMenu.tsx`、`src/app/navigation.ts` | 右上角用户名 + 直接退出；管理员用户管理进入侧栏 |
-| `src/app/router.tsx` | `/` 从重定向改为 `LandingPage` |
+| `src/app/router.tsx` | `/` 承载导览与认证查询串；删除独立登录页路由，`/login` 改为重定向 |
 | `src/ui/components.tsx` | `Modal` 支持紧凑尺寸与初始焦点 |
 | `src/i18n/index.ts`、`src/styles.css` | 导览页/登录浮窗/账户区文案与样式 |
-| `src/app/AppShell.test.tsx`、`src/features/home/LandingPage.test.tsx`、`src/auth/portal.test.ts`、`src/app/navigation.test.ts` | 根入口、浮窗登录、两栏隔离、登录记忆、错端拦截与意图存储测试 |
+| `src/app/AppShell.test.tsx`、`src/features/home/LandingPage.test.tsx`、`src/features/auth/LoginForm.test.tsx`、`src/auth/portal.test.ts`、`src/app/navigation.test.ts` | 根入口、浮窗登录、登录页删除后的回跳/成功态、两栏隔离、登录记忆、错端拦截与意图存储测试 |
 
 ## 真实执行
 
@@ -58,9 +65,9 @@
 |---|---|
 | `node node_modules/typescript/bin/tsc -b`（B1） | 通过 |
 | `node node_modules/eslint/bin/eslint.js . --max-warnings 0`（B1） | 通过（0 error / 0 warning） |
-| `node node_modules/vitest/vitest.mjs run`（B1 全量） | **51 个测试文件 / 452 个用例全部通过**（exit 0；含上游合入用例） |
+| `node node_modules/vitest/vitest.mjs run`（B1 全量） | **51 个测试文件 / 456 个用例全部通过**（exit 0；含上游合入用例） |
 | `node node_modules/vite/bin/vite.js build`（B1） | 通过 |
-| 线上入口复核（提交 `8b66c3f`） | `https://www.91idc.me/app/` HTTP 200，页面引用 `/app/assets/index-BlNt63qZ.js` 与 `/app/assets/index-BY-1nChA.css`；bundle 含「教师端登录」「学生端登录」「account__logout」，**不含** `account-menu`；Vercel 部署状态 `success`；`https://api.91idc.me/health/ready` 四个模块均 healthy |
+| 线上入口复核（提交 `20ccdc2`） | `https://www.91idc.me/app/` HTTP 200，页面引用 `/app/assets/index-CtScbMTo.js` 与 `/app/assets/index-Dh050zIm.css`；bundle 含「教师端登录」「学生端登录」「account__logout」，**不含** `account-menu` 与 `LoginPage`；Vercel 部署状态 `success`；`https://api.91idc.me/health/ready` 四个模块均 healthy |
 
 契约由上游合并升到 `0.24.0`（含课程/名单、人工评分与用户管理相关接口）；B1 已重新生成
 `src/api/generated/*` 并通过 `api:check`。本功能的浮窗登录与账户区不改变契约。

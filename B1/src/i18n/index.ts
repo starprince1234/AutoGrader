@@ -58,7 +58,11 @@ export const messages = {
 "landing.student.gradesHint": "查看成绩与评测证据",
     "landing.teacherLoginTitle": "教师端登录",
     "landing.studentLoginTitle": "学生端登录",
+    "landing.loginTitle": "登录",
     "landing.loginLead": "登录后直接进入你刚才选择的功能。",
+    "landing.loginGenericLead": "登录后进入系统。",
+    "landing.teacherMismatch": "该账号没有教师端权限，请使用教师账号登录。",
+    "landing.studentMismatch": "该账号没有学生端权限，请使用学生账号登录。",
 "landing.unknownRoles": "无法确认当前账号的角色，请退出后重新登录。",
 
 "portal.mismatch.title": "当前账号不能进入该入口",

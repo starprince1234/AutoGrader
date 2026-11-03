@@ -24,7 +24,7 @@ import { AuthLayout } from "./AuthLayout";
 import { isMainNavActive, mainNavItems, type MainNavItem } from "./navigation";
 import { Drawer } from "../ui/components";
 
-/** 不需要登录的路径：导览页、登录、注册与忘记密码。 */
+/** 不需要登录的路径：导览页、注册、忘记密码，以及只做重定向的旧 `/login`。 */
 const PUBLIC_PATHS = new Set(["/", "/login", "/register", "/forgot-password"]);
 
 /**
@@ -33,9 +33,9 @@ const PUBLIC_PATHS = new Set(["/", "/login", "/register", "/forgot-password"]);
  * 三层判断，顺序固定：
  * 1. **会话恢复完成前**不渲染任何业务内容（只显示骨架）——否则持有效 cookie 的用户会
  *    先看到一帧匿名外壳，或被误送到登录页。
- * 2. 公开页：`/` 是导览页（登录与否都先看到两栏），登录/注册/忘记密码使用认证布局；
- *    已登录用户访问登录/注册会被送回作业页，登录页上的 `?redirect=` 只接受站内路径。
- * 3. 受保护页：匿名用户带**原站内位置**去登录（深链不丢），登录后回到原处；
+ * 2. 公开页：`/` 是导览页（登录与否都先看到两栏），注册/忘记密码使用认证布局；
+ *    已登录用户访问注册/忘记密码会被送回作业页；旧 `/login` 只重定向回导览页。
+ * 3. 受保护页：匿名用户带**原站内位置**回导览页，登录浮窗成功后回到原处；
  *    从导览页点入的入口还要校验"教师端/学生端"是否与当前角色匹配，避免用错身份
  *    看到另一端的视图。
  *
@@ -106,13 +106,14 @@ export function AppShell() {
       return;
     }
     if (authenticated) return;
-    // 主动退出：去一个干净的登录页，不把刚离开的受保护地址塞回 redirect。
+    // 主动退出：回到导览页，不再去独立登录页。
     if (signingOutRef.current) {
-      void navigate({ to: "/login", replace: true });
+      void navigate({ to: "/", replace: true });
       return;
     }
+    // 匿名深链：回到导览页并带上原站内路径，登录浮窗成功后回到原处。
     void navigate({
-      to: "/login",
+      to: "/",
       search: { redirect: redirectTarget ?? undefined },
       replace: true,
     });
@@ -173,17 +174,18 @@ export function AppShell() {
     );
   }
 
-  // 匿名用户：effect 正在把浏览器带到登录页；这里不渲染受保护 Outlet，避免闪一帧。
+  // 匿名用户：effect 正在把浏览器带回导览页；这里不渲染受保护 Outlet，避免闪一帧。
   if (!authenticated) return <BootScreen />;
 
   const items = mainNavItems(session);
 
   /**
-   * 切换账号：先回导览页再清会话，避免 AppShell 在受保护路径上把匿名用户又送去登录页。
-   * 导览页会自行清掉上一次的入口意图。
+   * 退出/切换账号：先回导览页再清会话，避免 AppShell 在受保护路径上把匿名用户
+   * 又送去别处。导览页会自行清掉上一次的入口意图。
    */
   const switchAccount = () => {
     if (signingOut) return;
+    signingOutRef.current = true;
     setSigningOut(true);
     void navigate({ to: "/", replace: true })
       .then(() => signOut())
@@ -212,15 +214,7 @@ export function AppShell() {
           {t("app.brand")}
         </Link>
         <div className="app-header__spacer" />
-        <AccountMenu
-          signingOut={signingOut}
-          onSignOut={() => {
-            if (signingOutRef.current) return;
-            signingOutRef.current = true;
-            setSigningOut(true);
-            void signOut().finally(() => setSigningOut(false));
-          }}
-        />
+        <AccountMenu signingOut={signingOut} onSignOut={switchAccount} />
       </header>
 
       <div className="app-body">

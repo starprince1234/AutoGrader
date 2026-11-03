@@ -2,11 +2,11 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
+  redirect,
 } from "@tanstack/react-router";
 import { AppShell } from "./AppShell";
 import { ForgotPasswordPage } from "../features/auth/ForgotPasswordPage";
 import { LandingPage } from "../features/home/LandingPage";
-import { LoginPage } from "../features/auth/LoginPage";
 import { NotFoundPage } from "./NotFoundPage";
 import { RegisterPage } from "../features/auth/RegisterPage";
 import { safeRedirectTarget } from "../auth/redirect";
@@ -34,22 +34,28 @@ const rootRoute = createRootRoute({ component: AppShell, notFoundComponent: NotF
 
 /**
  * `/` 是面向所有访客的导览页：左侧教师端、右侧学生端，各自只列本端功能。
- * 登录与否都在这里先看到两栏；已登录用户直接点入口即可，未登录用户登录后回到目标页。
+ * 登录与否都在这里先看到两栏；已登录用户直接点入口即可，未登录用户在本页浮窗登录。
+ * 查询串承接三类一次性状态：深链回跳、注册成功、重置密码成功。
  */
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
+  validateSearch: validateAuthSearch,
   component: LandingPage,
 });
 
 /**
- * `/login` 的查询串。**两个键都必须可选**：多数入口是裸的 `/login`，
- * 若把键推成"必填但可为 undefined"，那些 `Link` 会全部报类型错。
+ * 认证相关查询串。**所有键都必须可选**：多数入口是裸的 `/` 或 `/login`。
  */
-type LoginSearch = { redirect?: string; registered?: string; reset?: string };
+type AuthSearch = {
+  redirect?: string;
+  registered?: string;
+  reset?: string;
+  login?: boolean;
+};
 
-function validateLoginSearch(search: Record<string, unknown>): LoginSearch {
-  const parsed: LoginSearch = {};
+function validateAuthSearch(search: Record<string, unknown>): AuthSearch {
+  const parsed: AuthSearch = {};
   // `redirect` 是用户可控的：只有 `safeRedirectTarget` 认可的站内路径才进入会话。
   const redirectTarget = safeRedirectTarget(search.redirect);
   if (redirectTarget) parsed.redirect = redirectTarget;
@@ -65,14 +71,28 @@ function validateLoginSearch(search: Record<string, unknown>): LoginSearch {
   } else if (search.reset === true || typeof search.reset === "number") {
     parsed.reset = "done";
   }
+  if (search.login === true || search.login === 1 || search.login === "1") {
+    parsed.login = true;
+  }
   return parsed;
 }
 
+/**
+ * `/login` 不再是一张页面，只保留为旧链接/收藏的兼容入口：带着原查询串回到导览页，
+ * 由导览页直接打开登录浮窗。这样退出登录、注册成功和找回密码成功都不会再停在一张
+ * 独立登录页上。
+ */
 const loginRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/login",
-  validateSearch: validateLoginSearch,
-  component: LoginPage,
+  validateSearch: validateAuthSearch,
+  beforeLoad: ({ search }) => {
+    throw redirect({
+      to: "/",
+      search: { ...search, login: true },
+      replace: true,
+    });
+  },
 });
 
 const registerRoute = createRoute({

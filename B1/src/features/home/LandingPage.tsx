@@ -1,15 +1,22 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { t } from "../../i18n";
 import { useSession } from "../../auth/sessionContext";
-import { signOut } from "../../auth/sessionStore";
+import { signOut, type SessionState } from "../../auth/sessionStore";
+import { DEFAULT_AUTHENTICATED_PATH, safeRedirectTarget } from "../../auth/redirect";
 import { clearPortalIntent, portalAllows, rememberPortalIntent, type Portal } from "../../auth/portal";
 import { Modal } from "../../ui/components";
 import { LoginForm } from "../auth/LoginForm";
 
 type LandingTarget = "/assignments" | "/questions" | "/grades" | "/roster" | "/review";
 
-type LoginIntent = { portal: Portal; target: LandingTarget };
+type LoginIntent = {
+  /** 从某一端入口进来时记录；从页头「登录」或回跳进来时为 null。 */
+  portal: Portal | null;
+  target: string;
+  registered?: boolean;
+  reset?: boolean;
+};
 
 type Feature = {
   to: LandingTarget;
@@ -87,12 +94,25 @@ const STUDENT_FEATURES: Feature[] = [
 export function LandingPage() {
   const session = useSession();
   const navigate = useNavigate();
+  const search = useSearch({ from: "/" });
   const [signingOut, setSigningOut] = useState(false);
-  const [loginIntent, setLoginIntent] = useState<LoginIntent | null>(null);
+  const [loginIntent, setLoginIntent] = useState<LoginIntent | null>(() => {
+    if (session.status === "authenticated") return null;
+    if (!search.login && !search.redirect && !search.registered && !search.reset) return null;
+    return {
+      portal: null,
+      target: safeRedirectTarget(search.redirect) ?? DEFAULT_AUTHENTICATED_PATH,
+      registered: Boolean(search.registered),
+      reset: Boolean(search.reset),
+    };
+  });
   const authenticated = session.status === "authenticated";
   const rolesKnown = session.rolesKnown;
   const teacherAllowed = !authenticated || portalAllows(session, "teacher");
   const studentAllowed = !authenticated || portalAllows(session, "student");
+  const hasAuthSearch = Boolean(
+    search.login || search.redirect || search.registered || search.reset,
+  );
 
   // 回到导览页意味着重新选择入口：清掉上一次的目标意图，避免旧意图影响新选择。
   useEffect(() => {
@@ -113,11 +133,21 @@ export function LandingPage() {
   const closeLogin = () => {
     clearPortalIntent();
     setLoginIntent(null);
+    if (hasAuthSearch) void navigate({ to: "/", replace: true });
   };
 
   const completeLogin = async (target: string) => {
     setLoginIntent(null);
     await navigate({ href: target, replace: true });
+  };
+
+  const authorizeLogin = (signedIn: SessionState): string | null => {
+    const portal = loginIntent?.portal;
+    if (!portal) return null;
+    if (portalAllows(signedIn, portal)) return null;
+    return portal === "teacher"
+      ? t("landing.teacherMismatch")
+      : t("landing.studentMismatch");
   };
 
   return (
@@ -148,9 +178,16 @@ export function LandingPage() {
               </button>
             </>
           ) : (
-            <Link to="/login" className="button button--ghost" data-testid="landing-login">
+            <button
+              type="button"
+              className="button button--ghost"
+              data-testid="landing-login"
+              onClick={() =>
+                setLoginIntent({ portal: null, target: DEFAULT_AUTHENTICATED_PATH })
+              }
+            >
               {t("login.submit")}
-            </Link>
+            </button>
           )}
         </div>
       </header>
@@ -228,18 +265,25 @@ export function LandingPage() {
           title={
             loginIntent.portal === "teacher"
               ? t("landing.teacherLoginTitle")
-              : t("landing.studentLoginTitle")
+              : loginIntent.portal === "student"
+                ? t("landing.studentLoginTitle")
+                : t("landing.loginTitle")
           }
           onClose={closeLogin}
           testId="login-dialog"
           className="modal--login"
           initialFocus="#login-username"
         >
-          <p className="login-dialog__lead muted">{t("landing.loginLead")}</p>
+          <p className="login-dialog__lead muted">
+            {loginIntent.portal ? t("landing.loginLead") : t("landing.loginGenericLead")}
+          </p>
           <LoginForm
             redirect={loginIntent.target}
+            registered={loginIntent.registered}
+            reset={loginIntent.reset}
             onSuccess={completeLogin}
             onNavigateAway={closeLogin}
+            authorize={authorizeLogin}
           />
         </Modal>
       ) : null}

@@ -2,7 +2,7 @@ import { useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { t } from "../../i18n";
 import { isApiError } from "../../api/problem";
-import { signIn } from "../../auth/sessionStore";
+import { signIn, signOut, type SessionState } from "../../auth/sessionStore";
 import { DEFAULT_AUTHENTICATED_PATH, safeRedirectTarget } from "../../auth/redirect";
 import { Banner, Field } from "../../ui/components";
 
@@ -10,11 +10,10 @@ type FieldErrors = { username?: string; password?: string };
 type FormError = { message: string; requestId?: string };
 
 /**
- * 登录表单本体（页面与导览页浮窗共用）。
+ * 登录表单本体（导览页浮窗与旧地址回跳共用）。
  *
- * 只负责"输入 → 校验 → signIn → 把安全的目标路径交给调用方"；页面/浮窗各自决定
- * 成功后如何导航。两个入口共用同一套错误分类与密码可见性行为，避免浮窗成为
- * 一条规则更少的旁路。
+ * 只负责"输入 → 校验 → signIn → 把安全的目标路径交给调用方"；浮窗决定成功后如何导航。
+ * 两个入口共用同一套错误分类与密码可见性行为，避免回跳入口成为一条规则更少的旁路。
  */
 export function LoginForm({
   redirect,
@@ -23,6 +22,7 @@ export function LoginForm({
   onSuccess,
   onNavigateAway,
   showLinks = true,
+  authorize,
 }: {
   redirect?: unknown;
   registered?: boolean;
@@ -30,6 +30,8 @@ export function LoginForm({
   onSuccess: (target: string) => void | Promise<void>;
   onNavigateAway?: () => void;
   showLinks?: boolean;
+  /** 登录成功后、导航前的端别校验；返回文案表示拒绝（会撤销刚建立的会话）。 */
+  authorize?: (session: SessionState) => string | null;
 }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -59,13 +61,25 @@ export function LoginForm({
     if (trimmedUsername !== username) setUsername(trimmedUsername);
     submittingRef.current = true;
     setPending(true);
+    let signedIn: SessionState;
     try {
-      await signIn(trimmedUsername, password);
+      signedIn = await signIn(trimmedUsername, password);
     } catch (error) {
       setFormError(loginError(error));
       // 网络断开时保留用户名、清空密码：用户至少不用重打账号，密码也不会留在一个
       // 连不上服务端的表单里。
       if (!isApiError(error)) setPassword("");
+      submittingRef.current = false;
+      setPending(false);
+      return;
+    }
+
+    const rejection = authorize?.(signedIn) ?? null;
+    if (rejection) {
+      // 刚建立的会话属于另一端：立即撤销，不导航到目标页，也不留下半登录状态。
+      await signOut();
+      setPassword("");
+      setFormError({ message: rejection });
       submittingRef.current = false;
       setPending(false);
       return;
