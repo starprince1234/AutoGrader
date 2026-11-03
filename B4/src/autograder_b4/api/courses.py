@@ -18,8 +18,8 @@ from sqlalchemy.exc import IntegrityError
 
 from ..audit import (
     ACTION_COURSE_CREATED,
+    ACTION_COURSE_DELETED,
     ACTION_COURSE_RENAMED,
-    ACTION_COURSE_RETIRED,
     ACTION_ENROLLMENT_DELETED,
     ACTION_ENROLLMENT_UPDATED,
     ACTION_SECTION_CREATED,
@@ -627,7 +627,7 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
         caller=Depends(dependencies.principal),
         connection: Connection = Depends(dependencies.connection),
     ) -> Response:
-        """Soft delete: `is_active=false`, so history keeps pointing at a real course."""
+        """Delete a course together with its classes and roster rows."""
         row = connection.execute(
             select(courses).where(courses.c.course_id == course_id)
         ).fetchone()
@@ -639,26 +639,46 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
             audit_denial(
                 engine,
                 principal=caller,
-                detail="retiring a course requires write access to it",
+                detail="deleting a course requires write access to it",
             )
             raise error
 
-        now = _now()
-        with engine.begin() as write:
-            write.execute(
-                update(courses)
-                .where(courses.c.course_id == course_id)
-                .values(is_active=False, updated_at=now)
-            )
-            AuditLog(write).record(
-                action=ACTION_COURSE_RETIRED,
-                outcome=OUTCOME_SUCCESS,
-                actor=actor_of(caller),
-                target_type="course",
-                target_id=course_id,
-                course_id=course_id,
-                detail=f"retired course {row.course_code!r} / {row.title!r}",
-            )
+        try:
+            with engine.begin() as write:
+                # FK order: sections/roster imports are RESTRICT, enrollments cascade from
+                # sections, roles cascade from the course, audit rows null out their reference.
+                section_ids = [
+                    value[0]
+                    for value in write.execute(
+                        select(sections.c.section_id).where(sections.c.course_id == course_id)
+                    ).fetchall()
+                ]
+                write.execute(
+                    delete(roster_imports).where(roster_imports.c.course_id == course_id)
+                )
+                if section_ids:
+                    write.execute(
+                        delete(enrollments).where(enrollments.c.section_id.in_(section_ids))
+                    )
+                write.execute(delete(sections).where(sections.c.course_id == course_id))
+                write.execute(delete(courses).where(courses.c.course_id == course_id))
+                AuditLog(write).record(
+                    action=ACTION_COURSE_DELETED,
+                    outcome=OUTCOME_SUCCESS,
+                    actor=actor_of(caller),
+                    target_type="course",
+                    target_id=course_id,
+                    course_id=None,
+                    detail=(
+                        f"deleted course {row.course_code!r} / {row.title!r} "
+                        f"with {len(section_ids)} class(es)"
+                    ),
+                )
+        except IntegrityError as error:
+            raise conflict(
+                "The course is still referenced by records outside this module "
+                "and cannot be deleted."
+            ) from error
         return Response(status_code=204)
 
     return router

@@ -60,6 +60,12 @@ export function RosterPage() {
   const classes = useSections(selectedCourseId === "" ? null : selectedCourseId);
   const deleteCourse = useDeleteCourse();
   const [deleteError, setDeleteError] = useState<unknown>(null);
+  //: 待确认的删除对象：课程或班级。null 表示没有弹窗。
+  const [pendingDelete, setPendingDelete] = useState<
+    | { kind: "course"; courseId: string; name: string }
+    | { kind: "class"; sectionId: string; name: string }
+    | null
+  >(null);
   const deleteSection = useDeleteSection(selectedCourseId === "" ? null : selectedCourseId);
   const [expandedClass, setExpandedClass] = useState<string | null>(null);
 
@@ -179,23 +185,11 @@ export function RosterPage() {
                     title={t("roster.course.delete", { name: row.title })}
                     data-testid={`course-delete-${row.course_id}`}
                     onClick={() => {
-                      if (!window.confirm(t("roster.course.deleteConfirm", { name: row.title }))) {
-                        return;
-                      }
                       setDeleteError(null);
-                      deleteCourse.mutate(row.course_id, {
-                        onError: (failure) => setDeleteError(failure),
-                        onSuccess: () => {
-                          if (selectedCourseId === row.course_id) {
-                            void navigate({
-                              search: (previous) => ({
-                                ...previous,
-                                course_id: undefined,
-                                section_id: undefined,
-                              }),
-                            });
-                          }
-                        },
+                      setPendingDelete({
+                        kind: "course",
+                        courseId: row.course_id,
+                        name: row.title,
                       });
                     }}
                   >
@@ -259,13 +253,11 @@ export function RosterPage() {
                           })}
                           data-testid={`class-delete-${option.sectionId}`}
                           onClick={() => {
-                            const name = row.class_name ?? option.label;
-                            if (!window.confirm(t("roster.classes.deleteConfirm", { name }))) {
-                              return;
-                            }
                             setDeleteError(null);
-                            deleteSection.mutate(option.sectionId, {
-                              onError: (failure) => setDeleteError(failure),
+                            setPendingDelete({
+                              kind: "class",
+                              sectionId: option.sectionId,
+                              name: row.class_name ?? option.label,
                             });
                           }}
                         >
@@ -421,6 +413,80 @@ export function RosterPage() {
           </form>
         </Modal>
       ) : null}
+      {pendingDelete ? (
+        <Modal
+          title={
+            pendingDelete.kind === "course" ? t("roster.deleteCourse.title") : t("roster.deleteClass.title")
+          }
+          testId="confirm-delete"
+          onClose={() => setPendingDelete(null)}
+        >
+          <div className="stack">
+            <p data-testid="confirm-delete-message">
+              {pendingDelete.kind === "course"
+                ? t("roster.deleteCourse.message", { name: pendingDelete.name })
+                : t("roster.deleteClass.message", { name: pendingDelete.name })}
+            </p>
+            <p className="muted">
+              {pendingDelete.kind === "course"
+                ? t("roster.deleteCourse.hint")
+                : t("roster.deleteClass.hint")}
+            </p>
+            {deleteError ? (
+              <Banner tone="error" testId="roster-delete-error">
+                {describeApiError(deleteError)}
+              </Banner>
+            ) : null}
+            <div className="inline">
+              <button
+                type="button"
+                className="button button--danger"
+                data-testid="confirm-delete-accept"
+                disabled={deleteCourse.isPending || deleteSection.isPending}
+                onClick={() => {
+                  setDeleteError(null);
+                  if (pendingDelete.kind === "course") {
+                    const courseId = pendingDelete.courseId;
+                    deleteCourse.mutate(courseId, {
+                      onSuccess: () => {
+                        setPendingDelete(null);
+                        if (selectedCourseId === courseId) {
+                          void navigate({
+                            search: (previous) => ({
+                              ...previous,
+                              course_id: undefined,
+                              section_id: undefined,
+                            }),
+                          });
+                        }
+                      },
+                      onError: (failure) => setDeleteError(failure),
+                    });
+                    return;
+                  }
+                  deleteSection.mutate(pendingDelete.sectionId, {
+                    onSuccess: () => setPendingDelete(null),
+                    onError: (failure) => setDeleteError(failure),
+                  });
+                }}
+              >
+                {deleteCourse.isPending || deleteSection.isPending
+                  ? t("roster.delete.deleting")
+                  : t("roster.delete.confirm")}
+              </button>
+              <button
+                type="button"
+                className="button button--ghost"
+                data-testid="confirm-delete-cancel"
+                onClick={() => setPendingDelete(null)}
+              >
+                {t("common.cancel")}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
+
     </div>
   );
 }

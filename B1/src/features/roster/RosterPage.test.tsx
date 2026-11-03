@@ -60,6 +60,7 @@ function routes(role: "teacher" | "student" = "teacher"): StubbedRoute[] {
               term: null,
               created_at: "2026-11-02T07:32:50.000Z",
               enrollment_count: 1,
+              class_name: "姓名学号.csv",
             },
           ],
         }),
@@ -110,6 +111,11 @@ function routes(role: "teacher" | "student" = "teacher"): StubbedRoute[] {
       path: `/api/v1/enrollments/${ENROLLMENT_ID}`,
       respond: () => new Response(null, { status: 204 }),
     },
+    {
+      method: "DELETE",
+      path: `/api/v1/courses/${UUID_A}/sections/${SECTION_ID}`,
+      respond: () => new Response(null, { status: 204 }),
+    },
   ];
 }
 
@@ -151,7 +157,7 @@ describe("课程 → 班级 → 学生", () => {
     await user.click(await screen.findByTestId(`course-open-${UUID_A}`));
 
     const row = await screen.findByTestId(`class-row-${SECTION_ID}`);
-    expect(within(row).getByText(/01/)).toBeInTheDocument();
+    expect(within(row).getByText(/姓名学号\.csv/)).toBeInTheDocument();
     expect(screen.getByTestId(`class-count-${SECTION_ID}`)).toHaveTextContent("1 人");
     expect(within(row).getByText(/2026-11-02 07:32:50/)).toBeInTheDocument();
     stub.restore();
@@ -224,6 +230,51 @@ describe("弹窗", () => {
       });
       expect((request?.body as { expected_updated_at?: string }).expected_updated_at).toBeTruthy();
     });
+    stub.restore();
+  });
+});
+
+describe("删除确认弹窗", () => {
+  it("点班级垃圾桶先弹确认框，确认后才发 DELETE", async () => {
+    const { stub, user } = await openPage();
+    await user.click(await screen.findByTestId(`course-open-${UUID_A}`));
+    await user.click(await screen.findByTestId(`class-delete-${SECTION_ID}`));
+
+    const dialog = await screen.findByTestId("confirm-delete");
+    expect(within(dialog).getByTestId("confirm-delete-message")).toHaveTextContent(
+      "姓名学号.csv",
+    );
+    // 确认前不发请求
+    expect(
+      stub.requests.some(
+        (request) =>
+          request.method === "DELETE" &&
+          request.url.pathname === `/api/v1/courses/${UUID_A}/sections/${SECTION_ID}`,
+      ),
+    ).toBe(false);
+
+    await user.click(within(dialog).getByTestId("confirm-delete-accept"));
+    await waitFor(() => {
+      expect(
+        stub.requests.some(
+          (request) =>
+            request.method === "DELETE" &&
+            request.url.pathname === `/api/v1/courses/${UUID_A}/sections/${SECTION_ID}`,
+        ),
+      ).toBe(true);
+    });
+    stub.restore();
+  });
+
+  it("取消后不发任何删除请求", async () => {
+    const { stub, user } = await openPage();
+    await user.click(await screen.findByTestId(`course-open-${UUID_A}`));
+    await user.click(await screen.findByTestId(`class-delete-${SECTION_ID}`));
+    const dialog = await screen.findByTestId("confirm-delete");
+    await user.click(within(dialog).getByTestId("confirm-delete-cancel"));
+
+    expect(screen.queryByTestId("confirm-delete")).toBeNull();
+    expect(stub.requests.some((request) => request.method === "DELETE")).toBe(false);
     stub.restore();
   });
 });

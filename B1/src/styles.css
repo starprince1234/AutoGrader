@@ -2140,3 +2140,17 @@ samp {
   padding: 2px 4px;
   color: var(--color-danger, #c0392b);
 }
+
+/* 危险操作的主按钮：与普通主色按钮区分，读起来是"这个动作会删东西"。 */
+.button--danger {
+  background: #c0392b;
+  color: #fff;
+}
+
+.button--danger:hover:not(:disabled) {
+  background: #a93226;
+}
+
+.button--danger:disabled {
+  background: #e6b0aa;
+}
