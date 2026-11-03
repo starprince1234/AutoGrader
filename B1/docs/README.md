@@ -56,11 +56,11 @@
 | 题目质量热力图（CHG-0015） | `部分` | 已并入 `features/review/QualityReviewTab.tsx`（见上方"复核工作区 · 题目质量"行）；旧 `QualitySummaryPage.test.tsx` 随旧页面删除 |
 | 题库标签覆盖度（CHG-0020 + CHG-0022） | `部分` | `QuestionCoveragePanel.test.tsx`（13 用例）+ `QuestionListPage.test.tsx`（2 用例）：`tagged + untagged == total` 是唯一被展示与校验的恒等式（反向断言逐标签之和 21 不在页面上）、`untagged_questions` 单独一格、`tags` 按契约顺序原样渲染、点标签复用既有筛选（CHG-0022 后每个标签都可筛，防御分支已删除）、`404` → "尚未在 B3 实现"信息态（只请求一次、不客户端兜底）、`403` 原样带出 detail。**对着已声明契约构建、未经真实 B3 验证**（本批未对运行中的 host 发过请求） |
 | 「验证并发布」（CHG-0019 / ADR-0015） | `部分` | `ReferenceVerificationPanel.test.tsx`（15 用例）：两步显式动作（验证 ≠ 发布）+ 不自动重试/不自动发布；三态互不混淆（全通过可发布 / 未通过逐用例 `failure_category` / `503` 或全 `infrastructure_error` → "验证需要 Linux 沙箱环境"，文案不含"成功"也不含"验证失败"）；**全通过但 B3 未记录存证（`attestation_id: null`）→ 仍不可发布**；结论摘要与当前版本不一致 → 失效；换版本 → 结论不跨实例。**对着已声明契约构建、未经真实 B2 验证**（B2 尚未实现该端点） |
-| 测试框架（vitest） | `已完成` | 合并后实跑：**54 文件 / 475 用例**，summary 全部通过；进程退出码为 1，属 `phase-02 §4` 记录的 forks worker 拆卸偶发（summary 无失败用例，非用例失败） |
+| 测试框架（vitest） | `已完成` | 合并后实跑：**56 文件 / 484 用例**（含新增的 9 个光晕用例），summary 全部通过；进程退出码为 1，属 `phase-02 §4` 记录的 forks worker 拆卸偶发（summary 无失败用例，非用例失败） |
 | 真实 ESLint | `已完成` | `eslint . --max-warnings 0`：0 error / 0 warning |
 | API 类型生成（ADR-0002） | `部分` | `node scripts/generate-api-types.mjs --check` **报漂移**：`src/api/generated/{common,b2,b3,b4}.ts` 与当前 `0.25.0` 契约不一致；本轮只有文档冲突要解，没有擅自重新生成（生成物会改到其他人的契约面） |
 | 端到端（真实后端） | `部分`（覆盖度**已打通**；其余按页说明） | 真实 MAIN host `http://127.0.0.1:18000` + B2/B3/B4。**本轮真实浏览器复核**：`/app/questions` 的覆盖度面板渲染真实 B3 数据（`total=102 / tagged=4 / untagged=98`，逐标签与独立 SQL 一致）⇒ **覆盖度端到端成立**；旧隔离区与旧质量页当时正常渲染（空列表/筛选面板），但**已随 P13 合并删除，新 `/review` 尚未部署**；`/app/questions/<id>/edit` 的验证面板可用，但对**草稿**得到 B2 `422`（评测包只对已发布版本编译 → 该跨模块缺口已由 `CHG-0028` 处理，待 B3 落地后复测）。**证据包面板未在浏览器里打开**。**AI 参考分的非空渲染、`unavailable` 态、学生视图仍未做端到端**（原因见 phase-03 的"未验证项"） |
-| 设计系统（P10，Linear 式） | `已完成`（浅/深两套实拍；登录后业务页未截） | `src/styles.css` 整体重写、**类名未改**；合并后实跑 `tsc -b`、`eslint --max-warnings 0`、`vitest`（54 文件 / 475 用例）、`vite build` 均通过；真实构建产物经无头 Chromium 实拍导览页、登录浮窗与组件总览（浅/深），见 `design/screenshots/`；`api:check` 仍报生成类型漂移（见上一行，本轮未重新生成）；未验证项见 `phases/active/phase-10-linear-design-system.md` |
+| 设计系统（P10，Linear 式） | `已完成`（浅/深两套实拍；登录后业务页未截） | `src/styles.css` 整体重写、**类名未改**；追加**常驻背景光晕**（`src/ui/GeminiGlow.tsx` + `glowAnimation.ts`：Always-on、30fps 上限、`prefers-reduced-motion` 静态降级、打印隐藏）；合并后实跑 `tsc -b`、`eslint --max-warnings 0`、`vitest`（56 文件 / 484 用例）、`vite build` 均通过；真实构建产物经无头 Chromium 实拍导览页、登录浮窗、组件总览与光晕周期（浅/深），见 `design/screenshots/`；`api:check` 仍报生成类型漂移（见上一行，本轮未重新生成）；未验证项见 `phases/active/phase-10-linear-design-system.md` |
 
 > 归档门禁与完成定义见 `collaboration/definition-of-done.md` 与 `phases/archive/README.md`。
 > 当前阶段记录：`phases/active/phase-10-linear-design-system.md`（Linear 设计系统重做：

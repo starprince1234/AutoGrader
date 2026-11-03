@@ -13,7 +13,7 @@ Phase 02 把 B1 的视觉统一为 Apple 式（light-first + 自动深色），�
 ## 设计来源与三处偏离
 
 来源：[`awesome-design-md` 的 Linear 设计系统](https://github.com/VoltAgent/awesome-design-md)。
-完整规则见 [`../design/DESIGN.md`](../design/DESIGN.md)。相对原系统做了三处明确偏离：
+完整规则见 [`../../design/DESIGN.md`](../../design/DESIGN.md)。相对原系统做了三处明确偏离：
 
 | 偏离 | 做法 | 原因 |
 |---|---|---|
@@ -23,6 +23,8 @@ Phase 02 把 B1 的视觉统一为 Apple 式（light-first + 自动深色），�
 
 渐变按"只做光"的规则使用：页面顶部低饱和光晕、主按钮 180° 微渐变、面板顶边 1px 发丝、
 品牌名一处渐变文字；**没有**彩色渐变填充区块、渐变胶囊或渐变表格行（见 DESIGN.md §2.3）。
+随后追加了**常驻背景光晕**（§"追加：Gemini 式常驻光晕"），它是这条规则的唯一例外，
+但同样只做背景光、不进内容层。
 
 ## 实际变更
 
@@ -63,9 +65,46 @@ node scripts/generate-api-types.mjs --check                     # exit 1：契�
 构建后 CSS 挂到代表性标记上：表格 + 四种状态胶囊 + 按钮四态 + 输入 + 四种提示条 + 分段页签 +
 advisory 卡 + 计数卡 + 覆盖度条）。
 
-截图见 [`screenshots/`](screenshots/)：`landing-light/dark.png`、`login-light/dark.png`、
+截图见 [`../../design/screenshots/`](../../design/screenshots/)：`landing-light/dark.png`、`login-light/dark.png`、
 `components-light/dark.png`。复核中据此修了三处：导览两栏由等高拉伸改为按内容高度对齐；
 深色提示条由大面积色块改为中性面 + 左侧色条；两栏顶端发丝与页面光晕强度上调。
+
+## 追加：Gemini 式常驻光晕
+
+参考用户提供的 `gemini_background_effect_prompt.md`（外部参考文件，不入库）：
+背景从顶部"浸染"出蔚蓝 → 青蓝 → 翠绿 → 亮黄绿 → 鹅黄 → 淡紫，叠极淡水波纹、有呼吸。
+要求是**常驻、不需触发、每个页面都在**，因此实现成与页面无关的背景层，而不是某个页面的效果。
+
+| 文件 | 变更 |
+|---|---|
+| `src/ui/GeminiGlow.tsx`（新增） | 宿主组件：`requestAnimationFrame` 逐帧写 `:root` 变量；30fps 上限；`visibilitychange` 暂停；`prefers-reduced-motion` 只写一帧 |
+| `src/ui/glowAnimation.ts`（新增） | 纯函数 `glowFrame(elapsedMs)`：两条色带（退场/进场）的颜色、色标位置与呼吸值 |
+| `src/app/Root.tsx` | 在 RouterProvider 之外渲染一次 `<GeminiGlow />`，路由切换不重挂 |
+| `src/styles.css` | 新增「常驻光晕层」一节与 `--glow-*` token；移除 `.landing::before` / `.auth-page::before` 两处旧的静态 hero 光晕（已被统一层替代） |
+| `src/ui/glowAnimation.test.ts`、`src/ui/GeminiGlow.test.tsx`（新增） | 9 个用例固定几何与降级行为 |
+
+**实现要点与踩过的坑**
+
+1. 第一版把两条色带的色标写成了"head 在 tail 之后"，浏览器按前一个色标钳制，截图里出现
+   一条硬边紫色带。改为**每带独立渐变、色标严格递增（head < tail）**，并且每条带两端都淡出。
+2. 第一版用 `mask-image` 给渐变加渐隐，遮罩边界本身又是一条硬线；已删除，柔和边界完全交给色标位置。
+3. 色带 alpha 之和恒为 1，交接处没有亮度台阶；色带最深 56%，**下半屏永远是底色**。
+4. 光晕在 `z-index: -1`，所有内容坐在不透明 `--color-surface` 上，因此读数不受影响。
+5. 强度只有一个总开关：浅色 `--glow-strength: 0.6`、深色 `0.3`；纹理透明度 5%，
+   动效 30fps，页面不可见时暂停。
+
+**验证读数（本轮实跑）**
+
+| 命令 | 结果 |
+|---|---|
+| `eslint . --max-warnings 0` | exit 0 |
+| `tsc -b` | exit 0 |
+| `vitest run` | 56 文件 / 484 用例，summary 全部通过（新增 9 个光晕用例）；进程退出码 1 为已知 worker 拆卸偶发 |
+| `vite build` | ✓ built，exit 0 |
+| `generate-api-types.mjs --check` | exit 1：生成类型未随 `0.25.0` 契约重新生成（既有状态，本轮未动生成物） |
+
+视觉证据：`screenshots/landing-light/dark.png`、`components-light/dark.png`（数据页在光晕之下的
+可读性）、`login-light/dark.png`、`glow-cycle-1..4.png`（一个色彩周期内的四帧）。
 
 ## 合并冲突（pull 远端 main）
 
@@ -88,3 +127,9 @@ pull 时 `B1/docs/README.md` 冲突（HEAD 与 `8373ddaff`），仓库里只有�
 4. 仅用 Chromium 内核验证：`color-mix()`、`background-clip: text`、`aspect-ratio` 等现代特性
    在 Firefox/Safari 上未实测；已为渐变文字加 `forced-colors` 回退。
 5. 未做对比度工具化检查（数值按 WCAG 手算：正文/次要文字 ≥ 4.5:1，白字于 `#5e6ad2` ≈ 4.66:1）。
+6. **光晕的性能只有设计约束、没有实测**：30fps 上限是为了省样式重算，但没有在低端集显 / 4K 屏上
+   量过帧率与功耗；也没有在真实业务页（长表格、Monaco 编辑器）上长时间观察它对输入延迟的影响。
+7. 光晕的 `prefers-reduced-motion` 降级只有单测（"不调用 rAF、只写一帧"），**没有**在系统开启
+   "减少动态效果"的真实浏览器里目视确认；打印样式同理，未做打印预览。
+8. `glow-cycle-*.png` 是同一页面相隔约 1.4s 的四帧，覆盖的色相不全（只到鹅黄/淡紫附近）；
+   六个色相的完整性由 `glowAnimation.test.ts` 的集合断言保证，而不是靠截图。

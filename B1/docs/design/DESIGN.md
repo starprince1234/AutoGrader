@@ -76,12 +76,14 @@
 
 | Token | 用途 | 规则 |
 |---|---|---|
-| `--gradient-page` | 页面背景：顶部一层低饱和径向光晕 + 极淡纵向渐变 | 深色下换成 indigo 光晕（透明度 ≈ 0.16） |
-| `--gradient-hero` | 导览页两列上方的光晕 | 只在 `landing`/`auth-page` 用，内容页不用第二处光 |
+| `--gradient-page` | 页面底色兜底：一层低饱和径向光 + 极淡纵向渐变 | 光晕层不跑（低动态/脚本未执行）时页面仍是成品样子 |
 | `--gradient-accent` | 主按钮（180° 微渐变）+ 进度条 | 起止色差 ≤ 10% 亮度，避免"塑料按钮" |
 | `--gradient-hairline` | 页头底边、面板顶部 1px 发丝 | 两端透明，中间实色，不切角 |
+| `--glow-*`（§11） | 常驻背景光晕的色带颜色与位置 | 只在最底层做背景光；**不进卡片、不进状态、不进表格** |
 
-**禁止**：彩色渐变大面积铺底、渐变胶囊、渐变表格行、渐变文字超过一个（目前只给导览页品牌名）。
+**禁止**：用彩色渐变填充卡片/胶囊/表格行；渐变文字超过一个（目前只给导览页品牌名）；
+把光晕放到内容层之上。**例外且受控**：§11 的常驻光晕是背景光，色相来自参考效果，
+强度由 `--glow-strength` 压住，所有内容都坐在不透明表面上。
 
 ## 3. 排版
 
@@ -191,14 +193,15 @@
 
 - 动效时长 120–240ms；曲线 `cubic-bezier(0.22, 0.61, 0.36, 1)`；只动 `transform`/`opacity`/`background`。
 - hover 位移 ≤ 4px；面板不缩放；按钮 active 只回落 1px。
-- `prefers-reduced-motion: reduce` 下动画压到 0.001ms，状态反馈仍由颜色与焦点环即时给出。
+- `prefers-reduced-motion: reduce` 下动画压到 0.001ms，状态反馈仍由颜色与焦点环即时给出；§11 的光晕在这种偏好下**完全静止**。
 - 触控断点下控件高度 ≥ 42px，侧栏改抽屉。
 
 ## 9. 实现映射与变更流程
 
 - token 全在 `src/styles.css` 的 `:root` / 深色媒体查询里；组件类名不变，**只改 CSS**（沿用 phase-02 的做法，避免碰 `.tsx` 与测试）。
 - 新增组件类前先看 `src/ui/components.tsx` 是否有对应原语；业务语义留在 feature 目录。
-- 改动 `src/styles.css` 或 `src/ui/components.tsx` 前，先在 `docs/phases/active/` 登记当轮阶段文档。
+- 仅有的例外是 §11 的常驻光晕：它需要一个 rAF 宿主组件（`src/ui/GeminiGlow.tsx`）与纯计算模块（`src/ui/glowAnimation.ts`），因为 CSS transition 无法插值 `background-image`。
+- 改动 `src/styles.css` / `src/ui/components.tsx` / 光晕模块前，先在 `docs/phases/active/` 登记当轮阶段文档。
 - 本轮落地记录见 [`../phases/active/phase-10-linear-design-system.md`](../phases/active/phase-10-linear-design-system.md)。
 
 ## 10. 视觉证据（浅/深两套）
@@ -210,6 +213,45 @@
 | 导览页（真实页面） | [`screenshots/landing-light.png`](screenshots/landing-light.png) | [`screenshots/landing-dark.png`](screenshots/landing-dark.png) |
 | 登录浮窗（点「登录」后的真实交互） | [`screenshots/login-light.png`](screenshots/login-light.png) | [`screenshots/login-dark.png`](screenshots/login-dark.png) |
 | 组件总览（表格/胶囊/按钮/提示条/页签/证据卡） | [`screenshots/components-light.png`](screenshots/components-light.png) | [`screenshots/components-dark.png`](screenshots/components-dark.png) |
+| 光晕的一个色彩周期（浅色，约 1.4s 一帧） | [1](screenshots/glow-cycle-1.png) · [2](screenshots/glow-cycle-2.png) · [3](screenshots/glow-cycle-3.png) · [4](screenshots/glow-cycle-4.png) | 深色见 `landing-dark.png` |
 
 组件总览页是把同一份构建后 CSS 挂到代表性标记上的临时产物（不入库），
 用于在**没有后端**的环境里复核表格、状态胶囊与表单形态；它不是真实业务页面的截图。
+两组截图都是在**光晕运行中**拍的（组件总览注入了一帧固定值，其余为实时动画）。
+
+## 11. 常驻背景光晕（Gemini 式）
+
+**常亮、不需要触发、不属于任何页面**：`Root` 在最外层渲染 `<GeminiGlow />`，
+容器 `position: fixed; inset: 0; z-index: -1`，所以导览页、认证页、业务页、弹窗之下都是同一层光。
+
+### 11.1 结构
+
+| 位置 | 职责 |
+|---|---|
+| `src/ui/GeminiGlow.tsx` | 宿主组件：rAF 循环、30fps 上限、页面不可见暂停、低动态偏好降级、把每帧写进 `:root` 的 CSS 变量 |
+| `src/ui/glowAnimation.ts` | 纯函数 `glowFrame(elapsedMs)`：两条色带的颜色/位置与呼吸值，可单测 |
+| `styles.css`「常驻光晕层」 | `.gemini-glow` 容器 + 两条色带（每带 2 个径向 + 1 条纵向渐变）+ 极淡噪点纹理 |
+
+### 11.2 视觉参数
+
+| 项 | 值 | 说明 |
+|---|---|---|
+| 色相顺序 | 蔚蓝 `#4A9FD9` → 青蓝 `#3DB8B0` → 翠绿 `#6BBF59` → 亮黄绿 `#9CCC4A` → 鹅黄 `#DDE36A` → 淡紫 `#A87FD4` → 回到蔚蓝 | 与参考效果一致，首尾衔接循环 |
+| 每个色相 | 1600ms（整轮 9.6s） | 比参考的 5s 更慢，避免在长时间做题的界面上抢注意力 |
+| 色带最深 | 退场带 18%→42%，淡出 34%→56% | 下半屏始终是底色（参考文档的硬性要求） |
+| 呼吸 | 5s 正弦，0.36 → 0.90 | 光晕整体透明度波动，不是死板色块 |
+| 强度 | 浅色 `--glow-strength: 0.6`、深色 `0.3` | 唯一的总开关；改它就能整体调浓淡 |
+| 纹理 | 内联 SVG `feTurbulence` 噪点，5% 透明度，72s 漂移 | 无额外网络请求，读作丝绸/水面细纹 |
+| 动效频率 | 30fps 上限 | 色相变化本来就慢，60fps 只是多算一倍大面积渐变 |
+
+### 11.3 硬规则
+
+1. **色带位置的色标必须递增（head < tail）**。把 tail 写在 head 之前，浏览器会按前一个色标钳制，
+   画出一条硬边——这是第一版实现真实踩到的坑（已修，测试固定住）。
+2. **色带 alpha 之和恒为 1**：退场带与新进场带交叉时不会出现亮度台阶。
+3. **只覆盖上半屏**：最深 56%，且尾端淡出；下半屏永远留给底色与内容。
+4. **内容永远在不透明表面上**：光晕在 `z-index: -1`，卡片/表格/表单是 `--color-surface`，
+   因此光只从面板缝隙透出来，不参与任何读数。
+5. **尊重偏好**：`prefers-reduced-motion: reduce` 只写一帧静态值、不启动 rAF；
+   `@media print` 直接隐藏光晕（导成绩单时不该带着颜色跑）。
+6. 页面不可见（`visibilitychange`）时暂停 rAF，回来继续，不补帧、不跳变。

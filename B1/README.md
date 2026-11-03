@@ -8,9 +8,12 @@ B1 是 AutoGrader 的**静态 Web 客户端**（TypeScript + React 19 + Vite 7�
 > 与 `index.html` 的 `theme-color`/favicon；按钮、输入、表格、状态胶囊、提示条、页签、弹窗的
 > 形态与字体层级、动效一并调整；浅色为主、深色跟随系统，渐变只用于顶部光晕、主按钮纵向微渐变
 > 与面板顶边发丝。状态语义在重写中逐条保留：`null` 仍是「未测量」而不是 0 分，AI 参考分仍比
-> 权威分弱，`idle` 承载「不可用/未完成」而不是错误色。验证：ESLint、`tsc -b`、
-> Vitest（合并取远端后 **54 文件 / 475 用例**）、`vite build` 实跑通过；真实构建产物经无头 Chromium 实拍
-> 浅/深两套（导览页、登录浮窗、组件总览，见 `docs/design/screenshots/`），**登录后的真实业务页
+> 权威分弱，`idle` 承载「不可用/未完成」而不是错误色。随后追加**常驻背景光晕**：不依赖任何触发，
+> 从导览页到业务页、弹窗之下都在同一层背景光里流动（蔚蓝 → 青蓝 → 翠绿 → 亮黄绿 → 鹅黄 → 淡紫，
+> 9.6s 一轮、5s 呼吸、30fps），实现为与页面解耦的 `GeminiGlow` + 纯计算 `glowAnimation`，
+> 尊重 `prefers-reduced-motion`（静止）与打印（隐藏）。验证：ESLint、`tsc -b`、
+> Vitest（合并取远端后 **56 文件 / 484 用例**）、`vite build` 实跑通过；真实构建产物经无头 Chromium 实拍
+> 浅/深两套（导览页、登录浮窗、组件总览、光晕周期，见 `docs/design/screenshots/`），**登录后的真实业务页
 > 因本机没有后端未截**。`api:check` 仍**失败**：拉取后契约锁已是 `0.25.0`，而
 > `src/api/generated/**` 尚未重新生成（本轮未擅自改动生成物）。详见
 > [`phase-10-linear-design-system.md`](docs/phases/active/phase-10-linear-design-system.md)。

@@ -60,6 +60,27 @@
     transparent 100%
   );
 
+  /*
+   * 常驻背景光晕（Gemini 式色彩浸染）。变量由 `src/ui/GeminiGlow.tsx` 的
+   * requestAnimationFrame 逐帧改写，每条色带只有四个量：
+   * 颜色（含 alpha 由权重折算）、顶端满色位置、淡出位置、权重。
+   * `a` 是正在退场的上一条色带，`b` 是正在进场的新色带；`--glow-opacity` 做呼吸。
+   * 位置必须满足 head < tail，否则浏览器会按前一个色标钳制，画出硬边。
+   */
+  --glow-a: rgba(74, 159, 217, 1);
+  --glow-a-head: 18%;
+  --glow-a-tail: 34%;
+  --glow-b: rgba(61, 184, 176, 0);
+  --glow-b-head: 8%;
+  --glow-b-tail: 22%;
+  --glow-opacity: 0.9;
+  /* 光晕整体强度上限：浅色主题里它只是"很淡的一层光"，绝不压过内容。 */
+  --glow-strength: 0.6;
+  --glow-blend: normal;
+  /* 纹理：噪点用 data URI 内联（不额外请求），透明度极低且缓慢漂移。 */
+  --glow-texture-opacity: 0.055;
+  --glow-texture: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23f)' opacity='.5'/%3E%3C/svg%3E");
+
   /* 圆角：4/6/8/12，胶囊只给标签 */
   --radius-xs: 4px;
   --radius-sm: 6px;
@@ -140,6 +161,15 @@
     --shadow-raised: 0 28px 64px -24px rgba(0, 0, 0, 0.72), 0 8px 24px -12px rgba(0, 0, 0, 0.5);
     --shadow-focus: 0 0 0 3px var(--color-accent-soft), 0 0 0 1px var(--color-accent);
     --shadow-inset-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+
+    /*
+     * 深色下的光晕：色相不变但压暗，并改用 screen 混合，避免在近黑底上变成"脏抹布"。
+     * 这里不做大幅提亮——深色页面的可读性靠背景保持暗，光只是顶边一层。
+     * 色带的颜色由脚本按同一组色相写入，深浅差异只落在强度与混合模式上。
+     */
+    --glow-strength: 0.3;
+    --glow-blend: screen;
+    --glow-texture-opacity: 0.05;
   }
 }
 
@@ -154,6 +184,7 @@ html {
 body {
   margin: 0;
   min-height: 100vh;
+  /* 底色留一层静态渐变兜底：光晕层因低动态偏好或脚本未执行而不跑时，页面依然是成品样子。 */
   background-color: var(--color-bg);
   background-image: var(--gradient-page);
   background-repeat: no-repeat;
@@ -171,6 +202,97 @@ body {
 ::selection {
   background: var(--color-accent-soft);
   color: var(--color-text);
+}
+
+/* ------------------------------------------------------------ 常驻光晕层 */
+
+/*
+ * 背景光晕（Gemini 式色彩浸染）：挂在 <body> 的第一个子元素上，`position: fixed` +
+ * `z-index: -1`，因此**和内容完全解耦**——它不属于任何页面的布局，切换路由时既不重挂也不打断
+ * 动画，导览页、登录页、业务页、弹窗之上都在同一层玻璃后面。
+ *
+ * 视觉实现（对应参考文档的四条关键特征）：
+ * 1. 纵向线性渐变 + 顶部偏左的径向径向渐变叠加，彩色只覆盖上半屏，下方是 white 兜底；
+ * 2. 彩色色标的**位置**由脚本逐帧下推，读起来是"颜色从顶边长出来、慢慢浸染下去"；
+ * 3. `--glow-texture` 是内联 SVG 噪点，透明度 5% 上下并极慢漂移，读作丝绸/水波的细纹；
+ * 4. `--glow-opacity` 做秒级呼吸。
+ * 卡片、表格、表单全部是不透明表面（`--color-surface`），光晕只从面板之间的缝隙透出来，
+ * 所以不会削弱任何读数。
+ */
+.gemini-glow {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  background: var(--color-bg);
+  /* 脚本未执行时的静态兜底：和 body 的渐变一致，避免"先白后彩"的闪。 */
+  background-image: var(--gradient-page);
+}
+
+/*
+ * 彩色浸染层：两条色带，各自"顶部满色 → head 处仍满 → tail 处淡到透明"。
+ * 每条色带内部色标严格递增（head < tail），这是不出现硬边的前提；
+ * 每带再叠左右两个径向渐变，让宽屏上的光有"两个光源"的体积感，而不是一条横贯的色带。
+ * 这里不用 mask-image：给渐变填充本身加遮罩会在遮罩边界留下一条硬线。
+ */
+.gemini-glow::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(1040px 560px at 15% -12%, var(--glow-a) 0%, transparent 72%),
+    radial-gradient(780px 430px at 70% -22%, var(--glow-a) 0%, transparent 74%),
+    linear-gradient(178deg, var(--glow-a) 0%, var(--glow-a) var(--glow-a-head), transparent var(--glow-a-tail)),
+    radial-gradient(900px 480px at 44% -18%, var(--glow-b) 0%, transparent 70%),
+    radial-gradient(700px 380px at 96% -6%, var(--glow-b) 0%, transparent 76%),
+    linear-gradient(163deg, var(--glow-b) 0%, var(--glow-b) var(--glow-b-head), transparent var(--glow-b-tail));
+  /* 两条带的 alpha 之和恒为 1（脚本算好写进颜色里），交接处没有亮度台阶。 */
+  opacity: calc(var(--glow-opacity) * var(--glow-strength));
+  mix-blend-mode: var(--glow-blend);
+  transition: opacity 600ms var(--ease);
+}
+
+/* 细密纹理：内联噪点 + 极慢平移；`mix-blend-mode: overlay` 让它在深色下也有质感。 */
+.gemini-glow::after {
+  content: "";
+  position: absolute;
+  inset: -20%;
+  background-image: var(--glow-texture);
+  background-size: 220px 220px;
+  opacity: var(--glow-texture-opacity);
+  mix-blend-mode: overlay;
+  animation: glow-drift 72s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes glow-drift {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-120px, -80px, 0);
+  }
+}
+
+/* 系统开启「减少动态效果」时不跑光晕（不闪、不漂、不呼吸），只留静态底色。 */
+@media (prefers-reduced-motion: reduce) {
+  .gemini-glow::before,
+  .gemini-glow::after {
+    animation: none !important;
+    transition: none;
+  }
+
+  .gemini-glow::after {
+    opacity: calc(var(--glow-texture-opacity) * 0.6);
+  }
+}
+
+/* 打印/导出成绩时背景不该带着颜色跑。 */
+@media print {
+  .gemini-glow {
+    display: none;
+  }
 }
 
 h1,
@@ -1739,7 +1861,8 @@ samp {
  * 登录/注册用独立布局：页顶只有产品名，页面中央一张按表单宽度收窄的卡片。
  * 宽屏下不铺满整行（两字段表单横跨整屏会让输入框和按钮失去关联），
  * 窄屏左右留 16px，卡片可以滚动到主按钮。
- * 页面上唯一的光是顶部的 hero 光晕；卡片本身只有发丝线与极轻阴影。
+ * 页面上唯一的光来自全局光晕层（`.gemini-glow`，见「常驻光晕层」一节）；
+ * 卡片本身只有发丝线与极轻阴影。
  */
 .auth-page {
   position: relative;
@@ -1747,15 +1870,6 @@ samp {
   display: flex;
   flex-direction: column;
   overflow-x: hidden;
-}
-
-.auth-page::before {
-  content: "";
-  position: absolute;
-  inset: -180px 0 auto;
-  height: 460px;
-  background: var(--gradient-hero);
-  pointer-events: none;
 }
 
 .auth-page__head {
@@ -1924,7 +2038,7 @@ samp {
 /*
  * 第一眼就是两栏：左侧教师端、右侧学生端。两栏都是简单标题 + 链接列表，
  * 不做功能磁贴或欢迎语；登录记忆与入口端校验由 AppShell 负责。
- * 顶部的光晕是整页唯一的光；两栏靠发丝线与「教师端/学生端」抬头区分，不用两块彩色。
+ * 顶部的光来自全局光晕层（`.gemini-glow`）；两栏靠发丝线与「教师端/学生端」抬头区分，不用两块彩色。
  */
 .landing {
   position: relative;
@@ -1933,15 +2047,6 @@ samp {
   flex-direction: column;
   padding: 0 max(var(--space-5), calc((100% - 1200px) / 2 + var(--space-5)));
   overflow-x: hidden;
-}
-
-.landing::before {
-  content: "";
-  position: absolute;
-  inset: -200px 0 auto;
-  height: 520px;
-  background: var(--gradient-hero);
-  pointer-events: none;
 }
 
 .landing__head {
