@@ -171,23 +171,54 @@ describe("题目列表的游标分页", () => {
     });
   });
 
-  it("默认只取已发布题目，出题角色可以显式把草稿包含进来", async () => {
+  it("「包含草稿」开关已移除：列表固定连草稿一起取，否则教师进不去自己的草稿", async () => {
     stub = installFetchStub(routes({ "": pageOf(["q-1"], null) }));
-    const user = await open(userEvent.setup());
+    await open(userEvent.setup());
 
+    expect(screen.queryByLabelText("包含草稿")).toBeNull();
     const first = stub.requests.find((request) =>
       request.url.pathname.endsWith("/api/v1/questions"),
     );
-    expect(first?.url.searchParams.get("published_only")).toBe("true");
+    expect(first?.url.searchParams.get("published_only")).toBe("false");
+  });
 
-    await user.click(screen.getByLabelText("包含草稿"));
+  it("题干搜索框按已加载题目的题干文字过滤，并给出无命中提示", async () => {
+    stub = installFetchStub(
+      routes({
+        "": {
+          items: [
+            questionPublic({ question_id: "q-1", stem_markdown: "# 统计行数\n实现 wc -l" }),
+            questionPublic({ question_id: "q-2", title: "字符串反转", stem_markdown: "把输入反转输出" }),
+          ],
+          next_cursor: null,
+        },
+      }),
+    );
+    const user = await open(userEvent.setup());
 
-    await waitFor(() => {
-      const last = stub?.requests
-        .filter((request) => request.url.pathname.endsWith("/api/v1/questions"))
-        .at(-1);
-      expect(last?.url.searchParams.get("published_only")).toBe("false");
-    });
+    const table = screen.getByTestId("question-table");
+    expect(within(table).getAllByRole("row")).toHaveLength(3);
+
+    await user.type(screen.getByLabelText("搜索题干"), "wc -l");
+    await waitFor(() => expect(within(table).getAllByRole("row")).toHaveLength(2));
+    expect(within(table).getByText("统计文件行数")).toBeInTheDocument();
+
+    await user.clear(screen.getByLabelText("搜索题干"));
+    await user.type(screen.getByLabelText("搜索题干"), "不存在的文字");
+    expect(await screen.findByText("没有找到包含这些文字的题目")).toBeInTheDocument();
+  });
+
+  it("题目列表在知识点覆盖之前，新建题目在「题库」标题右侧", async () => {
+    stub = installFetchStub(routes({ "": pageOf(["q-1"], null) }));
+    await open(userEvent.setup());
+
+    const table = screen.getByTestId("question-table");
+    const coverage = screen.getByTestId("question-coverage");
+    // DOCUMENT_POSITION_FOLLOWING = 4：覆盖度必须排在列表之后。
+    expect(table.compareDocumentPosition(coverage) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    const link = screen.getByTestId("question-new");
+    expect(link.closest("div.inline")?.textContent).toContain("题库");
   });
 
   it("标签筛选按契约的重复参数发送（explode=true），非法标签不入参", async () => {
@@ -243,7 +274,7 @@ describe("题目列表的游标分页", () => {
     expect(screen.queryByTestId("question-table")).toBeNull();
     expect(screen.queryByText("新建题目")).toBeNull();
     expect(screen.queryByTestId("edit-q-1")).toBeNull();
-    expect(screen.queryByLabelText("包含草稿")).toBeNull();
+    expect(screen.queryByLabelText("搜索题干")).toBeNull();
     // 覆盖度同样不存在（它既不该显示，也不该被请求）。
     expect(screen.queryByTestId("question-coverage")).toBeNull();
     await waitFor(() => {
@@ -277,17 +308,8 @@ describe("题目列表上的标签覆盖度（CHG-0020）", () => {
       request.url.pathname.endsWith("/coverage"),
     );
     expect(firstCoverage?.url.searchParams.get("course_id")).toBe(UUID_A);
-    expect(firstCoverage?.url.searchParams.get("published_only")).toBe("true");
-
-    // 切「包含草稿」时两个请求必须同时变：两个数字若来自不同作用域，并排放在一起就会互相矛盾。
-    await user.click(screen.getByLabelText("包含草稿"));
-
-    await waitFor(() => {
-      const lastCoverage = stub?.requests
-        .filter((request) => request.url.pathname.endsWith("/coverage"))
-        .at(-1);
-      expect(lastCoverage?.url.searchParams.get("published_only")).toBe("false");
-    });
+    // 两个数字必须来自同一个作用域：列表已经固定连草稿一起取，覆盖度也必须是同一个值。
+    expect(firstCoverage?.url.searchParams.get("published_only")).toBe("false");
     const lastQuestions = stub.requests
       .filter((request) => request.url.pathname.endsWith("/api/v1/questions"))
       .at(-1);

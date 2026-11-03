@@ -13,13 +13,17 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import Connection, and_, select, update
+from sqlalchemy import Connection, and_, delete, func, select, update
+from sqlalchemy.exc import IntegrityError
 
 from ..audit import (
     ACTION_COURSE_CREATED,
+    ACTION_COURSE_DELETED,
+    ACTION_COURSE_RENAMED,
     ACTION_ENROLLMENT_DELETED,
     ACTION_ENROLLMENT_UPDATED,
     ACTION_SECTION_CREATED,
+    ACTION_SECTION_DELETED,
     OUTCOME_SUCCESS,
     AuditLog,
     change_digest,
@@ -32,7 +36,14 @@ from ..authorization import (
     resolve_principal,
     visible_course_ids,
 )
-from ..db.tables import courses, enrollments, sections
+from ..db.tables import (
+    courses,
+    enrollments,
+    registration_allowlist,
+    registration_allowlist_batches,
+    roster_imports,
+    sections,
+)
 from ..db.tables import roles as roles_table
 from ..errors import bad_request, conflict, forbidden, not_found
 from ..logging import get_logger
@@ -59,10 +70,32 @@ MAX_DISPLAY_NAME_LENGTH = 200
 
 
 class CourseCreate(BaseModel):
+    """A course needs a title; the code is an optional label (see `update_course`)."""
+
     model_config = ConfigDict(extra="forbid")
 
-    course_code: str = Field(min_length=1, max_length=MAX_CODE_LENGTH)
+    course_code: str | None = Field(default=None, max_length=MAX_CODE_LENGTH)
     title: str = Field(min_length=1, max_length=MAX_TITLE_LENGTH)
+
+
+class CourseRename(BaseModel):
+    """Rename request: `title` only (see `update_course`), plus the optimistic lock."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=MAX_TITLE_LENGTH)
+    #: Omitted = keep the stored code; `None`/empty = clear it.
+    course_code: str | None = Field(default=None, max_length=MAX_CODE_LENGTH)
+    expected_updated_at: datetime
+
+
+class RegisteredClassImport(BaseModel):
+    """Which registration-allowlist class to attach to the course."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    batch_id: uuid.UUID
+    section_code: str | None = Field(default=None, max_length=MAX_CODE_LENGTH)
 
 
 class SectionCreate(BaseModel):
@@ -78,6 +111,15 @@ class EnrollmentUpdate(BaseModel):
     student_number: str | None = Field(default=None, max_length=MAX_STUDENT_NUMBER_LENGTH)
     display_name: str | None = Field(default=None, min_length=1, max_length=MAX_DISPLAY_NAME_LENGTH)
     expected_updated_at: datetime | None = None
+
+
+def domain_class_name(filename: str) -> str:
+    """Class name = file name without the extension, same rule as the allowlist."""
+    stem = filename.strip().rsplit("/", 1)[-1]
+    for suffix in (".csv", ".CSV"):
+        if stem.endswith(suffix):
+            return stem[: -len(suffix)].strip() or stem
+    return stem
 
 
 def _now() -> datetime:
@@ -98,13 +140,25 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
     ) -> dict[str, object]:
         size = clamp_limit(limit)
         visible = visible_course_ids(connection, caller)
-        if visible is None:
-            statement = select(courses)
-        else:
+        # The per-course section count is aggregated in the same query: one subquery
+        # instead of one listSections call per course (N+1) for the course table.
+        section_count = (
+            select(sections.c.course_id, func.count().label("section_count"))
+            .group_by(sections.c.course_id)
+            .subquery()
+        )
+        statement = (
+            select(courses, func.coalesce(section_count.c.section_count, 0).label("section_count"))
+            .select_from(
+                courses.outerjoin(section_count, section_count.c.course_id == courses.c.course_id)
+            )
+            .order_by(courses.c.created_at.desc(), courses.c.course_id.desc())
+        )
+        statement = statement.where(courses.c.is_active.is_(True))
+        if visible is not None:
             if not visible:
                 return {"items": [], "next_cursor": None}
-            statement = select(courses).where(courses.c.course_id.in_(visible))
-        statement = statement.order_by(courses.c.created_at.desc(), courses.c.course_id.desc())
+            statement = statement.where(courses.c.course_id.in_(visible))
         cursor_filter = descending_page_filter(courses.c.created_at, courses.c.course_id, cursor)
         if cursor_filter is not None:
             statement = statement.where(cursor_filter)
@@ -114,6 +168,8 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
                 "course_id": str(row.course_id),
                 "course_code": row.course_code,
                 "title": row.title,
+                "updated_at": _rfc3339(row.updated_at),
+                "section_count": row.section_count,
             }
             for row in rows
         ]
@@ -135,14 +191,16 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
             raise error
         course_id = uuid.uuid4()
         now = _now()
-        code = payload.course_code.strip()
+        raw_code = (payload.course_code or "").strip()
+        code = raw_code or None
         title = payload.title.strip()
         with engine.begin() as connection:
-            existing = connection.execute(
-                select(courses.c.course_id).where(courses.c.course_code == code)
-            ).fetchone()
-            if existing is not None:
-                raise conflict("A course with that code already exists.")
+            if code is not None:
+                existing = connection.execute(
+                    select(courses.c.course_id).where(courses.c.course_code == code)
+                ).fetchone()
+                if existing is not None:
+                    raise conflict("A course with that code already exists.")
             connection.execute(
                 courses.insert().values(
                     course_id=course_id,
@@ -183,6 +241,77 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
             "course_id": str(course_id),
             "course_code": code,
             "title": title,
+            "updated_at": _rfc3339(now),
+            "section_count": 0,
+        }
+
+    @router.patch("/api/v1/courses/{course_id}")
+    def update_course(
+        course_id: uuid.UUID,
+        payload: CourseRename,
+        caller=Depends(dependencies.principal),
+        connection: Connection = Depends(dependencies.connection),
+    ) -> dict[str, object]:
+        """Rename one course; the code is an identity and is not writable here."""
+        row = connection.execute(
+            select(courses).where(courses.c.course_id == course_id)
+        ).fetchone()
+        if row is None:
+            raise not_found("The course does not exist.")
+        try:
+            ensure_course_write(principal=caller, course_id=course_id, dependencies=dependencies)
+        except Exception as error:
+            audit_denial(
+                engine,
+                principal=caller,
+                detail="renaming a course requires write access to that course",
+            )
+            raise error
+
+        title = payload.title.strip()
+        if not title:
+            raise bad_request("The course title must not be blank.")
+        if not _same_instant(row.updated_at, payload.expected_updated_at):
+            raise conflict("The course changed since it was read; reload before saving.")
+
+        now = _now()
+        values: dict[str, object] = {"title": title, "updated_at": now}
+        if "course_code" in payload.model_fields_set:
+            raw_code = (payload.course_code or "").strip()
+            values["course_code"] = raw_code or None
+            if raw_code:
+                clash = connection.execute(
+                    select(courses.c.course_id).where(
+                        courses.c.course_code == raw_code,
+                        courses.c.course_id != course_id,
+                    )
+                ).fetchone()
+                if clash is not None:
+                    raise conflict("A course with that code already exists.")
+
+        with engine.begin() as write_connection:
+            write_connection.execute(
+                update(courses).where(courses.c.course_id == course_id).values(**values)
+            )
+            AuditLog(write_connection).record(
+                action=ACTION_COURSE_RENAMED,
+                outcome=OUTCOME_SUCCESS,
+                actor=actor_of(caller),
+                target_type="course",
+                target_id=course_id,
+                course_id=course_id,
+                detail=f"renamed course title: {row.title!r} -> {title!r}",
+                digest=change_digest({"title": title}),
+            )
+        section_total = connection.execute(
+            select(func.count()).select_from(sections).where(sections.c.course_id == course_id)
+        ).scalar_one()
+        return {
+            "course_id": str(course_id),
+            "course_code": values.get("course_code", row.course_code),
+            "title": title,
+            "updated_at": _rfc3339(now),
+            "section_count": int(section_total),
         }
 
     @router.get("/api/v1/courses/{course_id}/sections")
@@ -197,8 +326,43 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
         if exists is None:
             raise not_found("The course does not exist.")
         ensure_course_read(principal=caller, course_id=course_id, dependencies=dependencies)
+        enrollment_count = (
+            select(enrollments.c.section_id, func.count().label("enrollment_count"))
+            .group_by(enrollments.c.section_id)
+            .subquery()
+        )
+        # Class name comes from the most recent successful roster import:
+        # teachers recognise the file they imported, not the internal section code.
+        latest_import = (
+            select(
+                roster_imports.c.section_id,
+                roster_imports.c.filename,
+                func.row_number()
+                .over(
+                    partition_by=roster_imports.c.section_id,
+                    order_by=roster_imports.c.created_at.desc(),
+                )
+                .label("rank"),
+            ).subquery()
+        )
         rows = connection.execute(
-            select(sections)
+            select(
+                sections,
+                func.coalesce(enrollment_count.c.enrollment_count, 0).label("enrollment_count"),
+                latest_import.c.filename,
+            )
+            .select_from(
+                sections.outerjoin(
+                    enrollment_count, enrollment_count.c.section_id == sections.c.section_id
+                ).outerjoin(
+                    latest_import,
+                    and_(
+                        latest_import.c.section_id == sections.c.section_id,
+                        latest_import.c.rank == 1,
+                        latest_import.c.filename.is_not(None),
+                    ),
+                )
+            )
             .where(sections.c.course_id == course_id)
             .order_by(sections.c.section_code)
         ).fetchall()
@@ -209,10 +373,123 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
                     "course_id": str(row.course_id),
                     "section_code": row.section_code,
                     "term": row.term,
+                    "enrollment_count": row.enrollment_count,
+                    "class_name": row.filename,
                     "created_at": _rfc3339(row.created_at),
                 }
                 for row in rows
             ]
+        }
+
+    @router.post("/api/v1/courses/{course_id}/classes", status_code=201)
+    def attach_registered_class(
+        course_id: uuid.UUID,
+        payload: RegisteredClassImport,
+        caller=Depends(dependencies.principal),
+    ) -> dict[str, object]:
+        """Create a class from an already-registered class (allowlist batch)."""
+        with engine.begin() as write:
+            course_row = write.execute(
+                select(courses).where(courses.c.course_id == course_id)
+            ).fetchone()
+            if course_row is None:
+                raise not_found("The course does not exist.")
+            try:
+                ensure_course_write(
+                    principal=caller, course_id=course_id, dependencies=dependencies
+                )
+            except Exception as error:
+                audit_denial(
+                    engine,
+                    principal=caller,
+                    detail="attaching a class requires write access to its course",
+                )
+                raise error
+
+            batch = write.execute(
+                select(registration_allowlist_batches).where(
+                    registration_allowlist_batches.c.batch_id == payload.batch_id
+                )
+            ).fetchone()
+            if batch is None:
+                raise not_found("The registered class does not exist.")
+
+            entries = write.execute(
+                select(
+                    registration_allowlist.c.student_number,
+                    registration_allowlist.c.display_name,
+                )
+                .where(registration_allowlist.c.batch_id == payload.batch_id)
+                .order_by(registration_allowlist.c.student_number)
+            ).fetchall()
+
+            base_code = (
+                payload.section_code.strip()
+                if payload.section_code and payload.section_code.strip()
+                else domain_class_name(batch.filename)
+            )
+            taken = {
+                row[0]
+                for row in write.execute(
+                    select(sections.c.section_code).where(sections.c.course_id == course_id)
+                ).fetchall()
+            }
+            code = base_code
+            suffix = 2
+            while code in taken:
+                code = f"{base_code}-{suffix}"
+                suffix += 1
+
+            section_id = uuid.uuid4()
+            now = _now()
+            write.execute(
+                sections.insert().values(
+                    section_id=section_id,
+                    course_id=course_id,
+                    section_code=code,
+                    term=None,
+                    created_by=caller.user_id,
+                    created_at=now,
+                )
+            )
+            if entries:
+                write.execute(
+                    enrollments.insert(),
+                    [
+                        {
+                            "enrollment_id": uuid.uuid4(),
+                            "section_id": section_id,
+                            "user_id": None,
+                            "student_number": entry.student_number,
+                            "display_name": entry.display_name,
+                            "source": "registered_class",
+                            "roster_import_id": None,
+                            "is_active": True,
+                            "created_at": now,
+                            "updated_at": now,
+                        }
+                        for entry in entries
+                    ],
+                )
+            AuditLog(write).record(
+                action=ACTION_SECTION_CREATED,
+                outcome=OUTCOME_SUCCESS,
+                actor=actor_of(caller),
+                target_type="section",
+                target_id=section_id,
+                course_id=course_id,
+                detail=(
+                    f"class {code!r} from registered class {batch.filename!r} "
+                    f"({len(entries)} students)"
+                ),
+            )
+        return {
+            "section_id": str(section_id),
+            "course_id": str(course_id),
+            "section_code": code,
+            "term": None,
+            "enrollment_count": len(entries),
+            "class_name": batch.filename,
         }
 
     @router.post("/api/v1/courses/{course_id}/sections", status_code=201)
@@ -279,6 +556,7 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
             "section_code": code,
             "term": term,
             "created_at": _rfc3339(now),
+            "enrollment_count": 0,
         }
 
     @router.get("/api/v1/sections/{section_id}/enrollments")
@@ -429,6 +707,114 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
             "enrollment.deleted",
             extra={"event": "enrollment.deleted", "enrollment_id": str(enrollment_id)},
         )
+        return Response(status_code=204)
+
+    @router.delete("/api/v1/courses/{course_id}/sections/{section_id}", status_code=204)
+    def delete_section(
+        course_id: uuid.UUID,
+        section_id: uuid.UUID,
+        caller=Depends(dependencies.principal),
+        connection: Connection = Depends(dependencies.connection),
+    ) -> Response:
+        """Hard delete: the class and its roster rows go; the course stays."""
+        row = connection.execute(
+            select(sections).where(
+                sections.c.section_id == section_id, sections.c.course_id == course_id
+            )
+        ).fetchone()
+        if row is None:
+            raise not_found("The section does not exist in this course.")
+        try:
+            ensure_course_write(principal=caller, course_id=course_id, dependencies=dependencies)
+        except Exception as error:
+            audit_denial(
+                engine,
+                principal=caller,
+                detail="deleting a class requires write access to its course",
+            )
+            raise error
+
+        try:
+            with engine.begin() as write:
+                # `roster_imports.section_id` is ON DELETE RESTRICT, so the import rows
+                # must go first; their files and parsed rows cascade from them.
+                write.execute(
+                    delete(roster_imports).where(roster_imports.c.section_id == section_id)
+                )
+                write.execute(delete(enrollments).where(enrollments.c.section_id == section_id))
+                write.execute(delete(sections).where(sections.c.section_id == section_id))
+                AuditLog(write).record(
+                    action=ACTION_SECTION_DELETED,
+                    outcome=OUTCOME_SUCCESS,
+                    actor=actor_of(caller),
+                    target_type="section",
+                    target_id=section_id,
+                    course_id=course_id,
+                    detail=f"deleted class {row.section_code!r} with its roster rows",
+                )
+        except IntegrityError as error:
+            # A reference from another schema can still block it: report 409, not 500.
+            raise conflict("The class is still referenced and cannot be deleted.") from error
+        return Response(status_code=204)
+
+    @router.delete("/api/v1/courses/{course_id}", status_code=204)
+    def delete_course(
+        course_id: uuid.UUID,
+        caller=Depends(dependencies.principal),
+        connection: Connection = Depends(dependencies.connection),
+    ) -> Response:
+        """Delete a course together with its classes and roster rows."""
+        row = connection.execute(
+            select(courses).where(courses.c.course_id == course_id)
+        ).fetchone()
+        if row is None:
+            raise not_found("The course does not exist.")
+        try:
+            ensure_course_write(principal=caller, course_id=course_id, dependencies=dependencies)
+        except Exception as error:
+            audit_denial(
+                engine,
+                principal=caller,
+                detail="deleting a course requires write access to it",
+            )
+            raise error
+
+        try:
+            with engine.begin() as write:
+                # FK order: sections/roster imports are RESTRICT, enrollments cascade from
+                # sections, roles cascade from the course, audit rows null out their reference.
+                section_ids = [
+                    value[0]
+                    for value in write.execute(
+                        select(sections.c.section_id).where(sections.c.course_id == course_id)
+                    ).fetchall()
+                ]
+                write.execute(
+                    delete(roster_imports).where(roster_imports.c.course_id == course_id)
+                )
+                if section_ids:
+                    write.execute(
+                        delete(enrollments).where(enrollments.c.section_id.in_(section_ids))
+                    )
+                write.execute(delete(sections).where(sections.c.course_id == course_id))
+                write.execute(delete(courses).where(courses.c.course_id == course_id))
+                AuditLog(write).record(
+                    action=ACTION_COURSE_DELETED,
+                    outcome=OUTCOME_SUCCESS,
+                    actor=actor_of(caller),
+                    target_type="course",
+                    target_id=course_id,
+                    course_id=None,
+                    detail=(
+                        f"deleted course {row.course_code!r} / {row.title!r} "
+                        f"with {len(section_ids)} class(es)"
+                    ),
+                )
+        except IntegrityError as error:
+            raise conflict(
+                "The course is still referenced by records outside this module "
+                "and cannot be deleted."
+            ) from error
         return Response(status_code=204)
 
     return router

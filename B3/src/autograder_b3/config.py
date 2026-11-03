@@ -71,20 +71,24 @@ class Settings:
     default_max_files: int = 20
     default_max_total_bytes: int = 1024 * 1024
 
-    #: Authoring assistance (``RQ-T-10``, ADR-0009 decision 3). Absent by default:
-    #: ADR-0009 decision 4 requires the model service to be **off** unless a deployment
-    #: turns it on and accepts responsibility for what leaves the system.
-    authoring_provider_url: str | None = None
-    authoring_provider_name: str = "openai-compatible"
-    authoring_model: str | None = None
-    authoring_api_key: str | None = None
-    authoring_timeout_seconds: float = 20.0
+    #: The model provider, as the deployment injects it: `LLM_BASE_URL`, `LLM_MODEL_NAME`,
+    #: `LLM_APIKEY` (and optionally `LLM_TIMEOUT_SECONDS`). Absent by default: ADR-0009
+    #: decision 4 requires the model service to be **off** unless a deployment turns it on and
+    #: accepts responsibility for what leaves the system. One credential for both AI features
+    #: (structured draft generation and prose advice) -- a second one would be a second place
+    #: where a key can leak and a second thing an operator has to remember.
+    llm_base_url: str | None = None
+    llm_model: str | None = None
+    llm_api_key: str | None = None
+    #: A teacher waits on this synchronously, and the public edge closes the connection at
+    #: around 100s, so the ceiling is well under that rather than "as long as it takes".
+    llm_timeout_seconds: float = 60.0
 
     #: AI-FLOW-01A structured draft generation. The **provider** is not configured
-    #: separately: generation reuses ``B3_AUTHORING_PROVIDER_*`` so a deployment has one
+    #: separately: generation rides on the ``LLM_*`` block above, so a deployment has one
     #: model credential and one place to turn model access off (``ADR-0009`` decision 4).
     #: What is separate is the *input and retention policy*, because a generation stores a
-    #: candidate answer and candidate hidden cases -- content the assistance path never
+    #: candidate answer and candidate hidden cases -- content the advice path never
     #: keeps -- so its limits and its lifetime are deployment decisions of their own.
     draft_generation_max_objective_chars: int = 4_000
     draft_generation_max_constraints_chars: int = 2_000
@@ -114,10 +118,8 @@ class Settings:
 
             A malformed value fails here rather than at the first model call: the provider
             timeout exists so a slow or hanging endpoint cannot hold a teacher's request, and
-            a mistyped value must not silently disable that. The field itself is not new --
-            ``authoring_timeout_seconds`` has always existed and defaulted to 20s -- but it was
-            read from nowhere, so a reasoning model that routinely needs longer than 20s could
-            not be configured at all.
+            a mistyped value must not silently disable that. ``LLM_TIMEOUT_SECONDS`` is
+            optional -- most deployments never set it and take the default.
             """
             raw = (source.get(name) or "").strip()
             if not raw:
@@ -163,12 +165,10 @@ class Settings:
             consumer_name=value("B3_CONSUMER_NAME", "b3-question-statistics")
             or "b3-question-statistics",
             log_level=value("B3_LOG_LEVEL", "INFO") or "INFO",
-            authoring_provider_url=value("B3_AUTHORING_PROVIDER_URL", None),
-            authoring_provider_name=value("B3_AUTHORING_PROVIDER_NAME", "openai-compatible")
-            or "openai-compatible",
-            authoring_model=value("B3_AUTHORING_MODEL", None),
-            authoring_api_key=value("B3_AUTHORING_API_KEY", None),
-            authoring_timeout_seconds=seconds("B3_AUTHORING_TIMEOUT_SECONDS", 20.0),
+            llm_base_url=value("LLM_BASE_URL", None),
+            llm_model=value("LLM_MODEL_NAME", None),
+            llm_api_key=value("LLM_APIKEY", None),
+            llm_timeout_seconds=seconds("LLM_TIMEOUT_SECONDS", 60.0),
             draft_generation_max_objective_chars=count(
                 "B3_DRAFT_GENERATION_MAX_OBJECTIVE_CHARS", 4_000
             ),
@@ -201,18 +201,24 @@ class Settings:
         return bool(self.nats_url)
 
     @property
-    def authoring_assistance_enabled(self) -> bool:
-        """Both a provider URL and a model id are needed; either missing means off."""
-        return bool(self.authoring_provider_url and self.authoring_model)
+    def llm_configured(self) -> bool:
+        """All three values are needed for a real call: base URL, model id and credential.
+
+        A base URL plus a model id but no key would only produce a guaranteed 401 and a
+        teacher-facing "生成失败", which reads like a bug rather than a missing setting.
+        """
+        return bool(self.llm_base_url and self.llm_model and self.llm_api_key)
 
     @property
-    def authoring_missing_configuration(self) -> tuple[str, ...]:
-        """What a deployment must set to turn authoring assistance on, in order."""
+    def llm_missing_configuration(self) -> tuple[str, ...]:
+        """What a deployment must set to turn the model features on, in order."""
         missing = []
-        if not self.authoring_provider_url:
-            missing.append("B3_AUTHORING_PROVIDER_URL")
-        if not self.authoring_model:
-            missing.append("B3_AUTHORING_MODEL")
+        if not self.llm_base_url:
+            missing.append("LLM_BASE_URL")
+        if not self.llm_model:
+            missing.append("LLM_MODEL_NAME")
+        if not self.llm_api_key:
+            missing.append("LLM_APIKEY")
         return tuple(missing)
 
     @property
@@ -223,7 +229,7 @@ class Settings:
         switch to turn model access off. A second credential would mean a second place
         where a key can leak and a second thing an operator has to remember.
         """
-        return self.authoring_assistance_enabled
+        return self.llm_configured
 
     @property
     def draft_generation_budget_enabled(self) -> bool:

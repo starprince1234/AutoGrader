@@ -66,7 +66,7 @@ export interface components {
          */
         Language: "python" | "bash";
         /** @enum {string} */
-        Role: "student" | "teacher" | "assistant" | "admin";
+        Role: "student" | "teacher" | "admin";
         /** @description Authorization scope resolved server-side from the verified token. Never trusted from the client. */
         CourseScope: {
             course_id: components["schemas"]["Uuid"];

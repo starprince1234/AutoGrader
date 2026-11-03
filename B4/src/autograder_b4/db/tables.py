@@ -55,7 +55,9 @@ courses = Table(
     "courses",
     metadata,
     Column("course_id", PGUUID(as_uuid=True), primary_key=True),
-    Column("course_code", Text, nullable=False, unique=True),
+    # Optional label: uniqueness applies only to the codes that exist, which is why the
+    # database enforces it with a partial unique index instead of `unique=True` here.
+    Column("course_code", Text, nullable=True),
     Column("title", Text, nullable=False),
     Column("created_by", PGUUID(as_uuid=True), nullable=True),
     Column("is_active", Boolean, nullable=False, server_default="true"),

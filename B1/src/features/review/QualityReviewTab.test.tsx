@@ -63,6 +63,7 @@ const SUMMARY = "/api/v1/evaluation-runs/quality-summary";
 function routesFor(overrides?: {
   versionRespond?: () => Response;
   summaryRespond?: () => Response;
+  courses?: ReturnType<typeof courseSummary>[];
 }): StubbedRoute[] {
   return [
     {
@@ -76,7 +77,11 @@ function routesFor(overrides?: {
           }),
         ),
     },
-    { method: "GET", path: COURSES, respond: () => jsonResponse(coursePage([courseSummary()])) },
+    {
+      method: "GET",
+      path: COURSES,
+      respond: () => jsonResponse(coursePage(overrides?.courses ?? [courseSummary()])),
+    },
     {
       method: "GET",
       path: VERSION,
@@ -336,6 +341,22 @@ describe("P13-B 题目质量标签", () => {
       const latest = requests.at(-1);
       expect(latest?.url.searchParams.get("from")).toBeNull();
       expect(latest?.url.searchParams.get("to")).toBeNull();
+    });
+  });
+
+  it("课程下拉只展示令牌作用域内的课程", async () => {
+    const other = courseSummary({ course_id: UUID_C, course_code: "OTHER-1", title: "别的课" });
+    stub = installFetchStub(routesFor({ courses: [courseSummary(), other] }));
+    await signIn("teacher1", "pw");
+    renderQuality({ tab: "quality" });
+
+    const select = await screen.findByTestId("review-quality-course");
+    await waitFor(() => {
+      const labels = Array.from(select.querySelectorAll("option")).map(
+        (option) => option.textContent ?? "",
+      );
+      expect(labels.some((label) => label.includes("OS-2026"))).toBe(true);
+      expect(labels.some((label) => label.includes("OTHER-1"))).toBe(false);
     });
   });
 });

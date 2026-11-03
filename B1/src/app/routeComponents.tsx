@@ -60,22 +60,30 @@ export function QuestionDetailRoute() {
 }
 
 export function AuthoringNewRoute() {
-  const { generation } = useSearch({ from: "/questions/new" });
+  const { generation, ai } = useSearch({ from: "/questions/new" });
   const navigate = useNavigate();
   return (
     <RequireAuth>
       <RequirePermission
         allow={canAuthorQuestions}
-        allowedRoles={["teacher", "assistant", "admin"]}
+        allowedRoles={["teacher", "admin"]}
       >
         <AuthoringPage
           questionId={null}
           generationId={generation ?? null}
+          aiView={Boolean(ai)}
           onGenerationId={(next) => {
             // 候选 id 写回 URL：刷新后能恢复同一份原始候选，分享出去的链接也不会丢上下文。
+            // 用函数式 search 更新，避免把同一条 URL 上的 `ai` 键一起抹掉。
             void navigate({
               to: "/questions/new",
-              search: { generation: next ?? undefined },
+              search: (previous) => ({ ...previous, generation: next ?? undefined }),
+            });
+          }}
+          onAiViewChange={(next) => {
+            void navigate({
+              to: "/questions/new",
+              search: (previous) => ({ ...previous, ai: next ? true : undefined }),
             });
           }}
         />
@@ -90,7 +98,7 @@ export function AuthoringEditRoute() {
     <RequireAuth>
       <RequirePermission
         allow={canAuthorQuestions}
-        allowedRoles={["teacher", "assistant", "admin"]}
+        allowedRoles={["teacher", "admin"]}
       >
         <AuthoringPage questionId={questionId} />
       </RequirePermission>
@@ -175,7 +183,7 @@ export function AssignmentDetailRoute() {
 export function RosterRoute() {
   return (
     <RequireAuth>
-      <RequirePermission allow={canViewRoster} allowedRoles={["teacher", "assistant", "admin"]}>
+      <RequirePermission allow={canViewRoster} allowedRoles={["teacher", "admin"]}>
         <RosterPage />
       </RequirePermission>
     </RequireAuth>
@@ -219,7 +227,7 @@ export function ReviewRoute() {
     <RequireAuth>
       <RequirePermission
         allow={canReviewQuarantine}
-        allowedRoles={["teacher", "assistant", "admin"]}
+        allowedRoles={["teacher", "admin"]}
       >
         <ReviewPage
           search={search}

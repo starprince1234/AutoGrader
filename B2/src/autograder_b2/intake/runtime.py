@@ -24,7 +24,7 @@ from autograder_b2.config import (
 from autograder_b2.db.engine import create_db_engine
 from autograder_b2.db.schema import EXPECTED_SCHEMA_REVISION
 from autograder_b2.intake.imap import EmailCheckpointStore, EmailIntakeService, QuarantineStore
-from autograder_b2.intake.matching import MappingEmailMatcher
+from autograder_b2.intake.matching import DirectoryEmailMatcher, MappingEmailMatcher
 from autograder_b2.intake.quarantine import IntakeQuarantineService
 from autograder_b2.intake.query import SubmissionQueryService
 from autograder_b2.intake.service import IntakeLimits, SubmissionIntakeService
@@ -167,7 +167,22 @@ def _wire_email_intake(
     """
     try:
         imap = load_imap_settings(settings_source)
-        matcher = MappingEmailMatcher(imap.matching) if imap is not None else None
+        if imap is None:
+            matcher = None
+        elif imap.matching:
+            matcher = MappingEmailMatcher(imap.matching)
+        elif imap.identity is not None:
+            matcher = DirectoryEmailMatcher(
+                base_url=imap.identity.base_url,
+                authorization=imap.identity.authorization,
+                target=imap.identity.target,
+                timeout_seconds=imap.timeout_seconds,
+            )
+        else:
+            raise ConfigurationError(
+                "no matching rules configured: set B2_IMAP_MATCHING_JSON or "
+                "B2_IDENTITY_URL + B2_IDENTITY_AUTHORIZATION + B2_IMAP_TARGET_JSON"
+            )
     except ConfigurationError as error:
         runtime.email_unavailable_reason = str(error)
         return

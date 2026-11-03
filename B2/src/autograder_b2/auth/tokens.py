@@ -22,7 +22,7 @@ import jwt
 
 ALGORITHM = "EdDSA"
 REQUIRED_CLAIMS = ("iss", "aud", "sub", "jti", "iat", "nbf", "exp")
-ROLES = ("student", "teacher", "assistant", "admin")
+ROLES = ("student", "teacher", "admin")
 DEFAULT_ISSUER = "autograder-b4"
 DEFAULT_AUDIENCE = "autograder"
 
@@ -62,7 +62,7 @@ class Principal:
 
     @property
     def is_course_staff(self) -> bool:
-        return bool({"teacher", "assistant"} & set(self.roles))
+        return bool({"teacher"} & set(self.roles))
 
     @property
     def has_recognized_role(self) -> bool:

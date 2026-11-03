@@ -9,14 +9,14 @@
 from __future__ import annotations
 
 import sqlalchemy as sa
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, TIMESTAMP
 
 SCHEMA = "b2"
 
 #: 本代码期望的迁移版本（必须与 `module.yaml: database.migration_head` 和 Alembic head 三者一致）。
 #: 用途：readyness 探测据此判断"库结构与代码是否匹配"——连接得上但版本落后同样是**不可用**，
 #: 否则 health 会谎报健康而受权读请求全线 500。三者一致性由 `tests/test_migrations.py` 断言。
-EXPECTED_SCHEMA_REVISION = "20260915_0016"
+EXPECTED_SCHEMA_REVISION = "20261028_0018"
 
 metadata = sa.MetaData(schema=SCHEMA)
 
@@ -54,6 +54,9 @@ submissions = sa.Table(
     sa.Column("uidvalidity", sa.BigInteger(), nullable=True),
     sa.Column("uid", sa.BigInteger(), nullable=True),
     sa.Column("message_id", sa.Text(), nullable=True),
+    # 迁移 0017：机器判定为 deterministic；awaiting_manual 表示只能人工评分，
+    # 这种提交"尚未评分"，不能被读成"未提交"。
+    sa.Column("grade_status", sa.Text(), nullable=False),
     sa.CheckConstraint(
         "(intake = 'api' AND request_id IS NOT NULL"
         " AND mailbox IS NULL AND uidvalidity IS NULL AND uid IS NULL AND message_id IS NULL)"
@@ -108,6 +111,11 @@ intake_quarantines = sa.Table(
     # 历史行保持 NULL（无法证明课程归属）⇒ 只对平台管理员可见，原始数据不动。
     sa.Column("scope_course_id", sa.Uuid(), nullable=True),
     sa.Column("scope_section_id", sa.Uuid(), nullable=True),
+    # 迁移 0016（P13 老师复核界面）：邮件主题头与人工处置留痕。历史行全为空。
+    sa.Column("subject", sa.Text(), nullable=True),
+    sa.Column("resolution", sa.Text(), nullable=True),
+    sa.Column("resolved_at", TIMESTAMP(timezone=True, precision=3), nullable=True),
+    sa.Column("resolved_by", sa.Uuid(), nullable=True),
 )
 
 artifact_gc_runs = sa.Table(
@@ -330,6 +338,7 @@ evaluation_commentaries = sa.Table(
     sa.Column("advisory_confidence", sa.Text(), nullable=True),
 )
 
+<<<<<<< HEAD
 #: 学生分层学习提示（AI-FLOW-01B，迁移 0015）。
 #:
 #: 与 `evaluation_commentaries` 分开：提示只能由 run owner 学生读写，且没有教师逐条查看的出口；
@@ -352,4 +361,48 @@ evaluation_learning_hints = sa.Table(
     sa.Column("request_id", sa.Text(), nullable=True),
     sa.Column("requested_at", sa.DateTime(timezone=True), nullable=False),
     sa.Column("generated_at", sa.DateTime(timezone=True), nullable=True),
+=======
+# 迁移 0017：教师给的分数是判断而不是计算，所以与确定性分数并列存放，而不是替换它。
+# `uq_manual_grades_submission_id` 让"一次提交只有一个当前评分"在数据库层成立。
+manual_grades = sa.Table(
+    "manual_grades",
+    metadata,
+    sa.Column("manual_grade_id", sa.Uuid(), primary_key=True),
+    sa.Column("submission_id", sa.Uuid(), nullable=False),
+    sa.Column("score", sa.Numeric(5, 1), nullable=False),
+    sa.Column("comment", sa.Text(), nullable=True),
+    sa.Column("graded_by", sa.Uuid(), nullable=False),
+    sa.Column("graded_at", sa.DateTime(timezone=True), nullable=False),
+    sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+    sa.Column("revision", sa.Integer(), nullable=False),
+    sa.UniqueConstraint("submission_id", name="uq_manual_grades_submission_id"),
+)
+
+# 每次改分都留下旧分与理由，这样"谁改的、为什么改"不会随着覆盖而消失。
+manual_grade_history = sa.Table(
+    "manual_grade_history",
+    metadata,
+    sa.Column("history_id", sa.Uuid(), primary_key=True),
+    sa.Column("submission_id", sa.Uuid(), nullable=False),
+    sa.Column("previous_score", sa.Numeric(5, 1), nullable=True),
+    sa.Column("score", sa.Numeric(5, 1), nullable=False),
+    sa.Column("reason", sa.Text(), nullable=False),
+    sa.Column("graded_by", sa.Uuid(), nullable=False),
+    sa.Column("recorded_at", sa.DateTime(timezone=True), nullable=False),
+)
+
+# 迁移 0018：提交所来自那封信的有界、脱敏摘录；API 提交没有这一行。
+intake_messages = sa.Table(
+    "intake_messages",
+    metadata,
+    sa.Column("intake_message_id", sa.Uuid(), primary_key=True),
+    sa.Column("submission_id", sa.Uuid(), nullable=False),
+    sa.Column("subject", sa.Text(), nullable=True),
+    sa.Column("sender", sa.Text(), nullable=False),
+    sa.Column("body_excerpt", sa.Text(), nullable=False),
+    sa.Column("truncated", sa.Boolean(), nullable=False),
+    sa.Column("received_at", sa.DateTime(timezone=True), nullable=False),
+    sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+    sa.UniqueConstraint("submission_id", name="uq_intake_messages_submission_id"),
+>>>>>>> f4b9f8577780a71db289bfb676a7839bd6b2d217
 )

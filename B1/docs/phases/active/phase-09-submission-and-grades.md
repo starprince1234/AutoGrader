@@ -1,7 +1,7 @@
 # Phase 09 — P10 作答/提交闭环与 P11 成绩、导出、学习提示（成员四）
 
 - **状态**：已完成（代码与定向自动化检查）；**浏览器端到端与真实 B2/B3/B4 联调未执行**
-- **契约**：`MAIN/contracts` 从 `0.22.0` 升到 `0.23.0`（CHG-0030）；五份 `contracts.lock` 同步
+- **契约**：`MAIN/contracts` 从 `0.23.0` 升到 `0.24.0`（CHG-0030）；五份 `contracts.lock` 同步
 - **涉及页面**：P10 `/submit/:questionVersionId`、P11 `/grades`
 
 ## 1. 改了什么

@@ -1,6 +1,7 @@
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "../../api/client";
 import type {
+  DismissIntakeQuarantineRequest,
   IntakeQuarantinePage,
   IntakeQuarantineView,
   ResolveIntakeQuarantineRequest,
@@ -104,6 +105,37 @@ export function useResolveQuarantine() {
     },
     onSuccess: async () => {
       // 该记录属于「已处理」，两个状态的列表都要失效（成功提示只能在真实响应后出现）。
+      await queryClient.invalidateQueries({ queryKey: ["review-quarantines"] });
+    },
+  });
+}
+
+/**
+ * 驳回（不归属学生）。与归属一样只写处置记录：请求体只有可选的 `note`，
+ * 课程/课序仍由服务端从记录 scope 读取。
+ */
+export function useDismissQuarantine() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      quarantineId: string;
+      body: DismissIntakeQuarantineRequest;
+    }): Promise<IntakeQuarantineView> => {
+      const requestId = newRequestId();
+      const view = await apiRequest<IntakeQuarantineView>(
+        `/api/v1/intake/quarantines/${encodeURIComponent(input.quarantineId)}/dismiss`,
+        { method: "POST", body: input.body, requestId },
+      );
+      log({
+        event: "intake_quarantine_dismissed",
+        request_id: requestId,
+        intake_quarantine_id: input.quarantineId,
+        has_note: input.body.note !== null && input.body.note !== undefined,
+        resolution: view.resolution,
+      });
+      return view;
+    },
+    onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["review-quarantines"] });
     },
   });

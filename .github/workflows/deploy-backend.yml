@@ -51,8 +51,10 @@ on:
         options:
           - bootstrap-host
           - sync-mail-channel
+          - sync-llm-config
           - preflight
           - diagnose
+          - check-mail
           - deploy
         default: preflight
 
@@ -106,6 +108,33 @@ jobs:
           doppler-config: prd
           inject-env-vars: false
 
+      - name: Check the mail channel (no secret is printed)
+        if: github.event_name == 'workflow_dispatch' && inputs.operation == 'check-mail'
+        env:
+          IMAP_HOST: ${{ steps.doppler.outputs.IMAP_HOST }}
+          IMAP_PORT: ${{ steps.doppler.outputs.IMAP_PORT }}
+          IMAP_USER: ${{ steps.doppler.outputs.IMAP_USER }}
+          IMAP_PASS: ${{ steps.doppler.outputs.IMAP_PASS }}
+          B2_IMAP_MAILBOX: ${{ steps.doppler.outputs.B2_IMAP_MAILBOX }}
+        run: |
+          set -euo pipefail
+          # 端点可达性不需要任何凭据，先跑它：把"网络不通"与"授权码不对"分开。
+          python3 MAIN/scripts/probe_mail_endpoints.py \
+            --imap-host "${IMAP_HOST:-imap.qq.com}" \
+            --imap-port "${IMAP_PORT:-993}"
+          if [[ -z "${IMAP_USER:-}" || -z "${IMAP_PASS:-}" ]]; then
+            echo "::warning::IMAP_USER / IMAP_PASS are not present in Doppler; login not attempted."
+            exit 0
+          fi
+          # 登录探测只打印状态：欢迎语、ID 是否被接受、最近邮件数与主题。
+          # 口令从环境读取，脚本从不回显它。
+          B2_IMAP_PASSWORD="$IMAP_PASS" python3 MAIN/scripts/probe_imap_mailbox.py \
+            --host "${IMAP_HOST:-imap.qq.com}" \
+            --port "${IMAP_PORT:-993}" \
+            --username "$IMAP_USER" \
+            --mailbox "${B2_IMAP_MAILBOX:-INBOX}" \
+            --limit 3
+
       - name: Validate deployment credentials and SSH host fingerprint
         env:
           DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
@@ -147,22 +176,50 @@ jobs:
           set -euo pipefail
           scan_file="$RUNNER_TEMP/autograder-hostkey-scan"
           known_hosts_file="$RUNNER_TEMP/autograder-known-hosts"
-          ssh-keyscan -T 10 -p "$DEPLOY_SSH_PORT" -t ed25519 "$DEPLOY_SSH_HOST" \
-            > "$scan_file" 2>/dev/null
           : > "$known_hosts_file"
-          while IFS= read -r key_line; do
-            read -r scanned_host key_type key_data _ <<<"$key_line"
-            fingerprint="$(printf '%s %s\n' "$key_type" "$key_data" \
-              | ssh-keygen -lf - -E sha256 | awk 'NR == 1 { print $2 }')"
+
+          # ssh-keyscan 还会输出 `# host:port SSH-2.0-...` 这类注释行；它们不是公钥，
+          # 一旦被当成公钥喂给 ssh-keygen，整个步骤会因为 `set -e` 在打印真实原因前退出。
+          # ssh-keyscan 在部分失败时也返回非零，所以这里只要求"仍拿到了内容"；
+          # 真正是否有可用密钥由下面的 key_lines 判断。
+          ssh-keyscan -T 10 -p "$DEPLOY_SSH_PORT" -t ed25519 "$DEPLOY_SSH_HOST" \
+            > "$scan_file" 2>/dev/null || true
+          if [[ ! -s "$scan_file" ]]; then
+            echo "::error::ssh-keyscan could not reach ${DEPLOY_SSH_HOST}:${DEPLOY_SSH_PORT}."
+            exit 1
+          fi
+
+          key_lines=0
+          live_fingerprints=""
+          while read -r scanned_host key_type key_data _; do
+            case "${key_type:-}" in
+              ssh-ed25519|sk-ssh-ed25519@openssh.com) ;;
+              *) continue ;;
+            esac
+            [[ -n "${key_data:-}" ]] || continue
+            key_lines=$((key_lines + 1))
+            candidate="$RUNNER_TEMP/autograder-hostkey-candidate"
+            printf '%s %s\n' "$key_type" "$key_data" > "$candidate"
+            # 单行解析失败只丢这一行，不终止步骤。
+            fingerprint="$(ssh-keygen -lf "$candidate" -E sha256 2>/dev/null \
+              | awk 'NR == 1 { print $2 }' || true)"
+            rm -f "$candidate"
+            [[ -n "$fingerprint" ]] || continue
+            live_fingerprints="${live_fingerprints:+$live_fingerprints, }$fingerprint"
             if [[ "$fingerprint" == "$DEPLOY_SSH_HOSTKEY" ]]; then
               printf '%s %s %s\n' "$scanned_host" "$key_type" "$key_data" \
                 >> "$known_hosts_file"
             fi
           done < "$scan_file"
+
+          if [[ "$key_lines" -eq 0 ]]; then
+            echo "::error::ssh-keyscan returned no ED25519 host key for ${DEPLOY_SSH_HOST}:${DEPLOY_SSH_PORT}."
+            echo "The host may be unreachable from the runner, or may not offer ED25519."
+            exit 1
+          fi
           if [[ ! -s "$known_hosts_file" ]]; then
-            live_fingerprints="$(ssh-keygen -lf "$scan_file" -E sha256 2>/dev/null \
-              | awk '{ print $2 }' | sort -u | paste -sd ',')"
             echo "::error::The live ED25519 host key does not match the pinned fingerprint."
+            echo "Pinned: $DEPLOY_SSH_HOSTKEY"
             echo "Live ED25519 fingerprints: $live_fingerprints"
             exit 1
           fi
@@ -280,7 +337,7 @@ jobs:
           fi
           REMOTE
 
-      - name: Render mail channel variables
+      - name: Render mail channel variables (SMTP + IMAP intake)
         if: github.event_name == 'workflow_dispatch' && inputs.operation == 'sync-mail-channel'
         env:
           SMTP_HOST: ${{ steps.doppler.outputs.SMTP_HOST }}
@@ -291,6 +348,18 @@ jobs:
           SMTP_FROM_NAME: ${{ steps.doppler.outputs.SMTP_FROM_NAME }}
           SMTP_TLS_MODE: ${{ steps.doppler.outputs.SMTP_TLS_MODE }}
           SMTP_TIMEOUT_SECONDS: ${{ steps.doppler.outputs.SMTP_TIMEOUT_SECONDS }}
+          # 收信通道（B2 IMAP）：Doppler 里没配就整体跳过；配了就必须成套，
+          # 半配置由 write-mail-env.mjs 直接拒绝。
+          # Doppler 里的实际命名（与 SMTP_* 同风格）；翻译成 B2_IMAP_* 由 mail-env.mjs 负责。
+          IMAP_HOST: ${{ steps.doppler.outputs.IMAP_HOST }}
+          IMAP_PORT: ${{ steps.doppler.outputs.IMAP_PORT }}
+          IMAP_USER: ${{ steps.doppler.outputs.IMAP_USER }}
+          IMAP_PASS: ${{ steps.doppler.outputs.IMAP_PASS }}
+          IMAP_TLS_MODE: ${{ steps.doppler.outputs.IMAP_TLS_MODE }}
+          # 收信身份查询：本次作业目标由运维给出，服务令牌复用 B2→B3 的那一枚。
+          B2_IMAP_TARGET_JSON: ${{ steps.doppler.outputs.B2_IMAP_TARGET_JSON }}
+          B2_IDENTITY_URL: ${{ steps.doppler.outputs.B2_IDENTITY_URL }}
+          B2_B3_SERVICE_TOKEN: ${{ secrets.B2_B3_SERVICE_TOKEN }}
         run: node MAIN/deploy/write-mail-env.mjs "$RUNNER_TEMP/mail.env"
 
       - name: Install mail channel variables on the host
@@ -318,6 +387,16 @@ jobs:
           for name in mail.env merge-env-keys.py; do
             [[ -f "$staging/$name" && ! -L "$staging/$name" && -s "$staging/$name" ]]
           done
+          # 上一轮同步写进去、如今不该存在的键要先删：合并工具只增不删，而收信入口在缺少
+          # 上一轮同步写进去、如今不该存在的键要先删：合并工具只增不删，而收信入口在缺少
+          # 匹配规则时是 unavailable，会把整机 readiness 拉红。渲染器现在不会再写它们，
+          # 这里负责把历史遗留清掉。
+          if grep -q '^B2_IMAP_' /etc/autograder/runtime.env; then
+            grep -v '^B2_IMAP_' /etc/autograder/runtime.env > "$staging/runtime.clean.env"
+            install -m 0600 "$staging/runtime.clean.env" /etc/autograder/runtime.env
+            rm -f -- "$staging/runtime.clean.env"
+            printf 'dropped stale B2_IMAP_* keys\n'
+          fi
           python3 "$staging/merge-env-keys.py" \
             --target /etc/autograder/runtime.env --fragment "$staging/mail.env"
           rm -f -- "$staging/mail.env" "$staging/merge-env-keys.py"
@@ -339,6 +418,122 @@ jobs:
       - name: Remove the local mail channel fragment
         if: always() && github.event_name == 'workflow_dispatch' && inputs.operation == 'sync-mail-channel'
         run: rm -f "$RUNNER_TEMP/mail.env"
+
+      # The model provider (LLM_BASE_URL / LLM_MODEL_NAME / LLM_APIKEY). The environment file
+      # is rendered once by `bootstrap-host` and never rewritten by an ordinary release, so a
+      # host that already exists needs exactly this merge to pick the block up.
+      - name: Render model provider variables
+        if: github.event_name == 'workflow_dispatch' && inputs.operation == 'sync-llm-config'
+        env:
+          LLM_BASE_URL: ${{ steps.doppler.outputs.LLM_BASE_URL }}
+          LLM_MODEL_NAME: ${{ steps.doppler.outputs.LLM_MODEL_NAME }}
+          LLM_APIKEY: ${{ steps.doppler.outputs.LLM_APIKEY }}
+        run: node MAIN/deploy/write-llm-env.mjs "$RUNNER_TEMP/llm.env"
+
+      - name: Install model provider variables on the host
+        if: github.event_name == 'workflow_dispatch' && inputs.operation == 'sync-llm-config'
+        env:
+          DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
+          DEPLOY_SSH_USER: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
+          DEPLOY_SSH_PASSWORD: ${{ steps.doppler.outputs.DEPLOY_SSH_PASSWORD }}
+          DEPLOY_SSH_PORT: ${{ steps.doppler.outputs.DEPLOY_SSH_PORT }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          staging="/tmp/autograder-llm-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          bash .github/scripts/deploy-ssh.sh ssh "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
+            install -d -o root -g root -m 0700 "$staging"
+          bash .github/scripts/deploy-ssh.sh scp "$RUNNER_TEMP/llm.env" MAIN/deploy/merge-env-keys.py \
+            "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST:$staging/"
+          bash .github/scripts/deploy-ssh.sh ssh "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
+            bash -s -- "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" <<'REMOTE'
+          set -euo pipefail
+          [[ "$1" =~ ^[0-9]+$ && "$2" =~ ^[1-9][0-9]*$ ]]
+          staging="/tmp/autograder-llm-$1-$2"
+          [[ -d "$staging" && ! -L "$staging" ]]
+          for name in llm.env merge-env-keys.py; do
+            [[ -f "$staging/$name" && ! -L "$staging/$name" && -s "$staging/$name" ]]
+          done
+          python3 "$staging/merge-env-keys.py" \
+            --target /etc/autograder/runtime.env --fragment "$staging/llm.env"
+          rm -f -- "$staging/llm.env" "$staging/merge-env-keys.py"
+          rmdir -- "$staging"
+          systemctl restart autograder.service
+          for attempt in $(seq 1 30); do
+            if curl -fsS --max-time 5 http://127.0.0.1:18000/health/ready 2>/dev/null \
+              | grep -q '"ready": *true'; then
+              printf 'service ready after %s attempt(s)\n' "$attempt"
+              exit 0
+            fi
+            sleep 2
+          done
+          printf 'service did not become ready; recent unit output:\n' >&2
+          journalctl -u autograder.service -n 40 --no-pager >&2
+          exit 1
+          REMOTE
+
+      - name: Remove the local model provider fragment
+        if: always() && github.event_name == 'workflow_dispatch' && inputs.operation == 'sync-llm-config'
+        run: rm -f "$RUNNER_TEMP/llm.env"
+
+      # Three layers can be wrong after a config change, and the teacher-facing panel cannot
+      # tell them apart. This prints one line per layer, without a credential or a model answer:
+      #   service_env=...        which LLM_* names the *running* service process actually has
+      #   provider_direct=...    credential + endpoint accepted with no proxy in the way
+      #   provider_proxy=...     the same call through the host proxy the unit configures
+      - name: Self-check the model provider from the host
+        if: github.event_name == 'workflow_dispatch' && inputs.operation == 'sync-llm-config'
+        env:
+          DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
+          DEPLOY_SSH_USER: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
+          DEPLOY_SSH_PASSWORD: ${{ steps.doppler.outputs.DEPLOY_SSH_PASSWORD }}
+          DEPLOY_SSH_PORT: ${{ steps.doppler.outputs.DEPLOY_SSH_PORT }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          staging="/tmp/autograder-llm-check-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          bash .github/scripts/deploy-ssh.sh ssh "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
+            install -d -o root -g root -m 0700 "$staging"
+          bash .github/scripts/deploy-ssh.sh scp MAIN/deploy/verify_provider.py \
+            "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST:$staging/"
+          bash .github/scripts/deploy-ssh.sh ssh "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
+            bash -s -- "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" <<'REMOTE'
+          set -euo pipefail
+          [[ "$1" =~ ^[0-9]+$ && "$2" =~ ^[1-9][0-9]*$ ]]
+          staging="/tmp/autograder-llm-check-$1-$2"
+          [[ -d "$staging" && ! -L "$staging" ]]
+          [[ -f "$staging/verify_provider.py" && ! -L "$staging/verify_provider.py" ]]
+          trap 'rm -f -- "$staging/verify_provider.py"; rmdir -- "$staging" 2>/dev/null || true' EXIT
+
+          pid="$(systemctl show autograder.service -p MainPID --value)"
+          if [[ "$pid" =~ ^[1-9][0-9]*$ && -r "/proc/$pid/environ" ]]; then
+            names="$(tr '\0' '\n' < "/proc/$pid/environ" \
+              | grep -E '^LLM_[A-Z_]+=' | cut -d= -f1 | sort | paste -sd, -)"
+            printf 'service_env=%s\n' "${names:-none}"
+          else
+            printf '%s\n' 'service_env=unreadable'
+          fi
+
+          set -a
+          source /etc/autograder/runtime.env
+          set +a
+          cd /opt/autograder/current/MAIN
+          python="$PWD/.venv/bin/python"
+          if [[ ! -x "$python" ]]; then
+            printf '%s\n' 'provider_direct=failed category=interpreter_missing'
+            exit 0
+          fi
+          env -u http_proxy -u https_proxy -u HTTP_PROXY -u HTTPS_PROXY \
+            "$python" "$staging/verify_provider.py" direct \
+            || printf '%s\n' 'provider_direct=failed category=script_error'
+          HTTP_PROXY=http://127.0.0.1:7893 HTTPS_PROXY=http://127.0.0.1:7893 \
+          http_proxy=http://127.0.0.1:7893 https_proxy=http://127.0.0.1:7893 \
+          NO_PROXY=localhost,127.0.0.1,::1 no_proxy=localhost,127.0.0.1,::1 \
+            "$python" "$staging/verify_provider.py" proxy \
+            || printf '%s\n' 'provider_proxy=failed category=script_error'
+          REMOTE
 
       - name: Install current deployment scripts
         if: github.event_name == 'push' || inputs.operation == 'deploy' || inputs.operation == 'bootstrap-host'

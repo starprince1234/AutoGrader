@@ -1,0 +1,35 @@
+[Unit]
+# 邮件收作业的触发器：把邮箱里的新邮件拉进来，变成"待评分"的提交。
+#
+# 为什么是独立 unit 而不是在 API 进程里起后台线程：拉取是一次短任务（几秒），
+# 而 API 服务是常驻长任务；混在一起会让"收信卡住"表现为"网站也卡住"，
+# 也会让重启 API 时丢一次拉取的进度。
+Description=AutoGrader mail intake pull (once)
+After=network-online.target docker.service autograder.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=autograder
+Group=autograder
+WorkingDirectory=/opt/autograder/current/MAIN
+EnvironmentFile=/etc/autograder/runtime.env
+Environment=PYTHONPATH=/opt/autograder/current/B2/src
+Environment=PYTHONUNBUFFERED=1
+Environment=HTTP_PROXY=http://127.0.0.1:7893
+Environment=HTTPS_PROXY=http://127.0.0.1:7893
+Environment=http_proxy=http://127.0.0.1:7893
+Environment=https_proxy=http://127.0.0.1:7893
+Environment=NO_PROXY=localhost,127.0.0.1,::1
+Environment=no_proxy=localhost,127.0.0.1,::1
+# `--allow-unconfigured`：邮箱没配时这是一次"什么都没做"的成功，而不是每两分钟一条失败记录。
+# 真正配置错误（半配置、令牌缺失）仍然会以非零退出码暴露出来。
+ExecStart=/opt/autograder/current/MAIN/.venv/bin/python -m autograder_b2.intake.pull --once --allow-unconfigured
+TimeoutStartSec=180s
+UMask=0077
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+ReadWritePaths=/var/lib/autograder

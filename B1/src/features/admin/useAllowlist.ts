@@ -1,57 +1,99 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "../../api/client";
-import type {
-  RegistrationAllowlistReplacement,
-  RegistrationAllowlistState,
-} from "../../api/types";
+import type { components } from "../../api/generated/b4";
 import { queryKeys } from "../../app/queryClient";
-import { log, newRequestId } from "../../logging/logger";
-
-/** 注册名单（`GET|POST /api/v1/registration-allowlists`，仅管理员）。 */
 
 /**
- * 当前生效的批次。
+ * 注册名单（管理员）：每个上传的文件是一个**班级**，班级名来自文件名。
  *
- * 读取失败**不是**"没有批次"：`GET` 的零批次是 `batch_id: null` 且四门字段都在，而请求失败是
- * 一个错误对象。两者在页面上必须分开呈现，否则一次 5xx 会被读成"名单被清空了"。
+ * 与旧的"全量替换"不同：新增一个班级不影响其他班级；删除班级会连同它的名单行一起删除，
+ * 否则那些学生仍然可以自助注册。
  */
-export function useRegistrationAllowlist() {
+
+export type AllowlistBatch = components["schemas"]["AllowlistBatch"];
+export type AllowlistEntry = components["schemas"]["AllowlistEntry"];
+
+export type AllowlistBatchesBody = { items: AllowlistBatch[] };
+export type AllowlistEntriesBody = { batch_id: string; items: AllowlistEntry[] };
+
+export type AddBatchResult = {
+  batch_id: string;
+  class_name: string;
+  /** 实际写入的人数（重复学号与同班重复行都不计入）。 */
+  row_count: number;
+  /** 因已在其他班级中而跳过的行数。 */
+  skipped_row_count: number;
+  duplicate_student_numbers?: string[];
+  /** 同名班级已存在：这次是更新该班，而不是新增一个班。 */
+  replaced: boolean;
+  content_sha256: string;
+};
+
+export function useAllowlistBatches() {
   return useQuery({
-    queryKey: queryKeys.registrationAllowlist,
+    queryKey: queryKeys.allowlistBatches,
     queryFn: () =>
-      apiRequest<RegistrationAllowlistState>("/api/v1/registration-allowlists", { method: "GET" }),
+      apiRequest<AllowlistBatchesBody>("/api/v1/registration-allowlists/batches", {
+        method: "GET",
+      }),
   });
 }
 
-/**
- * 全量替换（multipart）。
- *
- * 写操作不自动重试：`mutations.retry` 全局为 `false`，这里也不加 `onError` 重试。一次上传就是
- * 一次名单替换，浏览器没收到响应并不等于服务端没执行——页面因此只提供"刷新当前名单"，
- * 由管理员看过事实再决定是否重新确认。
- */
-export function useReplaceRegistrationAllowlist() {
+/** 某个班级的学生；`enabled` 为假时不请求（折叠状态下不必拉取）。 */
+export function useAllowlistEntries(batchId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.allowlistEntries(batchId ?? ""),
+    enabled: batchId !== null,
+    queryFn: () =>
+      apiRequest<AllowlistEntriesBody>(
+        `/api/v1/registration-allowlists/batches/${encodeURIComponent(batchId as string)}/entries`,
+        { method: "GET" },
+      ),
+  });
+}
+
+export function useAddAllowlistBatch() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: async (file: File): Promise<RegistrationAllowlistReplacement> => {
-      const requestId = newRequestId();
+    mutationFn: async (file: File): Promise<AddBatchResult> => {
       const formData = new FormData();
       formData.append("file", file);
-      const result = await apiRequest<RegistrationAllowlistReplacement>(
-        "/api/v1/registration-allowlists",
-        { method: "POST", formData, requestId },
-      );
-      // 只记录聚合数字：名单内容（姓名、学号）不进前端日志。
-      log({
-        event: "registration_allowlist_replaced",
-        request_id: requestId,
-        row_count: result.row_count,
-        replaced_row_count: result.replaced_row_count,
+      return apiRequest<AddBatchResult>("/api/v1/registration-allowlists", {
+        method: "POST",
+        formData,
       });
-      return result;
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: queryKeys.registrationAllowlist });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.allowlistBatches });
+    },
+  });
+}
+
+export function useDeleteAllowlistBatch() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (batchId: string): Promise<void> =>
+      apiRequest<void>(
+        `/api/v1/registration-allowlists/batches/${encodeURIComponent(batchId)}`,
+        { method: "DELETE" },
+      ),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.allowlistBatches });
+    },
+  });
+}
+
+export function useDeleteAllowlistEntry(batchId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (entryId: string): Promise<void> =>
+      apiRequest<void>(
+        `/api/v1/registration-allowlists/entries/${encodeURIComponent(entryId)}`,
+        { method: "DELETE" },
+      ),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.allowlistEntries(batchId ?? "") });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.allowlistBatches });
     },
   });
 }

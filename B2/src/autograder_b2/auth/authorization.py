@@ -59,9 +59,9 @@ def require_submission_authority(
         raise AuthorizationError("a student may only submit their own work")
 
 
-#: 隔离区复核台的角色（`CHG-0014`：teacher/assistant/admin）。只读复核**不含**学生：
+#: 隔离区复核台的角色（`CHG-0014`：teacher/admin）。只读复核**不含**学生：
 #: 一条隔离记录连的是"某封邮件没能变成提交"，学生既不拥有它、也不该凭它推断他人邮件是否存在。
-_QUARANTINE_STAFF_ROLES = ("teacher", "assistant")
+_QUARANTINE_STAFF_ROLES = ("teacher",)
 
 
 def require_intake_quarantine_authority(principal: Principal) -> None:
@@ -83,7 +83,7 @@ def require_intake_quarantine_authority(principal: Principal) -> None:
     if principal.is_admin:
         return
     if not set(principal.roles) & set(_QUARANTINE_STAFF_ROLES):
-        raise AuthorizationError("quarantine review is limited to teacher, assistant or admin")
+        raise AuthorizationError("quarantine review is limited to teacher or admin")
     if not principal.scopes:
         raise AuthorizationError("the token carries no course scope")
 
@@ -128,7 +128,7 @@ def require_question_quality_authority(principal: Principal) -> None:
         raise AuthorizationError("the token carries no recognized platform role")
     if principal.is_admin or set(principal.roles) & set(_QUARANTINE_STAFF_ROLES):
         return
-    raise AuthorizationError("question quality is limited to teacher, assistant or admin")
+    raise AuthorizationError("question quality is limited to teacher or admin")
 
 
 def require_reference_verification_authority(principal: Principal) -> None:
@@ -156,7 +156,7 @@ def require_reference_verification_authority(principal: Principal) -> None:
         return
     if not set(principal.roles) & set(_QUARANTINE_STAFF_ROLES):
         raise AuthorizationError(
-            "reference verification is limited to teacher, assistant or admin"
+            "reference verification is limited to teacher or admin"
         )
     if not principal.scopes:
         raise AuthorizationError("the token carries no course scope")

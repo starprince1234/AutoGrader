@@ -76,6 +76,9 @@ os.environ["B4_ADMIN_DATABASE_URL"] = os.environ.get(
     "B4_TEST_ADMIN_DATABASE_URL", DEFAULT_TEST_ADMIN_DATABASE_URL
 )
 os.environ["NATS_URL"] = os.environ.get("B4_TEST_NATS_URL", DEFAULT_TEST_NATS_URL)
+# Shared token for internal endpoints (B2 mail intake looks up identities).
+# Pinned here so a developer machine config cannot leak in.
+os.environ["B4_SERVICE_TOKEN"] = os.environ.get("B4_TEST_SERVICE_TOKEN", "test-service-token")
 
 B4_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = B4_ROOT.parent

@@ -22,14 +22,16 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Request, Response, UploadFile
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from sqlalchemy import Connection, delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 
 from .. import registration as domain
 from ..audit import (
-    ACTION_ALLOWLIST_REPLACED,
+    ACTION_ALLOWLIST_ADDED,
+    ACTION_ALLOWLIST_BATCH_DELETED,
+    ACTION_ALLOWLIST_ENTRY_DELETED,
     ACTION_REGISTRATION_CODE_SENT,
     ACTION_REGISTRATION_CREATED,
     ACTION_REGISTRATION_REJECTED,
@@ -41,6 +43,7 @@ from ..audit import (
 from ..db.tables import registration_codes, users
 from ..errors import (
     conflict,
+    not_found,
     payload_too_large,
     service_unavailable,
     too_many_requests,
@@ -367,7 +370,7 @@ def build_registration_router(state: B4State, dependencies: Dependencies) -> API
             raise unprocessable(str(error)) from error
 
         with engine.begin() as write:
-            result = domain.replace_allowlist(
+            result = domain.add_allowlist_batch(
                 write,
                 filename=filename,
                 content=content,
@@ -375,28 +378,33 @@ def build_registration_router(state: B4State, dependencies: Dependencies) -> API
                 uploaded_by=caller.user_id,
             )
             AuditLog(write).record(
-                action=ACTION_ALLOWLIST_REPLACED,
+                action=ACTION_ALLOWLIST_ADDED,
                 outcome=OUTCOME_SUCCESS,
                 actor=actor_of(caller),
                 target_type="registration_allowlist",
                 target_id=result["batch_id"],
                 detail=(
-                    f"rows={result['row_count']} replaced={result['replaced_row_count']} "
+                    f"class={result['class_name']!r} rows={result['row_count']} "
+                    f"skipped={result['skipped_row_count']} replaced={result['replaced']} "
                     f"sha256={result['content_sha256'][:12]}"
                 ),
             )
         logger.info(
-            "registration.allowlist.replaced",
+            "registration.allowlist.added",
             extra={
-                "event": "registration.allowlist.replaced",
+                "event": "registration.allowlist.added",
+                "class_name": result["class_name"],
                 "row_count": result["row_count"],
-                "replaced_row_count": result["replaced_row_count"],
+                "skipped_row_count": result["skipped_row_count"],
             },
         )
         return {
             "batch_id": str(result["batch_id"]),
+            "class_name": result["class_name"],
             "row_count": result["row_count"],
-            "replaced_row_count": result["replaced_row_count"],
+            "skipped_row_count": result["skipped_row_count"],
+            "duplicate_student_numbers": result["duplicate_student_numbers"],
+            "replaced": result["replaced"],
             "content_sha256": result["content_sha256"],
         }
 
@@ -414,5 +422,83 @@ def build_registration_router(state: B4State, dependencies: Dependencies) -> API
             "row_count": batch["row_count"],
             "uploaded_at": rfc3339(batch["uploaded_at"]),
         }
+
+    @router.get("/api/v1/registration-allowlists/batches")
+    def list_batches(
+        caller=Depends(dependencies.administrator),
+        connection: Connection = Depends(dependencies.connection),
+    ) -> dict[str, object]:
+        batches = domain.list_allowlist_batches(connection)
+        return {
+            "items": [
+                {
+                    "batch_id": str(batch["batch_id"]),
+                    "class_name": batch["class_name"],
+                    "filename": batch["filename"],
+                    "row_count": batch["row_count"],
+                    "uploaded_at": rfc3339(batch["uploaded_at"]),
+                }
+                for batch in batches
+            ]
+        }
+
+    @router.get("/api/v1/registration-allowlists/batches/{batch_id}/entries")
+    def list_batch_entries(
+        batch_id: uuid.UUID,
+        caller=Depends(dependencies.administrator),
+        connection: Connection = Depends(dependencies.connection),
+    ) -> dict[str, object]:
+        entries = domain.list_batch_entries(connection, batch_id=batch_id)
+        if entries is None:
+            raise not_found("The allowlist batch does not exist.")
+        return {
+            "batch_id": str(batch_id),
+            "items": [
+                {
+                    "entry_id": str(entry["entry_id"]),
+                    "student_number": entry["student_number"],
+                    "display_name": entry["display_name"],
+                }
+                for entry in entries
+            ],
+        }
+
+    @router.delete("/api/v1/registration-allowlists/batches/{batch_id}", status_code=204)
+    def delete_batch(
+        batch_id: uuid.UUID,
+        caller=Depends(dependencies.administrator),
+    ) -> Response:
+        with engine.begin() as write:
+            deleted = domain.delete_batch(write, batch_id=batch_id)
+            if not deleted:
+                raise not_found("The allowlist batch does not exist.")
+            AuditLog(write).record(
+                action=ACTION_ALLOWLIST_BATCH_DELETED,
+                outcome=OUTCOME_SUCCESS,
+                actor=actor_of(caller),
+                target_type="registration_allowlist_batch",
+                target_id=batch_id,
+                detail="deleted allowlist batch with its entries",
+            )
+        return Response(status_code=204)
+
+    @router.delete("/api/v1/registration-allowlists/entries/{entry_id}", status_code=204)
+    def delete_entry(
+        entry_id: uuid.UUID,
+        caller=Depends(dependencies.administrator),
+    ) -> Response:
+        with engine.begin() as write:
+            deleted = domain.delete_entry(write, entry_id=entry_id)
+            if not deleted:
+                raise not_found("The allowlist entry does not exist.")
+            AuditLog(write).record(
+                action=ACTION_ALLOWLIST_ENTRY_DELETED,
+                outcome=OUTCOME_SUCCESS,
+                actor=actor_of(caller),
+                target_type="registration_allowlist_entry",
+                target_id=entry_id,
+                detail="deleted one allowlist entry",
+            )
+        return Response(status_code=204)
 
     return router

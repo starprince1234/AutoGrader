@@ -7,6 +7,7 @@ import { useLoadAllPages } from "../../api/pagination";
 import { useSession } from "../../auth/sessionContext";
 import {
   canExportGrades,
+  canGradeSubmission,
   canViewCohortGrades,
   canViewTeacherEvidence,
 } from "../../auth/visibility";
@@ -37,6 +38,7 @@ import {
   type ExportFormat,
   type GradeFilter,
 } from "./useGrades";
+import { ManualGradeDrawer } from "./ManualGradeDrawer";
 import { useGradeIdentities, identityKey, type GradeIdentity } from "./useGradeIdentities";
 import { useQuestionVersionOptions } from "./useQuestionVersionOptions";
 import { localInputToUtc, rangeProblem, type TimeRangeProblem } from "./timeRange";
@@ -110,6 +112,8 @@ export function GradesPage({
   const [exportError, setExportError] = useState<unknown>(null);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+  // 打分抽屉只记哪一次提交，其余状态由抽屉自己读（含乐观锁需要的 updated_at）。
+  const [gradeTarget, setGradeTarget] = useState<string | null>(null);
 
   const effectiveCourseId = courseId === "" ? (courseOptions[0]?.course_id ?? scopeCourse) : courseId;
   // 学生没有课程/课序/题目筛选，也不需要读课程目录与题库：只对教师侧加载这两份目录。
@@ -238,13 +242,32 @@ export function GradesPage({
     <StatusPill tone={STATE_TONE[row.state]}>{t(`grades.state.${row.state}`)}</StatusPill>
   );
   const scoreCell = (row: GradeRow) =>
-    typeof row.score === "number" ? (
+    row.grade_status === "awaiting_manual" ? (
+      <span className="muted" data-testid="awaiting-grade">
+        {t("grades.gradeStatus.awaiting_manual")}
+      </span>
+    ) : typeof row.score === "number" ? (
       <span data-testid="score">
         {row.score} / {row.max_score ?? t("common.none")}
       </span>
     ) : (
       <span className="muted" data-testid="unfinished-score">
         {t("grades.unscored")}
+      </span>
+    );
+  const gradeActionCell = (row: GradeRow) =>
+    canGradeSubmission(session) ? (
+      <button
+        type="button"
+        className="button button--ghost"
+        data-testid={`grade-${row.submission_id}`}
+        onClick={() => setGradeTarget(row.submission_id)}
+      >
+        {t("grades.gradeAction")}
+      </button>
+    ) : (
+      <span className="muted">
+        {t(`grades.gradeStatus.${row.grade_status ?? "deterministic"}`)}
       </span>
     );
   const resultCell = (row: GradeRow) =>
@@ -333,6 +356,7 @@ export function GradesPage({
                   { key: "state", header: t("grades.state"), render: (entry) => stateCell(entry.row) },
                   { key: "score", header: t("grades.scoreSlashMax"), align: "right", render: (entry) => scoreCell(entry.row) },
                   { key: "result", header: t("grades.result"), render: (entry) => resultCell(entry.row) },
+                  { key: "grade", header: t("grades.gradeAction"), render: (entry) => gradeActionCell(entry.row) },
                   { key: "evidence", header: t("grades.evidence"), render: (entry) => evidenceButton(entry.row) },
                 ]
               : [
@@ -355,6 +379,9 @@ export function GradesPage({
           }
         />
       )}
+      {gradeTarget ? (
+        <ManualGradeDrawer submissionId={gradeTarget} onClose={() => setGradeTarget(null)} />
+      ) : null}
     </Panel>
   );
 
@@ -450,7 +477,7 @@ export function GradesPage({
               ) : null}
               {courseOptions.map((course) => (
                 <option key={course.course_id} value={course.course_id}>
-                  {course.course_code} · {course.title}
+                  {formatCourseLabel(course)}
                 </option>
               ))}
             </select>

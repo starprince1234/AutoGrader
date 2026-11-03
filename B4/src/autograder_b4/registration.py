@@ -400,3 +400,232 @@ def create_account(
         .values(user_id=user_id, updated_at=moment)
     )
     return user_id
+
+
+def class_name_of(filename: str) -> str:
+    """Class name = file name without the extension.
+
+    A teacher names the file after the class, so the class needs no second input; this turns
+    ``01ban.csv`` into ``01ban`` and guesses nothing else.
+    """
+    stem = filename.strip().rsplit("/", 1)[-1]
+    for suffix in (".csv", ".CSV"):
+        if stem.endswith(suffix):
+            return stem[: -len(suffix)].strip() or stem
+    return stem
+
+
+def add_allowlist_batch(
+    connection: Connection,
+    *,
+    filename: str,
+    content: bytes,
+    rows: list[AllowlistRow],
+    uploaded_by: uuid.UUID | None,
+) -> dict[str, object]:
+    """Add one class, or replace it when a class with the same name already exists.
+
+    Students already present in *another* class are still refused (one student, one class); rows
+    that collide only with the class being replaced are not duplicates -- that is just an updated
+    list for the same class.
+    """
+    class_name = class_name_of(filename)
+    digest = hashlib.sha256(content).hexdigest()
+    now = datetime.now(UTC).replace(microsecond=0)
+
+    same_class = connection.execute(
+        select(registration_allowlist_batches.c.batch_id).where(
+            registration_allowlist_batches.c.filename == filename
+        )
+    ).fetchone()
+    if same_class is None:
+        # Same class even with a different extension, otherwise a .CSV copy becomes a second class.
+        same_class = next(
+            (
+                candidate
+                for candidate in connection.execute(
+                    select(
+                        registration_allowlist_batches.c.batch_id,
+                        registration_allowlist_batches.c.filename,
+                    )
+                ).fetchall()
+                if class_name_of(candidate.filename) == class_name
+            ),
+            None,
+        )
+
+    replaced = same_class is not None
+    batch_id = same_class[0] if replaced else uuid.uuid4()
+
+    if replaced:
+        connection.execute(
+            delete(registration_allowlist).where(registration_allowlist.c.batch_id == batch_id)
+        )
+        connection.execute(
+            update(registration_allowlist_batches)
+            .where(registration_allowlist_batches.c.batch_id == batch_id)
+            .values(
+                filename=filename,
+                content_sha256=digest,
+                row_count=0,
+                uploaded_by=uploaded_by,
+                created_at=now,
+            )
+        )
+    else:
+        connection.execute(
+            insert(registration_allowlist_batches).values(
+                batch_id=batch_id,
+                filename=filename,
+                content_sha256=digest,
+                row_count=0,
+                uploaded_by=uploaded_by,
+                created_at=now,
+            )
+        )
+
+    wanted = [row.student_number for row in rows]
+    existing = {
+        row[0]
+        for row in connection.execute(
+            select(registration_allowlist.c.student_number).where(
+                registration_allowlist.c.student_number.in_(wanted or [""])
+            )
+        ).fetchall()
+    }
+    duplicates = sorted(set(wanted) & existing)
+
+    inserted = 0
+    seen: set[str] = set()
+    for row in rows:
+        if row.student_number in existing or row.student_number in seen:
+            continue
+        seen.add(row.student_number)
+        connection.execute(
+            insert(registration_allowlist).values(
+                entry_id=uuid.uuid4(),
+                batch_id=batch_id,
+                student_number=row.student_number,
+                display_name=row.display_name,
+                created_at=now,
+            )
+        )
+        inserted += 1
+
+    connection.execute(
+        update(registration_allowlist_batches)
+        .where(registration_allowlist_batches.c.batch_id == batch_id)
+        .values(row_count=inserted)
+    )
+    return {
+        "batch_id": batch_id,
+        "class_name": class_name,
+        "row_count": inserted,
+        "skipped_row_count": len(duplicates),
+        "duplicate_student_numbers": duplicates[:20],
+        "replaced": replaced,
+        "content_sha256": digest,
+    }
+
+
+def list_allowlist_batches(connection: Connection) -> list[dict[str, object]]:
+    """Every imported class, newest first."""
+    entry_count = (
+        select(
+            registration_allowlist.c.batch_id,
+            func.count().label("entry_count"),
+        )
+        .group_by(registration_allowlist.c.batch_id)
+        .subquery()
+    )
+    rows = connection.execute(
+        select(
+            registration_allowlist_batches.c.batch_id,
+            registration_allowlist_batches.c.filename,
+            func.coalesce(entry_count.c.entry_count, 0).label("row_count"),
+            registration_allowlist_batches.c.created_at,
+        )
+        .select_from(
+            registration_allowlist_batches.outerjoin(
+                entry_count, entry_count.c.batch_id == registration_allowlist_batches.c.batch_id
+            )
+        )
+        .order_by(
+            registration_allowlist_batches.c.created_at.desc(),
+            registration_allowlist_batches.c.batch_id.desc(),
+        )
+    ).fetchall()
+    return [
+        {
+            "batch_id": row.batch_id,
+            "class_name": class_name_of(row.filename),
+            "filename": row.filename,
+            "row_count": row.row_count,
+            "uploaded_at": row.created_at,
+        }
+        for row in rows
+    ]
+
+
+def list_batch_entries(
+    connection: Connection, *, batch_id: uuid.UUID
+) -> list[dict[str, object]] | None:
+    """Students of one class; ``None`` when the class does not exist."""
+    if (
+        connection.execute(
+            select(registration_allowlist_batches.c.batch_id).where(
+                registration_allowlist_batches.c.batch_id == batch_id
+            )
+        ).fetchone()
+        is None
+    ):
+        return None
+    rows = connection.execute(
+        select(
+            registration_allowlist.c.entry_id,
+            registration_allowlist.c.student_number,
+            registration_allowlist.c.display_name,
+        )
+        .where(registration_allowlist.c.batch_id == batch_id)
+        .order_by(registration_allowlist.c.student_number)
+    ).fetchall()
+    return [
+        {
+            "entry_id": row.entry_id,
+            "student_number": row.student_number,
+            "display_name": row.display_name,
+        }
+        for row in rows
+    ]
+
+
+def delete_batch(connection: Connection, *, batch_id: uuid.UUID) -> bool:
+    """Delete a class together with its rows: otherwise those students stay registrable."""
+    if (
+        connection.execute(
+            select(registration_allowlist_batches.c.batch_id).where(
+                registration_allowlist_batches.c.batch_id == batch_id
+            )
+        ).fetchone()
+        is None
+    ):
+        return False
+    connection.execute(
+        delete(registration_allowlist).where(registration_allowlist.c.batch_id == batch_id)
+    )
+    connection.execute(
+        delete(registration_allowlist_batches).where(
+            registration_allowlist_batches.c.batch_id == batch_id
+        )
+    )
+    return True
+
+
+def delete_entry(connection: Connection, *, entry_id: uuid.UUID) -> bool:
+    """Remove one student."""
+    return (
+        connection.execute(
+            delete(registration_allowlist).where(registration_allowlist.c.entry_id == entry_id)
+        ).rowcount
+        > 0
+    )

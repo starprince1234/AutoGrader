@@ -2,7 +2,7 @@
 
 `b4.roles` distinguishes a platform role (course_id IS NULL) from a course-scoped one.
 Course creation records the creator's grant, and enrollment records a student's scope;
-granting an *additional* teacher or assistant to an existing course has no operation in
+granting an *additional* teacher to an existing course has no operation in
 `MAIN/contracts/openapi/b4.yaml` today.
 
 Rather than invent a path -- which ADR-0003 forbids -- B4 exposes the grant as an

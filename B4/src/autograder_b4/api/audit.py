@@ -1,7 +1,7 @@
 """Audit query API.
 
 Visibility follows the same server-side scope rule as everything else: an administrator
-sees every record, a teacher or assistant sees the records of the courses they are
+sees every record, a teacher sees the records of the courses they are
 scoped to, and a student sees nothing. Narrowing by course is applied as a filter, not as
 a post-hoc redaction, so an out-of-scope record is never read from the database at all.
 """

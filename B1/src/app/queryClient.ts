@@ -31,6 +31,8 @@ export const queryKeys = {
   users: (role: string | null) => ["users", role] as const,
   /** 当前生效的注册名单批次（P14）。只有一个对象，没有筛选维度可进键。 */
   registrationAllowlist: ["registration-allowlist"] as const,
+  allowlistBatches: ["allowlist-batches"] as const,
+  allowlistEntries: (batchId: string) => ["allowlist-entries", batchId] as const,
   questions: (courseId: string | null) => ["questions", courseId] as const,
   /**
    * 题库标签覆盖度（CHG-0020）。作用域（课程 + `published_only`）进键：同一门课在
@@ -47,6 +49,9 @@ export const queryKeys = {
   questionDiagnostics: (questionId: string) =>
     ["question-diagnostics", questionId] as const,
   grades: (filter: Record<string, string | undefined>) => ["grades", filter] as const,
+  /** 来信正文：一次提交一封，按 submission_id 缓存即可。 */
+  intakeMessage: (submissionId: string) => ["intake-message", submissionId] as const,
+  manualGrade: (submissionId: string) => ["manual-grade", submissionId] as const,
   submission: (submissionId: string) => ["submission", submissionId] as const,
   evaluationReport: (runId: string, view: string) =>
     ["evaluation-report", runId, view] as const,

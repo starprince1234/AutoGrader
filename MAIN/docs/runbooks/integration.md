@@ -135,10 +135,11 @@ pwsh -File scripts\render_integration_env.ps1 -Config dev_personal -OutFile .env
 
 - **基础配置**（DSN、端口、路径、JWT 设置、超时，以及 provider 的三个 bedrock 值
   `APIKEY`/`BASE_URL`/`MODEL`）存放在 Doppler。
-- **派生 provider 块**（`B2_COMMENTARY_*` / `B3_AUTHORING_*`，共 8 个变量）由渲染器生成、**不存储** ——
+- **派生 provider 块**（`B2_COMMENTARY_*` 4 个 + `LLM_*` 3 个，共 7 个变量）由渲染器生成、**不存储** ——
   存它会把同一个 API key 放进三个地方。
-- 渲染器里有一处必须写明的**不对称**：B2 取 **base** url（它自己追加 `/chat/completions`），
-  B3 取**完整端点**（它逐字 POST）。配错会得到一个"存在但永远失败"的 provider。
+- 两处 base url 的用法必须分清：B2 取 **base**（它自己追加 `/chat/completions`），B3 也取 **base**
+  （它自己追加 `/v1/responses`，见 `B3/src/autograder_b3/llm_client.py` 的 `responses_endpoint`）。
+  只有把**完整端点**塞给 base 变量才会得到一个"存在但永远失败"的 provider。
 - 验证方式：删除该文件后重新渲染，应当**字节完全相同**（实测 SHA-256 相等）。
 
 ### 3.8 启动模块自己的进程（worker 与中继）

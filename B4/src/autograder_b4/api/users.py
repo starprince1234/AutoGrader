@@ -10,11 +10,12 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 from sqlalchemy import Connection, and_, select, update
 
 from ..audit import (
+    ACTION_USER_ACTIVATED,
     ACTION_USER_CREATED,
     ACTION_USER_DEACTIVATED,
     ACTION_USER_UPDATED,
@@ -299,8 +300,6 @@ def build_users_router(state: B4State, dependencies: Dependencies) -> APIRouter:
         user_id: uuid.UUID,
         caller=Depends(dependencies.administrator),
     ):
-        from fastapi import Response
-
         now = _now()
         with engine.connect() as read:
             existing = read.execute(
@@ -345,6 +344,53 @@ def build_users_router(state: B4State, dependencies: Dependencies) -> APIRouter:
             )
         logger.info(
             "user.deactivated", extra={"event": "user.deactivated", "target_user_id": str(user_id)}
+        )
+        return Response(status_code=204)
+
+    @router.post("/api/v1/users/{user_id}/activate", status_code=204)
+    def activate_user(
+        user_id: uuid.UUID,
+        caller=Depends(dependencies.administrator),
+    ):
+        """Soft re-activation: the inverse of `delete_user`.
+
+        The row, its history and its enrollments are never touched -- only `is_active` and the
+        deactivation stamp move. Sessions are *not* revived: deactivation revoked them, and an
+        account that may sign in again is not the same thing as an account that is still signed
+        in. The self-service rule mirrors deactivation: changing the state of the caller's own
+        account is refused (and audited) so one administrator can neither lock nor unlock
+        themselves.
+        """
+        now = _now()
+        with engine.connect() as read:
+            existing = read.execute(
+                select(users.c.user_id).where(users.c.user_id == user_id)
+            ).fetchone()
+        if existing is None:
+            raise not_found("The user does not exist.")
+        if existing.user_id == caller.user_id:
+            audit_denial(
+                engine,
+                principal=caller,
+                detail="refused to activate the caller's own administrator account",
+            )
+            raise conflict("An administrator cannot activate their own account.")
+        with engine.begin() as connection:
+            connection.execute(
+                update(users)
+                .where(users.c.user_id == user_id)
+                .values(is_active=True, deactivated_at=None, updated_at=now)
+            )
+            AuditLog(connection).record(
+                action=ACTION_USER_ACTIVATED,
+                outcome=OUTCOME_SUCCESS,
+                actor=actor_of(caller),
+                target_type="user",
+                target_id=user_id,
+                detail="user re-activated",
+            )
+        logger.info(
+            "user.activated", extra={"event": "user.activated", "target_user_id": str(user_id)}
         )
         return Response(status_code=204)
 

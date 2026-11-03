@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AutoGrader B4 Platform API
-  version: 0.23.0
+  version: 0.24.0
   description: |
     Identity, courses, sections, enrollments, roster import, audit and the runtime
     module registry. Owned by B4 (RQ-B-4-10/20/30/40/50/99).
@@ -347,9 +347,89 @@ paths:
         '204': {description: Password replaced; every refresh session of the account revoked.}
         '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
 
+  /api/v1/registration-allowlists/batches:
+    get:
+      operationId: listRegistrationAllowlistBatches
+      summary: List every imported allowlist (one per class)
+      description: |
+        Each uploaded file is a **class**; the class name is the file name. Listing them is what
+        lets an administrator keep several cohorts on the platform at once instead of replacing
+        one snapshot with another.
+      tags: [registration]
+      responses:
+        '200':
+          description: Batches, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/AllowlistBatch'}
+                additionalProperties: false
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+
+  /api/v1/registration-allowlists/batches/{batch_id}/entries:
+    parameters:
+      - {name: batch_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    get:
+      operationId: listRegistrationAllowlistEntries
+      summary: Students of one class, ordered by student number
+      tags: [registration]
+      responses:
+        '200':
+          description: Entries of the batch.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [batch_id, items]
+                properties:
+                  batch_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/AllowlistEntry'}
+                additionalProperties: false
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
+  /api/v1/registration-allowlists/batches/{batch_id}:
+    parameters:
+      - {name: batch_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    delete:
+      operationId: deleteRegistrationAllowlistBatch
+      summary: Delete a whole class (its students lose the right to register)
+      description: |
+        Deleting a class must not silently keep its students registrable: the entries are removed
+        with the batch, so a student who is no longer in any class can no longer self-register.
+        Accounts already created are unaffected -- they are users, not allowlist rows.
+      tags: [registration]
+      responses:
+        '204': {description: Deleted.}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
+  /api/v1/registration-allowlists/entries/{entry_id}:
+    parameters:
+      - {name: entry_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    delete:
+      operationId: deleteRegistrationAllowlistEntry
+      summary: Remove one student from a class
+      tags: [registration]
+      responses:
+        '204': {description: Removed.}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
   /api/v1/registration-allowlists:
     post:
-      operationId: replaceRegistrationAllowlist
+      operationId: addRegistrationAllowlistBatch
       summary: Replace the registration allowlist from a CSV file (admin only)
       description: |
         The CSV carries the identity anchor used by self-service registration: a
@@ -377,16 +457,26 @@ paths:
               additionalProperties: false
       responses:
         '200':
-          description: Allowlist replaced.
+          description: Allowlist batch added (or the same-named class replaced).
           content:
             application/json:
               schema:
                 type: object
-                required: [batch_id, row_count, replaced_row_count, content_sha256]
+                required: [batch_id, class_name, row_count, skipped_row_count, replaced, content_sha256]
                 properties:
                   batch_id: {type: string, format: uuid}
+                  #: 班级名来自文件名（去掉扩展名）。
+                  class_name: {type: string}
+                  #: 实际写入的学生人数（不是文件行数：与其他班级重复的学号会被跳过）。
                   row_count: {type: integer, minimum: 0}
-                  replaced_row_count: {type: integer, minimum: 0}
+                  #: 因"已在其他班级中"而跳过的行数。
+                  skipped_row_count: {type: integer, minimum: 0}
+                  duplicate_student_numbers:
+                    type: array
+                    items: {type: string}
+                    maxItems: 20
+                  #: 同名班级已存在时为 true，表示这次是**更新**该班而不是新增一个班。
+                  replaced: {type: boolean}
                   content_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
                 additionalProperties: false
         '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
@@ -416,6 +506,45 @@ paths:
                 additionalProperties: false
         '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
         '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+
+  /api/v1/internal/identities/by-email:
+    get:
+      operationId: lookupIdentityByEmail
+      summary: Resolve a registered e-mail address to its account (internal)
+      description: |
+        Purpose: the mail intake (B2) receives a message whose sender is an e-mail address, and
+        must turn that address into the account that submitted the work. B4 owns the address,
+        so the lookup lives here rather than duplicating a copy of the user table in B2.
+
+        Why an internal endpoint rather than a wider teacher-facing one: this answers "which
+        account has this address" for **any** address on the platform, which is exactly the
+        question an enumeration attack wants. It therefore requires the pre-shared service
+        credential and is never reachable with a user session.
+
+        The response deliberately omits the address itself: the caller already knows the
+        address it asked about, and echoing it back would put a second copy of personal data
+        into B2's database for no functional gain.
+
+        Not found is `404`, not an empty object: the intake turns that into a quarantine record
+        ("sender does not match any account"), which is a decision it can only make if "no such
+        account" is distinguishable from "malformed request".
+      tags: [internal, users]
+      security: [{serviceToken: []}]
+      parameters:
+        - name: email
+          in: query
+          required: true
+          schema: {type: string, minLength: 3, maxLength: 320}
+          description: The sender address, matched case-insensitively after trimming.
+      responses:
+        '200':
+          description: The account registered with that address.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/InternalIdentity'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
 
   /api/v1/users:
     get:
@@ -530,8 +659,8 @@ paths:
         owns stay in place; `is_active` becomes `false` and every open session of that user is
         revoked, so the account can no longer sign in. An administrator whose own row this is
         gets `409`: deactivating yourself would end the session that is performing the request
-        and can leave the platform without an active administrator. Re-activation has no
-        endpoint here — it is deliberately not invented by a client.
+        and can leave the platform without an active administrator. The opposite direction is
+        `activateUser`; this verb never revives an account by itself.
       tags: [users]
       responses:
         '204': {description: User deactivated; an audit record is written.}
@@ -544,6 +673,35 @@ paths:
             Refused because the target is the caller's own account. Deactivation revokes the
             caller's sessions, so the operation cannot be reported back to the actor that
             asked for it; a second administrator has to perform it.
+
+  /api/v1/users/{user_id}/activate:
+    parameters:
+      - {name: user_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    post:
+      operationId: activateUser
+      summary: Re-activate a deactivated user (admin only)
+      description: |
+        **Soft re-activation, the inverse of `deleteUser`.** `is_active` becomes `true`, the
+        deactivation timestamp is cleared and the account may sign in again; the row, its
+        historical records and every course membership stay untouched, so reviving an account
+        never rewrites history or re-creates enrollments. `updated_at` advances, which is what
+        a concurrent editor compares against.
+
+        The self-service rule is symmetric with `deleteUser`: an administrator whose own row
+        this is gets `409`. State changes on the account performing the request are refused in
+        both directions, so no single administrator can lock or unlock themselves.
+      tags: [users]
+      responses:
+        '204': {description: User re-activated; an audit record is written.}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '409':
+          $ref: './common.yaml#/components/responses/Conflict'
+          description: |
+            Refused because the target is the caller's own account. Activation mirrors
+            deactivation: the state of the account performing the request cannot be changed by
+            that request, so a second administrator has to perform it.
 
   /api/v1/courses:
     get:
@@ -577,9 +735,16 @@ paths:
           application/json:
             schema:
               type: object
-              required: [course_code, title]
+              required: [title]
               properties:
-                course_code: {type: string, minLength: 1, maxLength: 64}
+                course_code:
+                  type: [string, "null"]
+                  minLength: 1
+                  maxLength: 64
+                  description: |
+                    Optional label. Omit it (or send null) and the course has no code; the course
+                    is still identified by `course_id`, which is what rosters, assignments and
+                    exports use. Codes that are present must be unique.
                 title: {type: string, minLength: 1, maxLength: 200}
               additionalProperties: false
       responses:
@@ -590,6 +755,83 @@ paths:
               schema: {$ref: '#/components/schemas/CoursePublic'}
         '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
         '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
+
+  /api/v1/courses/{course_id}:
+    parameters:
+      - {name: course_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    patch:
+      operationId: updateCourse
+      summary: Rename a course (teacher of that course, or admin)
+      description: |
+        Only the title is writable. The course code is an identity: rosters, assignments and
+        exports match on it, so renaming it in place would silently break references rather than
+        rename a course. A wrong code is fixed by creating the right course, not by editing this
+        one.
+
+        `expected_updated_at` is an optimistic lock. Two teachers renaming the same course at the
+        same time must not have one edit vanish; the stale writer gets `409` and re-reads.
+      tags: [courses]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CourseRename'}
+      responses:
+        '200':
+          description: The course as stored after the rename.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CoursePublic'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '409':
+          description: |
+            The course changed since `expected_updated_at` (someone else renamed it first).
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+    delete:
+      operationId: deleteCourse
+      summary: Retire a course (soft delete)
+      description: |
+        The row is kept and marked inactive: submissions, grades and audit records refer to the
+        course by id, so removing it outright would leave history pointing at nothing. The course
+        disappears from `listCourses`, which is what "deleted" means for the teacher.
+      tags: [courses]
+      responses:
+        '204': {description: Retired.}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
+  /api/v1/courses/{course_id}/classes:
+    parameters:
+      - {name: course_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    post:
+      operationId: attachRegisteredClass
+      summary: Create a class in this course from an already-registered class
+      description: |
+        Copies the students of an existing registration allowlist batch ("已注册名单" 里的一个班级)
+        into a new section of this course. Students are stored unbound (`user_id` null) until they
+        register, which is the same state a CSV roster import leaves them in.
+
+        This exists so a teacher does not upload the same file twice: the class was already
+        imported once for registration, and the course only needs to reference it.
+      tags: [courses]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/RegisteredClassImport'}
+      responses:
+        '201':
+          description: The created section, with its student count.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/SectionPublic'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
         '409': {$ref: './common.yaml#/components/responses/Conflict'}
 
   /api/v1/courses/{course_id}/sections:
@@ -615,6 +857,24 @@ paths:
         '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
         '403': {$ref: './common.yaml#/components/responses/Forbidden'}
         '404': {$ref: './common.yaml#/components/responses/NotFound'}
+  /api/v1/courses/{course_id}/sections/{section_id}:
+    parameters:
+      - {name: course_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+      - {name: section_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    delete:
+      operationId: deleteSection
+      summary: Delete a class (its enrollments go with it)
+      description: |
+        Deleting a class removes its roster rows and its course grants. Assignments that named
+        this section are outside B4's schema and are not checked here -- deleting a class that
+        still has assignments is the caller's call, not something B4 can validate across modules.
+      tags: [courses]
+      responses:
+        '204': {description: Deleted.}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
     post:
       operationId: createSection
       summary: Create a section (teacher or admin)
@@ -865,6 +1125,24 @@ paths:
 
 components:
   schemas:
+    InternalIdentity:
+      type: object
+      description: |
+        The minimum B2 needs to attach a submission to its owner: a stable id, the student
+        number for cross-checking the attachment name, and the display name for the review
+        list. No e-mail address is returned (see `lookupIdentityByEmail`).
+      required: [user_id, username, display_name, roles, is_active]
+      properties:
+        user_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        username: {type: string}
+        display_name: {type: string}
+        student_number: {type: [string, "null"]}
+        roles:
+          type: array
+          items: {$ref: './common.yaml#/components/schemas/Role'}
+        is_active: {type: boolean}
+      additionalProperties: false
+
     EnrollmentPublic:
       type: object
       description: |
@@ -906,10 +1184,11 @@ components:
         is_active:
           type: boolean
           description: |
-            Whether the account may sign in. `deleteUser` is a **soft** deactivation, so this
-            is the only field that distinguishes a deactivated account from a usable one: an
-            admin screen that omits it has no way to say whether `204` actually took effect,
-            and RQ-B-4-50 requires the account state to be visible.
+            Whether the account may sign in. `deleteUser` is a **soft** deactivation and
+            `activateUser` is its soft inverse, so this is the only field that distinguishes a
+            deactivated account from a usable one: an admin screen that omits it has no way to
+            say whether either `204` actually took effect, and RQ-B-4-50 requires the account
+            state to be visible.
         updated_at:
           allOf: [{$ref: './common.yaml#/components/schemas/Timestamp'}]
           description: |
@@ -919,17 +1198,76 @@ components:
         created_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
       additionalProperties: false
 
+    AllowlistBatch:
+      type: object
+      description: |
+        One imported allowlist, i.e. one class. `class_name` is derived from the file name: a
+        teacher names the file after the class, so there is no second place to type it.
+      required: [batch_id, class_name, row_count, uploaded_at]
+      properties:
+        batch_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        class_name: {type: string}
+        filename: {type: string}
+        row_count: {type: integer, minimum: 0}
+        uploaded_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+      additionalProperties: false
+
+    AllowlistEntry:
+      type: object
+      required: [entry_id, student_number, display_name]
+      properties:
+        entry_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        student_number: {type: string}
+        display_name: {type: string}
+      additionalProperties: false
+
+    RegisteredClassImport:
+      type: object
+      description: Which registered class to attach to the course.
+      required: [batch_id]
+      properties:
+        batch_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        #: 可选：指定课序号。省略时取班级名，重名时追加 -2、-3。
+        section_code: {type: [string, "null"], maxLength: 64}
+      additionalProperties: false
+
+    CourseRename:
+      type: object
+      description: |
+        Rename request. `title` is the only writable field (see `updateCourse`); an empty or
+        whitespace-only title is refused rather than coerced, because a blank course name is
+        indistinguishable from a rendering bug later.
+      required: [title, expected_updated_at]
+      properties:
+        title: {type: string, minLength: 1, maxLength: 200}
+        course_code:
+          type: [string, "null"]
+          description: |
+            Optional. **Omitted** leaves the stored code unchanged; `null` (or an empty string)
+            clears it. The distinction matters because clearing a label is a deliberate act,
+            while a rename that happens not to mention the code must not silently drop it.
+        expected_updated_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+      additionalProperties: false
+
     CoursePublic:
       type: object
       description: |
         A course as the API returns it, for reads and for the create response. The create
         response previously carried only `course_id`, so a client could not show the new
         course without a second round trip.
-      required: [course_id, course_code, title]
+      required: [course_id, course_code, title, updated_at, section_count]
       properties:
         course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
-        course_code: {type: string}
+        course_code:
+          type: [string, "null"]
+          description: "Optional label; null means the course was created without one."
+        #: 该课程下已创建的课序（班级）数量。课程列表直接用它显示"已注册班级数"，
+        #: 否则前端要为每一门课再发一次 `listSections`（N+1）。
+        section_count: {type: integer, minimum: 0}
         title: {type: string}
+        # `updateCourse.expected_updated_at` is compared against this value: without it a
+        # client can only overwrite unconditionally, which makes the lock decorative.
+        updated_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
       additionalProperties: false
 
     SectionPublic:
@@ -938,12 +1276,17 @@ components:
         A section (课序) of a course. Defined here because the read and create responses
         had no schema, which forced the client to guess which key carried the identifier
         and which one carried the label.
-      required: [section_id, course_id, section_code]
+      required: [section_id, course_id, section_code, enrollment_count]
       properties:
         section_id: {$ref: './common.yaml#/components/schemas/Uuid'}
         course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
         section_code: {type: string, minLength: 1, maxLength: 64}
         term: {type: [string, 'null'], maxLength: 64}
+        #: 该课序最近一次成功导入的名单文件名；从未导入过时为 null（界面退回课序号）。
+        class_name:
+          type: [string, "null"]
+        #: 该课序下已导入的学生人数。
+        enrollment_count: {type: integer, minimum: 0}
         created_at:
           anyOf: [{$ref: './common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]
       additionalProperties: false

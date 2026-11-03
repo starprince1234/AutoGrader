@@ -260,6 +260,7 @@ def build_message(
     sender: str = "alice@example.edu",
     body: str = f"please grade this. {BODY_MARKER}",
     attachments: Sequence[tuple[str, bytes]] = (("main.py", SOURCE),),
+    subject: str = "submission",
 ) -> bytes:
     """构造一封真实的 MIME 邮件（附件一律用 base64 传输编码，与真实邮件客户端一致）。"""
     from email.message import EmailMessage as MIMEMessage
@@ -269,7 +270,7 @@ def build_message(
     message["To"] = f"{MAILBOX}@example.edu"
     if message_id is not None:
         message["Message-ID"] = message_id
-    message["Subject"] = "submission"
+    message["Subject"] = subject
     message.set_content(body)
     for name, payload in attachments:
         message.add_attachment(
@@ -666,6 +667,7 @@ def test_message_that_matches_nothing_is_quarantined_and_queryable(harness: Harn
     entry = recorded[0]
     assert entry.intake == "email"
     assert entry.reason_code == "not_uniquely_matched"
+    assert entry.subject == "submission", "主题头要落库，列表才认得出邮件"
     assert (entry.mailbox, entry.uidvalidity, entry.uid) == (MAILBOX, 77, 5)
     assert entry.message_id == "<unmatched@example.edu>"
     assert entry.detail, "隔离原因不得为空"
@@ -683,6 +685,33 @@ def test_message_that_matches_nothing_is_quarantined_and_queryable(harness: Harn
     again = harness.service().process_raw(uidvalidity=77, uid=5, raw=raw)
     assert again.status == "skipped"
     assert count(harness.engine, intake_quarantines) == 1
+
+
+def test_subject_is_a_bounded_display_label_not_message_content(harness: Harness) -> None:
+    """主题头被折叠空白、截断到 200 字；它只是标签，不改变"不存正文/附件"的边界。"""
+    raw = build_message(
+        message_id="<subject@example.edu>",
+        sender="stranger@example.edu",
+        subject="  作业   一   提交  ",
+    )
+    harness.service().process_raw(uidvalidity=80, uid=9, raw=raw)
+    entries = {entry.uid: entry for entry in harness.quarantine.list_recent(mailbox=MAILBOX)}
+    entry = entries[9]
+    assert entry.subject == "作业 一 提交"
+
+    raw_long = build_message(
+        message_id="<subject-long@example.edu>",
+        sender="stranger@example.edu",
+        subject="x" * 300,
+    )
+    harness.service().process_raw(uidvalidity=80, uid=10, raw=raw_long)
+    entries = {item.uid: item for item in harness.quarantine.list_recent(mailbox=MAILBOX)}
+    longest = entries[10]
+    assert longest.subject is not None
+    assert len(longest.subject) == 200
+
+    # 边界：主题是无正文的元数据；隔离表里不能出现报文正文/附件内容字段。
+    assert BODY_MARKER not in str(entry.subject)
 
 
 def test_ambiguous_message_is_quarantined_without_guessing(
@@ -1751,6 +1780,7 @@ def test_parsed_message_never_carries_the_body() -> None:
         "attachments",
         "nested_attachments",
         "attachments_overflow",
+        "subject",
     ]
     assert message.nested_attachments == () and message.attachments_overflow is False
     assert BODY_MARKER not in repr(message)

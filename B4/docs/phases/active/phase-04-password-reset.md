@@ -28,8 +28,9 @@
 | `uv tool run ruff check B4/src B4/tests/test_password_reset.py B4/tests/conftest.py B4/alembic/versions/20261027_0005_password_reset.py` | 通过 |
 | `uv run --project MAIN python -m autograder_host.checks` | 通过（契约、清单、迁移头、文档链接与端口一致性） |
 | B4 `pytest` | **未执行**：本机没有 PostgreSQL（55435）与 NATS（54224），B4 套件要求真实实例 |
-| 真实迁移 `upgrade`/`downgrade` | **未执行**（同上） |
+| 真实迁移 `upgrade`/`downgrade` | **未执行**（同上）；`Deploy AutoGrader backend` 工作流对提交 `de4a0ee` 成功，但未直接查询生产库的 `alembic_version_b4` |
 | 真实 SMTP 发码/改密 | **未验证** |
+| 线上公开接口 | `POST /api/v1/auth/password-reset/code` 对未知邮箱返回 `202`；`GET /api/v1/modules/B4/health` → `healthy: true` |
 
 `tests/test_password_reset.py` 已覆盖：只给启用账号发码、未知/停用邮箱不泄露、重发窗口、
 改密后 refresh 会话失效、错误码统一且计数、尝试上限、SMTP 失败零残留、短密码不消费验证码。
@@ -37,4 +38,4 @@
 ## 回滚
 
 回退迁移 `20261027_0005`，还原本批契约文本与版本号，移除两个 operation，然后重跑
-`scripts/relock_contracts.py`；版本回到 `0.20.0`。
+`scripts/relock_contracts.py`；版本回到 `0.21.0`。

@@ -6,7 +6,7 @@ front end hiding a button is not a control, so every handler that writes resolve
 caller's authority from `b4.roles` and `b4.enrollments` on each request.
 
 The role vocabulary is exactly the `Role` enum declared in
-`MAIN/contracts/openapi/common.yaml` (`student`, `teacher`, `assistant`, `admin`); B4
+`MAIN/contracts/openapi/common.yaml` (`student`, `teacher`, `admin`); B4
 does not define a second one.
 """
 
@@ -23,12 +23,11 @@ from .security.tokens import CourseScope
 
 ROLE_STUDENT = "student"
 ROLE_TEACHER = "teacher"
-ROLE_ASSISTANT = "assistant"
 ROLE_ADMIN = "admin"
-ROLES = (ROLE_STUDENT, ROLE_TEACHER, ROLE_ASSISTANT, ROLE_ADMIN)
+ROLES = (ROLE_STUDENT, ROLE_TEACHER, ROLE_ADMIN)
 
 #: Roles that carry teaching authority for a specific course.
-COURSE_STAFF_ROLES = (ROLE_TEACHER, ROLE_ASSISTANT)
+COURSE_STAFF_ROLES = (ROLE_TEACHER,)
 
 
 @dataclass(frozen=True)

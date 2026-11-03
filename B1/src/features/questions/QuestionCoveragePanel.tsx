@@ -109,12 +109,6 @@ function CoverageTags({
           },
         ]}
       />
-      <p className="muted" data-testid="coverage-bar-note">
-        {t("questions.coverageBarNote")}
-      </p>
-      <p className="muted" data-testid="coverage-tag-filter-note">
-        {t("questions.coverageTagFilterHint")}
-      </p>
     </div>
   );
 }
@@ -176,8 +170,6 @@ export function QuestionCoveragePanel({
 
   return (
     <Panel title={t("questions.coverageTitle")} testId="question-coverage">
-      <p className="muted">{t("questions.coverageIntro")}</p>
-
       {courseId === null ? (
         <Banner tone="info" testId="coverage-no-course">
           {t("questions.coverageNoCourse")}

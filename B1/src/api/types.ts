@@ -99,7 +99,7 @@ export type RegistrationAllowlistState = JsonBody<
  * 服务端事务，页面不自己数。
  */
 export type RegistrationAllowlistReplacement = JsonBody<
-  B4Operations["replaceRegistrationAllowlist"],
+  B4Operations["addRegistrationAllowlistBatch"],
   200
 >;
 
@@ -201,7 +201,10 @@ export type SubmissionAccepted = B2Schemas["SubmissionAccepted"];
 export type SubmissionView = B2Schemas["SubmissionView"];
 export type EvaluationRunView = B2Schemas["EvaluationRunView"];
 export type EvaluationStreamFrame = B2Schemas["EvaluationStreamFrame"];
-export type GradeRow = B2Schemas["GradeRow"];
+export type GradeRow = B2Schemas["GradeRow"] & {
+  /** 0.24 人工评分：机器判定 / 待评分 / 已评分。旧服务端可能不返回。 */
+  grade_status?: "deterministic" | "awaiting_manual" | "graded";
+};
 export type GradePage = JsonBody<B2Operations["listGrades"], 200>;
 export type EvaluationReport = B2Schemas["evaluation-report.schema"];
 export type SubmissionEnvelope = B2Schemas["submission-envelope.schema"];
@@ -270,6 +273,8 @@ export type IntakeQuarantineView = B2Schemas["IntakeQuarantineView"];
 export type IntakeQuarantinePage = JsonBody<B2Operations["listIntakeQuarantines"], 200>;
 export type ResolveIntakeQuarantineRequest =
   B2Operations["resolveIntakeQuarantine"]["requestBody"]["content"]["application/json"];
+export type DismissIntakeQuarantineRequest =
+  B2Operations["dismissIntakeQuarantine"]["requestBody"]["content"]["application/json"];
 
 /**
  * 可移动的申诉证据包（`getAppealPack`）。`report` 受调用方 `view` 约束——

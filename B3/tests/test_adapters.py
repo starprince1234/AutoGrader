@@ -212,9 +212,14 @@ def test_stdin_adapter_rejects_a_shell_string_instead_of_an_array():
     assert "array" in str(error.value)
 
 
-def test_stdin_adapter_requires_some_input_or_exit_code():
-    with pytest.raises(ManifestInvalid):
-        validate_adapter_manifest({"kind": "stdin"})
+def test_stdin_adapter_may_leave_globals_empty_when_cases_carry_input():
+    # 三个全局项（命令参数 / 标准输入 / 期望退出码）都可以留空：用例自带输入即可评测，
+    # 因此这里不再要求"至少填一个"。
+    manifest = validate_adapter_manifest({"kind": "stdin"})
+    assert manifest.kind == "stdin"
+    assert manifest.args == ()
+    assert manifest.stdin is None
+    assert manifest.expect_exit_code is None
 
 
 # --- TC-ADP-02: file I/O --------------------------------------------------

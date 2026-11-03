@@ -8,6 +8,7 @@ import { useCourses } from "../../api/directory";
 import { useQuestionList } from "../questions/useQuestions";
 import { Banner, Drawer, Field, Modal } from "../../ui/components";
 import { useCreateAssignment } from "./useAssignments";
+import { courseLabel as formatCourseLabel } from "../../api/directory";
 
 /**
  * 新建作业（P04 的主操作）。
@@ -138,7 +139,7 @@ export function AssignmentComposer({
             >
               {courseOptions.map((course) => (
                 <option key={course.course_id} value={course.course_id}>
-                  {course.course_code} · {course.title}
+                  {formatCourseLabel(course)}
                 </option>
               ))}
             </select>

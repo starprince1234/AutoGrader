@@ -87,6 +87,86 @@ export function useCreateCourse() {
 }
 
 /** 创建课序：响应体即存储后的课序，直接加入当前课程的课序列表。 */
+/**
+ * 课程显示名：有编号时"编号 · 名称"，没有编号时只显示名称。
+ *
+ * 编号是可选的标签（`updateCourse` 可以清空它），所以显示层必须容忍 null——否则清空之后
+ * 每一屏都会出现一个孤零零的" · 软件工程"。
+ */
+export function courseLabel(course: { course_code?: string | null; title: string }): string {
+  const code = (course.course_code ?? "").trim();
+  return code === "" ? course.title : `${code} · ${course.title}`;
+}
+
+/** 把「已注册名单」里的一个班级导入到课程：创建课序并复制该班学生。 */
+export function useAttachRegisteredClass(courseId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (batchId: string): Promise<SectionPublic> =>
+      apiRequest<SectionPublic>(
+        `/api/v1/courses/${encodeURIComponent(courseId ?? "")}/classes`,
+        { method: "POST", body: { batch_id: batchId } },
+      ),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.sections(courseId ?? "") });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.courses });
+    },
+  });
+}
+
+/** 删除课程：软删，课程从列表消失，但历史记录仍指向它。 */
+export function useDeleteCourse() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (courseId: string): Promise<void> =>
+      apiRequest<void>(`/api/v1/courses/${encodeURIComponent(courseId)}`, { method: "DELETE" }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.courses });
+    },
+  });
+}
+
+/** 删除班级（课序）：连带删除该班名单与课程授权。 */
+export function useDeleteSection(courseId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (sectionId: string): Promise<void> =>
+      apiRequest<void>(
+        `/api/v1/courses/${encodeURIComponent(courseId ?? "")}/sections/${encodeURIComponent(sectionId)}`,
+        { method: "DELETE" },
+      ),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.sections(courseId ?? "") });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.courses });
+    },
+  });
+}
+
+/** 重命名课程：只改 title；`expected_updated_at` 是乐观锁，避免两人同时改互相覆盖。 */
+export function useRenameCourse() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      courseId: string;
+      title: string;
+      /** `null` 表示清空序号；`undefined` 表示不改动（契约里两者语义不同）。 */
+      courseCode?: string | null;
+      expectedUpdatedAt: string;
+    }): Promise<CoursePublic> =>
+      apiRequest<CoursePublic>(`/api/v1/courses/${encodeURIComponent(input.courseId)}`, {
+        method: "PATCH",
+        body: {
+          title: input.title,
+          ...(input.courseCode === undefined ? {} : { course_code: input.courseCode }),
+          expected_updated_at: input.expectedUpdatedAt,
+        },
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.courses });
+    },
+  });
+}
+
 export function useCreateSection(courseId: string | null) {
   const queryClient = useQueryClient();
   return useMutation({

@@ -186,6 +186,9 @@ def test_created_constraints_exist(empty_database_url: str) -> None:
         "ck_intake_quarantines_intake",
         "ck_intake_quarantines_detail",
         "ck_intake_quarantines_scope",
+        "ck_intake_quarantines_subject",
+        "ck_intake_quarantines_decision",
+        "ck_intake_quarantines_decision_audit",
         "ck_artifact_gc_runs_trigger",
         "ck_artifact_gc_runs_counts_non_negative",
         "ck_artifact_gc_runs_artifact_counts_within_scanned",
@@ -615,11 +618,12 @@ def test_every_timestamp_column_has_millisecond_precision(empty_database_url: st
     remediation = _load_migration_module("20260915_0012_b2_table_standard_remediation.py")
 
     expected = {f"{table}.{column}" for table, column in remediation.MILLISECOND_COLUMNS}
-    # 迁移 0015 新增的表自带 `timestamptz(3)`（建表时就按标准写），因此它不在 0012 的
-    # "整改清单"里，但必须同样满足精度要求。
+    # 迁移 0016 新增的表自带 `timestamptz(3)`（建表时就按标准写），因此它不在 0012 的
+    # "整改清单"里，但必须同样满足精度要求；0018 的处置时间列同样必须满足。
     expected |= {
         "evaluation_learning_hints.requested_at",
         "evaluation_learning_hints.generated_at",
+        "intake_quarantines.resolved_at",
     }
     assert {f"{row[0]}.{row[1]}" for row in rows} == expected
 

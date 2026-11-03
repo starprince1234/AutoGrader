@@ -1,7 +1,7 @@
 # Phase 11 — 成绩身份关联、时间范围导出与学生分层提示（成员四，CHG-0030）
 
 - **状态**：代码已完成；**真实 PostgreSQL 迁移/集成、真实 B4/B3 联调与 provider 调用未执行**
-- **契约**：`MAIN/contracts` 从 `0.22.0` 升到 `0.23.0`；`B2/module.yaml` 与 descriptor 同步；迁移头 `20260915_0016`
+- **契约**：`MAIN/contracts` 从 `0.23.0` 升到 `0.24.0`；`B2/module.yaml` 与 descriptor 同步；迁移头 `20260915_0016`
 
 ## 1. 成绩读/导出
 

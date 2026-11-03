@@ -77,8 +77,8 @@ describe("P14 工作区：标签与查询", () => {
         { method: "GET", path: "/api/v1/users", respond: () => jsonResponse(userPage([userSummary()])) },
         {
           method: "GET",
-          path: "/api/v1/registration-allowlists",
-          respond: () => jsonResponse({ batch_id: null, filename: null, row_count: 0, uploaded_at: null }),
+          path: "/api/v1/registration-allowlists/batches",
+          respond: () => jsonResponse({ items: [] }),
         },
       ]),
     );
@@ -92,7 +92,9 @@ describe("P14 工作区：标签与查询", () => {
 
     // 用户标签不读名单：两个标签各自请求各自的对象。
     expect(
-      stub.requests.filter((request) => request.url.pathname === "/api/v1/registration-allowlists"),
+      stub.requests.filter(
+          (request) => request.url.pathname === "/api/v1/registration-allowlists/batches",
+        ),
     ).toHaveLength(0);
   });
 
@@ -102,8 +104,8 @@ describe("P14 工作区：标签与查询", () => {
         { method: "GET", path: "/api/v1/users", respond: () => jsonResponse(userPage([userSummary()])) },
         {
           method: "GET",
-          path: "/api/v1/registration-allowlists",
-          respond: () => jsonResponse({ batch_id: null, filename: null, row_count: 0, uploaded_at: null }),
+          path: "/api/v1/registration-allowlists/batches",
+          respond: () => jsonResponse({ items: [] }),
         },
       ]),
     );
@@ -112,15 +114,28 @@ describe("P14 工作区：标签与查询", () => {
     renderWithProviders(<Harness />);
 
     await screen.findByTestId("users-table");
+    // 首次渲染不播放动画：内容面板只有基础类名。
+    expect(screen.getByTestId("admin-tab-panel").className).toBe("admin-tab-panel");
     await user.click(screen.getByRole("tab", { name: "注册名单" }));
 
-    expect(await screen.findByTestId("allowlist-empty")).toHaveTextContent("尚未导入注册名单。");
+    expect(await screen.findByTestId("allowlist-empty")).toHaveTextContent("还没有任何班级名单，点「添加名单」选择 CSV 文件。");
+    // 切到右侧标签：内容面板向右滑入（自左向右移动），标签按钮本身不带动画类。
+    expect(screen.getByTestId("admin-tab-panel").className).toContain(
+      "admin-tab-panel--slide-right",
+    );
+    expect(screen.getByRole("tab", { name: "注册名单" }).className).not.toContain("admin-tab-panel");
     expect(
-      stub.requests.filter((request) => request.url.pathname === "/api/v1/registration-allowlists"),
+      stub.requests.filter(
+          (request) => request.url.pathname === "/api/v1/registration-allowlists/batches",
+        ),
     ).toHaveLength(1);
 
     await user.click(screen.getByRole("tab", { name: "用户" }));
     await screen.findByTestId("users-table");
+    // 切回左侧标签：方向相反（自右向左移动）。
+    expect(screen.getByTestId("admin-tab-panel").className).toContain(
+      "admin-tab-panel--slide-left",
+    );
 
     const writes = stub.requests.filter((request) => request.method !== "GET");
     // 唯一的非 GET 是登录本身。
@@ -133,8 +148,8 @@ describe("P14 工作区：标签与查询", () => {
         { method: "GET", path: "/api/v1/users", respond: () => jsonResponse(userPage([])) },
         {
           method: "GET",
-          path: "/api/v1/registration-allowlists",
-          respond: () => jsonResponse({ batch_id: null, filename: null, row_count: 0, uploaded_at: null }),
+          path: "/api/v1/registration-allowlists/batches",
+          respond: () => jsonResponse({ items: [] }),
         },
       ]),
     );

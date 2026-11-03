@@ -157,8 +157,9 @@ samp {
 /* ---------------------------------------------------------------- 外壳 */
 
 /*
- * 页头只有三样东西：产品名、账户菜单、退出（在账户菜单里）。没有契约版本、
- * 没有课程作用域 UUID、没有欢迎语。业务导航在左侧栏（桌面）或抽屉（小屏）。
+ * 页头只有三样东西：产品名、用户名、退出登录。没有契约版本、
+ * 没有课程作用域 UUID、没有欢迎语，也没有需要悬停才展开的账户菜单。
+ * 业务导航在左侧栏（桌面）或抽屉（小屏）。
  */
 .app-shell {
   min-height: 100vh;
@@ -187,7 +188,7 @@ samp {
   flex: 1;
 }
 
-.app-header__menu {
+.app-header .app-header__menu {
   display: none;
 }
 
@@ -323,37 +324,13 @@ samp {
   background: currentColor;
 }
 
-/* ------------------------------------------------------------ 账户菜单 */
+/* ------------------------------------------------------------ 账户区 */
 
 .account {
-  position: relative;
-}
-
-.account__button {
-  appearance: none;
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  justify-content: center;
-  gap: 1px;
-  min-height: 40px;
-  padding: 4px 12px;
-  border: 0;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--color-text);
-  font: inherit;
-  text-align: right;
-  cursor: pointer;
-}
-
-.account__button:hover {
-  background: var(--color-surface-2);
-}
-
-.account__button:focus-visible {
-  outline: none;
-  box-shadow: var(--shadow-focus);
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
 }
 
 .account__name {
@@ -363,80 +340,12 @@ samp {
   white-space: nowrap;
   font-size: 14px;
   font-weight: 600;
-  line-height: 1.2;
 }
 
-.account__role {
-  font-size: 11.5px;
-  line-height: 1.2;
-  color: var(--color-text-faint);
-}
-
-.account__menu {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  z-index: 30;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 208px;
-  padding: 6px;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-raised);
-}
-
-.account__identity {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px 10px 10px;
-  margin-bottom: 4px;
-  border-bottom: 1px solid var(--color-border);
-}
-
-.account__identity-name {
-  font-size: 13.5px;
-  font-weight: 600;
-}
-
-.account__identity-role {
-  font-size: 12px;
-  color: var(--color-text-muted);
-}
-
-.account__item {
-  appearance: none;
-  display: flex;
-  align-items: center;
-  min-height: 36px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--color-text);
-  font: inherit;
-  font-size: 14px;
-  text-align: left;
-  text-decoration: none;
-  cursor: pointer;
-}
-
-.account__item:hover:not(:disabled) {
-  background: var(--color-surface-2);
-  opacity: 1;
-}
-
-.account__item:focus-visible {
-  outline: none;
-  box-shadow: var(--shadow-focus);
-}
-
-.account__item:disabled {
-  color: var(--color-text-faint);
-  cursor: not-allowed;
+.account__logout {
+  height: 34px;
+  padding: 0 14px;
+  font-size: 13px;
 }
 
 /* ---------------------------------------------------------------- 抽屉 */
@@ -658,6 +567,39 @@ samp {
   flex-wrap: wrap;
 }
 
+/* 管理员工作区（P14）：切换标签时内容面板横向滑入。
+   “向右滑”是内容自左向右移动（切到注册名单），反向即“向左滑”（切回用户）。
+   动画只挂在内容包装层上；标签按钮本身不移动，外观、配色与选中态完全不变。 */
+@keyframes tab-panel-slide-right {
+  from {
+    opacity: 0;
+    transform: translateX(-24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes tab-panel-slide-left {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.admin-tab-panel--slide-right {
+  animation: tab-panel-slide-right 240ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
+.admin-tab-panel--slide-left {
+  animation: tab-panel-slide-left 240ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}
+
 /* 剪贴板不可用时的诊断文本：等宽、可横向滚动、可全选复制。 */
 .diagnostics {
   width: 100%;
@@ -724,6 +666,9 @@ samp {
 
 .button {
   appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: var(--color-accent);
   color: #fff;
   border: 0;
@@ -733,6 +678,7 @@ samp {
   font: inherit;
   font-size: 14px;
   font-weight: 500;
+  line-height: 1;
   cursor: pointer;
   white-space: nowrap;
   transition: background 0.2s var(--ease), transform 0.12s var(--ease), opacity 0.2s var(--ease);
@@ -1201,6 +1147,10 @@ samp {
   animation: rise 0.24s var(--ease);
 }
 
+.modal:focus {
+  outline: none;
+}
+
 .modal__head {
   display: flex;
   justify-content: space-between;
@@ -1218,6 +1168,16 @@ samp {
 .modal__body {
   padding: var(--space-5);
   overflow: auto;
+}
+
+.modal--login {
+  max-width: 420px;
+}
+
+.login-dialog__lead {
+  margin: 0 0 var(--space-4);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 @keyframes fade-in {
@@ -1571,15 +1531,252 @@ samp {
   white-space: nowrap;
 }
 
+/* ---------------------------------------------------------------- 导览页 */
+
+/*
+ * 第一眼就是两栏：左侧教师端、右侧学生端。两栏都是简单标题 + 链接列表，
+ * 不做功能磁贴或欢迎语；登录记忆与入口端校验由 AppShell 负责。
+ */
+.landing {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: 0 max(var(--space-5), calc((100% - 1200px) / 2 + var(--space-5)));
+  background: var(--color-bg);
+}
+
+.landing__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: 72px;
+}
+
+.landing__brand {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.landing__account {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.landing__identity {
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.landing__main {
+  flex: 1;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-5);
+  align-items: stretch;
+  padding: var(--space-4) 0 48px;
+}
+
+.landing__column {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  padding: 28px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+}
+
+/* 两端各一条细色线区分类别，不靠图标堆叠。 */
+.landing__column--teacher {
+  border-top: 3px solid var(--color-accent);
+}
+
+.landing__column--student {
+  border-top: 3px solid var(--color-ok);
+}
+
+.landing__column-head {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.landing__eyebrow {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-faint);
+}
+
+.landing__column--teacher .landing__eyebrow {
+  color: var(--color-accent);
+}
+
+.landing__column--student .landing__eyebrow {
+  color: var(--color-ok);
+}
+
+.landing__title {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.landing__lead {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.landing__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border-top: 1px solid var(--color-border);
+}
+
+.landing__list li {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.landing__link {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  min-height: 64px;
+  padding: 12px 4px;
+  color: var(--color-text);
+  text-decoration: none;
+  transition: background 0.15s var(--ease), padding 0.15s var(--ease);
+}
+
+.landing__link--action {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.landing__link:hover {
+  background: var(--color-surface-2);
+  opacity: 1;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+.landing__link:focus-visible {
+  outline: none;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-focus);
+}
+
+.landing__link-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.landing__link-label {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.landing__link-hint {
+  color: var(--color-text-muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.landing__link-arrow {
+  flex: none;
+  color: var(--color-text-faint);
+  font-size: 20px;
+  line-height: 1;
+}
+
+.landing__link--disabled {
+  color: var(--color-text-faint);
+  cursor: not-allowed;
+}
+
+.landing__link--disabled:hover {
+  background: transparent;
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+.landing__link--disabled .landing__link-hint {
+  color: var(--color-text-faint);
+}
+
+.landing__note {
+  margin: auto 0 0;
+  color: var(--color-text-faint);
+  font-size: 12.5px;
+}
+
 /* ---------------------------------------------------------------- 响应式 */
 
 @media (max-width: 767px) {
+  .landing {
+    padding: 0 var(--space-4) 32px;
+  }
+
+  .landing__head {
+    min-height: 64px;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+
+  .landing__account {
+    gap: var(--space-2);
+  }
+
+  .landing__identity {
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .landing__main {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-4);
+    padding: var(--space-3) 0 32px;
+  }
+
+  .landing__column {
+    padding: var(--space-5);
+    border-radius: var(--radius-md);
+  }
+
+  .landing__title {
+    font-size: 22px;
+  }
+
+  .landing__link {
+    min-height: 56px;
+  }
+
   .app-header {
     gap: var(--space-3);
     padding: 0 var(--space-4);
   }
 
-  .app-header__menu {
+  .app-header .app-header__menu {
     display: inline-flex;
   }
 
@@ -1598,6 +1795,14 @@ samp {
 
   .account__name {
     max-width: 120px;
+  }
+
+  .account {
+    gap: var(--space-2);
+  }
+
+  .account__logout {
+    padding: 0 10px;
   }
 }
 
@@ -1631,6 +1836,153 @@ samp {
   }
 }
 
+/* ---------------------------------------------------------------------------
+   出题向导：左侧步骤导航 + 右侧一步内容。
+   只新增 .wizard* / .step-dot* 这几个类，不改动上面任何既有规则。
+--------------------------------------------------------------------------- */
+/* 顶部操作栏：留白更小、「未保存」提示与「取消」同一行垂直居中。 */
+.panel--compact {
+  padding: 10px var(--space-5);
+  gap: 6px;
+}
+
+.wizard-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+/* 一行说明的浅蓝底小标签（例如「题干图片」右侧的"保存草稿后再插入图片"）。 */
+.hint-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: rgba(37, 99, 235, 0.1);
+  color: #1d4ed8;
+  font-size: 13px;
+}
+
+.wizard {
+  display: grid;
+  grid-template-columns: minmax(220px, 260px) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.wizard__nav {
+  position: sticky;
+  top: 16px;
+}
+
+.wizard__steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0;
+}
+
+/* 步骤之间的连接线：已完成 → 蓝色实线；未完成 → 灰色虚线。 */
+.wizard__line {
+  display: block;
+  height: 26px;
+  /* 与圆点中心对齐：卡片左内边距 16px + 圆点半径 11px - 边框半宽 1px。 */
+  margin-left: 26px;
+  border-left: 2px solid #2563eb;
+}
+
+.wizard__line[data-done="false"] {
+  border-left-style: dashed;
+  border-left-color: #cbd5e1;
+}
+
+.wizard__step {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  grid-template-areas:
+    "dot label"
+    "dot state";
+  gap: 2px 10px;
+  align-items: center;
+  /* 五个步骤之间的距离拉开：页面利用率更高，也更容易扫读进度。 */
+  padding: 14px 16px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.wizard__step:hover {
+  background: rgba(37, 99, 235, 0.06);
+}
+
+.wizard__step.is-active {
+  background: rgba(37, 99, 235, 0.1);
+  border-color: rgba(37, 99, 235, 0.35);
+}
+
+.wizard__step:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
+
+.wizard__step-label {
+  grid-area: label;
+  font-weight: 600;
+}
+
+.wizard__step-state {
+  grid-area: state;
+  font-size: 12px;
+  color: #64748b;
+}
+
+/* 完成：蓝色实心圆点 + 对勾；未完成：蓝色空心圆圈。 */
+.step-dot {
+  grid-area: dot;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid #2563eb;
+  background: transparent;
+  color: #ffffff;
+  font-size: 12px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.step-dot--done {
+  background: #2563eb;
+}
+
+.wizard__body {
+  min-width: 0;
+}
+
+/* 每一步底部的「保存草稿」：右下角对齐，说明文字在按钮左边。 */
+.wizard__save {
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
+@media (max-width: 860px) {
+  .wizard {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .wizard__nav {
+    position: static;
+  }
+}
+
 /* 低动态模式：关闭滑动/循环动画，但保留状态反馈（颜色、焦点环立刻可见）。 */
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -1640,4 +1992,228 @@ samp {
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
   }
+}
+
+/* 注册名单：一班一行。
+   班级 / 人数 / 时间 三个字段在一行内均匀分开（space-between），删除按钮固定在右侧；
+   除删除按钮外整行都是展开开关，所以可点击区域与看起来可点的区域一致。 */
+.allowlist-batches {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.allowlist-batch__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.allowlist-batch__toggle {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 40px;
+  padding: 6px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-surface);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.allowlist-batch__toggle:hover {
+  background: var(--color-surface-hover, rgba(0, 0, 0, 0.03));
+}
+
+.allowlist-batch__name {
+  font-weight: 600;
+}
+
+.allowlist-batch__delete {
+  flex: 0 0 auto;
+}
+
+/* 学生：一行 3–4 个，按可用宽度自动决定列数。 */
+.allowlist-entries {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0 4px 4px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 6px 16px;
+}
+
+.allowlist-entry {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 8px;
+}
+
+.allowlist-entry:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+
+.allowlist-entry__name {
+  flex: 0 0 auto;
+}
+
+.allowlist-entry__number {
+  flex: 1 1 auto;
+  color: var(--color-text-muted, #666);
+  font-size: 0.9em;
+}
+
+.allowlist-entry__delete {
+  flex: 0 0 auto;
+  min-width: 28px;
+  min-height: 28px;
+  padding: 2px 4px;
+  color: var(--color-danger, #c0392b);
+}
+
+/* ---------------------------------------------------------------- 外壳 */
+
+/*
+ * 页头只有三样东西：产品名、账户菜单、退出（在账户菜单里）。没有契约版本、
+ * 没有课程作用域 UUID、没有欢迎语。业务导航在左侧栏（桌面）或抽屉（小屏）。
+ */
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg);
+}
+
+.app-header__menu {
+  display: none;
+}
+
+/* ------------------------------------------------------------ 账户菜单 */
+
+.account {
+  position: relative;
+}
+
+.account__button {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 1px;
+  min-height: 40px;
+  padding: 4px 12px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  text-align: right;
+  cursor: pointer;
+}
+
+.account__button:hover {
+  background: var(--color-surface-2);
+}
+
+.account__button:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.account__role {
+  font-size: 11.5px;
+  line-height: 1.2;
+  color: var(--color-text-faint);
+}
+
+.account__menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 208px;
+  padding: 6px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-raised);
+}
+
+.account__identity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px 10px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.account__identity-name {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.account__identity-role {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.account__item {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.account__item:hover:not(:disabled) {
+  background: var(--color-surface-2);
+  opacity: 1;
+}
+
+.account__item:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.account__item:disabled {
+  color: var(--color-text-faint);
+  cursor: not-allowed;
+}
+
+.app-header__menu {
+    display: inline-flex;
+  }
+
+/* 危险操作的主按钮：与普通主色按钮区分，读起来是"这个动作会删东西"。 */
+.button--danger {
+  background: #c0392b;
+  color: #fff;
+}
+
+.button--danger:disabled {
+  background: #e6b0aa;
 }

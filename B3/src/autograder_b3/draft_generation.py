@@ -27,8 +27,6 @@ from __future__ import annotations
 
 import json
 import math
-import urllib.error
-import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 from collections.abc import Mapping, Sequence
@@ -42,6 +40,13 @@ from .compile.validation import (
     validate_workspace_path,
 )
 from .config import Settings
+from .llm_client import (
+    LlmCallError,
+    LlmConfig,
+    TokenUsage,
+    complete_json,
+    provider_name_for,
+)
 from .dto.internal import PROTECTED_FIELD_NAMES
 from .errors import B3Error, ManifestInvalid
 
@@ -292,13 +297,6 @@ class ProposalOutcome:
 
 
 @dataclass(frozen=True)
-class TokenUsage:
-    prompt_tokens: int | None = None
-    completion_tokens: int | None = None
-    total_tokens: int | None = None
-
-
-@dataclass(frozen=True)
 class GenerationView:
     """One generation record as a client sees it (teacher-only).
 
@@ -454,92 +452,55 @@ def build_prompt(*, payload: Mapping[str, Any]) -> str:
 
 
 @dataclass
-class HttpDraftGenerationProvider:
-    """Minimal OpenAI-compatible chat-completions client.
+class ResponsesDraftGenerationProvider:
+    """One POST to the Responses endpoint, built by :mod:`autograder_b3.llm_client`.
 
-    Deliberately not a dependency: one POST built from the standard library, so the whole
-    feature stays optional and a deployment without a provider simply has no generation
-    (``ADR-0009`` decision 4). Real network calls happen only when a provider URL is
-    configured -- there is no sample/fixture path that could masquerade as a model answer.
+    Deliberately not a dependency: the feature stays optional and a deployment without a
+    provider simply has no generation (``ADR-0009`` decision 4). Real network calls happen
+    only when ``LLM_BASE_URL`` / ``LLM_MODEL_NAME`` / ``LLM_APIKEY`` are configured -- there is
+    no sample/fixture path that could masquerade as a model answer.
     """
 
-    url: str
-    model: str
-    api_key: str | None = None
-    timeout_seconds: float = 20.0
-    name: str = "openai-compatible"
+    config: LlmConfig
+
+    @property
+    def name(self) -> str:
+        return self.config.provider_name
+
+    @property
+    def model(self) -> str:
+        return self.config.model
 
     def generate(self, *, payload: Mapping[str, Any]) -> ProviderAnswer:
-        body = json.dumps(
-            {
-                "model": self.model,
-                "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": build_prompt(payload=payload)},
-                ],
-                "response_format": {"type": "json_object"},
-                "temperature": 0,
-            }
-        ).encode("utf-8")
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        request = urllib.request.Request(  # noqa: S310 - configured provider URL
-            self.url, data=body, headers=headers, method="POST"
-        )
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
-                document = json.loads(response.read().decode("utf-8"))
-            content = document["choices"][0]["message"]["content"]
-            parsed = json.loads(content)
-        except (urllib.error.URLError, TimeoutError, OSError, KeyError, IndexError) as exc:
-            # The exception *type* is recorded; the body never is. A provider error page can
-            # echo the request, which would put the objective into a log line.
-            raise DraftGenerationProviderError(
-                f"the model provider call failed ({type(exc).__name__})"
-            ) from exc
-        except (ValueError, TypeError) as exc:
-            raise DraftGenerationProviderError(
-                "the model provider answered with something that is not a JSON object"
-            ) from exc
-        if not isinstance(parsed, Mapping):
-            raise DraftGenerationProviderError(
-                "the model provider answered with something that is not a JSON object"
+            document, usage = complete_json(
+                config=self.config,
+                system_prompt=SYSTEM_PROMPT,
+                user_prompt=build_prompt(payload=payload),
             )
-        return ProviderAnswer(document=parsed, usage=_usage_from(document))
-
-
-def _usage_from(document: Mapping[str, Any]) -> TokenUsage:
-    """Read the provider's reported token usage when it reports one. Never estimated."""
-
-    def number(name: str) -> int | None:
-        raw = document.get("usage")
-        if not isinstance(raw, Mapping):
-            return None
-        value = raw.get(name)
-        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-            return None
-        return value
-
-    return TokenUsage(
-        prompt_tokens=number("prompt_tokens"),
-        completion_tokens=number("completion_tokens"),
-        total_tokens=number("total_tokens"),
-    )
+        except LlmCallError as error:
+            # Only the *classification* travels: a provider error page can echo the request,
+            # which would put the teacher's objective into a log line.
+            raise DraftGenerationProviderError(
+                f"the model provider call failed ({error.category})"
+            ) from error
+        return ProviderAnswer(document=document, usage=usage)
 
 
 def provider_from_settings(settings: Settings) -> DraftGenerationProvider | None:
     """``None`` when the deployment has no provider, which is the default."""
     if not settings.draft_generation_enabled:
         return None
-    assert settings.authoring_provider_url is not None
-    assert settings.authoring_model is not None
-    return HttpDraftGenerationProvider(
-        url=settings.authoring_provider_url,
-        model=settings.authoring_model,
-        api_key=settings.authoring_api_key,
-        timeout_seconds=settings.authoring_timeout_seconds,
-        name=settings.authoring_provider_name,
+    assert settings.llm_base_url is not None
+    assert settings.llm_model is not None
+    return ResponsesDraftGenerationProvider(
+        config=LlmConfig(
+            base_url=settings.llm_base_url,
+            model=settings.llm_model,
+            api_key=settings.llm_api_key,
+            timeout_seconds=settings.llm_timeout_seconds,
+            provider_name=provider_name_for(settings.llm_base_url),
+        )
     )
 
 

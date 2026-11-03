@@ -612,6 +612,21 @@ uff、pytest、pnpm * 都无法运行。
 
 ---
 
+## 0.22.0 - 人工评分（老师亲自打分）与邮件正文可见
+
+- **级别**：P1（新增 operation 与字段）
+- **状态**：已生效
+- **动机**：部分作业无法由执行判定（Unix 作业以邮件提交命令行，who/uname/ls -i 的输出依赖机器）。
+  这类作业只能由教师判定，而此前分数只来自确定性评测，系统里没有"老师给分"的位置，也没有
+  "待评分"状态——"交了但没评"于是被显示成"未交"。
+- **新增 operation**：setManualGrade、
+eleaseManualGrade、downloadSubmissionFile、
+  getSubmissionIntakeMessage。
+- **字段**：GradeRow.grade_status（deterministic|awaiting_manual|graded）、GradeRow.score_source。
+- **原则**：人工分与机器分分表存储，带作者/时间/理由/历史；导出必须能回答"这个分谁给的"；
+  waiting_manual 不计入未交；正文只留前 4000 字并脱敏。
+- **影响模块**：B2（存储与写路径）、B1（待评分列表与打分表单）
+
 ## 0.21.0 — 合并两条 0.20.0 分支：P13 复核范围 + 名单导入 CSV
 
 - **级别**：P1（**版本号冲突后的合并**，无新增字段）
@@ -783,10 +798,73 @@ uff、pytest、pnpm * 都无法运行。
 - **验证**：见本批提交说明与 `B1/docs/phases/active/phase-08-password-reset.md`；
   B4 的接口与迁移说明见 `B4/docs/phases/active/phase-04-password-reset.md`；
   本机无 PostgreSQL/NATS，B4 pytest 与真实迁移 upgrade/downgrade 未执行，已逐条列明；
-  B1 的 `tsc` / ESLint / Vitest / `api:check` 实际执行结果见阶段记录。
+  B1 的 `tsc` / ESLint / Vitest（46 文件 / 398 用例）/ `api:check` / `vite build` 与
+  MAIN 契约/清单/文档门禁实际通过；Vercel 与 `Deploy AutoGrader backend` 对提交 `de4a0ee`
+  均成功，线上公开发码接口对未知邮箱返回 `202`，B4 health 为 healthy。
 - **摘要**：见五份 `contracts.lock`（由 `contract_digest()` 计算，此处不复制）
 - **回滚方式**：还原本批契约文本与版本号、回退 B4 迁移 `20261027_0005`、移除 B1 的
-  `/forgot-password` 页面与登录入口，然后重跑 `scripts/relock_contracts.py`；版本回到 `0.20.0`。
+  `/forgot-password` 页面与登录入口，然后重跑 `scripts/relock_contracts.py`；版本回到 `0.21.0`。
+## 0.23.0 — 隔离区人工处置留痕与邮件摘要
+
+- **级别**：P1 增补（新增 4 个响应字段与 1 个 operation；不改既有字段语义）
+- **状态**：已生效
+- **动机**：老师复核隔离邮件时只有邮箱/UID，认不出是哪封邮件；"驳回"没有出口，结构/附件类拒绝
+  的记录永远留在待处理列表；处置后也没有"谁在何时处理"的留痕。此前的 `IntakeQuarantineView`
+  只有 `resolved` 布尔、`resolved_student_id` 与 `resolution_note`，表达不了"已驳回"，也表达不了
+  操作人与时间。
+- **变更文件**：
+  - `openapi/b2.yaml`：`IntakeQuarantineView` 增加 `subject`/`resolution`/`resolved_at`/`resolved_by`
+    （均为 required，null 表示未记录）；新增 `POST /api/v1/intake/quarantines/{id}/dismiss`
+    （`dismissIntakeQuarantine`）；`resolveIntakeQuarantine` 补充处置结果与留痕语义；列表
+    `resolved` 描述改为"已处理（归属或驳回）/未处理"。
+  - 六份契约 `info.version`、五份 `contracts.lock` 与模块清单同步到 `0.23.0`（`0.22.0` 已被找回密码批次占用）。
+- **受影响模块与需要做的改动**：
+  - **B2**：迁移 `20260916_0016`（四列 + 三个 CHECK，历史行保持空）；邮件入口记录主题头
+    （可打印、折叠空白、≤200 字）；`resolve` 写 `attribution` 留痕；新增 `dismiss` 服务与路由
+    （任何原因码都可驳回，行锁 + 行级授权 + 409 原子性保持不变）。
+  - **B1**：生成类型重新生成；复核列表显示邮件摘要/失败原因/课程课序/状态/处理人+时间，
+    操作列提供「归属学生」「驳回」；归属弹窗仍只提交 `student_id/note`，驳回提交 `note`。
+  - **B3/B4/B5**：无行为改动，仅锁摘要与版本号随契约升级。
+- **是否破坏兼容**：否（新增字段为 nullable、新增 operation；旧客户端忽略新字段仍可工作）。
+- **迁移方式**：一次性加列/加约束；历史已处理行的处置结果与留痕为 `null`，界面显示"未记录"，
+  不做回填与猜测。
+- **示例变更**：
+  `POST /api/v1/intake/quarantines/{id}/dismiss` `{"note":"附件是误报"}` →
+  `{"intake_quarantine_id":"…","subject":"作业一提交","resolution":"dismissed","resolved":true,"resolved_at":"2026-10-27T08:00:00.000Z","resolved_by":"…","resolved_student_id":null,…}`。
+- **验证**：B2 迁移/接口/邮件主题的 pytest 与 B1 `tsc/eslint/api:check/vitest/build` 见本次提交
+  说明；真实 PostgreSQL 迁移 upgrade/downgrade 与 B2 API 行为在本机临时实例上执行。
+- **摘要**：见五份 `contracts.lock`（由官方 `relock_contracts.py` 计算，此处不复制）。
+- **回滚方式**：还原本批契约文本与版本号、回退 B2 迁移 `20260916_0016`（删除四列与三个约束，
+  会丢失主题与处置留痕）、移除 B1 的驳回入口，然后重跑 `relock_contracts.py`；版本回到 `0.22.0`。
+
+---
+
+### 0.23.0 修订 — 新增 `activateUser`（无 CHG 编号）
+
+- **级别**：P1 增补（新增一条管理员路径；不改既有请求体、响应体与错误语义）
+- **状态**：已生效
+- **动机**：P14 用户标签此前只能停用账号，停用后**没有恢复入口**：契约里 `deleteUser`
+  是软停用，却没有任何"反向"操作，管理员误停用或学生复学后只能等下一次注册，页面也无法
+  如实提供「启用账号」。本次补上完整闭环：停用 ⇄ 启用。
+- **变更文件**：`openapi/b4.yaml`
+  - 新增 `POST /api/v1/users/{user_id}/activate`（`activateUser`）：`204`；清空停用时间、
+    `is_active` 恢复 `true`、`updated_at` 前进；不恢复已撤销的会话（需重新登录），
+    不改历史成绩、角色与课程名单；
+  - 启用**自己**返回 `409`，与 `deleteUser` 的自停用拒绝对称，避免单个管理员改自己的状态；
+  - `deleteUser` 的说明删除"重新激活不在本契约"一句，改为指向 `activateUser`；
+  - `UserSummary.is_active` 的说明补上两个方向的软状态变更。
+- **受影响模块与需要做的改动**：**B4** 增加端点、`user.activated` 审计动作与测试；
+  **B1** 重新生成类型，P14 用户行对已停用账号提供「启用账号」按钮与确认弹窗；
+  **B2/B3/B5** 无改动（不消费 `UserSummary`，也不调用该端点）。
+- **是否破坏兼容**：否（纯新增路径；`deleteUser` 的请求与响应未变）。
+- **迁移方式**：一次性切换，不保留兼容层（无数据库结构变化，无迁移文件）。
+- **验证**：`tsc`（B1）、ESLint（B1）、`pnpm api:check`、B1 全量 Vitest（48 文件 / 420 用例）、
+  B4 `ruff`、`MAIN/scripts/relock_contracts.py --check` 与 `MAIN/host/tests`（7 用例）均通过；
+  B4 `tests/test_users_courses.py` 在本机临时 PostgreSQL 17 实例上 **39 用例全部通过**
+  （含新增的启用成功、启用自己 409、启用不存在用户 404 三条）。生产部署后的线上复核见提交说明。
+- **摘要**：见五份 `contracts.lock`（由 `contract_digest()` 计算，此处不复制）
+- **回滚方式**：删除 `activateUser` 段落、还原 `deleteUser` 与 `UserSummary` 的说明文字，
+  移除 B1 的启用按钮与弹窗，然后重跑 `scripts/relock_contracts.py`；模块版本仍为 `0.23.0`。
 
 ---
 
@@ -817,6 +895,20 @@ uff、pytest、pnpm * 都无法运行。
 ## 记录模板（后续变更复制此块）
 
 ```md
+## 0.24.0 - 邮件收信的身份查询（B4 内部端点）
+
+- **级别**：P1（新增 operation）
+- **状态**：已生效
+- **动机**：学生用邮件交作业时，B2 只知道发件人地址；把地址变成账号是 B4 的事实
+  （`b4.users.email`），而模块之间不跨 schema 读表。此前只能靠一张要求四个 UUID 的手工匹配表，
+  每换一次作业就要改表，实际不可维护。
+- **新增 operation**：`lookupIdentityByEmail`（`GET /api/v1/internal/identities/by-email`），
+  以 `serviceToken` 鉴权，返回账号 id / 用户名 / 姓名 / 学号 / 角色，**不回显邮箱地址**。
+- **安全**：它回答的是"任意地址属于哪个账号"，正是枚举攻击想要的，因此只允许预共享服务凭证
+  访问；未配置 `B4_SERVICE_TOKEN` 时该端点关闭，而不是退化成"谁都能查"。地址不存在返回 404，
+  B2 据此把邮件放进隔离区。
+- **影响模块**：B4（实现与配置）、B2（收信匹配的调用方）
+
 ## <版本> — <标题>（CHG-<序号>）
 
 - 级别：P1 增补 / P2 语义 / P3 破坏

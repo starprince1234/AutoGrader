@@ -1,17 +1,19 @@
 # B1 组件清单与扩展点
 
 组件已实际落地（不再是规划）：三条泳道的页面/组件分别在
-`src/features/roster-import|roster|questions|submission|grades|users|auth|authoring|commentary|appeals|intake|quality`，
+`src/features/roster-import|roster|questions|submission|grades|users|auth|authoring|commentary|appeals|review|home`，
 共享面在 `src/app`、`src/api`、`src/auth`、`src/ui`、`src/logging`、`src/i18n`。
 共享文件的改动登记规则见 `../phases/active/phase-01-business-ui.md`；入口与外壳重做见
-`../phases/active/phase-06-entry-shell-and-auth-redesign.md`。
+`../phases/active/phase-06-entry-shell-and-auth-redesign.md`，导览页与登录记忆见
+`../phases/active/phase-09-landing-portal.md`。
 
 ## 组件清单（实现态）
 
 | 组件/模块 | 实现文件 | 职责 | 依赖 |
 |---|---|---|---|
-| 路由与路由组件 | `src/app/router.tsx`、`src/app/routeComponents.tsx` | 路由表 + 守卫组合（认证 + 角色可见性）；`/` 重定向到作业页；`/login` 的 redirect 由 `safeRedirectTarget` 过滤 | `src/auth/guards.tsx`、`src/auth/redirect.ts` |
-| 应用外壳 | `src/app/AppShell.tsx`、`src/app/AuthLayout.tsx`、`src/app/AccountMenu.tsx`、`src/app/navigation.ts`、`src/app/contractVersion.ts` | 会话恢复骨架；页头（产品名 + 账户菜单）；232px 角色侧栏与移动抽屉；认证页独立布局；退出清空查询缓存。契约版本仍由构建期注入，但**不再显示**在页头 | `src/auth/visibility.ts`、`src/ui/components.tsx`（Drawer） |
+| 路由与路由组件 | `src/app/router.tsx`、`src/app/routeComponents.tsx` | 路由表 + 守卫组合（认证 + 角色可见性）；`/` 渲染教师/学生双列导览页；`/login` 只作旧地址重定向（回 `/` 并打开浮窗）；登录回跳参数由 `safeRedirectTarget` 过滤 | `src/auth/guards.tsx`、`src/auth/redirect.ts` |
+| 导览页 | `src/features/home/LandingPage.tsx`、`src/features/auth/LoginForm.tsx`、`src/auth/portal.ts` | 左教师（作业/题库/成绩/课程/复核）、右学生（作业/成绩）各列各自功能，两栏不混；匿名点入口在当前页打开登录浮窗，成功直达所点功能；已登录按角色直达、错误一端禁用并说明；只记 `{portal, path}` 一次性意图 | `src/auth/sessionContext`、`src/auth/portal`、`src/ui/components.tsx`（Modal）、`@tanstack/react-router` |
+| 应用外壳 | `src/app/AppShell.tsx`、`src/app/AuthLayout.tsx`、`src/app/AccountMenu.tsx`、`src/app/navigation.ts`、`src/app/contractVersion.ts` | 会话恢复骨架（最近登录用户据此跳过登录）；门户意图校验与不匹配阻断；页头直接显示用户名和退出按钮（无下拉/悬停菜单），退出后回导览页；232px 角色侧栏与移动抽屉（管理员用户管理在侧栏）；认证页独立布局；退出清空查询缓存并重置门户状态。契约版本仍由构建期注入，但**不再显示**在页头 | `src/auth/visibility.ts`、`src/auth/portal.ts`、`src/ui/components.tsx`（Drawer） |
 | 查询客户端与键 | `src/app/queryClient.ts` | 重试策略（4xx 不重试）、统一查询键 | `@tanstack/react-query` |
 | 渲染异常边界 | `src/app/ErrorBoundary.tsx` | 渲染异常上报（带 `request_id`）+ 降级 UI | `src/logging/logger.ts` |
 | API 客户端 | `src/api/client.ts`、`problem.ts` | 契约路径原样请求、`X-Request-ID`、401 刷新重放、ProblemDetails → `ApiError` | 生成类型 |
@@ -39,7 +41,7 @@
 | 分布图 | `src/features/grades/GradesChart.tsx`、`echartsLoader.ts` | ECharts 分布图（可注入加载器，失败降级为表格） | echarts |
 | 前端日志器 | `src/logging/logger.ts`、`redaction.ts` | 结构化 JSON 行 + 拒绝清单脱敏 + 有界缓冲 | 无 |
 | UI 原语与脱敏 | `src/ui/components.tsx`、`src/ui/masking.ts`、`src/styles.css` | 表格/面板/弹窗与抽屉（焦点陷阱 + 焦点归还）/选项卡/分页控件/页面标题/诊断复制 + 展示层脱敏 + 设计 token | 无 |
-| 登录、注册与找回密码 | `src/features/auth/LoginPage.tsx`、`RegisterPage.tsx`、`ForgotPasswordPage.tsx`、`registrationValidation.ts`、`registrationErrors.ts`、`registrationApi.ts`、`passwordResetApi.ts`、`src/auth/redirect.ts` | 登录（字段校验、错误分类、密码显示/隐藏、深链回跳）；名单校验后的两步注册；邮箱验证码找回密码（通用提示、字段错误、成功回登录）；回跳只接受站内路径 | `POST /auth/*`、`POST /auth/password-reset*` |
+| 登录、注册与找回密码 | `src/features/auth/LoginForm.tsx`、`RegisterPage.tsx`、`ForgotPasswordPage.tsx`、`registrationValidation.ts`、`registrationErrors.ts`、`registrationApi.ts`、`passwordResetApi.ts`、`src/auth/redirect.ts` | 登录浮窗内容（字段校验、错误分类、密码显示/隐藏、深链回跳）；名单校验后的两步注册；邮箱验证码找回密码（通用提示、字段错误、成功回导览页浮窗）；回跳只接受站内路径 | `POST /auth/*`、`POST /auth/password-reset*` |
 
 ## 依赖方向
 

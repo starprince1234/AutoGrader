@@ -200,6 +200,90 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/registration-allowlists/batches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List every imported allowlist (one per class)
+         * @description Each uploaded file is a **class**; the class name is the file name. Listing them is what
+         *     lets an administrator keep several cohorts on the platform at once instead of replacing
+         *     one snapshot with another.
+         */
+        get: operations["listRegistrationAllowlistBatches"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registration-allowlists/batches/{batch_id}/entries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batch_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        /** Students of one class, ordered by student number */
+        get: operations["listRegistrationAllowlistEntries"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registration-allowlists/batches/{batch_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batch_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete a whole class (its students lose the right to register)
+         * @description Deleting a class must not silently keep its students registrable: the entries are removed
+         *     with the batch, so a student who is no longer in any class can no longer self-register.
+         *     Accounts already created are unaffected -- they are users, not allowlist rows.
+         */
+        delete: operations["deleteRegistrationAllowlistBatch"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/registration-allowlists/entries/{entry_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entry_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Remove one student from a class */
+        delete: operations["deleteRegistrationAllowlistEntry"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/registration-allowlists": {
         parameters: {
             query?: never;
@@ -222,7 +306,42 @@ export interface paths {
          *     something other than 13-digit student numbers is rejected rather than imported
          *     partially. Columns are located by header name, never by position.
          */
-        post: operations["replaceRegistrationAllowlist"];
+        post: operations["addRegistrationAllowlistBatch"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/internal/identities/by-email": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Resolve a registered e-mail address to its account (internal)
+         * @description Purpose: the mail intake (B2) receives a message whose sender is an e-mail address, and
+         *     must turn that address into the account that submitted the work. B4 owns the address,
+         *     so the lookup lives here rather than duplicating a copy of the user table in B2.
+         *
+         *     Why an internal endpoint rather than a wider teacher-facing one: this answers "which
+         *     account has this address" for **any** address on the platform, which is exactly the
+         *     question an enumeration attack wants. It therefore requires the pre-shared service
+         *     credential and is never reachable with a user session.
+         *
+         *     The response deliberately omits the address itself: the caller already knows the
+         *     address it asked about, and echoing it back would put a second copy of personal data
+         *     into B2's database for no functional gain.
+         *
+         *     Not found is `404`, not an empty object: the intake turns that into a quarantine record
+         *     ("sender does not match any account"), which is a decision it can only make if "no such
+         *     account" is distinguishable from "malformed request".
+         */
+        get: operations["lookupIdentityByEmail"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -265,14 +384,44 @@ export interface paths {
          *     owns stay in place; `is_active` becomes `false` and every open session of that user is
          *     revoked, so the account can no longer sign in. An administrator whose own row this is
          *     gets `409`: deactivating yourself would end the session that is performing the request
-         *     and can leave the platform without an active administrator. Re-activation has no
-         *     endpoint here — it is deliberately not invented by a client.
+         *     and can leave the platform without an active administrator. The opposite direction is
+         *     `activateUser`; this verb never revives an account by itself.
          */
         delete: operations["deleteUser"];
         options?: never;
         head?: never;
         /** Update a user or reassign roles (admin only) */
         patch: operations["updateUser"];
+        trace?: never;
+    };
+    "/api/v1/users/{user_id}/activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-activate a deactivated user (admin only)
+         * @description **Soft re-activation, the inverse of `deleteUser`.** `is_active` becomes `true`, the
+         *     deactivation timestamp is cleared and the account may sign in again; the row, its
+         *     historical records and every course membership stay untouched, so reviving an account
+         *     never rewrites history or re-creates enrollments. `updated_at` advances, which is what
+         *     a concurrent editor compares against.
+         *
+         *     The self-service rule is symmetric with `deleteUser`: an administrator whose own row
+         *     this is gets `409`. State changes on the account performing the request are refused in
+         *     both directions, so no single administrator can lock or unlock themselves.
+         */
+        post: operations["activateUser"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/courses": {
@@ -293,6 +442,67 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/courses/{course_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                course_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Retire a course (soft delete)
+         * @description The row is kept and marked inactive: submissions, grades and audit records refer to the
+         *     course by id, so removing it outright would leave history pointing at nothing. The course
+         *     disappears from `listCourses`, which is what "deleted" means for the teacher.
+         */
+        delete: operations["deleteCourse"];
+        options?: never;
+        head?: never;
+        /**
+         * Rename a course (teacher of that course, or admin)
+         * @description Only the title is writable. The course code is an identity: rosters, assignments and
+         *     exports match on it, so renaming it in place would silently break references rather than
+         *     rename a course. A wrong code is fixed by creating the right course, not by editing this
+         *     one.
+         *
+         *     `expected_updated_at` is an optimistic lock. Two teachers renaming the same course at the
+         *     same time must not have one edit vanish; the stale writer gets `409` and re-reads.
+         */
+        patch: operations["updateCourse"];
+        trace?: never;
+    };
+    "/api/v1/courses/{course_id}/classes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                course_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create a class in this course from an already-registered class
+         * @description Copies the students of an existing registration allowlist batch ("已注册名单" 里的一个班级)
+         *     into a new section of this course. Students are stored unbound (`user_id` null) until they
+         *     register, which is the same state a CSV roster import leaves them in.
+         *
+         *     This exists so a teacher does not upload the same file twice: the class was already
+         *     imported once for registration, and the course only needs to reference it.
+         */
+        post: operations["attachRegisteredClass"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/courses/{course_id}/sections": {
         parameters: {
             query?: never;
@@ -305,9 +515,34 @@ export interface paths {
         /** List sections (课序) of a course */
         get: operations["listSections"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/courses/{course_id}/sections/{section_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                course_id: components["schemas"]["Uuid"];
+                section_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
         /** Create a section (teacher or admin) */
         post: operations["createSection"];
-        delete?: never;
+        /**
+         * Delete a class (its enrollments go with it)
+         * @description Deleting a class removes its roster rows and its course grants. Assignments that named
+         *     this section are outside B4's schema and are not checked here -- deleting a class that
+         *     still has assignments is the caller's call, not something B4 can validate across modules.
+         */
+        delete: operations["deleteSection"];
         options?: never;
         head?: never;
         patch?: never;
@@ -512,6 +747,19 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /**
+         * @description The minimum B2 needs to attach a submission to its owner: a stable id, the student
+         *     number for cross-checking the attachment name, and the display name for the review
+         *     list. No e-mail address is returned (see `lookupIdentityByEmail`).
+         */
+        InternalIdentity: {
+            user_id: components["schemas"]["Uuid"];
+            username: string;
+            display_name: string;
+            student_number?: string | null;
+            roles: components["schemas"]["Role"][];
+            is_active: boolean;
+        };
+        /**
          * @description One row of a section's roster. Recorded by CHG-0007: the operation previously
          *     returned an undocumented body ("Page of enrollments.").
          *
@@ -541,10 +789,11 @@ export interface components {
             student_number?: string | null;
             roles: components["schemas"]["Role"][];
             /**
-             * @description Whether the account may sign in. `deleteUser` is a **soft** deactivation, so this
-             *     is the only field that distinguishes a deactivated account from a usable one: an
-             *     admin screen that omits it has no way to say whether `204` actually took effect,
-             *     and RQ-B-4-50 requires the account state to be visible.
+             * @description Whether the account may sign in. `deleteUser` is a **soft** deactivation and
+             *     `activateUser` is its soft inverse, so this is the only field that distinguishes a
+             *     deactivated account from a usable one: an admin screen that omits it has no way to
+             *     say whether either `204` actually took effect, and RQ-B-4-50 requires the account
+             *     state to be visible.
              */
             is_active: boolean;
             /**
@@ -556,14 +805,53 @@ export interface components {
             created_at?: components["schemas"]["Timestamp"];
         };
         /**
+         * @description One imported allowlist, i.e. one class. `class_name` is derived from the file name: a
+         *     teacher names the file after the class, so there is no second place to type it.
+         */
+        AllowlistBatch: {
+            batch_id: components["schemas"]["Uuid"];
+            class_name: string;
+            filename?: string;
+            row_count: number;
+            uploaded_at: components["schemas"]["Timestamp"];
+        };
+        AllowlistEntry: {
+            entry_id: components["schemas"]["Uuid"];
+            student_number: string;
+            display_name: string;
+        };
+        /** @description Which registered class to attach to the course. */
+        RegisteredClassImport: {
+            batch_id: components["schemas"]["Uuid"];
+            section_code?: string | null;
+        };
+        /**
+         * @description Rename request. `title` is the only writable field (see `updateCourse`); an empty or
+         *     whitespace-only title is refused rather than coerced, because a blank course name is
+         *     indistinguishable from a rendering bug later.
+         */
+        CourseRename: {
+            title: string;
+            /**
+             * @description Optional. **Omitted** leaves the stored code unchanged; `null` (or an empty string)
+             *     clears it. The distinction matters because clearing a label is a deliberate act,
+             *     while a rename that happens not to mention the code must not silently drop it.
+             */
+            course_code?: string | null;
+            expected_updated_at: components["schemas"]["Timestamp"];
+        };
+        /**
          * @description A course as the API returns it, for reads and for the create response. The create
          *     response previously carried only `course_id`, so a client could not show the new
          *     course without a second round trip.
          */
         CoursePublic: {
             course_id: components["schemas"]["Uuid"];
-            course_code: string;
+            /** @description Optional label; null means the course was created without one. */
+            course_code: string | null;
+            section_count: number;
             title: string;
+            updated_at: components["schemas"]["Timestamp"];
         };
         /**
          * @description A section (课序) of a course. Defined here because the read and create responses
@@ -575,6 +863,8 @@ export interface components {
             course_id: components["schemas"]["Uuid"];
             section_code: string;
             term?: string | null;
+            class_name?: string | null;
+            enrollment_count: number;
             created_at?: components["schemas"]["Timestamp"] | null;
         };
         /**
@@ -621,7 +911,7 @@ export interface components {
             detail?: string;
         };
         /** @enum {string} */
-        Role: "student" | "teacher" | "assistant" | "admin";
+        Role: "student" | "teacher" | "admin";
         /**
          * Format: uuid
          * @description UUID v4 (RFC 9562), generated by the owning module. See MAIN/docs/api/identifiers.md.
@@ -670,16 +960,16 @@ export interface components {
             /** @description Request path or trace identifier */
             instance: string;
         };
-        /** @description Cursor pagination envelope. Offset pagination is forbidden for large tables. */
-        CursorPage: {
-            items: unknown[];
-            next_cursor?: string | null;
-        };
         /**
          * Format: date-time
          * @description UTC RFC 3339 with millisecond precision, e.g. 2026-09-15T08:30:00.000Z.
          */
         Timestamp: string;
+        /** @description Cursor pagination envelope. Offset pagination is forbidden for large tables. */
+        CursorPage: {
+            items: unknown[];
+            next_cursor?: string | null;
+        };
     };
     responses: {
         /** @description Missing, malformed or expired credentials. Does not reveal whether the principal exists. */
@@ -736,8 +1026,8 @@ export interface components {
                 "application/problem+json": components["schemas"]["ProblemDetails"];
             };
         };
-        /** @description File, aggregate or attachment size limit exceeded. */
-        PayloadTooLarge: {
+        /** @description Authenticated and authorized, but the resource does not exist. */
+        NotFound: {
             headers: {
                 [name: string]: unknown;
             };
@@ -745,8 +1035,8 @@ export interface components {
                 "application/problem+json": components["schemas"]["ProblemDetails"];
             };
         };
-        /** @description Authenticated and authorized, but the resource does not exist. */
-        NotFound: {
+        /** @description File, aggregate or attachment size limit exceeded. */
+        PayloadTooLarge: {
             headers: {
                 [name: string]: unknown;
             };
@@ -1068,6 +1358,104 @@ export interface operations {
             422: components["responses"]["UnprocessableEntity"];
         };
     };
+    listRegistrationAllowlistBatches: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Batches, newest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["AllowlistBatch"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+        };
+    };
+    listRegistrationAllowlistEntries: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batch_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Entries of the batch. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        batch_id: components["schemas"]["Uuid"];
+                        items: components["schemas"]["AllowlistEntry"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteRegistrationAllowlistBatch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                batch_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    deleteRegistrationAllowlistEntry: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entry_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     getRegistrationAllowlist: {
         parameters: {
             query?: never;
@@ -1102,7 +1490,7 @@ export interface operations {
             403: components["responses"]["Forbidden"];
         };
     };
-    replaceRegistrationAllowlist: {
+    addRegistrationAllowlistBatch: {
         parameters: {
             query?: never;
             header?: {
@@ -1123,7 +1511,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Allowlist replaced. */
+            /** @description Allowlist batch added (or the same-named class replaced). */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -1132,8 +1520,11 @@ export interface operations {
                     "application/json": {
                         /** Format: uuid */
                         batch_id: string;
+                        class_name: string;
                         row_count: number;
-                        replaced_row_count: number;
+                        skipped_row_count: number;
+                        duplicate_student_numbers?: string[];
+                        replaced: boolean;
                         content_sha256: string;
                     };
                 };
@@ -1141,6 +1532,32 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    lookupIdentityByEmail: {
+        parameters: {
+            query: {
+                /** @description The sender address, matched case-insensitively after trimming. */
+                email: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The account registered with that address. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalIdentity"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
             422: components["responses"]["UnprocessableEntity"];
         };
     };
@@ -1291,6 +1708,35 @@ export interface operations {
             422: components["responses"]["UnprocessableEntity"];
         };
     };
+    activateUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description User re-activated; an audit record is written. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /**
+             * @description Refused because the target is the caller's own account. Activation mirrors
+             *     deactivation: the state of the account performing the request cannot be changed by
+             *     that request, so a second administrator has to perform it.
+             */
+            409: components["responses"]["Conflict"];
+        };
+    };
     listCourses: {
         parameters: {
             query?: {
@@ -1327,7 +1773,12 @@ export interface operations {
         requestBody: {
             content: {
                 "application/json": {
-                    course_code: string;
+                    /**
+                     * @description Optional label. Omit it (or send null) and the course has no code; the course
+                     *     is still identified by `course_id`, which is what rosters, assignments and
+                     *     exports use. Codes that are present must be unique.
+                     */
+                    course_code?: string | null;
                     title: string;
                 };
             };
@@ -1344,6 +1795,96 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    deleteCourse: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                course_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Retired. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    updateCourse: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                course_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CourseRename"];
+            };
+        };
+        responses: {
+            /** @description The course as stored after the rename. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CoursePublic"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            /** @description The course changed since `expected_updated_at` (someone else renamed it first). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    attachRegisteredClass: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                course_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RegisteredClassImport"];
+            };
+        };
+        responses: {
+            /** @description The created section, with its student count. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SectionPublic"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
         };
     };
@@ -1380,6 +1921,7 @@ export interface operations {
             header?: never;
             path: {
                 course_id: components["schemas"]["Uuid"];
+                section_id: components["schemas"]["Uuid"];
             };
             cookie?: never;
         };
@@ -1405,6 +1947,30 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+        };
+    };
+    deleteSection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                course_id: components["schemas"]["Uuid"];
+                section_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     listEnrollments: {

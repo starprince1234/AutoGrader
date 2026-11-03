@@ -11,10 +11,10 @@ What lives in Doppler is the *base* configuration: DSNs, ports, paths, JWT setti
 and the three provider bedrock values (`APIKEY`, `BASE_URL`, `MODEL`). What is **rendered** is
 the per-module provider block, because B2 and B3 disagree about the shape of the same fact:
 
-    B2_COMMENTARY_BASE_URL  <- BASE_URL        (B2 appends /chat/completions itself)
-    B3_AUTHORING_PROVIDER_URL <- BASE_URL + /chat/completions   (B3 posts to it verbatim)
+    B2_COMMENTARY_BASE_URL  <- BASE_URL   (B2 appends /chat/completions itself)
+    LLM_BASE_URL            <- BASE_URL   (B3 appends /v1/responses for the Responses API)
 
-Storing those eight variables instead of deriving them would put one API key in three places --
+Storing those variables instead of deriving them would put one API key in three places --
 the pattern this project has already removed three times (E4's five digest implementations,
 E2's two requirement matrices, the fourteen copies of the contract version).
 
@@ -57,10 +57,9 @@ $derived = [ordered]@{
     "B2_COMMENTARY_BASE_URL"     = $secrets.BASE_URL
     "B2_COMMENTARY_MODEL"        = $secrets.MODEL
     "B2_COMMENTARY_API_KEY"      = $secrets.APIKEY
-    "B3_AUTHORING_PROVIDER_URL"  = "$($secrets.BASE_URL.TrimEnd('/'))/chat/completions"
-    "B3_AUTHORING_PROVIDER_NAME" = "deepseek"
-    "B3_AUTHORING_MODEL"         = $secrets.MODEL
-    "B3_AUTHORING_API_KEY"       = $secrets.APIKEY
+    "LLM_BASE_URL"               = $secrets.BASE_URL
+    "LLM_MODEL_NAME"             = $secrets.MODEL
+    "LLM_APIKEY"                 = $secrets.APIKEY
 }
 
 $lines = [System.Collections.Generic.List[string]]::new()
@@ -79,7 +78,7 @@ foreach ($name in ($secrets.PSObject.Properties.Name | Sort-Object)) {
 
 $lines.Add("")
 $lines.Add("# Provider block, rendered from APIKEY / BASE_URL / MODEL above.")
-$lines.Add("# B2 takes a BASE url (it appends /chat/completions); B3 takes the FULL endpoint.")
+$lines.Add("# Both take a BASE url; each appends the path its API uses (B3: /v1/responses).")
 foreach ($name in $derived.Keys) {
     $lines.Add("$name=$($derived[$name])")
 }

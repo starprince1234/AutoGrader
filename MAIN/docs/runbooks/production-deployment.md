@@ -114,6 +114,45 @@ gh workflow run deploy-backend.yml --ref main -f operation=sync-mail-channel
 （`root:root 0600`）后 `systemctl restart autograder.service`；手工方式需自行保证引号与转义正确，
 写入前确认文件不是符号链接。
 
+### 模型 provider 变量（`operation=sync-llm-config`）
+
+同一条"只渲染一次"的约束也适用于模型 provider：`LLM_BASE_URL` / `LLM_MODEL_NAME` / `LLM_APIKEY`
+只写进首次 `bootstrap-host` 渲染的 `runtime.env`，日常发布不会重写它。已经存在的宿主因此需要一次显式同步：
+
+```bash
+gh workflow run deploy-backend.yml --ref main -f operation=sync-llm-config
+```
+
+它从 Doppler `autograder/prd` 取这三个键，用同一个 `MAIN/deploy/merge-env-keys.py` **只合并这三个键**
+进 `/etc/autograder/runtime.env`（原子写入，0600 root:root，日志只打印键名不打印值），然后重启
+`autograder.service` 并在 30 次轮询内等待 `/health/ready` 就绪。
+
+`LLM_BASE_URL` 是 **base**：B3 自己追加 `/v1/responses`（Responses API）。把完整端点写进 base 变量会
+得到一个"存在但永远失败"的 provider。三个键必须同时存在——只配一部分会让页面先显示"可用"、再在第一次
+生成时失败，那比缺少配置更难解释。缺任意一项时 B3 如实上报 `provider_status=unavailable`，页面显示
+"AI 出题暂未开通"，手动出题不受影响。
+
+**手工等价操作**：把三行追加到 `/etc/autograder/runtime.env` 后重启服务（同样需自行保证引号与转义）。
+
+同一次运行还会打印三行自检（`MAIN/deploy/verify_provider.py`，不打印密钥、不打印模型输出）：
+
+```
+service_env=LLM_APIKEY,LLM_BASE_URL,LLM_MODEL_NAME     # 运行中的服务进程实际拿到的名字（读 /proc/<MainPID>/environ）
+provider_direct=ok reply_keys=1 tokens=57              # 不走代理直连：凭证与地址被接受，响应解析成功
+provider_proxy=ok reply_keys=1 tokens=57               # 与 unit 相同的方式经本机代理调用
+```
+
+读法：
+
+| 输出 | 结论 |
+|---|---|
+| `service_env=none` | 文件里有、进程没有 → systemd 没重启或 `EnvironmentFile` 未生效 |
+| `provider_direct=failed category=http_401` | 键或模型权限不对（地址是对的：它连上了） |
+| `provider_direct=failed category=http_404` | 地址拼错（`LLM_BASE_URL` 不是 base，或指向了别的 API 路径） |
+| `provider_direct=failed category=network` | 主机出不去的网 / DNS / TLS |
+| `provider_direct=ok` 而 `provider_proxy=failed` | 本机代理不放行该域名：把该域名加进 unit 的 `NO_PROXY` |
+| 两行都 `ok` 而页面仍不可用 | 客户端缓存或旧标签页：硬刷新；仍不行则不是配置问题 |
+
 
 ## 3. 空库重建与后续数据
 

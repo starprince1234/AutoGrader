@@ -4,7 +4,7 @@
 
 ## 契约权威
 
-- OpenAPI：`../../MAIN/contracts/openapi/b4.yaml`（版本与摘要以 `../contracts.lock` 为准，本模块不写死；**已覆盖 B4 全部端点**：`createSession`、`refreshSession`、`deleteSession`、`getJwks`、`requestRegistrationCode`、`createRegistration`、`requestPasswordResetCode`、`completePasswordReset`、`listUsers`/`createUser`/`updateUser`/`deleteUser`、`listCourses`/`createCourse`、`listSections`/`createSection`、`listEnrollments`/`updateEnrollment`/`deleteEnrollment`、`createRosterImport`/`getRosterImport`/`setRosterColumnMapping`/`confirmRosterImport`、`listAuditRecords`、`listRegisteredModules`/`getModuleHealth`）。
+- OpenAPI：`../../MAIN/contracts/openapi/b4.yaml`（版本与摘要以 `../contracts.lock` 为准，本模块不写死；**已覆盖 B4 全部端点**：`createSession`、`refreshSession`、`deleteSession`、`getJwks`、`requestRegistrationCode`、`createRegistration`、`requestPasswordResetCode`、`completePasswordReset`、`listUsers`/`createUser`/`updateUser`/`deleteUser`/`activateUser`、`listCourses`/`createCourse`、`listSections`/`createSection`、`listEnrollments`/`updateEnrollment`/`deleteEnrollment`、`createRosterImport`/`getRosterImport`/`setRosterColumnMapping`/`confirmRosterImport`、`listAuditRecords`、`listRegisteredModules`/`getModuleHealth`）。
 - 通用错误：`../../MAIN/contracts/openapi/common.yaml`（`ProblemDetails`）。
 - 名单导入载荷：`../../MAIN/contracts/schemas/roster-import.schema.json`。
 - 事件 envelope：`../../MAIN/contracts/schemas/event-envelope.schema.json`。
@@ -36,6 +36,7 @@
 | `POST /api/v1/users` | `createUser` | 创建用户 | 是 | 管理员 | `已完成` |
 | `PATCH /api/v1/users/{user_id}` | `updateUser` | 改资料/角色（`expected_updated_at` 乐观并发） | 是 | 管理员 | `已完成` |
 | `DELETE /api/v1/users/{user_id}` | `deleteUser` | 停用（软删除）并撤销其会话；停用**自己**返回 `409`（否则执行者的会话会被自己撤销，结果也无从上报） | 是 | 管理员 | `已完成` |
+| `POST /api/v1/users/{user_id}/activate` | `activateUser` | 启用（软启用）：清空停用时间、账号恢复登录，历史与课程名单不变；启用**自己**同样返回 `409` | 是 | 管理员 | `已完成` |
 | `GET /api/v1/courses` | `listCourses` | 列出调用者作用域内课程 | 是 | 按作用域 | `已完成` |
 | `POST /api/v1/courses` | `createCourse` | 创建课程（同时为创建者写入课程级授予） | 是 | 教师/管理员 | `已完成` |
 | `GET /api/v1/courses/{course_id}/sections` | `listSections` | 课序列表 | 是 | 课程读 | `已完成` |

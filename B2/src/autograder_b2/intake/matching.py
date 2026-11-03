@@ -30,10 +30,14 @@
 
 from __future__ import annotations
 
+import json
+import urllib.error
+import urllib.request
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, Protocol, runtime_checkable
+from urllib.parse import quote
 
 from autograder_b2.config import ConfigurationError
 
@@ -221,3 +225,108 @@ def _canonical_uuid(rule: str, field_name: str, value: str) -> str:
     except (AttributeError, ValueError) as error:
         raise MatchingRuleError(f"matching rule {rule!r} field {field_name} is not a UUID") from error
     return str(parsed)
+
+
+class MatchingUnavailable(RuntimeError):
+    """身份查询不可用（令牌错误、服务不可达、响应异常）。
+
+    这与 `not_matched` 有本质区别：后者是"这封信确实不属于任何账号"，应当隔离并等待人工认领；
+    前者是"我们现在判断不了"，此时把每一封邮件都隔离起来会把故障伪装成正常业务。调用方应当让
+    本次拉取失败（不写 checkpoint），下一次重试。
+    """
+
+
+class DirectoryEmailMatcher:
+    """按发件人向 B4 查询账号，再与本次作业的统一目标拼成提交身份。"""
+
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        authorization: str,
+        target: Mapping[str, str],
+        timeout_seconds: float = 10.0,
+        opener: Callable[[str, Mapping[str, str], float], tuple[int, bytes]] | None = None,
+    ) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._authorization = authorization
+        self._target = dict(target)
+        self._timeout = timeout_seconds
+        self._opener = opener or _http_get
+
+    def match(
+        self, *, mailbox: str, sender: str, attachment_names: Sequence[str]
+    ) -> MatchResult:
+        normalized = sender.strip().lower()
+        if not normalized:
+            return MatchResult(
+                outcome="not_matched",
+                target=None,
+                candidates=0,
+                identities=0,
+                detail="the message carries no sender address",
+                scope_context=None,
+            )
+        url = (
+            f"{self._base_url}/api/v1/internal/identities/by-email"
+            f"?email={quote(normalized, safe='')}"
+        )
+        status, payload = self._opener(
+            url, {"authorization": self._authorization}, self._timeout
+        )
+        if status == 404:
+            return MatchResult(
+                outcome="not_matched",
+                target=None,
+                candidates=0,
+                identities=0,
+                detail="the sender address is not registered to any account",
+                scope_context=None,
+            )
+        if status != 200:
+            raise MatchingUnavailable(f"identity lookup returned HTTP {status}")
+        try:
+            document = json.loads(payload)
+        except Exception as error:
+            raise MatchingUnavailable("identity lookup returned invalid JSON") from error
+        if not isinstance(document, dict) or not document.get("user_id"):
+            raise MatchingUnavailable("identity lookup returned no user id")
+        if not document.get("is_active", True):
+            return MatchResult(
+                outcome="not_matched",
+                target=None,
+                candidates=0,
+                identities=0,
+                detail="the sender's account is deactivated",
+                scope_context=None,
+            )
+
+        target = SubmissionTarget(
+            student_id=str(document["user_id"]),
+            course_id=self._target["course_id"],
+            section_id=self._target["section_id"],
+            question_version_id=self._target["question_version_id"],
+        )
+        return MatchResult(
+            outcome="matched",
+            target=target,
+            candidates=1,
+            identities=1,
+            detail="one identity resolved from the sender address",
+            scope_context=ScopeContext(
+                course_id=target.course_id, section_id=target.section_id
+            ),
+        )
+
+
+def _http_get(url: str, headers: Mapping[str, str], timeout: float) -> tuple[int, bytes]:
+    """最小 HTTP GET：只用标准库，与模块"无第三方依赖"的约定一致。"""
+    request = urllib.request.Request(url, method="GET")
+    for name, value in headers.items():
+        request.add_header(name, value)
+    request.add_header("user-agent", "autograder-b2-intake/1.0")
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return response.status, response.read()
+    except urllib.error.HTTPError as error:
+        return error.code, error.read()

@@ -797,6 +797,7 @@ def test_uppercase_spelling_does_not_bypass_idempotency(
 
 QUARANTINES = "/api/v1/intake/quarantines"
 RESOLVE = "/api/v1/intake/quarantines/{quarantine}/resolve"
+DISMISS = "/api/v1/intake/quarantines/{quarantine}/dismiss"
 #: 只有这两种原因码能被人工归属（见 `intake.quarantine`）。
 MATCH_FAILURES = ("not_uniquely_matched", "ambiguous_match")
 
@@ -847,6 +848,7 @@ def _seed_quarantine(
     recorded_at: datetime | None = None,
     scope_course_id: str | None = None,
     scope_section_id: str | None = None,
+    subject: str | None = None,
 ) -> str:
     """用**生产写入路径**（`intake.imap.QuarantineStore`）落一条隔离记录，返回它的 id。
 
@@ -869,6 +871,7 @@ def _seed_quarantine(
             message_id=message_id or f"<{uuid.uuid4()}@example.edu>",
             now=recorded_at or datetime.now(UTC),
             scope=scope,
+            subject=subject,
         )
 
 
@@ -959,6 +962,10 @@ def test_quarantine_list_exposes_what_the_email_path_recorded(
         "resolution_note",
         "scope_course_id",
         "scope_section_id",
+        "subject",
+        "resolution",
+        "resolved_at",
+        "resolved_by",
     }
     assert item["intake_quarantine_id"] == quarantine_id
     assert item["intake"] == "email"
@@ -968,6 +975,9 @@ def test_quarantine_list_exposes_what_the_email_path_recorded(
     assert item["mailbox"] == "submissions@example.edu"
     assert item["resolved"] is False
     assert item["resolved_student_id"] is None and item["resolution_note"] is None
+    assert item["subject"] is None
+    assert item["resolution"] is None
+    assert item["resolved_at"] is None and item["resolved_by"] is None
     assert item["recorded_at"].endswith("Z")
     # scope 来自写入侧（匹配规则共识），读取侧只做映射：两个字段必须如实带出。
     assert item["scope_course_id"] == student[1]
@@ -1054,12 +1064,18 @@ def test_quarantine_resolve_records_the_attribution_without_evaluating(
         engine, scope_course_id=student[1], scope_section_id=student[2]
     )
     attributed = str(uuid.uuid4())
+    actor = str(uuid.uuid4())
+    token = _auth(
+        signer.token(
+            user_id=actor, roles=("teacher",), scope=[{"course_id": student[1]}]
+        )
+    )
     before = _evaluation_footprint(engine)
 
     response = client.post(
         RESOLVE.format(quarantine=quarantine_id),
         json={"student_id": attributed, "note": "学生本人来信确认了这封信"},
-        headers=_auth(_staff_token(signer, student)),
+        headers=token,
     )
 
     assert response.status_code == 200, response.text
@@ -1068,6 +1084,10 @@ def test_quarantine_resolve_records_the_attribution_without_evaluating(
     assert body["resolved_student_id"] == attributed
     assert body["resolution_note"] == "学生本人来信确认了这封信"
     assert body["intake_quarantine_id"] == quarantine_id
+    # 处置留痕：结果、时间与操作人都要落进同一条视图。
+    assert body["resolution"] == "attributed"
+    assert body["resolved_at"] is not None and body["resolved_at"].endswith("Z")
+    assert body["resolved_by"] == actor
     assert _resolved_state(engine, quarantine_id) == (
         True,
         attributed,
@@ -1076,6 +1096,147 @@ def test_quarantine_resolve_records_the_attribution_without_evaluating(
     assert _evaluation_footprint(engine) == before == (0, 0, 0), (
         "归属不得产生提交、事件或评测运行"
     )
+
+
+def test_quarantine_dismiss_closes_any_reason_without_attributing(
+    client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
+) -> None:
+    """驳回可用于**任何**原因码，且不写学生、不触发评测，只留处置人与时间。"""
+    actor = str(uuid.uuid4())
+    token = _auth(
+        signer.token(
+            user_id=actor,
+            roles=("teacher",),
+            scope=[{"course_id": student[1], "section_id": student[2]}],
+        )
+    )
+    before = _evaluation_footprint(engine)
+    identifiers = [
+        _seed_quarantine(
+            engine,
+            reason_code=reason_code,
+            uid=index + 1,
+            scope_course_id=student[1],
+            scope_section_id=student[2],
+        )
+        for index, reason_code in enumerate(
+            ("not_uniquely_matched", "ambiguous_match", "executable_attachment")
+        )
+    ]
+
+    for index, quarantine_id in enumerate(identifiers):
+        response = client.post(
+            DISMISS.format(quarantine=quarantine_id),
+            json={"note": "附件是误报"} if index != 2 else {},
+            headers=token,
+        )
+        assert response.status_code == 200, (index, response.text)
+        body = response.json()
+        assert body["resolved"] is True
+        assert body["resolved_student_id"] is None
+        assert body["resolution"] == "dismissed"
+        assert body["resolved_at"] is not None and body["resolved_at"].endswith("Z")
+        assert body["resolved_by"] == actor
+
+    assert _evaluation_footprint(engine) == before == (0, 0, 0), (
+        "驳回不得产生提交、事件或评测运行"
+    )
+    listed = client.get(QUARANTINES, params={"resolved": "true"}, headers=token)
+    assert listed.status_code == 200, listed.text
+    assert {item["intake_quarantine_id"] for item in listed.json()["items"]} == set(identifiers)
+    assert all(item["resolution"] == "dismissed" for item in listed.json()["items"])
+
+
+def test_quarantine_dismiss_is_conflict_after_either_decision(
+    client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
+) -> None:
+    """归属与驳回共享同一个"已处理"状态：先后任一决定之后，另一种决定都 409。"""
+    token = _auth(_staff_token(signer, student))
+    scope = {"scope_course_id": student[1], "scope_section_id": student[2]}
+
+    attributed = _seed_quarantine(engine, **scope)
+    assert (
+        client.post(
+            RESOLVE.format(quarantine=attributed),
+            json={"student_id": str(uuid.uuid4())},
+            headers=token,
+        ).status_code
+        == 200
+    )
+    after_resolve = client.post(
+        DISMISS.format(quarantine=attributed), json={"note": "不要了"}, headers=token
+    )
+    assert after_resolve.status_code == 409, after_resolve.text
+    attributed_row = _quarantine_row(engine, attributed)
+    assert attributed_row is not None and attributed_row.resolution == "attributed"
+
+    dismissed = _seed_quarantine(engine, reason_code="ambiguous_match", uid=2, **scope)
+    assert (
+        client.post(DISMISS.format(quarantine=dismissed), json={}, headers=token).status_code
+        == 200
+    )
+    after_dismiss = client.post(
+        RESOLVE.format(quarantine=dismissed),
+        json={"student_id": str(uuid.uuid4())},
+        headers=token,
+    )
+    assert after_dismiss.status_code == 409, after_dismiss.text
+
+
+def test_quarantine_dismiss_reuses_row_scope_authorization(
+    client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
+) -> None:
+    """staff 对未关联/跨课记录驳回 ⇒ 403，且一个字段都不写；管理员可处置未关联行。"""
+    scoped = _seed_quarantine(
+        engine, scope_course_id=student[1], scope_section_id=student[2]
+    )
+    unscoped = _seed_quarantine(engine, reason_code="executable_attachment", uid=2)
+    foreign = _seed_quarantine(
+        engine,
+        reason_code="ambiguous_match",
+        uid=3,
+        scope_course_id=str(uuid.uuid4()),
+        scope_section_id=str(uuid.uuid4()),
+    )
+
+    for token in (_foreign_token(signer), _scopeless_staff_token(signer)):
+        for quarantine_id in (scoped, unscoped, foreign):
+            response = client.post(
+                DISMISS.format(quarantine=quarantine_id), json={}, headers=_auth(token)
+            )
+            assert response.status_code == 403, (quarantine_id, response.text)
+    for quarantine_id in (unscoped, foreign):
+        assert _resolved_state(engine, quarantine_id) == (False, None, None)
+
+    admin = str(uuid.uuid4())
+    admin_token = _auth(signer.token(user_id=admin, roles=("admin",), scope=[]))
+    admin_response = client.post(
+        DISMISS.format(quarantine=unscoped), json={"note": "运维处置"}, headers=admin_token
+    )
+    assert admin_response.status_code == 200, admin_response.text
+    assert admin_response.json()["resolution"] == "dismissed"
+    assert admin_response.json()["resolved_by"] == admin
+
+
+def test_quarantine_dismiss_validates_the_body_and_the_identifier(
+    client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
+) -> None:
+    """驳回体只允许 `note`（≤500）；未知字段/非 JSON/非法 id 分别 422/422/404。"""
+    quarantine_id = _seed_quarantine(
+        engine, scope_course_id=student[1], scope_section_id=student[2]
+    )
+    token = _auth(_staff_token(signer, student))
+    target = DISMISS.format(quarantine=quarantine_id)
+
+    unknown = client.post(target, json={"note": "x", "student_id": str(uuid.uuid4())}, headers=token)
+    assert unknown.status_code == 422, unknown.text
+    too_long = client.post(target, json={"note": "x" * 501}, headers=token)
+    assert too_long.status_code == 422, too_long.text
+    malformed = client.post(target, content=b"not json", headers={**token, "content-type": "application/json"})
+    assert malformed.status_code == 422, malformed.text
+    missing = client.post(DISMISS.format(quarantine=str(uuid.uuid4())), json={}, headers=token)
+    assert missing.status_code == 404, missing.text
+    assert _resolved_state(engine, quarantine_id) == (False, None, None)
 
 
 def test_quarantine_resolve_reruns_the_checks_the_manual_path_must_not_skip(

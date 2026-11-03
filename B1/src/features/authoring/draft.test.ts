@@ -43,6 +43,8 @@ function validForm(overrides: Partial<DraftForm> = {}): DraftForm {
       {
         ...emptyDraftForm().cases[0],
         name: "基本用例",
+        // 分值不再有默认值：一份合法表单必须由教师填一个合法分值。
+        weight: "1",
         stdin: "a\nb\n",
         expectedStdout: "2\n",
         expectedExitCode: "0",
@@ -281,18 +283,42 @@ describe("校验（不通过就不发请求）", () => {
     );
   });
 
-  it("用例名与权重按序号定位问题", () => {
+  it("用例名可以留空：按序号自动命名；权重仍必须大于 0", () => {
     const form = validForm();
     form.cases.push({ ...emptyDraftForm().cases[0], name: "", weight: "0" });
     const keys = issueKeys(form);
-    expect(keys).toContain("authoring.issue.caseName");
+    // 用例名是选填项：缺名字不再是一个"问题"。
+    expect(keys).not.toContain("authoring.issue.caseName");
     expect(keys).toContain("authoring.issue.caseWeight");
+
+    // 留空的名字在提交时变成「用例N」，序号从 1 开始。
+    const input = built(
+      validForm({ cases: [{ ...emptyDraftForm().cases[0], name: "", weight: "1" }] }),
+    );
+    expect(input.cases?.[0].name).toBe("用例1");
   });
 
-  it("stdin 题型三者全空时明确报错（B3 会 422，本地先说清楚）", () => {
-    expect(
-      issueKeys(validForm({ adapterExpectExitCode: "", adapterArgs: "", adapterStdin: "" })),
-    ).toContain("authoring.issue.adapterStdinEmpty");
+  it("期望退出码预置为 0，但分值留空等教师自己填", () => {
+    expect(emptyDraftForm().cases[0].expectedExitCode).toBe("0");
+    expect(emptyDraftForm().adapterExpectExitCode).toBe("0");
+    expect(emptyDraftForm().cases[0].weight).toBe("");
+  });
+
+  it("数值容差只在「数值容差」模式下校验：其他模式里禁用的输入不该挡住保存", () => {
+    // 残留的旧值 + 非数值模式：不发容差字段，也不报错。
+    const input = built(validForm({ comparisonStdout: "exact", numericTolerance: "not-a-number" }));
+    expect(input.adapter.comparison).toEqual({ stdout: "exact" });
+  });
+
+  it("命令行题型的三个全局项可以全部留空：用例自带输入即可评测", () => {
+    const input = built(
+      validForm({ adapterExpectExitCode: "", adapterArgs: "", adapterStdin: "" }),
+    );
+    // 不发这三个字段的任何"占位值"，适配器里只剩类型与比对规则。
+    expect(input.adapter.kind).toBe("stdin");
+    expect(input.adapter).not.toHaveProperty("args");
+    expect(input.adapter).not.toHaveProperty("stdin");
+    expect(input.adapter).not.toHaveProperty("expect_exit_code");
   });
 });
 

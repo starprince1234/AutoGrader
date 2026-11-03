@@ -1,0 +1,14 @@
+[Unit]
+Description=AutoGrader mail intake pull timer
+# 每 2 分钟拉一次。邮件作业的时效性是"当天/一周内"，2 分钟足够；
+# 更频繁不会更快——IMAP 往返本身就是秒级。
+Documentation=file:/opt/autograder/current/MAIN/deploy/autograder-intake.service
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=2min
+AccuracySec=15s
+Unit=autograder-intake.service
+
+[Install]
+WantedBy=timers.target

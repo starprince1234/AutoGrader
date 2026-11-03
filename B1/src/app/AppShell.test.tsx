@@ -7,10 +7,10 @@ import {
   createRootRoute,
   createRoute,
   createRouter,
-  redirect,
 } from "@tanstack/react-router";
 import { AppShell } from "./AppShell";
 import { NotFoundPage } from "./NotFoundPage";
+import { readPortalIntent, rememberPortalIntent } from "../auth/portal";
 import {
   getSessionState,
   installSessionAuth,
@@ -27,7 +27,7 @@ import { UUID_A, UUID_B } from "../testing/contractFixtures";
 import { renderWithProviders } from "../testing/renderWithProviders";
 
 /**
- * 应用外壳的集成测试（P01）：会话恢复门、根入口、角色导航、账户菜单与退出。
+ * 应用外壳的集成测试（P01）：会话恢复门、根入口、角色导航、用户名与直接退出。
  * 这里用真实的 `restoreSession()` 走真实的状态机，只把 HTTP 边界换成桩。
  */
 
@@ -35,12 +35,14 @@ let stub: FetchStub | null = null;
 
 beforeEach(() => {
   installSessionAuth();
+  sessionStorage.clear();
 });
 
 afterEach(() => {
   stub?.restore();
   stub = null;
   resetSessionForTests();
+  sessionStorage.clear();
 });
 
 function tokenFor(roles: string[]): string {
@@ -91,9 +93,10 @@ function renderApp(initialEntry: string) {
   const indexRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/",
-    beforeLoad: () => {
-      throw redirect({ to: "/assignments", replace: true });
-    },
+    validateSearch: (search: Record<string, unknown>) => ({
+      redirect: typeof search.redirect === "string" ? search.redirect : undefined,
+    }),
+    component: () => <Placeholder label="导览页" />,
   });
   const loginRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -158,26 +161,33 @@ function renderApp(initialEntry: string) {
 }
 
 describe("P01 根入口与会话恢复", () => {
-  it("匿名打开受保护深链：先骨架，再到登录页并保留原站内路径", async () => {
+  it("匿名打开受保护深链：先骨架，再回导览页并保留原站内路径", async () => {
     await establishSession("anonymous");
     const router = renderApp("/grades?course_id=abc");
 
     // 受保护内容一帧都不渲染
     expect(screen.queryByText("成绩页")).not.toBeInTheDocument();
 
-    await waitFor(() => expect(router.state.location.pathname).toBe("/login"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/"));
     expect((router.state.location.search as { redirect?: string }).redirect).toBe(
       "/grades?course_id=abc",
     );
   });
 
-  it("匿名打开根路径：进入作业页的登录回跳，而不是欢迎页", async () => {
+  it("匿名打开根路径：显示教师端/学生端导览，不强制去登录", async () => {
     await establishSession("anonymous");
     const router = renderApp("/");
 
-    await waitFor(() => expect(router.state.location.pathname).toBe("/login"));
-    expect((router.state.location.search as { redirect?: string }).redirect).toBe("/assignments");
-    expect(screen.queryByText(/欢迎/)).not.toBeInTheDocument();
+    expect(await screen.findByText("导览页")).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/");
+  });
+
+  it("已登录打开根路径：仍先显示导览，可直接点入口", async () => {
+    await establishSession("student");
+    const router = renderApp("/");
+
+    expect(await screen.findByText("导览页")).toBeInTheDocument();
+    expect(router.state.location.pathname).toBe("/");
   });
 
   it("匿名打开忘记密码页：保留公开页，不被送回登录页", async () => {
@@ -188,15 +198,7 @@ describe("P01 根入口与会话恢复", () => {
     expect(router.state.location.pathname).toBe("/forgot-password");
   });
 
-  it("已登录打开根路径直接进入作业页", async () => {
-    await establishSession("student");
-    const router = renderApp("/");
-
-    await waitFor(() => expect(router.state.location.pathname).toBe("/assignments"));
-    expect(await screen.findByText("作业页")).toBeInTheDocument();
-  });
-
-  it("已登录用户打开登录页会被送回作业页，不出现第二套表单", async () => {
+  it("已登录用户打开旧登录地址也会被送回作业页", async () => {
     await establishSession("student");
     const router = renderApp("/login");
 
@@ -205,7 +207,7 @@ describe("P01 根入口与会话恢复", () => {
   });
 });
 
-describe("角色导航与账户菜单", () => {
+describe("角色导航与右上角账户区", () => {
   it("学生侧栏只有作业与成绩，页头不显示契约版本或欢迎语", async () => {
     await establishSession("student");
     renderApp("/assignments");
@@ -223,49 +225,97 @@ describe("角色导航与账户菜单", () => {
     expect(screen.getByTestId("session-identity")).toHaveTextContent("student1");
   });
 
-  it("教师/管理员侧栏为作业、题库、成绩、课程", async () => {
+  it("教师侧栏为作业、题库、成绩、课程", async () => {
     await establishSession("teacher");
     renderApp("/assignments");
 
     for (const testId of ["nav-assignments", "nav-questions", "nav-grades", "nav-roster"]) {
       expect(await screen.findByTestId(testId)).toBeInTheDocument();
     }
+    expect(screen.queryByTestId("nav-admin-users")).toBeNull();
   });
 
-  it("用户管理只在管理员账户菜单里", async () => {
+  it("管理员的用户管理在侧栏，点击直接进入并保持高亮；右上角没有下拉", async () => {
     const user = userEvent.setup();
     await establishSession("admin");
     const router = renderApp("/assignments");
 
-    await screen.findByTestId("account-menu-button");
-    expect(screen.queryByTestId("nav-admin-users")).toBeNull();
-    await user.click(screen.getByTestId("account-menu-button"));
-    await user.click(screen.getByTestId("account-users-link"));
+    const navItem = await screen.findByTestId("nav-admin-users");
+    expect(navItem).toHaveTextContent("用户管理");
+    expect(navItem).not.toHaveAttribute("aria-current");
+
+    expect(screen.queryByTestId("account-menu-button")).toBeNull();
+    expect(screen.queryByTestId("account-menu")).toBeNull();
+    expect(screen.queryByTestId("account-users-link")).toBeNull();
+    await user.click(navItem);
 
     await waitFor(() => expect(router.state.location.pathname).toBe("/admin/users"));
     expect(await screen.findByText("用户管理页")).toBeInTheDocument();
+    expect(screen.getByTestId("nav-admin-users")).toHaveAttribute("aria-current", "page");
   });
 
-  it("学生账户菜单没有用户管理", async () => {
-    const user = userEvent.setup();
+  it("学生右上角没有用户管理，只有用户名和直接可见的退出按钮", async () => {
     await establishSession("student");
     renderApp("/assignments");
 
-    await user.click(await screen.findByTestId("account-menu-button"));
+    expect(await screen.findByTestId("session-identity")).toHaveTextContent("student1");
     expect(screen.queryByTestId("account-users-link")).toBeNull();
+    expect(screen.queryByTestId("account-menu-button")).toBeNull();
+    expect(screen.queryByTestId("account-menu")).toBeNull();
     expect(screen.getByTestId("account-logout")).toBeInTheDocument();
   });
 
-  it("退出登录清空会话并回到干净的登录页（不保留 redirect）", async () => {
+  it("学生通过教师端入口登录回来时被拦下，不渲染教师视图", async () => {
+    await establishSession("student");
+    rememberPortalIntent("teacher", "/assignments");
+    renderApp("/assignments");
+
+    const mismatch = await screen.findByTestId("portal-mismatch");
+    expect(mismatch).toHaveTextContent("教师端");
+    expect(screen.queryByText("作业页")).toBeNull();
+    // 意图保留：刷新同一路径仍然会被拦下，不会因为刷新就进入错误的一侧。
+    expect(readPortalIntent()).toMatchObject({ portal: "teacher", path: "/assignments" });
+  });
+
+  it("教师通过教师端入口直接进入，并清除一次性意图", async () => {
+    await establishSession("teacher");
+    rememberPortalIntent("teacher", "/assignments");
+    renderApp("/assignments");
+
+    expect(await screen.findByText("作业页")).toBeInTheDocument();
+    expect(readPortalIntent()).toBeNull();
+  });
+
+  it("学生通过学生端入口直接进入", async () => {
+    await establishSession("student");
+    rememberPortalIntent("student", "/grades");
+    renderApp("/grades");
+
+    expect(await screen.findByText("成绩页")).toBeInTheDocument();
+    expect(readPortalIntent()).toBeNull();
+  });
+
+  it("入口端不匹配时可返回导览页重新选择", async () => {
+    const user = userEvent.setup();
+    await establishSession("student");
+    rememberPortalIntent("teacher", "/assignments");
+    const router = renderApp("/assignments");
+
+    await screen.findByTestId("portal-mismatch");
+    await user.click(screen.getByTestId("portal-mismatch-back"));
+
+    await waitFor(() => expect(router.state.location.pathname).toBe("/"));
+  });
+
+  it("退出登录清空会话并回到干净的导览页（不保留 redirect）", async () => {
     const user = userEvent.setup();
     await establishSession("student");
     const router = renderApp("/grades");
 
-    await screen.findByTestId("account-menu-button");
-    await user.click(screen.getByTestId("account-menu-button"));
+    await screen.findByTestId("session-identity");
     await user.click(screen.getByTestId("account-logout"));
 
-    await waitFor(() => expect(router.state.location.pathname).toBe("/login"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/"));
     expect((router.state.location.search as { redirect?: string }).redirect).toBeUndefined();
     expect(getSessionState().status).toBe("anonymous");
     const logoutCalls = stub?.requests.filter(
@@ -287,6 +337,22 @@ describe("角色导航与账户菜单", () => {
     await user.click(screen.getByTestId("drawer-nav-assignments"));
 
     await waitFor(() => expect(router.state.location.pathname).toBe("/assignments"));
+    await waitFor(() => expect(screen.queryByTestId("nav-drawer")).toBeNull());
+  });
+
+  it("管理员在小屏抽屉里也能进入用户管理", async () => {
+    const user = userEvent.setup();
+    await establishSession("admin");
+    const router = renderApp("/grades");
+
+    await user.click(await screen.findByTestId("nav-drawer-open"));
+    const drawer = await screen.findByTestId("nav-drawer");
+    expect(within(drawer).getByRole("link", { name: "用户管理" })).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("drawer-nav-admin-users"));
+
+    await waitFor(() => expect(router.state.location.pathname).toBe("/admin/users"));
+    expect(await screen.findByText("用户管理页")).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByTestId("nav-drawer")).toBeNull());
   });
 });

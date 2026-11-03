@@ -66,7 +66,7 @@ export function problem(overrides?: Partial<ProblemDetails>): ProblemDetails {
 }
 
 export function courseSummary(overrides?: Partial<CoursePublic>): CoursePublic {
-  return { course_id: UUID_A, course_code: "OS-2026", title: "操作系统", ...overrides };
+  return { course_id: UUID_A, course_code: "OS-2026", title: "操作系统", updated_at: "2026-10-01T00:00:00.000Z", section_count: 0, ...overrides };
 }
 
 export function coursePage(courses: CoursePublic[], nextCursor: string | null = null) {
@@ -697,6 +697,10 @@ export function intakeQuarantineView(
     // 需要未关联行（只对管理员可见）时显式传 `scope_course_id: null, scope_section_id: null`。
     scope_course_id: UUID_A,
     scope_section_id: UUID_B,
+    subject: "作业一提交",
+    resolution: null,
+    resolved_at: null,
+    resolved_by: null,
     ...overrides,
   } as IntakeQuarantineView;
 }

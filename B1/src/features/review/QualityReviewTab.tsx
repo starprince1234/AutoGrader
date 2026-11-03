@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { t } from "../../i18n";
 import { isApiError } from "../../api/problem";
 import type { EvaluationQualitySummary } from "../../api/types";
-import { loadedCourses, useCourses } from "../../api/directory";
+import { courseLabel as formatCourseLabel, loadedCourses, useCourses } from "../../api/directory";
 import { useSession } from "../../auth/sessionContext";
 import {
   Banner,
@@ -255,7 +255,12 @@ export function QualityReviewTab({
   }, [filter.from, filter.to]);
 
   const courses = useCourses();
-  const courseOptions = loadedCourses(courses.data?.pages);
+  const isAdmin = session.rolesKnown && session.roles.includes("admin");
+  // 与邮件标签同一口径：下拉只展示令牌作用域覆盖的课程；服务端仍会拒绝越权版本。
+  const scopeCourseIds = new Set(session.scope.map((entry) => entry.course_id));
+  const courseOptions = loadedCourses(courses.data?.pages).filter(
+    (course) => isAdmin || scopeCourseIds.has(course.course_id),
+  );
   const versionOptions = useVersionOptions(courseId === "" ? null : courseId);
 
   const invalidVersion = filter.questionVersionId !== null && !isUuid(filter.questionVersionId);
@@ -335,7 +340,7 @@ export function QualityReviewTab({
                 <option value="">{t("common.selectPrompt")}</option>
                 {courseOptions.map((course) => (
                   <option key={course.course_id} value={course.course_id}>
-                    {course.course_code} · {course.title}
+                    {formatCourseLabel(course)}
                   </option>
                 ))}
               </select>
