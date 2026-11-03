@@ -27,7 +27,6 @@ export const messages = {
     "nav.returningToAssignments": "正在返回作业…",
     "nav.roleUnknown": "角色未知",
     "nav.accountLabel": "账户",
-    "nav.account": "账户菜单",
 
     // ---------------------------------------------------------------- 导览页（教师端 / 学生端）
     "landing.signedIn": "已登录：{name} · {roles}",
@@ -57,6 +56,9 @@ export const messages = {
     "landing.student.assignmentsHint": "查看作业、进入作答与提交",
     "landing.student.grades": "我的成绩",
     "landing.student.gradesHint": "查看成绩与评测证据",
+    "landing.teacherLoginTitle": "教师端登录",
+    "landing.studentLoginTitle": "学生端登录",
+    "landing.loginLead": "登录后直接进入你刚才选择的功能。",
     "landing.unknownRoles": "无法确认当前账号的角色，请退出后重新登录。",
 
     "portal.mismatch.title": "当前账号不能进入该入口",

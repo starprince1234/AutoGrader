@@ -15,7 +15,9 @@
 - 页头登录按钮与品牌文字在同一水平线上（按钮内部垂直居中），不再出现文字偏高。
 - 左栏教师端只列：作业管理、题库、班级成绩、课程与名单、复核工作区；
   右栏学生端只列：我的作业、我的成绩。两栏使用独立的数据数组，学生端不出现题库/课程/复核。
-- 未登录点击入口：记录"入口端 + 目标路径"后进入登录；登录成功回到目标页。
+- 未登录点击入口：**不离开导览页**，在当前页打开登录浮窗；登录成功后直达所点功能。
+- 进入系统后右上角不设下拉菜单：直接显示用户名，旁边就是「退出登录」按钮。
+- 管理员多出的「用户管理」作为普通入口放进侧栏，不再藏在账户菜单里。
 - 最近登录过（refresh cookie 仍有效）：AppShell 恢复会话后，导览页显示已登录身份，
   点击本端入口直接进入，不额外登录。
 - 已登录但角色不匹配：该端入口禁用并说明原因，**不会用教师账号打开学生视图**。
@@ -40,12 +42,15 @@
 
 | 文件 | 作用 |
 |---|---|
-| `src/features/home/LandingPage.tsx` | 两栏导览页、功能列表、登录记忆展示、退出登录 |
+| `src/features/home/LandingPage.tsx` | 两栏导览页、功能列表、登录浮窗、登录记忆展示、退出登录 |
+| `src/features/auth/LoginForm.tsx` | 页面与浮窗共用的登录表单（校验、错误分类、密码可见性） |
 | `src/auth/portal.ts` | 入口端类型、一次性意图存储/读取、角色匹配规则 |
 | `src/app/AppShell.tsx` | `/` 公开导览分支、入口端校验、角色不符说明页、切换账号 |
+| `src/app/AccountMenu.tsx`、`src/app/navigation.ts` | 右上角用户名 + 直接退出；管理员用户管理进入侧栏 |
 | `src/app/router.tsx` | `/` 从重定向改为 `LandingPage` |
-| `src/i18n/index.ts`、`src/styles.css` | 导览页文案与两栏/窄屏样式 |
-| `src/app/AppShell.test.tsx`、`src/features/home/LandingPage.test.tsx`、`src/auth/portal.test.ts` | 根入口、两栏隔离、登录记忆、错端拦截与意图存储测试 |
+| `src/ui/components.tsx` | `Modal` 支持紧凑尺寸与初始焦点 |
+| `src/i18n/index.ts`、`src/styles.css` | 导览页/登录浮窗/账户区文案与样式 |
+| `src/app/AppShell.test.tsx`、`src/features/home/LandingPage.test.tsx`、`src/auth/portal.test.ts`、`src/app/navigation.test.ts` | 根入口、浮窗登录、两栏隔离、登录记忆、错端拦截与意图存储测试 |
 
 ## 真实执行
 
@@ -53,18 +58,19 @@
 |---|---|
 | `node node_modules/typescript/bin/tsc -b`（B1） | 通过 |
 | `node node_modules/eslint/bin/eslint.js . --max-warnings 0`（B1） | 通过（0 error / 0 warning） |
-| `node node_modules/vitest/vitest.mjs run`（B1 全量） | **48 个测试文件 / 412 个用例全部通过**（exit 0） |
+| `node node_modules/vitest/vitest.mjs run`（B1 全量） | **51 个测试文件 / 452 个用例全部通过**（exit 0；含上游合入用例） |
 | `node node_modules/vite/bin/vite.js build`（B1） | 通过 |
 | 线上入口复核（提交 `9c3e14a`） | `https://www.91idc.me/app/` HTTP 200，页面引用 `/app/assets/index-DWwU-G25.js` 与 `/app/assets/index-D_UAGaES.css`；bundle 含「教学管理」「学习任务」「当前账号没有教师端权限」与 `portal-mismatch`，**不含**页脚提示文案；DOM 中无 `<footer>`；`https://api.91idc.me/health/ready` 四个模块均 healthy，B4 迁移头 `20261027_0005` |
 
-契约没有变化（纯前端），`contracts.lock` 与后端无需更新。
+契约由上游合并升到 `0.24.0`（含课程/名单、人工评分与用户管理相关接口）；B1 已重新生成
+`src/api/generated/*` 并通过 `api:check`。本功能的浮窗登录与账户区不改变契约。
 
 ## 未验证
 
-- 1440 / 768 / 390 px 的真实浏览器截图、深色模式与触摸操作未验收。
-- 未使用真实教师/学生账号走"导览 → 登录 → 回目标页"的完整线上闭环；该路径由
-  LandingPage + AppShell + LoginPage 的集成测试组合覆盖。线上只确认了构建产物包含导览页，
-  未做真实账号的浏览器点击复核。
+- 1440 px 的登录浮窗与页头已用本地构建截图复核；768 / 390 px、深色模式与触摸操作未验收。
+- 未使用真实教师/学生账号走"导览 → 浮窗登录 → 回目标页"的完整线上闭环；该路径由
+  LandingPage + AppShell + LoginForm 的集成测试组合覆盖。线上只确认了构建产物，未做真实账号的
+  浏览器点击复核。
 - 未对生产部署后的导览页做视觉复核（部署结果以推送后的 Vercel 状态为准）。
 
 ## 回滚

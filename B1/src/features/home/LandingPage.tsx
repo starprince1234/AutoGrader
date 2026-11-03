@@ -1,11 +1,15 @@
 import { useEffect, useState } from "react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { t } from "../../i18n";
 import { useSession } from "../../auth/sessionContext";
 import { signOut } from "../../auth/sessionStore";
 import { clearPortalIntent, portalAllows, rememberPortalIntent, type Portal } from "../../auth/portal";
+import { Modal } from "../../ui/components";
+import { LoginForm } from "../auth/LoginForm";
 
 type LandingTarget = "/assignments" | "/questions" | "/grades" | "/roster" | "/review";
+
+type LoginIntent = { portal: Portal; target: LandingTarget };
 
 type Feature = {
   to: LandingTarget;
@@ -73,7 +77,7 @@ const STUDENT_FEATURES: Feature[] = [
  *
  * 打开网站先看到教师端/学生端两栏；每一栏只列该端的功能，不把教师的功能混进学生端，
  * 反之亦然。点击入口时：
- * - 没有登录：记住"这一端 + 目标页"，去登录；登录成功后直接进入该页；
+ * - 没有登录：在当前页打开登录浮窗，登录成功后直接进入所点功能；
  * - 最近登录过（会话仍有效）：直接进入；
  * - 已登录但角色不匹配：入口禁用并说明，避免用教师账号打开学生视图。
  *
@@ -82,7 +86,9 @@ const STUDENT_FEATURES: Feature[] = [
  */
 export function LandingPage() {
   const session = useSession();
+  const navigate = useNavigate();
   const [signingOut, setSigningOut] = useState(false);
+  const [loginIntent, setLoginIntent] = useState<LoginIntent | null>(null);
   const authenticated = session.status === "authenticated";
   const rolesKnown = session.rolesKnown;
   const teacherAllowed = !authenticated || portalAllows(session, "teacher");
@@ -98,6 +104,21 @@ export function LandingPage() {
     : session.roles.length > 0
       ? session.roles.map((role) => t(`role.${role}`)).join(" / ")
       : t("nav.roleUnknown");
+
+  const openLogin = (portal: Portal, target: LandingTarget) => {
+    rememberPortalIntent(portal, target);
+    setLoginIntent({ portal, target });
+  };
+
+  const closeLogin = () => {
+    clearPortalIntent();
+    setLoginIntent(null);
+  };
+
+  const completeLogin = async (target: string) => {
+    setLoginIntent(null);
+    await navigate({ href: target, replace: true });
+  };
 
   return (
     <div className="landing" data-testid="landing-page">
@@ -153,6 +174,8 @@ export function LandingPage() {
               features={TEACHER_FEATURES}
               portal="teacher"
               allow={teacherAllowed}
+              authenticated={authenticated}
+              onLogin={openLogin}
               testIdPrefix="landing-teacher"
             />
           </nav>
@@ -184,6 +207,8 @@ export function LandingPage() {
               features={STUDENT_FEATURES}
               portal="student"
               allow={studentAllowed}
+              authenticated={authenticated}
+              onLogin={openLogin}
               testIdPrefix="landing-student"
             />
           </nav>
@@ -197,6 +222,27 @@ export function LandingPage() {
           </p>
         </section>
       </main>
+
+      {loginIntent ? (
+        <Modal
+          title={
+            loginIntent.portal === "teacher"
+              ? t("landing.teacherLoginTitle")
+              : t("landing.studentLoginTitle")
+          }
+          onClose={closeLogin}
+          testId="login-dialog"
+          className="modal--login"
+          initialFocus="#login-username"
+        >
+          <p className="login-dialog__lead muted">{t("landing.loginLead")}</p>
+          <LoginForm
+            redirect={loginIntent.target}
+            onSuccess={completeLogin}
+            onNavigateAway={closeLogin}
+          />
+        </Modal>
+      ) : null}
     </div>
   );
 }
@@ -205,11 +251,15 @@ function FeatureList({
   features,
   portal,
   allow,
+  authenticated,
+  onLogin,
   testIdPrefix,
 }: {
   features: Feature[];
   portal: Portal;
   allow: boolean;
+  authenticated: boolean;
+  onLogin: (portal: Portal, target: LandingTarget) => void;
   testIdPrefix: string;
 }) {
   return (
@@ -229,20 +279,7 @@ function FeatureList({
         );
         return (
           <li key={feature.to}>
-            {allow ? (
-              <Link
-                to={feature.to}
-                className="landing__link"
-                data-testid={testId}
-                onClick={() => {
-                  // 总是记录"点了哪一端"：匿名的登录回跳需要它，已登录但会话恰好在跳转前
-                  // 失效的窄窗口也需要它；AppShell 校验后会清除。
-                  rememberPortalIntent(portal, feature.to);
-                }}
-              >
-                {content}
-              </Link>
-            ) : (
+            {!allow ? (
               <span
                 className="landing__link landing__link--disabled"
                 data-testid={testId}
@@ -250,6 +287,29 @@ function FeatureList({
               >
                 {content}
               </span>
+            ) : authenticated ? (
+              <Link
+                to={feature.to}
+                className="landing__link"
+                data-testid={testId}
+                onClick={() => {
+                  // 总是记录"点了哪一端"：已登录但会话恰好在跳转前失效的窄窗口也需要它；
+                  // AppShell 校验后会清除。
+                  rememberPortalIntent(portal, feature.to);
+                }}
+              >
+                {content}
+              </Link>
+            ) : (
+              <button
+                type="button"
+                className="landing__link landing__link--action"
+                data-testid={testId}
+                aria-haspopup="dialog"
+                onClick={() => onLogin(portal, feature.to)}
+              >
+                {content}
+              </button>
             )}
           </li>
         );

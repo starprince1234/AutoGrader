@@ -483,11 +483,16 @@ export function Modal({
   onClose,
   children,
   testId,
+  className,
+  initialFocus,
 }: {
   title: ReactNode;
   onClose: () => void;
   children: ReactNode;
   testId?: string;
+  className?: string;
+  /** 可选的初始焦点选择器；默认把焦点放在弹窗本体。 */
+  initialFocus?: string;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
@@ -496,11 +501,14 @@ export function Modal({
   useEffect(() => {
     returnFocusRef.current =
       document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    dialogRef.current?.focus();
+    const preferred = initialFocus
+      ? dialogRef.current?.querySelector<HTMLElement>(initialFocus)
+      : null;
+    (preferred ?? dialogRef.current)?.focus();
     return () => {
       returnFocusRef.current?.focus();
     };
-  }, []);
+  }, [initialFocus]);
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if (event.key === "Escape") {
@@ -534,7 +542,7 @@ export function Modal({
   return (
     <div className="modal__backdrop" role="presentation" onKeyDown={handleKeyDown}>
       <div
-        className="modal"
+        className={className ? `modal ${className}` : "modal"}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
