@@ -109,23 +109,39 @@ describe("P01 导览页", () => {
     expect(within(teacher).queryByText("我的作业")).not.toBeInTheDocument();
   });
 
-  it("匿名点击教师端入口：记住入口端并进入目标页，登录可回跳", async () => {
+  it("匿名点击教师端入口：当前页打开登录浮窗，不跳转新页面", async () => {
     const user = userEvent.setup();
     const router = renderLanding();
 
     await screen.findByTestId("landing-page");
     await user.click(screen.getByTestId("landing-teacher-assignments"));
 
-    await waitFor(() => expect(router.state.location.pathname).toBe("/assignments"));
+    const dialog = await screen.findByTestId("login-dialog");
+    expect(within(dialog).getByText("教师端登录")).toBeInTheDocument();
+    expect(within(dialog).getByLabelText("用户名")).toHaveFocus();
+    expect(router.state.location.pathname).toBe("/");
     expect(readPortalIntent()).toEqual({ portal: "teacher", path: "/assignments" });
   });
 
-  it("匿名点击学生端入口：意图是学生端，不会带成教师端", async () => {
+  it("在浮窗里登录为学生会直接进入所点功能，意图仍是学生端", async () => {
     const user = userEvent.setup();
     const router = renderLanding();
+    stub = installFetchStub([
+      {
+        method: "POST",
+        path: "/api/v1/auth/session",
+        respond: () => jsonResponse(sessionCreated({ roles: ["student"] })),
+      },
+    ]);
 
     await screen.findByTestId("landing-page");
     await user.click(screen.getByTestId("landing-student-grades"));
+
+    const dialog = await screen.findByTestId("login-dialog");
+    expect(within(dialog).getByText("学生端登录")).toBeInTheDocument();
+    await user.type(within(dialog).getByLabelText("用户名"), "student1");
+    await user.type(within(dialog).getByLabelText("密码"), "correct-password");
+    await user.click(within(dialog).getByTestId("login-submit"));
 
     await waitFor(() => expect(router.state.location.pathname).toBe("/grades"));
     expect(readPortalIntent()).toEqual({ portal: "student", path: "/grades" });

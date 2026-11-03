@@ -157,8 +157,9 @@ samp {
 /* ---------------------------------------------------------------- 外壳 */
 
 /*
- * 页头只有三样东西：产品名、账户菜单、退出（在账户菜单里）。没有契约版本、
- * 没有课程作用域 UUID、没有欢迎语。业务导航在左侧栏（桌面）或抽屉（小屏）。
+ * 页头只有三样东西：产品名、用户名、退出登录。没有契约版本、
+ * 没有课程作用域 UUID、没有欢迎语，也没有需要悬停才展开的账户菜单。
+ * 业务导航在左侧栏（桌面）或抽屉（小屏）。
  */
 .app-shell {
   min-height: 100vh;
@@ -187,7 +188,7 @@ samp {
   flex: 1;
 }
 
-.app-header__menu {
+.app-header .app-header__menu {
   display: none;
 }
 
@@ -323,37 +324,13 @@ samp {
   background: currentColor;
 }
 
-/* ------------------------------------------------------------ 账户菜单 */
+/* ------------------------------------------------------------ 账户区 */
 
 .account {
-  position: relative;
-}
-
-.account__button {
-  appearance: none;
   display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  justify-content: center;
-  gap: 1px;
-  min-height: 40px;
-  padding: 4px 12px;
-  border: 0;
-  border-radius: var(--radius-pill);
-  background: transparent;
-  color: var(--color-text);
-  font: inherit;
-  text-align: right;
-  cursor: pointer;
-}
-
-.account__button:hover {
-  background: var(--color-surface-2);
-}
-
-.account__button:focus-visible {
-  outline: none;
-  box-shadow: var(--shadow-focus);
+  align-items: center;
+  gap: var(--space-3);
+  min-width: 0;
 }
 
 .account__name {
@@ -363,80 +340,12 @@ samp {
   white-space: nowrap;
   font-size: 14px;
   font-weight: 600;
-  line-height: 1.2;
 }
 
-.account__role {
-  font-size: 11.5px;
-  line-height: 1.2;
-  color: var(--color-text-faint);
-}
-
-.account__menu {
-  position: absolute;
-  top: calc(100% + 8px);
-  right: 0;
-  z-index: 30;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 208px;
-  padding: 6px;
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-md);
-  box-shadow: var(--shadow-raised);
-}
-
-.account__identity {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 8px 10px 10px;
-  margin-bottom: 4px;
-  border-bottom: 1px solid var(--color-border);
-}
-
-.account__identity-name {
-  font-size: 13.5px;
-  font-weight: 600;
-}
-
-.account__identity-role {
-  font-size: 12px;
-  color: var(--color-text-muted);
-}
-
-.account__item {
-  appearance: none;
-  display: flex;
-  align-items: center;
-  min-height: 36px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 6px;
-  background: transparent;
-  color: var(--color-text);
-  font: inherit;
-  font-size: 14px;
-  text-align: left;
-  text-decoration: none;
-  cursor: pointer;
-}
-
-.account__item:hover:not(:disabled) {
-  background: var(--color-surface-2);
-  opacity: 1;
-}
-
-.account__item:focus-visible {
-  outline: none;
-  box-shadow: var(--shadow-focus);
-}
-
-.account__item:disabled {
-  color: var(--color-text-faint);
-  cursor: not-allowed;
+.account__logout {
+  height: 34px;
+  padding: 0 14px;
+  font-size: 13px;
 }
 
 /* ---------------------------------------------------------------- 抽屉 */
@@ -1238,6 +1147,10 @@ samp {
   animation: rise 0.24s var(--ease);
 }
 
+.modal:focus {
+  outline: none;
+}
+
 .modal__head {
   display: flex;
   justify-content: space-between;
@@ -1255,6 +1168,16 @@ samp {
 .modal__body {
   padding: var(--space-5);
   overflow: auto;
+}
+
+.modal--login {
+  max-width: 420px;
+}
+
+.login-dialog__lead {
+  margin: 0 0 var(--space-4);
+  font-size: 13px;
+  line-height: 1.5;
 }
 
 @keyframes fade-in {
@@ -1737,6 +1660,15 @@ samp {
   transition: background 0.15s var(--ease), padding 0.15s var(--ease);
 }
 
+.landing__link--action {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
 .landing__link:hover {
   background: var(--color-surface-2);
   opacity: 1;
@@ -1844,7 +1776,7 @@ samp {
     padding: 0 var(--space-4);
   }
 
-  .app-header__menu {
+  .app-header .app-header__menu {
     display: inline-flex;
   }
 
@@ -1863,6 +1795,14 @@ samp {
 
   .account__name {
     max-width: 120px;
+  }
+
+  .account {
+    gap: var(--space-2);
+  }
+
+  .account__logout {
+    padding: 0 10px;
   }
 }
 
@@ -2141,14 +2081,137 @@ samp {
   color: var(--color-danger, #c0392b);
 }
 
+/* ---------------------------------------------------------------- 外壳 */
+
+/*
+ * 页头只有三样东西：产品名、账户菜单、退出（在账户菜单里）。没有契约版本、
+ * 没有课程作用域 UUID、没有欢迎语。业务导航在左侧栏（桌面）或抽屉（小屏）。
+ */
+.app-shell {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--color-bg);
+}
+
+.app-header__menu {
+  display: none;
+}
+
+/* ------------------------------------------------------------ 账户菜单 */
+
+.account {
+  position: relative;
+}
+
+.account__button {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 1px;
+  min-height: 40px;
+  padding: 4px 12px;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  text-align: right;
+  cursor: pointer;
+}
+
+.account__button:hover {
+  background: var(--color-surface-2);
+}
+
+.account__button:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.account__role {
+  font-size: 11.5px;
+  line-height: 1.2;
+  color: var(--color-text-faint);
+}
+
+.account__menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 208px;
+  padding: 6px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-raised);
+}
+
+.account__identity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px 10px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.account__identity-name {
+  font-size: 13.5px;
+  font-weight: 600;
+}
+
+.account__identity-role {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.account__item {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.account__item:hover:not(:disabled) {
+  background: var(--color-surface-2);
+  opacity: 1;
+}
+
+.account__item:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.account__item:disabled {
+  color: var(--color-text-faint);
+  cursor: not-allowed;
+}
+
+.app-header__menu {
+    display: inline-flex;
+  }
+
 /* 危险操作的主按钮：与普通主色按钮区分，读起来是"这个动作会删东西"。 */
 .button--danger {
   background: #c0392b;
   color: #fff;
-}
-
-.button--danger:hover:not(:disabled) {
-  background: #a93226;
 }
 
 .button--danger:disabled {

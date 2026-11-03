@@ -12,8 +12,8 @@
 | 组件/模块 | 实现文件 | 职责 | 依赖 |
 |---|---|---|---|
 | 路由与路由组件 | `src/app/router.tsx`、`src/app/routeComponents.tsx` | 路由表 + 守卫组合（认证 + 角色可见性）；`/` 渲染教师/学生双列导览页；`/login` 的 redirect 由 `safeRedirectTarget` 过滤 | `src/auth/guards.tsx`、`src/auth/redirect.ts` |
-| 导览页 | `src/features/home/LandingPage.tsx`、`src/auth/portal.ts` | 左教师（作业/题库/成绩/课程/复核）、右学生（作业/成绩）各列各自功能，两栏不混；点入口只记 `{portal, path}` 一次性意图；已登录按角色直达、错误一端禁用并说明；匿名先登录再回目标页 | `src/auth/sessionContext`、`src/auth/portal`、`@tanstack/react-router` |
-| 应用外壳 | `src/app/AppShell.tsx`、`src/app/AuthLayout.tsx`、`src/app/AccountMenu.tsx`、`src/app/navigation.ts`、`src/app/contractVersion.ts` | 会话恢复骨架（最近登录用户据此跳过登录）；门户意图校验与不匹配阻断；页头（产品名 + 账户菜单）；232px 角色侧栏与移动抽屉；认证页独立布局；退出清空查询缓存并重置门户状态。契约版本仍由构建期注入，但**不再显示**在页头 | `src/auth/visibility.ts`、`src/auth/portal.ts`、`src/ui/components.tsx`（Drawer） |
+| 导览页 | `src/features/home/LandingPage.tsx`、`src/features/auth/LoginForm.tsx`、`src/auth/portal.ts` | 左教师（作业/题库/成绩/课程/复核）、右学生（作业/成绩）各列各自功能，两栏不混；匿名点入口在当前页打开登录浮窗，成功直达所点功能；已登录按角色直达、错误一端禁用并说明；只记 `{portal, path}` 一次性意图 | `src/auth/sessionContext`、`src/auth/portal`、`src/ui/components.tsx`（Modal）、`@tanstack/react-router` |
+| 应用外壳 | `src/app/AppShell.tsx`、`src/app/AuthLayout.tsx`、`src/app/AccountMenu.tsx`、`src/app/navigation.ts`、`src/app/contractVersion.ts` | 会话恢复骨架（最近登录用户据此跳过登录）；门户意图校验与不匹配阻断；页头直接显示用户名和退出按钮（无下拉/悬停菜单）；232px 角色侧栏与移动抽屉（管理员用户管理在侧栏）；认证页独立布局；退出清空查询缓存并重置门户状态。契约版本仍由构建期注入，但**不再显示**在页头 | `src/auth/visibility.ts`、`src/auth/portal.ts`、`src/ui/components.tsx`（Drawer） |
 | 查询客户端与键 | `src/app/queryClient.ts` | 重试策略（4xx 不重试）、统一查询键 | `@tanstack/react-query` |
 | 渲染异常边界 | `src/app/ErrorBoundary.tsx` | 渲染异常上报（带 `request_id`）+ 降级 UI | `src/logging/logger.ts` |
 | API 客户端 | `src/api/client.ts`、`problem.ts` | 契约路径原样请求、`X-Request-ID`、401 刷新重放、ProblemDetails → `ApiError` | 生成类型 |

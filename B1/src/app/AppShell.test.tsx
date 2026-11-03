@@ -27,7 +27,7 @@ import { UUID_A, UUID_B } from "../testing/contractFixtures";
 import { renderWithProviders } from "../testing/renderWithProviders";
 
 /**
- * 应用外壳的集成测试（P01）：会话恢复门、根入口、角色导航、账户菜单与退出。
+ * 应用外壳的集成测试（P01）：会话恢复门、根入口、角色导航、用户名与直接退出。
  * 这里用真实的 `restoreSession()` 走真实的状态机，只把 HTTP 边界换成桩。
  */
 
@@ -204,7 +204,7 @@ describe("P01 根入口与会话恢复", () => {
   });
 });
 
-describe("角色导航与账户菜单", () => {
+describe("角色导航与右上角账户区", () => {
   it("学生侧栏只有作业与成绩，页头不显示契约版本或欢迎语", async () => {
     await establishSession("student");
     renderApp("/assignments");
@@ -232,7 +232,7 @@ describe("角色导航与账户菜单", () => {
     expect(screen.queryByTestId("nav-admin-users")).toBeNull();
   });
 
-  it("用户管理只在管理员侧栏可进入，且进入后保持高亮；账户菜单不再有该入口", async () => {
+  it("管理员的用户管理在侧栏，点击直接进入并保持高亮；右上角没有下拉", async () => {
     const user = userEvent.setup();
     await establishSession("admin");
     const router = renderApp("/assignments");
@@ -241,16 +241,9 @@ describe("角色导航与账户菜单", () => {
     expect(navItem).toHaveTextContent("用户管理");
     expect(navItem).not.toHaveAttribute("aria-current");
 
-    await user.click(screen.getByTestId("account-menu-button"));
-    const menu = await screen.findByTestId("account-menu");
-    // 下拉菜单只剩身份（admin / 管理员）与退出登录。
-    expect(within(menu).getByText("admin1")).toBeInTheDocument();
-    expect(within(menu).getByText("管理员")).toBeInTheDocument();
-    expect(within(menu).getByTestId("account-logout")).toBeInTheDocument();
-    expect(within(menu).queryByText("用户管理")).toBeNull();
+    expect(screen.queryByTestId("account-menu-button")).toBeNull();
+    expect(screen.queryByTestId("account-menu")).toBeNull();
     expect(screen.queryByTestId("account-users-link")).toBeNull();
-    await user.click(screen.getByTestId("account-menu-button"));
-
     await user.click(navItem);
 
     await waitFor(() => expect(router.state.location.pathname).toBe("/admin/users"));
@@ -258,16 +251,14 @@ describe("角色导航与账户菜单", () => {
     expect(screen.getByTestId("nav-admin-users")).toHaveAttribute("aria-current", "page");
   });
 
-  it("学生账户菜单只有身份与退出登录", async () => {
-    const user = userEvent.setup();
+  it("学生右上角没有用户管理，只有用户名和直接可见的退出按钮", async () => {
     await establishSession("student");
     renderApp("/assignments");
 
-    await user.click(await screen.findByTestId("account-menu-button"));
-    const menu = await screen.findByTestId("account-menu");
-    expect(within(menu).getByText("student1")).toBeInTheDocument();
-    expect(within(menu).queryByText("用户管理")).toBeNull();
+    expect(await screen.findByTestId("session-identity")).toHaveTextContent("student1");
     expect(screen.queryByTestId("account-users-link")).toBeNull();
+    expect(screen.queryByTestId("account-menu-button")).toBeNull();
+    expect(screen.queryByTestId("account-menu")).toBeNull();
     expect(screen.getByTestId("account-logout")).toBeInTheDocument();
   });
 
@@ -318,8 +309,7 @@ describe("角色导航与账户菜单", () => {
     await establishSession("student");
     const router = renderApp("/grades");
 
-    await screen.findByTestId("account-menu-button");
-    await user.click(screen.getByTestId("account-menu-button"));
+    await screen.findByTestId("session-identity");
     await user.click(screen.getByTestId("account-logout"));
 
     await waitFor(() => expect(router.state.location.pathname).toBe("/login"));
