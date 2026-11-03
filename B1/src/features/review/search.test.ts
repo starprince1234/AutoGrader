@@ -60,6 +60,7 @@ describe("复核工作区的 URL 状态", () => {
       courseId: UUID_A,
       sectionId: UUID_B,
       resolved: false,
+      held: false,
       reasonCode: "ambiguous_match",
     });
     expect(next).toEqual({
@@ -67,6 +68,7 @@ describe("复核工作区的 URL 状态", () => {
       course_id: UUID_A,
       section_id: UUID_B,
       resolved: "false",
+      held: "false",
       reason_code: "ambiguous_match",
     });
     expect(next.cursor).toBeUndefined();

@@ -16,6 +16,7 @@ import {
   UUID_RUN,
   gradePage,
   gradeRow,
+  questionPublic,
   questionVersionPublic,
   sessionCreated,
   streamFrame,
@@ -66,6 +67,10 @@ function studentRoutes(events: StubbedRoute["respond"]): StubbedRoute[] {
       path: `/api/v1/question-versions/${VERSION_ID}`,
       respond: () =>
         jsonResponse(questionVersionPublic({ max_files: 2, max_total_bytes: 4096 })),
+    },
+    {
+      path: `/api/v1/questions/${UUID_A}`,
+      respond: () => jsonResponse(questionPublic()),
     },
     {
       method: "POST",
@@ -240,6 +245,11 @@ describe("作答与提交（RQ-B-1-50）", () => {
     renderWithProviders(
       <SubmitPage questionVersionId={VERSION_ID} editorLoader={failingLoader} />,
     );
+
+    // 恢复前先询问：直接覆盖会丢掉学生刚敲进去的内容。
+    const dialog = await screen.findByTestId("restore-draft");
+    expect(dialog).toHaveTextContent("恢复上次未提交代码？");
+    await userEvent.setup().click(screen.getByTestId("restore-draft-confirm"));
 
     expect(await screen.findByTestId("draft-restored")).toHaveTextContent("草稿不是已提交");
     expect(screen.getByTestId("active-file-path")).toHaveValue("draft.py");

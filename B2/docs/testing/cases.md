@@ -387,3 +387,15 @@ PostgreSQL + 真实 Ed25519 验签；隔离记录由**生产写入路径** `inta
 | T-DB-13 | `RQ-B-4-30` / CHG-0014 | 集成 | 真实 PostgreSQL | 迁移 0013 的 upgrade → downgrade -1 → upgrade（三步实测在 B2 测试实例上执行） | 三步都成功；head 上三个新列与两条 CHECK 存在（`information_schema`/`pg_constraint` 实测）、降级后消失；`alembic heads` 只剩一个并与 `module.yaml`/`EXPECTED_SCHEMA_REVISION` 一致 | **存在**（phase-05 的三步实测 + `tests/test_migrations.py` 的既有闸 + `tests/test_storage_cas.py::test_core_metadata_matches_database` 的逐列比对；**未新增 0013 专项用例**：库结构由上述既有闸覆盖，而"新列被端点正确读写"由 T-QUAR-005/007 覆盖） |
 | T-DB-14 | CHG-0012（`timestamptz(3)` 毫秒精度） | 集成 | 真实 PostgreSQL 的 `information_schema` | 枚举库里全部时间戳列，核对 0012 声明的 `MILLISECOND_COLUMNS` 逐一为毫秒精度 | 声明集合与库内实际精度集合**相等**（多列/少列/精度不符都算失败） | **存在**（`test_migrations.py::test_every_timestamp_column_has_millisecond_precision`；**phase-08 修**：原用例 `from alembic.versions import …` 的**路径假设错误**（本仓库 `alembic/` 无 `__init__.py`，`import alembic` 解析到 site-packages ⇒ `ModuleNotFoundError`；**不是收集期错误**，`--collect-only` 得 23 条）；改为用 `importlib.util.spec_from_file_location` **按文件路径**加载 0012，断言语义未放宽） |
 
+## 成员四本批（2026-10，AI-FLOW-01B / CHG-0030）
+
+| ID | 场景 | 证据 |
+|---|---|---|
+| B2-HINT-01 | 输出协议 1–3 条、层级严格递增、扩展字段忽略 | `test_learning_hints_policy.py::test_parses_one_to_three_ordered_steps…` |
+| B2-HINT-02 | 完整程序/分数断言/隐藏字段 → 整组拒绝 | `test_learning_hints_policy.py`（安全闸门 4 例） |
+| B2-HINT-03 | B3 公开上下文只读五个白名单字段、超长截断 | `test_learning_hints_policy.py`（上下文 4 例） |
+| B2-HINT-04 | 表中没有分数/证据列；空状态体不带步骤/provenance | `test_hints_table_has_no_score_or_evidence_columns` 等 |
+| B2-GRADE-01 | 导出经 B4 名单合并姓名/学号 | `test_query_keeps_identity_null_and_export_merges_the_authorized_roster`（DB） |
+| B2-GRADE-02 | 缺身份/未配置目录/无调用者令牌 → 拒绝导出 | 三条 `test_export_…`（DB） |
+| B2-GRADE-03 | `columns` 不能删必需列、未知字段 422 | `test_export_column_selection_keeps_required_columns_and_rejects_unknown` |
+| B2-GRADE-04 | DB 用例与迁移 0016 在本机 skip，需真实 PostgreSQL 重跑 | `pytest -q` 输出 664 passed / 688 skipped |

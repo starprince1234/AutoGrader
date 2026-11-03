@@ -73,6 +73,22 @@ from autograder_b2.evaluation.quality import (
     parse_timestamp,
 )
 from autograder_b2.evaluation.report import for_student, for_teacher
+from autograder_b2.hints import (
+    HintsBudgetExceeded,
+    HintsInfrastructureFailure,
+    HintsInProgress,
+    HintsNotApplicable,
+    HintsNotConfigured,
+    HintsRejectedRun,
+    HintsRunNotCompleted,
+)
+from autograder_b2.hints.store import (
+    not_applicable_body,
+    not_requested_body,
+)
+from autograder_b2.hints.store import (
+    unavailable_body as hints_unavailable_body,
+)
 from autograder_b2.intake.query import SubmissionNotFoundError
 from autograder_b2.logging.logger import log_dependency_unavailable
 from autograder_b2.runtime import B2Runtime
@@ -423,6 +439,175 @@ def build_evaluation_router(runtime: B2Runtime) -> APIRouter:
             status_code=202, content=outcome.record.as_contract(runtime.commentary.disclaimers)
         )
 
+    @router.get("/api/v1/evaluation-runs/{evaluation_run_id}/learning-hints")
+    async def get_learning_hints(evaluation_run_id: str, request: Request) -> Response:
+        """学生读**本人** run 的分层提示（AI-FLOW-01B）。
+
+        只有 run owner 学生可读：教师/助教/管理员在这里一律 403（**刻意没有**教师逐条查看学生
+        提示的接口）。provider 关闭后**已生成的内容仍可读**；从未生成过返回 `not_requested`，
+        没有 provider 且从未生成返回 `unavailable`——三者语义不同，不能混成一个错误。
+        """
+        instance = request.url.path
+        unavailable = runtime.hints_unavailable()
+        if unavailable is not None:
+            return _not_available(instance, "learning hints", unavailable)
+        principal_or_response = _authenticate(runtime, request, instance)
+        if isinstance(principal_or_response, Response):
+            return principal_or_response
+        principal = principal_or_response
+
+        run = _load_run(runtime, evaluation_run_id)
+        if run is None:
+            return _not_found(instance)
+        owner_or_response = _require_run_owner(runtime, principal, run, instance)
+        if isinstance(owner_or_response, Response):
+            return owner_or_response
+
+        assert runtime.hints is not None
+        try:
+            record = runtime.hints.load(run.evaluation_run_id)
+        except SQLAlchemyError as error:
+            log_dependency_unavailable(
+                logger, dependency="database", error=error, stage="learning hints"
+            )
+            runtime.record_failure()
+            return problem_response(SERVICE_UNAVAILABLE, instance)
+        if record is not None:
+            # `ready`/`failed`/`pending` 都是**已存在的事实**：provider 后来被关掉也不影响读取。
+            return JSONResponse(
+                status_code=200,
+                content=record.as_contract(runtime.hints.disclaimers),
+            )
+        if not runtime.hints.configured:
+            return JSONResponse(
+                status_code=200,
+                content=hints_unavailable_body(run.evaluation_run_id, runtime.hints.disclaimers),
+            )
+        return JSONResponse(
+            status_code=200,
+            content=not_requested_body(run.evaluation_run_id, runtime.hints.disclaimers),
+        )
+
+    @router.post("/api/v1/evaluation-runs/{evaluation_run_id}/learning-hints")
+    async def request_learning_hints(evaluation_run_id: str, request: Request) -> Response:
+        """为**本人**已完成的 run 生成分层提示（同步调用；幂等键重放不重复计费）。
+
+        请求体没有模型参数、没有题目内容、没有 student_id：provider/model 来自部署配置，
+        题目上下文由 B2 用 `run.question_version_id` 从 B3 读取，归属由 submission 的 owner 判定。
+        """
+        instance = request.url.path
+        unavailable = runtime.hints_unavailable()
+        if unavailable is not None:
+            return _not_available(instance, "learning hints", unavailable)
+        principal_or_response = _authenticate(runtime, request, instance)
+        if isinstance(principal_or_response, Response):
+            return principal_or_response
+        principal = principal_or_response
+
+        idempotency_key = (request.headers.get("idempotency-key") or "").strip()
+        if not idempotency_key:
+            return problem_response(
+                Problem(
+                    422,
+                    "unprocessable-entity",
+                    "Unprocessable Entity",
+                    "Idempotency-Key is required: a replay of the same intent must not call the"
+                    " model twice",
+                ),
+                instance,
+            )
+        if len(idempotency_key) > 200:
+            return problem_response(
+                Problem(
+                    422,
+                    "unprocessable-entity",
+                    "Unprocessable Entity",
+                    "Idempotency-Key must be at most 200 characters",
+                ),
+                instance,
+            )
+
+        run = _load_run(runtime, evaluation_run_id)
+        if run is None:
+            return _not_found(instance)
+        owner_or_response = _require_run_owner(runtime, principal, run, instance)
+        if isinstance(owner_or_response, Response):
+            return owner_or_response
+
+        assert runtime.hints is not None
+        if not runtime.hints.configured:
+            return problem_response(
+                Problem(
+                    503,
+                    "service-unavailable",
+                    "Service Unavailable",
+                    f"learning hints are not available: {runtime.hints.not_configured_reason}",
+                ),
+                instance,
+            )
+        try:
+            outcome = runtime.hints.generate(
+                run=run,
+                student_id=principal.user_id,
+                idempotency_key=idempotency_key,
+                request_id=request.headers.get("x-request-id"),
+            )
+        except HintsRunNotCompleted as error:
+            return problem_response(
+                Problem(409, "conflict", "Conflict", f"learning hints are not available yet: {error}"),
+                instance,
+            )
+        except HintsRejectedRun as error:
+            return problem_response(Problem(409, "conflict", "Conflict", str(error)), instance)
+        except HintsInfrastructureFailure as error:
+            return problem_response(Problem(409, "conflict", "Conflict", str(error)), instance)
+        except HintsInProgress as error:
+            return problem_response(Problem(409, "conflict", "Conflict", str(error)), instance)
+        except HintsBudgetExceeded as error:
+            return problem_response(
+                Problem(429, "too-many-requests", "Too Many Requests", str(error)),
+                instance,
+            )
+        except HintsNotApplicable:
+            # 已完成但没有可讲的失败证据：正常答复（不生成、不落行、不调用模型）。
+            return JSONResponse(
+                status_code=200,
+                content=not_applicable_body(run.evaluation_run_id, runtime.hints.disclaimers),
+            )
+        except HintsNotConfigured as error:  # pragma: no cover - configured 已在上方判定
+            return problem_response(
+                Problem(
+                    503,
+                    "service-unavailable",
+                    "Service Unavailable",
+                    f"learning hints are not available: {error}",
+                ),
+                instance,
+            )
+        except SQLAlchemyError as error:
+            log_dependency_unavailable(
+                logger, dependency="database", error=error, stage="learning hints"
+            )
+            runtime.record_failure()
+            return problem_response(SERVICE_UNAVAILABLE, instance)
+
+        body = outcome.record.as_contract(runtime.hints.disclaimers)
+        if outcome.failure_category == "provider_error":
+            # provider（传输）失败：状态 503 + 可读原因；该行已标 `failed`，GET 能读到真实状态。
+            return problem_response(
+                Problem(
+                    503,
+                    "service-unavailable",
+                    "Service Unavailable",
+                    "learning-hint generation failed: the model provider did not return a usable"
+                    " response",
+                ),
+                instance,
+            )
+        # `ready`，或输出结构/安全闸门判定的 `failed`（200 + failed：这是**生成结果**，
+        # 不是依赖故障；客户端据 status 显示"暂不可用"，不显示半截提示）。
+        return JSONResponse(status_code=200, content=body)
+
     return router
 
 
@@ -545,11 +730,42 @@ def _authorize_run(
     return None
 
 
+def _require_run_owner(
+    runtime: B2Runtime, principal: Principal, run: RunRow, instance: str
+) -> Response | None:
+    """学习提示的**归属**判定：只有 run owner 学生本人。
+
+    先走与报告/流相同的三层判定（角色 → 课程作用域 → 对象可见性），再显式比较
+    `submission.student_id == principal.user_id`。两步都要：
+
+    - 只比较 owner 会绕过课程作用域（一个已退课的学生仍可能持有旧 run id）；
+    - 只做作用域判定会让**教师/助教/管理员**也能读写学生提示，而本功能刻意没有教师视图。
+
+    管理员在这里**同样被拒绝**：提示是学生的学习辅助，不是需要排障的权威数据（分数与报告才是）。
+    """
+    query = runtime.intake.query
+    assert query is not None
+    try:
+        submission = query.get(run.submission_id, principal=principal)
+    except SubmissionNotFoundError:
+        return _not_found(instance)
+    except AuthorizationError:
+        return problem_response(FORBIDDEN, instance)
+    except SQLAlchemyError as error:
+        log_dependency_unavailable(
+            logger, dependency="database", error=error, stage="learning hints"
+        )
+        runtime.record_failure()
+        return problem_response(SERVICE_UNAVAILABLE, instance)
+    if submission.student_id != principal.user_id:
+        # 不区分"别人的 run"与"不存在"：调用方已经持有 run id，把 404 当答案只会让人继续猜。
+        return problem_response(FORBIDDEN, instance)
+    return None
+
+
 def _may_read_teacher_view(principal: Principal) -> bool:
     """教师视图的资格：管理员，或持有教师/助教角色（课程作用域已由 `_authorize_run` 校验）。"""
     return principal.is_admin or bool(set(principal.roles) & set(_TEACHER_VIEW_ROLES))
-
-
 def _host_roots(runtime: B2Runtime) -> tuple[str, ...]:
     """证据包脱敏要剔除的**宿主根**（部署事实，来自配置而不是猜测）。
 

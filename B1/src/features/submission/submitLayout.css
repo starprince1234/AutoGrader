@@ -1,0 +1,27 @@
+/* 作答页的双栏布局（页面私有，不新增全局 token；颜色/间距仍来自 styles.css 的变量与刻度）。 */
+.submit-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 42fr) minmax(0, 58fr);
+  gap: 16px;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .submit-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.submit-stem {
+  max-height: 72vh;
+  overflow: auto;
+}
+
+.submit-editor {
+  min-height: 420px;
+}
+
+.submit-stem img {
+  max-width: 100%;
+  height: auto;
+}

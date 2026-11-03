@@ -28,12 +28,13 @@ export type AssignmentListPage = { items: AssignmentPublic[]; nextCursor: string
 
 export type AssignmentFilter = { courseId: string | null; sectionId: string | null };
 
-export function useAssignmentList(filter: AssignmentFilter) {
+export function useAssignmentList(filter: AssignmentFilter, options?: { enabled?: boolean }) {
   return useInfiniteQuery({
     queryKey: queryKeys.assignments({
       course_id: filter.courseId ?? undefined,
       section_id: filter.sectionId ?? undefined,
     }),
+    enabled: options?.enabled ?? true,
     initialPageParam: null as string | null,
     queryFn: async ({ pageParam }): Promise<AssignmentListPage> => {
       const page = await apiRequest<AssignmentPage>("/api/v1/assignments", {
@@ -65,7 +66,10 @@ export function loadedAssignments(
  * `truncated` 单独暴露：到达 `MAX_AUTO_PAGES` 是**永久停止**，调用方必须显示"被截断"，
  * 不能对它渲染"加载中"（那个 spinner 永远不会消失）。
  */
-export function useAllAssignments(filter: AssignmentFilter): {
+export function useAllAssignments(
+  filter: AssignmentFilter,
+  options?: { enabled?: boolean },
+): {
   assignments: AssignmentPublic[];
   isPending: boolean;
   isError: boolean;
@@ -75,7 +79,7 @@ export function useAllAssignments(filter: AssignmentFilter): {
   /** 到达自动翻页上限而永久停止。 */
   truncated: boolean;
 } {
-  const query = useAssignmentList(filter);
+  const query = useAssignmentList(filter, options);
   const { complete, capped } = useLoadAllPages({
     hasNextPage: query.hasNextPage,
     isFetchingNextPage: query.isFetchingNextPage,

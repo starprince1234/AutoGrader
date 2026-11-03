@@ -9,11 +9,13 @@ B1 是 AutoGrader 的**静态 Web 客户端**（TypeScript + React 19 + Vite 7�
 > 形态与字体层级、动效一并调整；浅色为主、深色跟随系统，渐变只用于顶部光晕、主按钮纵向微渐变
 > 与面板顶边发丝。状态语义在重写中逐条保留：`null` 仍是「未测量」而不是 0 分，AI 参考分仍比
 > 权威分弱，`idle` 承载「不可用/未完成」而不是错误色。验证：ESLint、`tsc -b`、
-> Vitest（**51 文件 / 456 用例**）、`vite build` 实跑通过；真实构建产物经无头 Chromium 实拍
+> Vitest（合并取远端后 **54 文件 / 475 用例**）、`vite build` 实跑通过；真实构建产物经无头 Chromium 实拍
 > 浅/深两套（导览页、登录浮窗、组件总览，见 `docs/design/screenshots/`），**登录后的真实业务页
-> 因本机没有后端未截**。`api:check` 本轮**失败**：`src/api/generated/**` 与 `MAIN/contracts`
-> 漂移（既有状态，本轮未触碰生成类型与契约）。详见
+> 因本机没有后端未截**。`api:check` 仍**失败**：拉取后契约锁已是 `0.25.0`，而
+> `src/api/generated/**` 尚未重新生成（本轮未擅自改动生成物）。详见
 > [`phase-10-linear-design-system.md`](docs/phases/active/phase-10-linear-design-system.md)。
+> 同批并行的 P10/P11 见
+> [`phase-09-submission-and-grades.md`](docs/phases/active/phase-09-submission-and-grades.md)。
 > 上一批为**导览页与登录记忆**——
 > 根路径 `/` 不再直接跳作业页，改为**双列导览页**：左列教师入口（作业、题库、成绩、课程、复核），
 > 右列学生入口（作业、成绩），两端功能各归各列。点入口后：已登录用户按角色直达；**最近登录用户

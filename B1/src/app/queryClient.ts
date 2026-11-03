@@ -87,6 +87,13 @@ export const queryKeys = {
   /** 申诉证据包。`view` 进键：学生视图与教师视图是两份不同的内容。 */
   appealPack: (runId: string, view: string) => ["appeal-pack", runId, view] as const,
   /**
+   * 学生分层学习提示（AI-FLOW-01B）。按 run 取，**不带 view**：契约没有教师视图，
+   * 这条路径只对 run owner 学生开放。
+   */
+  learningHints: (runId: string) => ["learning-hints", runId] as const,
+  /** 课序名单（成绩页身份关联用）。与 `enrollments` 分开：那个是分页列表，这里是一次取完的映射。 */
+  gradeRoster: (sectionId: string) => ["grade-roster", sectionId] as const,
+  /**
    * AI 草稿生成（AI-FLOW-01A）。按课程进键：provider 状态与请求预算都是部署配置的结果，
    * 而"另一门课的剩余次数"对当前页面没有意义。
    */

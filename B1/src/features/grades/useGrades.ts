@@ -12,6 +12,11 @@ export type GradeFilter = {
   courseId: string | null;
   sectionId: string | null;
   questionVersionId: string | null;
+  /** UTC RFC 3339（页面把本地输入转成它）；`null` = 不限制。 */
+  fromUtc?: string | null;
+  toUtc?: string | null;
+  /** P10 → P11 深链：只看这一次运行对应的提交。授权作用域仍由服务端判定。 */
+  evaluationRunId?: string | null;
 };
 
 /** 契约的 `Limit` 上限（`common.yaml`）。一页拿满，减少翻页次数。 */
@@ -27,14 +32,17 @@ export type GradeListPage = { items: GradeRow[]; nextCursor: string | null };
  * `next_cursor`，由页面提供"已加载 N 行 / 加载更多 / 已到末页"。
  * 汇总口径仍只覆盖**已加载行**并如实标注（契约没有汇总端点，缺口第 4 条）。
  */
-export function useGrades(filter: GradeFilter) {
+export function useGrades(filter: GradeFilter, options?: { enabled?: boolean }) {
   return useInfiniteQuery({
     queryKey: queryKeys.grades({
       course_id: filter.courseId ?? undefined,
       section_id: filter.sectionId ?? undefined,
       question_version_id: filter.questionVersionId ?? undefined,
+      from: filter.fromUtc ?? undefined,
+      to: filter.toUtc ?? undefined,
+      evaluation_run_id: filter.evaluationRunId ?? undefined,
     }),
-    enabled: Boolean(filter.courseId),
+    enabled: Boolean(filter.courseId) && (options?.enabled ?? true),
     initialPageParam: null as string | null,
     queryFn: async ({ pageParam }): Promise<GradeListPage> => {
       const page = await apiRequest<GradePage>("/api/v1/grades", {
@@ -42,6 +50,9 @@ export function useGrades(filter: GradeFilter) {
           course_id: filter.courseId as string,
           section_id: filter.sectionId ?? undefined,
           question_version_id: filter.questionVersionId ?? undefined,
+          from: filter.fromUtc ?? undefined,
+          to: filter.toUtc ?? undefined,
+          evaluation_run_id: filter.evaluationRunId ?? undefined,
           limit: GRADE_PAGE_SIZE,
           cursor: pageParam ?? undefined,
         },
@@ -78,7 +89,14 @@ export function useAllGrades(courseId: string | null, sectionId: string | null):
   incomplete: boolean;
   truncated: boolean;
 } {
-  const query = useGrades({ courseId, sectionId, questionVersionId: null });
+  const query = useGrades({
+    courseId,
+    sectionId,
+    questionVersionId: null,
+    fromUtc: null,
+    toUtc: null,
+    evaluationRunId: null,
+  });
   const { complete, capped } = useLoadAllPages({
     hasNextPage: query.hasNextPage,
     isFetchingNextPage: query.isFetchingNextPage,
@@ -159,6 +177,7 @@ export function filenameFromDisposition(
 export async function downloadGradesExport(
   filter: GradeFilter,
   format: ExportFormat,
+  columns: readonly string[] = [],
 ): Promise<{ filename: string; requestId: string; bytes: number }> {
   const requestId = newRequestId();
   const { response } = await apiRequestRaw("/api/v1/grades/export", {
@@ -166,6 +185,10 @@ export async function downloadGradesExport(
       course_id: filter.courseId as string,
       section_id: filter.sectionId ?? undefined,
       question_version_id: filter.questionVersionId ?? undefined,
+      from: filter.fromUtc ?? undefined,
+      to: filter.toUtc ?? undefined,
+      evaluation_run_id: filter.evaluationRunId ?? undefined,
+      columns: columns.length === 0 ? undefined : columns.join(","),
       format,
     },
     accept:
@@ -202,6 +225,10 @@ export async function downloadGradesExport(
     course_id: filter.courseId,
     section_id: filter.sectionId,
     question_version_id: filter.questionVersionId,
+    from: filter.fromUtc ?? null,
+    to: filter.toUtc ?? null,
+    evaluation_run_id: filter.evaluationRunId ?? null,
+    columns: [...columns],
   });
 
   return { filename, requestId, bytes: blob.size };

@@ -181,6 +181,68 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/evaluation-runs/{evaluation_run_id}/learning-hints": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                evaluation_run_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Read the caller's layered learning hints for one evaluation run (AI-FLOW-01B)
+         * @description **Owner-only.** These hints belong to the student who owns the submission behind the run;
+         *     teacher and assistant roles are refused (403) — there is deliberately no staff endpoint to
+         *     read an individual student's hints, because hints are a learning aid, not evidence.
+         *
+         *     `status` is one of `not_requested` (provider is configured but nothing was generated for
+         *     this run yet), `ready` (1-3 ordered steps), `failed` (generation was attempted and did not
+         *     produce a safe result), `unavailable` (this deployment configures no model provider and no
+         *     earlier result exists) or `not_applicable` (the run is completed but has no deterministic
+         *     failure evidence to explain). A previously generated result stays readable after the
+         *     provider is switched off: configuration is not a reason to retract content.
+         *
+         *     The response never contains the score, case evidence, `result_digest`, hidden cases,
+         *     reference answers or another student's data. Hints are **not** part of the score track.
+         */
+        get: operations["getLearningHints"];
+        put?: never;
+        /**
+         * Generate (or idempotently replay) layered learning hints for one run (AI-FLOW-01B)
+         * @description **Owner-only and completed-run-only.** The request carries no model parameters, no question
+         *     content and no student id: the provider/model come from deployment configuration, the
+         *     public question context is read server-side from B3 by `run.question_version_id`, and
+         *     ownership is derived from the submission, never from the body.
+         *
+         *     Preconditions, each with a distinct answer:
+         *
+         *     - run not `completed` -> `409` ("评测完成后可生成提示"), and no provider call happens;
+         *     - run rejected by security rules or carrying a `found` security conclusion -> `409`;
+         *       hints must not suggest a workaround;
+         *     - terminal reason is an infrastructure/internal error -> `409`; a system failure must never
+         *       be attributed to the student;
+         *     - no failed case and no blocking static finding -> `200` with `status: not_applicable`
+         *       (no invented failure reason, no model call);
+         *     - deployment budget for this student exhausted -> `429`;
+         *     - provider not configured -> `503` (the caller can still GET the authoritative score and
+         *       report);
+         *     - provider transport failure -> `503` with a Problem Details body; the stored row is
+         *       `failed` and remains readable via GET;
+         *     - output that is structurally invalid or trips the safe-output guard -> `200` with
+         *       `status: failed` (no partial steps are ever returned).
+         *
+         *     Replaying the same `Idempotency-Key` returns the stored result without another model call.
+         *     A run has at most one hint row: a successful result is final for that run, while a `failed`
+         *     row may be retried explicitly (a new submission always creates a new run and its own hints).
+         */
+        post: operations["requestLearningHints"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/intake/quarantines": {
         parameters: {
             query?: never;
@@ -342,6 +404,76 @@ export interface paths {
          *     is silently overwritten.
          */
         post: operations["dismissIntakeQuarantine"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/intake/quarantines/{intake_quarantine_id}/hold": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                intake_quarantine_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Put a quarantined message on hold, or resume it ("暂存")
+         * @description A reviewer can defer a row without deciding it. A held row is **not** resolved: it keeps
+         *     its place in the review flow, can still be completed or dismissed, and can be resumed with
+         *     `held=false`. The hold itself records who and when (`held_at`/`held_by`).
+         *
+         *     Row authorization is identical to the other intake operations: staff only for rows covered
+         *     by their token scope, administrators for any row; a resolved row returns `409`.
+         */
+        post: operations["setIntakeQuarantineHold"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/intake/quarantines/{intake_quarantine_id}/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                intake_quarantine_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Match the quarantined message to a student and create that student's submission
+         * @description "Match user" closes the loop that `resolveIntakeQuarantine` deliberately left open: the
+         *     server re-reads the **original message** from the mailbox position stored on the row
+         *     (`mailbox`/`uidvalidity`/`uid`), re-runs the attachment gates, and persists a normal
+         *     submission for the explicitly chosen `student_id`/`course_id`/`section_id`/
+         *     `question_version_id`. The quarantine row becomes `resolution=completed` and carries the
+         *     new `resolved_submission_id`; `email_checkpoints` moves from `quarantined` to `processed`
+         *     in the same submission transaction.
+         *
+         *     Preconditions and refusals:
+         *
+         *     * the row must be visible and processable under the same row-level scope rules as the
+         *       other intake operations; for a scoped row the chosen course/section must equal the
+         *       record's proven scope (`422` otherwise), and staff must hold the target scope (`403`);
+         *     * a resolved row returns `409`; a row whose message is gone (UIDVALIDITY changed, deleted,
+         *       fetch failed) returns `409` -- the platform does not store attachment bytes, so it cannot
+         *       invent them;
+         *     * the original message must still pass the current attachment gates (`422` otherwise);
+         *     * if email intake is not configured in this deployment the operation returns `503`:
+         *       there is no cached copy to fall back to.
+         *
+         *     The operation writes a normal submission (same persist path as the automatic flow), so
+         *     evaluation/outbox behaviour is exactly that of a submission created at intake time.
+         */
+        post: operations["completeIntakeQuarantine"];
         delete?: never;
         options?: never;
         head?: never;
@@ -827,24 +959,39 @@ export interface components {
              */
             subject: string | null;
             /**
-             * @description The human decision: `attributed` (a student was named), `dismissed` (reviewed and
-             *     closed without attribution), or `null` for rows that are still pending or that were
-             *     resolved before the decision trail existed. `resolved` remains the boolean form so
-             *     older filtered pages keep their meaning.
+             * @description The human decision: `completed` (the original mail was re-read and turned into the
+             *     chosen student's submission), `attributed` (legacy manual attribution that recorded a
+             *     student but did not create a submission), `dismissed` (marked invalid/作废), or `null`
+             *     for rows that are still pending/held or that were resolved before the trail existed.
+             *     `resolved` remains the boolean form so older filtered pages keep their meaning.
              * @enum {string|null}
              */
-            resolution: "attributed" | "dismissed" | null;
+            resolution: "attributed" | "completed" | "dismissed" | null;
             /**
-             * @description When the human decision was recorded (server clock). `null` for pending rows and for
-             *     rows resolved before this field existed.
+             * @description When the human decision was recorded (server clock). `null` for pending/held rows and
+             *     for rows resolved before this field existed.
              */
             resolved_at: components["schemas"]["Timestamp"] | null;
             /**
              * @description The platform user id (`sub` of the access token) that recorded the decision, so the
-             *     audit trail names an actor rather than only a time. `null` for pending rows and for
+             *     audit trail names an actor rather than only a time. `null` for pending/held rows and for
              *     rows resolved before this field existed.
              */
             resolved_by: components["schemas"]["Uuid"] | null;
+            /**
+             * @description The submission created by "match user" (`resolution=completed`). Null for pending/held
+             *     rows, for dismissals and for the legacy `attributed` decision.
+             */
+            resolved_submission_id: components["schemas"]["Uuid"] | null;
+            /**
+             * @description "暂存": reviewed but deliberately deferred. A held row is **not** resolved; it stays
+             *     processable and can be resumed (`held=false`).
+             */
+            held: boolean;
+            /** @description When the row was put on hold; null unless `held=true`. */
+            held_at: components["schemas"]["Timestamp"] | null;
+            /** @description Who put the row on hold; null unless `held=true`. */
+            held_by: components["schemas"]["Uuid"] | null;
         };
         /**
          * @description A movable evidence bundle for one evaluation run (CHG-0014). Self-contained on purpose:
@@ -1113,6 +1260,16 @@ export interface components {
          * @description One grade record. `score` is null while the run is unfinished; the row then
          *     reports its `state` instead, so an incomplete evaluation is never displayed
          *     as a zero.
+         *
+         *     `student_number` / `display_name` stay null on this read path: B2 owns only the
+         *     `b2` schema and must not read B4's tables. The P11 page joins these rows with the
+         *     authorized roster (`GET /sections/{section_id}/enrollments`) by `student_id`, and
+         *     the export path asks B4 through that same authorized interface — neither invents
+         *     a value for a row that is missing from the roster.
+         *
+         *     `security_status` is the three-state conclusion of the run that produced the score
+         *     (`found` / `not_found` / `not_checked`); null means the run never reached the
+         *     security stage. `not_checked` must never be folded into `not_found`.
          */
         GradeRow: {
             submission_id: components["schemas"]["Uuid"];
@@ -1138,6 +1295,57 @@ export interface components {
             score_source?: ("deterministic" | "manual") | null;
             submitted_at?: components["schemas"]["Timestamp"];
             evaluation_run_id?: components["schemas"]["Uuid"] | null;
+            security_status?: ("found" | "not_found" | "not_checked") | null;
+        };
+        /**
+         * @description One step of a layered learning hint. The levels are ordered from the gentlest
+         *     ("what concept is involved") to the most specific ("how to check your own work"), so a
+         *     client can reveal them progressively. Progressive disclosure is a learning-pace control,
+         *     not a security boundary: every returned step has already passed the safe-output guard.
+         */
+        LearningHintStep: {
+            /** @enum {string} */
+            level: "knowledge" | "direction" | "self_check";
+            title: string;
+            /** @description Teaching text. Short pseudocode or a check list is allowed; a complete runnable answer is rejected server-side. */
+            text: string;
+        };
+        /**
+         * @description The student's own layered hints for one `evaluation_run` (AI-FLOW-01B).
+         *
+         *     This shape carries **no** score, no case evidence, no expected output and no
+         *     `advisory_score`: hints are a learning aid and must never become a second grading track.
+         *     `hint_steps` is an ordered list of one to three steps; a useful run may legitimately yield
+         *     fewer than three, and the list is empty exactly when `status` is not `ready`.
+         *
+         *     `provider` / `model` / `prompt_version` are the provenance of a generated result (null when
+         *     nothing was generated); `context_scope` lists the fields the model was allowed to read, so a
+         *     reader can verify that student source and hidden cases were not among them.
+         */
+        LearningHintsResponse: {
+            evaluation_run_id: components["schemas"]["Uuid"];
+            /** @description Stable id of the stored hint row; null when no row exists (`not_requested` / `not_applicable` / `unavailable`). */
+            generation_id?: components["schemas"]["Uuid"] | null;
+            /**
+             * @description `not_requested` = provider available but nothing generated for this run yet.
+             *     `not_applicable` = completed run without deterministic failure evidence to explain.
+             *     `pending` = generation accepted but not finished.
+             *     `ready` = steps are present.
+             *     `failed` = generation was attempted and did not produce a safe, parseable result.
+             *     `unavailable` = no provider is configured (and no earlier result exists).
+             * @enum {string}
+             */
+            status: "not_requested" | "not_applicable" | "pending" | "ready" | "failed" | "unavailable";
+            hint_steps: components["schemas"]["LearningHintStep"][];
+            provider?: string | null;
+            model?: string | null;
+            prompt_version?: string | null;
+            /** @description Evidence/public-context fields the generation was allowed to read. Empty when nothing was generated. */
+            context_scope?: string[];
+            /** @description Redacted category of a failed generation (e.g. provider_error, invalid_model_output, unsafe_output). No model text is stored or returned. */
+            failure_category?: string | null;
+            /** @description Normative labels that must be displayed with the steps: model-generated, not part of the score, no complete answer. */
+            disclaimers: string[];
         };
         file: {
             path: string;
@@ -1455,6 +1663,8 @@ export interface components {
         Traceparent: string;
         /** @description Correlation identifier. Generated at the entry point when absent. */
         RequestId: string;
+        /** @description Alternative to a body-carried idempotency key for create operations. */
+        IdempotencyKey: string;
         Cursor: string;
         Limit: number;
     };
@@ -1662,6 +1872,71 @@ export interface operations {
             503: components["responses"]["ServiceUnavailable"];
         };
     };
+    getLearningHints: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                evaluation_run_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Hints, or an explicit statement of why none are available. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearningHintsResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    requestLearningHints: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Alternative to a body-carried idempotency key for create operations. */
+                "Idempotency-Key"?: components["parameters"]["IdempotencyKey"];
+            };
+            path: {
+                evaluation_run_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Stored result (`ready` / `failed`) or `not_applicable`. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LearningHintsResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["UnprocessableEntity"];
+            /** @description The deployment-configured generation budget for this student is exhausted. */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
     listIntakeQuarantines: {
         parameters: {
             query?: {
@@ -1670,6 +1945,11 @@ export interface operations {
                 course_id?: components["schemas"]["Uuid"];
                 section_id?: components["schemas"]["Uuid"];
                 reason_code?: string;
+                /**
+                 * @description `true` returns only rows the reviewer put on hold ("暂存"), `false` excludes held rows.
+                 *     Omitting it filters neither. Held rows are still unresolved and remain processable.
+                 */
+                held?: boolean;
                 /**
                  * @description `true` returns only processed records (attributed **or** dismissed), `false` only
                  *     unprocessed ones.
@@ -1773,6 +2053,77 @@ export interface operations {
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
             422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    setIntakeQuarantineHold: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                intake_quarantine_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    held: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Hold state updated; the record itself is still unresolved. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntakeQuarantineView"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    completeIntakeQuarantine: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                intake_quarantine_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    student_id: components["schemas"]["Uuid"];
+                    course_id: components["schemas"]["Uuid"];
+                    section_id: components["schemas"]["Uuid"];
+                    question_version_id: components["schemas"]["Uuid"];
+                    note?: string | null;
+                };
+            };
+        };
+        responses: {
+            /** @description Submission created and the record marked completed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntakeQuarantineView"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["UnprocessableEntity"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     verifyReferenceAnswer: {
@@ -2035,6 +2386,12 @@ export interface operations {
                 section_id?: components["schemas"]["Uuid"];
                 question_version_id?: components["schemas"]["Uuid"];
                 student_id?: components["schemas"]["Uuid"];
+                /** @description Inclusive lower bound on the submission time (RFC 3339, UTC). Same semantics as the export filter. */
+                from?: components["schemas"]["Timestamp"];
+                /** @description Inclusive upper bound on the submission time (RFC 3339, UTC). Must not be earlier than `from` (422). */
+                to?: components["schemas"]["Timestamp"];
+                /** @description Narrow the page to the submission that owns this evaluation run. Used by the P10 -> P11 result deep link; the caller's normal course/student scope still applies, so another student's run id yields an empty page rather than a wider read. */
+                evaluation_run_id?: components["schemas"]["Uuid"];
             };
             header?: never;
             path?: never;
@@ -2065,6 +2422,21 @@ export interface operations {
                 section_id?: components["schemas"]["Uuid"];
                 question_version_id?: components["schemas"]["Uuid"];
                 student_id?: components["schemas"]["Uuid"];
+                /** @description Same inclusive lower bound as `listGrades`: the exported rows are exactly the rows the page showed. */
+                from?: components["schemas"]["Timestamp"];
+                /** @description Same inclusive upper bound as `listGrades`. */
+                to?: components["schemas"]["Timestamp"];
+                /** @description Same run filter as `listGrades`. */
+                evaluation_run_id?: components["schemas"]["Uuid"];
+                /**
+                 * @description Comma-separated optional column selection. Unknown names are rejected with 422 rather
+                 *     than ignored. The required columns of RQ-B-1-60 (student number, name, course, section,
+                 *     question version, score, max score, submitted time, evaluation run id) are **always**
+                 *     present and cannot be removed; the file is produced by B2 with B4-supplied names and
+                 *     student numbers, and the export fails rather than emitting a file whose identities are
+                 *     missing.
+                 */
+                columns?: string;
                 format?: "xlsx" | "csv";
             };
             header?: never;

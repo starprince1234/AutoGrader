@@ -1,3 +1,4 @@
+import { Link } from "@tanstack/react-router";
 import { t } from "../../i18n";
 import { PageTitle, Tabs } from "../../ui/components";
 import { MailReviewTab } from "./MailReviewTab";
@@ -29,7 +30,12 @@ export function ReviewPage({
   const tab: ReviewTab = normalizeReviewTab(search.tab);
   return (
     <div className="stack">
-      <PageTitle>{t("review.title")}</PageTitle>
+      <div className="panel__head">
+        <PageTitle>{t("review.title")}</PageTitle>
+        <Link className="button button--ghost" to="/assignments" data-testid="review-back">
+          {t("review.backToAssignments")}
+        </Link>
+      </div>
       <Tabs
         label={t("review.title")}
         testId="review-tabs"

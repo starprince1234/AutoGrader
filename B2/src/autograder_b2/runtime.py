@@ -90,8 +90,10 @@ from autograder_b2.commentary.provider import CommentaryProviderConfig
 from autograder_b2.config import (
     ConfigurationError,
     EvaluationChainNotConfigured,
+    LearningHintsSettings,
     evaluation_chain_settings,
     load_commentary_settings,
+    load_learning_hints_settings,
 )
 from autograder_b2.db.schema import EXPECTED_SCHEMA_REVISION, outbox_events
 from autograder_b2.evaluation import EvaluationOrchestrator, EvaluationOutcome
@@ -100,6 +102,9 @@ from autograder_b2.evaluation.quality import EvaluationQualityService
 from autograder_b2.events.dispatcher import NatsOutboxDispatcher
 from autograder_b2.events.nats import NatsEventBus
 from autograder_b2.grades import GradeQueryService, GradesExportService
+from autograder_b2.grades.identity import HttpEnrollmentDirectory
+from autograder_b2.hints import HintsService
+from autograder_b2.hints.context import DEFAULT_LEARNING_CONTEXT_PATH, B3LearningContextClient
 from autograder_b2.intake.runtime import IntakeRuntime, build_runtime
 from autograder_b2.integration.adapters import (
     B3Endpoint,
@@ -150,6 +155,10 @@ class B2Runtime:
     #: 让教师看不到已有运行的评语。默认 `provider=None`（没有模型服务）。
     commentary: CommentaryService | None = None
     commentary_reason: str | None = None
+    #: 学生分层学习提示（AI-FLOW-01B）：与评语轨**共用** provider 配置，但有自己的表、自己的权限
+    #: 与自己的预算；它只读已落库证据（+可选的 B3 公开题目上下文），不碰分数轨。
+    hints: HintsService | None = None
+    hints_reason: str | None = None
     #: 参考解答验证（`CHG-0019`）：与评测链**共用**取包端点与并发闸门（`ADR-0015`：
     #: 不新增凭据、不新增跨模块机制）。它不读库，因此库结构版本不是它的前置。
     references: ReferenceVerificationService | None = None
@@ -254,6 +263,19 @@ class B2Runtime:
             return self.intake.unavailable_reason or "接收运行时未装配"
         if self.commentary is None:
             return self.commentary_reason or "评语轨未装配"
+        return self.database_reason()
+
+    def hints_unavailable(self) -> str | None:
+        """学习提示路由的 503 原因；`None` = 可用。
+
+        与评语同口径：提示只依赖数据库与认证器。**没有 provider 不是端点不可用**——`GET` 会返回
+        `status: unavailable`，而 `POST` 由服务层以 503 指名"未配置"（与评语轨的 409 不同：
+        提示是学生动作，缺配置时"不可服务"比"冲突"更准确）。
+        """
+        if not self.intake.ready:
+            return self.intake.unavailable_reason or "接收运行时未装配"
+        if self.hints is None:
+            return self.hints_reason or "学习提示轨未装配"
         return self.database_reason()
 
     def references_unavailable(self) -> str | None:
@@ -437,16 +459,82 @@ def _wire_commentary(runtime: B2Runtime, settings_source: Mapping[str, str]) -> 
         engine=engine, provider=provider, not_configured_reason=reason
     )
     runtime.commentary_reason = reason
+    _wire_hints(runtime, settings_source, provider=provider, provider_reason=reason)
+
+
+def _wire_hints(
+    runtime: B2Runtime,
+    settings_source: Mapping[str, str],
+    *,
+    provider,
+    provider_reason: str | None,
+) -> None:
+    """装配学生分层提示（与评语**共用** provider；接上 B3 公开题目上下文）。
+
+    两个"没有就不读"的输入：
+    - 没有 provider ⇒ `HintsService` 存在但 `configured=False`：`GET` 返回 `unavailable`，
+      `POST` 503 并指名缺哪些变量，**没有任何出网调用**；
+    - 没有 B3 基址/服务凭据 ⇒ 不构造 B3 上下文客户端：提示只使用已落库证据，
+      `context_scope` 里如实少一节。B3 的 `learning-context` 视图自契约 `0.18.0` 起存在，
+      默认路径见 `DEFAULT_LEARNING_CONTEXT_PATH`；`B2_LEARNING_CONTEXT_PATH` 只用于覆盖。
+    """
+    engine = runtime.intake.engine
+    if engine is None:
+        return
+    try:
+        hints_settings: LearningHintsSettings = load_learning_hints_settings(settings_source)
+    except ConfigurationError as error:
+        runtime.hints_reason = str(error)
+        return
+
+    context_client: B3LearningContextClient | None = None
+    context_path = hints_settings.context_path or DEFAULT_LEARNING_CONTEXT_PATH
+    settings = runtime.intake.settings
+    b3_base = None if settings is None else settings.b3_base_url
+    b3_auth = None if settings is None else settings.b3_authorization
+    if b3_base and b3_auth:
+        try:
+            context_client = B3LearningContextClient(
+                b3_base,
+                path_template=context_path,
+                authorization=b3_auth,
+            )
+        except ValueError as error:
+            # 非法装配只让"多读的一节"不可用：提示仍可用已落库证据生成。
+            runtime.hints_reason = f"B3 learning-context 未装配：{error}"
+
+    runtime.hints = HintsService(
+        engine=engine,
+        provider=provider,
+        not_configured_reason=provider_reason,
+        settings=hints_settings,
+        context=context_client,
+    )
 
 
 def _wire_database_services(runtime: B2Runtime) -> None:
-    """成绩查询与导出、题目质量汇总（只依赖数据库，与评测链无关）。"""
+    """成绩查询与导出、题目质量汇总（只依赖数据库，与评测链无关）。
+
+    导出额外装配 B4 名单客户端（`B2_B4_BASE_URL`）：它让姓名/学号可以在**不跨 schema**的前提下
+    进入导出文件。未配置或配置非法时导出仍装配（空结果照样能导出表头），但一旦有行就会以
+    `IdentityNotConfigured`（503）拒绝，而不是生成缺身份的"成功"文件。
+    """
     engine = runtime.intake.engine
     if engine is None:
         return
     runtime.grades = GradeQueryService(engine)
-    runtime.exporter = GradesExportService(engine)
     runtime.quality = EvaluationQualityService(engine)
+    directory = None
+    settings = runtime.intake.settings
+    if settings is not None and settings.b4_base_url:
+        try:
+            directory = HttpEnrollmentDirectory(
+                settings.b4_base_url, timeout_seconds=settings.b4_timeout_seconds
+            )
+        except ValueError:
+            # 非法地址在这里收敛成"没有目录"：导出会以 503 拒绝，不会悄悄输出空姓名列。
+            directory = None
+    runtime.exporter = GradesExportService(engine, directory=directory)
 
 
 def _wire_evaluation_chain(runtime: B2Runtime) -> None:

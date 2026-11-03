@@ -78,7 +78,7 @@ import json
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import sqlalchemy as sa
 from sqlalchemy import Connection, Engine
@@ -91,6 +91,11 @@ from autograder_b2.auth.authorization import (
 )
 from autograder_b2.auth.tokens import Principal
 from autograder_b2.db.schema import intake_quarantines
+from autograder_b2.intake.attachments import AttachmentRejected
+from autograder_b2.intake.imap import ImapProtocolError
+
+if TYPE_CHECKING:
+    from autograder_b2.intake.imap import EmailIntakeService
 
 #: 契约 `Limit` 的默认值与边界（`common.yaml`）。
 DEFAULT_LIMIT = 50
@@ -133,6 +138,32 @@ class QuarantineRequestError(ValueError):
     """请求体不合契约（`student_id` 非 UUID、`note` 超长）→ 对外 422。"""
 
 
+class QuarantineEmailUnavailable(RuntimeError):
+    """匹配用户需要回邮箱取原邮件，但本部署没有配置邮件入口 → 对外 503。"""
+
+
+class QuarantineMessageGone(RuntimeError):
+    """原邮件已不在邮箱里（UIDVALIDITY 变化/被删除/取信失败）→ 对外 409。"""
+
+
+class QuarantineContentRejected(ValueError):
+    """原邮件按当前策略仍不能作为提交（附件被拒/报文畸形）→ 对外 422。"""
+
+
+class QuarantineTargetMismatch(ValueError):
+    """选择的课程/课序与记录已证明的 scope 不一致 → 对外 422。"""
+
+
+@dataclass(frozen=True, slots=True)
+class CompletionTarget:
+    """匹配用户时的目标身份（全部由调用方显式选择，不从邮件内容推断）。"""
+
+    student_id: str
+    course_id: str
+    section_id: str
+    question_version_id: str
+
+
 @dataclass(frozen=True, slots=True)
 class IntakeQuarantineView:
     """契约 `IntakeQuarantineView` 的一行（字段以契约为准，**不含**任何邮件正文/附件内容）。
@@ -157,10 +188,17 @@ class IntakeQuarantineView:
     scope_section_id: str | None = None
     #: 邮件主题头（有界、无正文）；历史行为 `None`。
     subject: str | None = None
-    #: 人工处置结果：`attributed`（归属学生）/`dismissed`（驳回）/`None`（未处理或历史遗留）。
+    #: 人工处置结果：`attributed`（旧人工归属）/`completed`（匹配用户并生成提交）/
+    #: `dismissed`（标记作废）/`None`（未处理或历史遗留）。
     resolution: str | None = None
     resolved_at: datetime | None = None
     resolved_by: str | None = None
+    #: 匹配用户后生成的提交；只有 `resolution='completed'` 非空。
+    resolved_submission_id: str | None = None
+    #: 暂存：仍未处理，稍后再决定；与 `resolved` 互斥。
+    held: bool = False
+    held_at: datetime | None = None
+    held_by: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,6 +232,10 @@ def quarantine_view_body(view: IntakeQuarantineView) -> dict[str, Any]:
         "resolution": view.resolution,
         "resolved_at": None if view.resolved_at is None else rfc3339_millis(view.resolved_at),
         "resolved_by": view.resolved_by,
+        "resolved_submission_id": view.resolved_submission_id,
+        "held": view.held,
+        "held_at": None if view.held_at is None else rfc3339_millis(view.held_at),
+        "held_by": view.held_by,
     }
 
 
@@ -220,6 +262,18 @@ def parse_resolved_filter(raw: str | None) -> bool | None:
     if lowered == "false":
         return False
     raise InvalidQuarantineFilterError("resolved must be true or false")
+
+
+def parse_held_filter(raw: str | None) -> bool | None:
+    """解析 `?held=`：`true` 只看暂存，`false` 排除暂存，省略不筛。"""
+    if raw is None or raw == "":
+        return None
+    lowered = raw.strip().lower()
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    raise InvalidQuarantineFilterError("held must be true or false")
 
 
 def parse_limit(raw: str | None) -> int:
@@ -345,6 +399,33 @@ def validate_resolution_request(*, student_id: object, note: object) -> tuple[st
     return canonical_student, validate_resolution_note(note)
 
 
+def validate_completion_request(
+    *,
+    student_id: object,
+    course_id: object,
+    section_id: object,
+    question_version_id: object,
+    note: object,
+) -> tuple[CompletionTarget, str | None]:
+    """匹配用户的请求体：四个 UUID + 可选备注；任何非法值都是 422。"""
+
+    def canonical(value: object, field: str) -> str:
+        try:
+            return str(uuid.UUID(str(value)))
+        except (AttributeError, TypeError, ValueError) as error:
+            raise QuarantineRequestError(f"{field} must be a UUID") from error
+
+    return (
+        CompletionTarget(
+            student_id=canonical(student_id, "student_id"),
+            course_id=canonical(course_id, "course_id"),
+            section_id=canonical(section_id, "section_id"),
+            question_version_id=canonical(question_version_id, "question_version_id"),
+        ),
+        validate_resolution_note(note),
+    )
+
+
 class IntakeQuarantineService:
     """隔离记录的读取与人工归属（`listIntakeQuarantines` / `resolveIntakeQuarantine` 的服务层）。
 
@@ -352,8 +433,14 @@ class IntakeQuarantineService:
     的作用域"的风险）。
     """
 
-    def __init__(self, engine: Engine) -> None:
+    def __init__(
+        self,
+        engine: Engine,
+        *,
+        email: EmailIntakeService | None = None,
+    ) -> None:
         self._engine = engine
+        self._email = email
 
     # --- 列表 -------------------------------------------------------------------------
 
@@ -365,6 +452,7 @@ class IntakeQuarantineService:
         section_id: str | None = None,
         reason_code: str | None = None,
         resolved: bool | None = None,
+        held: bool | None = None,
         limit: int = DEFAULT_LIMIT,
         cursor: str | None = None,
     ) -> IntakeQuarantinePage:
@@ -394,6 +482,7 @@ class IntakeQuarantineService:
                     section_id=wanted_section,
                     reason_code=reason,
                     resolved=resolved,
+                    held=held,
                     after=after,
                     limit=size + 1,
                 )
@@ -426,6 +515,11 @@ class IntakeQuarantineService:
                 intake_quarantines.c.resolved,
                 intake_quarantines.c.scope_course_id,
                 intake_quarantines.c.scope_section_id,
+                intake_quarantines.c.mailbox,
+                intake_quarantines.c.uidvalidity,
+                intake_quarantines.c.uid,
+                intake_quarantines.c.message_id,
+                intake_quarantines.c.resolved_submission_id,
             )
             .where(intake_quarantines.c.intake_quarantine_id == identifier)
             .with_for_update()
@@ -489,6 +583,10 @@ class IntakeQuarantineService:
                     resolution="attributed",
                     resolved_at=datetime.now(UTC),
                     resolved_by=uuid.UUID(principal.user_id),
+                    resolved_submission_id=None,
+                    held=False,
+                    held_at=None,
+                    held_by=None,
                 )
             )
             updated = connection.execute(
@@ -540,6 +638,10 @@ class IntakeQuarantineService:
                     resolution="dismissed",
                     resolved_at=datetime.now(UTC),
                     resolved_by=uuid.UUID(principal.user_id),
+                    resolved_submission_id=None,
+                    held=False,
+                    held_at=None,
+                    held_by=None,
                 )
             )
             updated = connection.execute(
@@ -547,6 +649,177 @@ class IntakeQuarantineService:
             ).fetchone()
         assert updated is not None  # 同一事务内刚更新过这一行
         return _view_of(updated)
+
+
+    def complete(
+        self,
+        *,
+        principal: Principal,
+        intake_quarantine_id: str,
+        student_id: str,
+        course_id: str,
+        section_id: str,
+        question_version_id: str,
+        note: str | None = None,
+    ) -> IntakeQuarantineView:
+        """匹配用户：按选中的课程/课序/题目版本，把原邮件重新取回并生成该学生的提交。
+
+        这是"人工归属"的完整闭环：检查行级 scope → 取回原邮件 → 重跑附件闸门 → 走与自动路径
+        相同的 `persist` → 同一行标记 `completed` 并写入提交 id。**依赖邮件入口配置**：没有 IMAP
+        时明确 `503`，不从缓存/客户端补附件字节（隔离记录按设计不存附件）。
+
+        异常：403 越权；404 不存在；409 已处理/原邮件不可定位；422 请求或附件不合规；
+        `QuarantineEmailUnavailable` → 503。
+        """
+        target, canonical_note = validate_completion_request(
+            student_id=student_id,
+            course_id=course_id,
+            section_id=section_id,
+            question_version_id=question_version_id,
+            note=note,
+        )
+        identifier = self._identifier(intake_quarantine_id)
+
+        with self._engine.begin() as connection:
+            row = self._lock_authorized_row(connection, principal, identifier)
+            if bool(row.resolved):
+                raise QuarantineAlreadyResolvedError(str(identifier))
+            self._require_completion_target(principal, target, row)
+            if self._email is None:
+                raise QuarantineEmailUnavailable("email intake is not configured")
+            mailbox = None if row.mailbox is None else str(row.mailbox)
+            uidvalidity = None if row.uidvalidity is None else int(row.uidvalidity)
+            uid = None if row.uid is None else int(row.uid)
+            message_id = None if row.message_id is None else str(row.message_id)
+
+        if mailbox is None or uidvalidity is None or uid is None:
+            raise QuarantineMessageGone("the record has no mailbox position")
+
+        try:
+            raw = self._email.fetch_raw(uidvalidity=uidvalidity, uid=uid)
+        except ImapProtocolError as error:
+            raise QuarantineMessageGone(str(error)) from error
+
+        try:
+            submission_id = self._email.ingest_raw_for_target(
+                raw=raw,
+                student_id=target.student_id,
+                course_id=target.course_id,
+                section_id=target.section_id,
+                question_version_id=target.question_version_id,
+                mailbox=mailbox,
+                uidvalidity=uidvalidity,
+                uid=uid,
+                message_id=message_id,
+            )
+        except AttachmentRejected as error:
+            raise QuarantineContentRejected(f"{error.reason}: {error.detail}") from error
+
+        now = datetime.now(UTC)
+        with self._engine.begin() as connection:
+            row = self._lock_authorized_row(connection, principal, identifier)
+            if bool(row.resolved):
+                current = connection.execute(
+                    _select_view().where(
+                        intake_quarantines.c.intake_quarantine_id == identifier
+                    )
+                ).fetchone()
+                assert current is not None
+                if str(current.resolved_submission_id or "") == submission_id:
+                    return _view_of(current)
+                raise QuarantineAlreadyResolvedError(str(identifier))
+            self._require_completion_target(principal, target, row)
+            connection.execute(
+                sa.update(intake_quarantines)
+                .where(
+                    sa.and_(
+                        intake_quarantines.c.intake_quarantine_id == identifier,
+                        intake_quarantines.c.resolved.is_(False),
+                    )
+                )
+                .values(
+                    resolved=True,
+                    resolved_student_id=uuid.UUID(target.student_id),
+                    resolution_note=canonical_note,
+                    resolution="completed",
+                    resolved_at=now,
+                    resolved_by=uuid.UUID(principal.user_id),
+                    resolved_submission_id=uuid.UUID(submission_id),
+                    held=False,
+                    held_at=None,
+                    held_by=None,
+                )
+            )
+            self._email.mark_checkpoint_processed(
+                connection,
+                mailbox=mailbox,
+                uidvalidity=uidvalidity,
+                uid=uid,
+                submission_id=submission_id,
+                now=now,
+            )
+            updated = connection.execute(
+                _select_view().where(intake_quarantines.c.intake_quarantine_id == identifier)
+            ).fetchone()
+        assert updated is not None
+        return _view_of(updated)
+
+    def set_held(
+        self,
+        *,
+        principal: Principal,
+        intake_quarantine_id: str,
+        held: bool,
+    ) -> IntakeQuarantineView:
+        """暂存/恢复；暂存行仍未处理，可继续匹配用户或标记作废。"""
+        require_intake_quarantine_authority(principal)
+        identifier = self._identifier(intake_quarantine_id)
+        now = datetime.now(UTC)
+        with self._engine.begin() as connection:
+            row = self._lock_authorized_row(connection, principal, identifier)
+            if bool(row.resolved):
+                raise QuarantineAlreadyResolvedError(str(identifier))
+            connection.execute(
+                sa.update(intake_quarantines)
+                .where(intake_quarantines.c.intake_quarantine_id == identifier)
+                .values(
+                    held=held,
+                    held_at=now if held else None,
+                    held_by=uuid.UUID(principal.user_id) if held else None,
+                )
+            )
+            updated = connection.execute(
+                _select_view().where(intake_quarantines.c.intake_quarantine_id == identifier)
+            ).fetchone()
+        assert updated is not None
+        return _view_of(updated)
+
+    @staticmethod
+    def _identifier(intake_quarantine_id: str) -> uuid.UUID:
+        try:
+            return uuid.UUID(intake_quarantine_id)
+        except (AttributeError, TypeError, ValueError) as error:
+            raise QuarantineNotFoundError("malformed quarantine id") from error
+
+    @staticmethod
+    def _require_completion_target(
+        principal: Principal,
+        target: CompletionTarget,
+        row: Any,
+    ) -> None:
+        """目标课程/课序必须在调用者 scope 内，且与记录已证明的 scope 不冲突。"""
+        if not principal.is_admin and not principal.covers_course(
+            target.course_id, target.section_id
+        ):
+            raise AuthorizationError("the target course/section is outside the token scope")
+        if row.scope_course_id is not None and str(row.scope_course_id) != target.course_id:
+            raise QuarantineTargetMismatch(
+                "target course does not match the record's verified scope"
+            )
+        if row.scope_section_id is not None and str(row.scope_section_id) != target.section_id:
+            raise QuarantineTargetMismatch(
+                "target section does not match the record's verified scope"
+            )
 
 
 # --- SQL ----------------------------------------------------------------------------------
@@ -571,6 +844,10 @@ def _select_view() -> sa.Select[Any]:
         intake_quarantines.c.resolution,
         intake_quarantines.c.resolved_at,
         intake_quarantines.c.resolved_by,
+        intake_quarantines.c.resolved_submission_id,
+        intake_quarantines.c.held,
+        intake_quarantines.c.held_at,
+        intake_quarantines.c.held_by,
     )
 
 
@@ -621,6 +898,7 @@ def _page_statement(
     section_id: str | None,
     reason_code: str | None,
     resolved: bool | None,
+    held: bool | None,
     after: tuple[datetime, uuid.UUID] | None,
     limit: int,
 ) -> sa.Select[Any]:
@@ -638,6 +916,8 @@ def _page_statement(
         statement = statement.where(intake_quarantines.c.reason_code == reason_code)
     if resolved is not None:
         statement = statement.where(intake_quarantines.c.resolved.is_(resolved))
+    if held is not None:
+        statement = statement.where(intake_quarantines.c.held.is_(held))
     if after is not None:
         moment, identifier = after
         statement = statement.where(
@@ -683,6 +963,12 @@ def _view_of(row: Any) -> IntakeQuarantineView:
         resolution=None if row.resolution is None else str(row.resolution),
         resolved_at=row.resolved_at,
         resolved_by=None if row.resolved_by is None else str(row.resolved_by),
+        resolved_submission_id=(
+            None if row.resolved_submission_id is None else str(row.resolved_submission_id)
+        ),
+        held=bool(row.held),
+        held_at=row.held_at,
+        held_by=None if row.held_by is None else str(row.held_by),
     )
 
 

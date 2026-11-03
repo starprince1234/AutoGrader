@@ -18,6 +18,8 @@ import type {
   EvaluationStreamFrame,
   GradeRow,
   IntakeQuarantineView,
+  LearningHintStep,
+  LearningHintsResponse,
   ProblemDetails,
   QuestionDraftGeneration,
   QuestionDraftGenerationCapabilities,
@@ -590,6 +592,50 @@ export function advisoryScore(overrides?: Partial<AdvisoryScore>): AdvisoryScore
 }
 
 /**
+ * 学习提示（`LearningHintsResponse`，AI-FLOW-01B）。默认是 `ready` 且**只有两条**：
+ * 契约允许 1–3 条（“证据不足时不强制生成三条”），页面必须按实际条数逐层展开。
+ *
+ * 响应里**没有** score / advisory_score / 逐项证据——夹具若带上它们，页面就可能在无意中
+ * 把它们渲染出来，而那正是这条轨要避免的。
+ */
+export function learningHintStep(overrides?: Partial<LearningHintStep>): LearningHintStep {
+  return {
+    level: "knowledge",
+    title: "先看清输入格式",
+    text: "题目的输入是按行给出的；先把“一行”与“一个数字”区分开。",
+    ...overrides,
+  } as LearningHintStep;
+}
+
+export function learningHintsResponse(
+  overrides?: Partial<LearningHintsResponse>,
+): LearningHintsResponse {
+  return {
+    evaluation_run_id: UUID_RUN,
+    generation_id: "00000000-0000-4000-8000-0000000000f9",
+    status: "ready",
+    hint_steps: [
+      learningHintStep(),
+      learningHintStep({
+        level: "direction",
+        title: "从失败类别排查",
+        text: "报告里失败的是资源限制：先检查循环里有没有不断增长的缓冲区。",
+      }),
+    ],
+    provider: "example-provider",
+    model: "example-model-v1",
+    prompt_version: "b2-learning-hints/1",
+    context_scope: ["case_evidence.failure_category", "score.score", "question.stem_markdown"],
+    failure_category: null,
+    disclaimers: [
+      "学习提示由模型根据本次已完成评测的证据生成，不参与评分。",
+      "提示不会给出完整可提交的答案或隐藏用例。",
+    ],
+    ...overrides,
+  } as LearningHintsResponse;
+}
+
+/**
  * 教学评语（`EvaluationCommentary`，RQ-T-20）。默认是 `ready` 且带参考分——夹具取最"满"的形状，
  * 三态由各测试显式覆盖。`disclaimers` 是契约的规范标注，测试按**逐字**断言引用它们。
  */
@@ -655,6 +701,10 @@ export function intakeQuarantineView(
     resolution: null,
     resolved_at: null,
     resolved_by: null,
+    resolved_submission_id: null,
+    held: false,
+    held_at: null,
+    held_by: null,
     ...overrides,
   } as IntakeQuarantineView;
 }

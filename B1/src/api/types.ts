@@ -201,7 +201,10 @@ export type SubmissionAccepted = B2Schemas["SubmissionAccepted"];
 export type SubmissionView = B2Schemas["SubmissionView"];
 export type EvaluationRunView = B2Schemas["EvaluationRunView"];
 export type EvaluationStreamFrame = B2Schemas["EvaluationStreamFrame"];
-export type GradeRow = B2Schemas["GradeRow"];
+export type GradeRow = B2Schemas["GradeRow"] & {
+  /** 0.24 人工评分：机器判定 / 待评分 / 已评分。旧服务端可能不返回。 */
+  grade_status?: "deterministic" | "awaiting_manual" | "graded";
+};
 export type GradePage = JsonBody<B2Operations["listGrades"], 200>;
 export type EvaluationReport = B2Schemas["evaluation-report.schema"];
 export type SubmissionEnvelope = B2Schemas["submission-envelope.schema"];
@@ -241,6 +244,24 @@ export type CommentaryProvenance = NonNullable<EvaluationCommentary["provenance"
  */
 export type AdvisoryScore = B2Schemas["AdvisoryScore"];
 
+/* --------------------------------------------- B2（学生分层学习提示，AI-FLOW-01B） */
+
+/**
+ * 学生分层学习提示（`getLearningHints` / `requestLearningHints`）。
+ *
+ * 只有 **run owner 学生**可读写；契约里没有教师逐条查看学生提示的接口。响应**不含**分数、
+ * 逐项证据或参考分——提示永远不是第二个评分来源。`status` 六态：`not_requested`（还没生成）、
+ * `not_applicable`（已完成但没有可讲的失败证据）、`pending`、`ready`、`failed`、`unavailable`
+ * （本部署未配置 provider 且没有既有结果）。
+ */
+export type LearningHintsResponse = B2Schemas["LearningHintsResponse"];
+export type LearningHintStep = B2Schemas["LearningHintStep"];
+export type LearningHintStatus = LearningHintsResponse["status"];
+export type LearningHintLevel = LearningHintStep["level"];
+
+/** 成绩行的三态安全结论（`null` = 没走到安全判定阶段，与 `not_checked` 不同）。 */
+export type SecurityStatus = NonNullable<GradeRow["security_status"]>;
+
 /* ------------------------------------------- B2（隔离区 / 证据包 / 质量聚合，CHG-0014/0015） */
 
 /**
@@ -254,6 +275,10 @@ export type ResolveIntakeQuarantineRequest =
   B2Operations["resolveIntakeQuarantine"]["requestBody"]["content"]["application/json"];
 export type DismissIntakeQuarantineRequest =
   B2Operations["dismissIntakeQuarantine"]["requestBody"]["content"]["application/json"];
+export type CompleteIntakeQuarantineRequest =
+  B2Operations["completeIntakeQuarantine"]["requestBody"]["content"]["application/json"];
+export type SetIntakeQuarantineHoldRequest =
+  B2Operations["setIntakeQuarantineHold"]["requestBody"]["content"]["application/json"];
 
 /**
  * 可移动的申诉证据包（`getAppealPack`）。`report` 受调用方 `view` 约束——

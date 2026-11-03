@@ -41,6 +41,7 @@ def _sql(principal: Principal, *, course_id: str | None = None) -> str:
         section_id=None,
         reason_code=None,
         resolved=False,
+        held=None,
         after=None,
         limit=51,
     )

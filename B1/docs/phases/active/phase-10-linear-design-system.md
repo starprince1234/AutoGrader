@@ -43,16 +43,18 @@ Phase 02 把 B1 的视觉统一为 Apple 式（light-first + 自动深色），�
 ```powershell
 node node_modules/typescript/bin/tsc -b                        # exit 0
 node node_modules/eslint/bin/eslint.js . --max-warnings 0       # exit 0
-node node_modules/vitest/vitest.mjs run                         # 51 文件 / 456 用例，exit 0（82.00s）
+node node_modules/vitest/vitest.mjs run                         # 合并后 54 文件 / 475 用例，summary 全通过（进程退出码 1，见下）
 node node_modules/vite/bin/vite.js build                        # ✓ built，exit 0
 node scripts/generate-api-types.mjs --check                     # exit 1：契约类型漂移（见下）
 ```
 
 - `tsc` / `vitest` / `vite build` 需要写 `tsconfig.tsbuildinfo`、缓存与 `dist/`，本环境的
   DSH 沙箱默认挡掉这些写操作（`EPERM`），因此这三条在放开写权限后执行；命令本身未改。
-- **`api:check` 失败（既有状态，不是本轮引入）**：`src/api/generated/{common,b2,b3,b4}.ts` 与
-  `MAIN/contracts` 漂移。本轮没有触碰生成类型或契约；`docs/README.md` 里"`--check` 实跑通过"
-  的旧记录与本次读数不一致，未在本轮处理，留待 MAIN 侧确认后统一。
+- **`api:check` 失败（不是本轮引入）**：拉取远端后契约锁已是 `0.25.0`（摘要 `b985940e…`），
+  而 `src/api/generated/{common,b2,b3,b4}.ts` 仍是旧生成物。本轮只解 `B1/docs/README.md` 的
+  文档冲突，**没有擅自重新生成**（那会改到其他人的契约面），留待 MAIN 侧确认后统一。
+- vitest 的进程退出码为 1 而 summary 全部通过，属 `phase-02 §4` 记录的 forks worker 拆卸偶发，
+  判定以 summary 为准；合并后用例数由 51/456 增至 54/475（含并行批次 P10/P11 的新用例）。
 
 ### 视觉复核（无头 Edge + CDP，真实构建产物）
 
@@ -64,6 +66,18 @@ advisory 卡 + 计数卡 + 覆盖度条）。
 截图见 [`screenshots/`](screenshots/)：`landing-light/dark.png`、`login-light/dark.png`、
 `components-light/dark.png`。复核中据此修了三处：导览两栏由等高拉伸改为按内容高度对齐；
 深色提示条由大面积色块改为中性面 + 左侧色条；两栏顶端发丝与页面光晕强度上调。
+
+## 合并冲突（pull 远端 main）
+
+pull 时 `B1/docs/README.md` 冲突（HEAD 与 `8373ddaff`），仓库里只有这一个文件冲突。两边都在改
+同一份索引：远端新增并行批次 `phase-09-submission-and-grades`（P10/P11）与新的契约锁；
+本地新增 `design/DESIGN.md`、`phase-10` 的两行引用。解决方式：**以远端为基线**，保留本地新增的
+权威表/状态表两行与阶段链，把契约行换成远端拉下来的 `0.25.0`（摘要 `b985940e…`），并据实把
+`api:check`、vitest 读数改成当前状态；**没有删除任何远端内容**。
+
+`src/styles.css`、`B1/README.md` 与其余文件无冲突（远端把作答页布局放在页面私有的
+`features/submission/submitLayout.css`，只引用全局 token，与新设计兼容）。合并提交未由本环境创建：
+本机 `PATH` 上没有 `git`，`git add` / `commit` 需在用户的 Git 客户端完成。
 
 ## 未验证项
 

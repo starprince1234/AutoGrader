@@ -108,19 +108,57 @@ export function AuthoringEditRoute() {
 
 export function SubmitRoute() {
   const { questionVersionId } = useParams({ from: "/submit/$questionVersionId" });
+  const { submission_id, evaluation_run_id } = useSearch({ from: "/submit/$questionVersionId" });
+  const navigate = useNavigate();
   return (
     <RequireAuth>
       <RequirePermission allow={canSubmitAnswer} allowedRoles={["student"]}>
-        <SubmitPage questionVersionId={questionVersionId} />
+        <SubmitPage
+          questionVersionId={questionVersionId}
+          initialSubmissionId={submission_id ?? null}
+          initialRunId={evaluation_run_id ?? null}
+          onSubmitted={(ids) => {
+            void navigate({
+              to: "/submit/$questionVersionId",
+              params: { questionVersionId },
+              search: {
+                submission_id: ids.submissionId,
+                evaluation_run_id: ids.evaluationRunId ?? undefined,
+              },
+              replace: true,
+            });
+          }}
+          onOpenResult={(runId) => {
+            void navigate({ to: "/grades", search: { evaluation_run_id: runId } });
+          }}
+          onOpenGrades={() => {
+            void navigate({ to: "/grades", search: {} });
+          }}
+          onOpenQuestion={(questionId, versionId) => {
+            void navigate({
+              to: "/questions/$questionId",
+              params: { questionId },
+              search: { version: versionId },
+            });
+          }}
+          onBackToAssignments={() => {
+            void navigate({ to: "/assignments" });
+          }}
+        />
       </RequirePermission>
     </RequireAuth>
   );
 }
 
 export function GradesRoute() {
+  const { evaluation_run_id } = useSearch({ from: "/grades" });
+  const navigate = useNavigate();
+  const setRun = (runId: string | null) => {
+    void navigate({ to: "/grades", search: { evaluation_run_id: runId ?? undefined } });
+  };
   return (
     <RequireAuth>
-      <GradesPage />
+      <GradesPage initialRunId={evaluation_run_id ?? null} onRunChange={setRun} />
     </RequireAuth>
   );
 }

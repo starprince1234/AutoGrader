@@ -39,6 +39,13 @@ from sqlalchemy import Engine
 
 from autograder_b2.api.formatting import rfc3339_millis
 from autograder_b2.auth.tokens import Principal
+from autograder_b2.grades.identity import (
+    EnrollmentDirectory,
+    EnrollmentIdentity,
+    IdentityMissingForRows,
+    IdentityNotConfigured,
+    merge_identities,
+)
 from autograder_b2.grades.query import (
     DEFAULT_BATCH_SIZE,
     GradeQueryService,
@@ -59,23 +66,54 @@ XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.s
 CSV_MEDIA_TYPE = "text/csv"
 CSV_BOM = "\ufeff"
 
-#: 导出列：`(GradeRow 字段, 表头)`。表头用中文（面向教师），字段名照抄契约。
-#: 状态列写**状态机原值**（`completed` 而不是"已完成"）：导出必须能与 API 的行逐字段对齐，
-#: 加一张翻译表就等于多一条会漂移的口径。
+#: 导出列：`(GradeRow 字段, 表头)`，顺序即契约 `GradeRow` 的字段顺序。
+#:
+#: 表头用中文（面向教师），状态与安全结论写**枚举原值**（`completed` / `not_found`）：导出必须能
+#: 与 API 的行逐字段对齐，加一张翻译表就等于多一条会漂移的口径。
 GRADE_EXPORT_COLUMNS: tuple[tuple[str, str], ...] = (
     ("submission_id", "提交ID"),
     ("student_id", "学生ID"),
     ("student_number", "学号"),
     ("display_name", "姓名"),
-    ("course_id", "课程ID"),
-    ("section_id", "课序ID"),
-    ("question_version_id", "题目版本ID"),
+    ("course_id", "课程"),
+    ("section_id", "课序"),
+    ("question_version_id", "题目版本"),
     ("state", "状态"),
     ("score", "得分"),
     ("max_score", "满分"),
     ("is_pass", "是否通过"),
     ("submitted_at", "提交时间(UTC)"),
     ("evaluation_run_id", "评测运行ID"),
+    ("security_status", "安全检查结论"),
+)
+
+#: **不可取消**的列（`RQ-B-1-60`）：学号、姓名、课程、课序、题目、得分、满分、提交时间、评测 ID。
+#: 它们承载"这是谁、哪门课哪道题、多少分、哪次评测"这五个问题；缺任何一个，文件就不再是可用的
+#: 成绩单（而是一份看起来成功的残缺文件）。`columns` 参数只能**增选**可选列，永远不能删除它们。
+REQUIRED_EXPORT_COLUMNS: tuple[str, ...] = (
+    "student_number",
+    "display_name",
+    "course_id",
+    "section_id",
+    "question_version_id",
+    "score",
+    "max_score",
+    "submitted_at",
+    "evaluation_run_id",
+)
+
+#: 可选附加列（契约 `exportGrades.columns` 允许的取值）。
+OPTIONAL_EXPORT_COLUMNS: tuple[str, ...] = (
+    "submission_id",
+    "student_id",
+    "state",
+    "is_pass",
+    "security_status",
+)
+
+#: 全部允许的字段（`columns` 的取值域）。
+EXPORT_COLUMN_FIELDS: tuple[str, ...] = tuple(
+    field for field, _ in GRADE_EXPORT_COLUMNS
 )
 
 #: 时间列的表头（XLSX 写入的日期时间不带时区，Excel 的序列号本来就没有时区）。
@@ -99,6 +137,39 @@ _ZIP_EXTERNAL_ATTR = 0o600 << 16
 
 class UnsupportedExportFormat(ValueError):
     """`format` 不在 `xlsx`/`csv` 内 → 对外 422（路由层也可用枚举声明在解析阶段拦下）。"""
+
+
+class UnsupportedExportColumn(ValueError):
+    """`columns` 含未声明的字段（或试图删除必需列）→ 对外 422。
+
+    必需列**不能被删**：这不是格式偏好，而是 `RQ-B-1-60` 要求的成绩单定义。试图删除它们时
+    这里明确失败，而不是"忽略该请求项继续导出"——后者会生成一份看起来成功、实则缺学号/姓名
+    的文件，而下载者无从知道少了什么。
+    """
+
+
+def resolve_export_columns(raw: str | None) -> tuple[tuple[str, str], ...]:
+    """解析 `columns`（逗号分隔）→ 有序的 `(field, header)` 列表；未给 = 全部列。
+
+    - 未知字段 → `UnsupportedExportColumn`（422）；
+    - 必需列**总是**包含，即使调用方没有列出它们；
+    - 结果顺序固定为契约 `GradeRow` 的字段顺序（与页面表格同一口径，不按请求顺序重排）。
+    """
+    if raw is None or raw.strip() == "":
+        return GRADE_EXPORT_COLUMNS
+    requested: set[str] = set()
+    for part in raw.split(","):
+        field = part.strip()
+        if field == "":
+            continue
+        if field not in EXPORT_COLUMN_FIELDS:
+            raise UnsupportedExportColumn(
+                f"columns contains an unknown field: {field!r};"
+                f" allowed fields are {', '.join(EXPORT_COLUMN_FIELDS)}"
+            )
+        requested.add(field)
+    requested.update(REQUIRED_EXPORT_COLUMNS)
+    return tuple((field, header) for field, header in GRADE_EXPORT_COLUMNS if field in requested)
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,20 +201,28 @@ def escape_spreadsheet_cell(value: str) -> str:
     return value
 
 
-def render_csv(rows: Sequence[GradeRow]) -> bytes:
+def render_csv(
+    rows: Sequence[GradeRow],
+    columns: Sequence[tuple[str, str]] | None = None,
+) -> bytes:
     """渲染 CSV：UTF-8 BOM + CRLF + 公式注入转义。
 
     空值（未完成运行的分数）写成**空字段**而不是 `0`：表里没有值就是没有值，`0` 是一个结论。
+    `columns` 缺省为全部列；导出端点传入的是 `resolve_export_columns()` 的产物。
     """
+    selected = GRADE_EXPORT_COLUMNS if columns is None else tuple(columns)
     buffer = io.StringIO(newline="")
     writer = csv.writer(buffer, lineterminator="\r\n")
-    writer.writerow([header for _, header in GRADE_EXPORT_COLUMNS])
+    writer.writerow([header for _, header in selected])
     for row in rows:
-        writer.writerow([_csv_text(row, field) for field, _ in GRADE_EXPORT_COLUMNS])
+        writer.writerow([_csv_text(row, field) for field, _ in selected])
     return (CSV_BOM + buffer.getvalue()).encode("utf-8")
 
 
-def render_xlsx(rows: Sequence[GradeRow]) -> bytes:
+def render_xlsx(
+    rows: Sequence[GradeRow],
+    columns: Sequence[tuple[str, str]] | None = None,
+) -> bytes:
     """渲染 XLSX（单工作表，首行加粗冻结）。
 
     数值列写原生数值、布尔列写原生布尔、时间列写 UTC 的**朴素** `datetime`（Excel 日期序列号没有
@@ -153,15 +232,16 @@ def render_xlsx(rows: Sequence[GradeRow]) -> bytes:
     与每个 ZIP 条目，因此这里显式盖上从行数据派生的文档时间（`_document_moment`），并把包重打成固定
     条目时间戳的 ZIP（`_repack_deterministically`）。OOXML 结构、数字格式、列宽、冻结窗格都不受影响。
     """
+    selected = GRADE_EXPORT_COLUMNS if columns is None else tuple(columns)
     workbook = Workbook()
     sheet = workbook.active
     sheet.title = "成绩"
-    width_units = [_display_width(header) for _, header in GRADE_EXPORT_COLUMNS]
-    for column, (_, header) in enumerate(GRADE_EXPORT_COLUMNS, start=1):
+    width_units = [_display_width(header) for _, header in selected]
+    for column, (_, header) in enumerate(selected, start=1):
         cell = sheet.cell(row=1, column=column, value=header)
         cell.font = Font(bold=True)
     for index, row in enumerate(rows, start=2):
-        for column, (field, _) in enumerate(GRADE_EXPORT_COLUMNS, start=1):
+        for column, (field, _) in enumerate(selected, start=1):
             value = _xlsx_value(row, field)
             if value is None:
                 continue
@@ -234,10 +314,23 @@ def _repack_deterministically(payload: bytes) -> bytes:
 
 
 class GradesExportService:
-    """成绩导出（`exportGrades` 的服务层）；取数完全委托 `GradeQueryService`。"""
+    """成绩导出（`exportGrades` 的服务层）；取数完全委托 `GradeQueryService`。
 
-    def __init__(self, engine: Engine, *, batch_size: int = DEFAULT_BATCH_SIZE) -> None:
+    `directory` 是 B4 名单的客户端（`grades.identity`）：姓名/学号**只能**经它取得。
+    没有装配它时导出直接拒绝（`IdentityNotConfigured`），因为一份缺姓名的"成功"成绩单
+    比一次明确的失败危险得多（见 `grades.identity` 模块文档）。空结果不需要身份，
+    因此仍能导出一份只有表头的文件。
+    """
+
+    def __init__(
+        self,
+        engine: Engine,
+        *,
+        directory: EnrollmentDirectory | None = None,
+        batch_size: int = DEFAULT_BATCH_SIZE,
+    ) -> None:
         self._query = GradeQueryService(engine, batch_size=batch_size)
+        self._directory = directory
 
     def export(
         self,
@@ -247,16 +340,26 @@ class GradesExportService:
         section_id: str | None = None,
         question_version_id: str | None = None,
         student_id: str | None = None,
+        since: datetime | None = None,
+        until: datetime | None = None,
+        evaluation_run_id: str | None = None,
+        columns: tuple[tuple[str, str], ...] | None = None,
+        authorization: str | None = None,
         fmt: str = "xlsx",
     ) -> ExportFile:
         """导出成绩；过滤语义与 `list_grades` **同一个** `_resolve`（含授权与课序收敛）。
 
         参数 `fmt` 而非 `format`：路由层的查询参数叫 `format`（契约），这里避开同名内建函数。
+        `columns` 已由 `resolve_export_columns()` 校验（这里只消费）；`authorization` 是调用者
+        自己的 bearer 头，仅用于向 B4 读名单，**不落库、不写日志**。
+
         异常与查询一致：`AuthorizationError` → 403，`InvalidFilterError`/`InvalidCursorError`
-        → 422，`UnsupportedExportFormat` → 422。
+        → 422，`UnsupportedExportFormat`/`UnsupportedExportColumn` → 422；
+        身份关联失败见 `grades.identity` 的三个异常（503/409）。
         """
         if fmt not in EXPORT_FORMATS:
             raise UnsupportedExportFormat(f"format must be one of {', '.join(EXPORT_FORMATS)}")
+        selected = resolve_export_columns(None) if columns is None else columns
         rows = list(
             self._query.iter_grades(
                 principal=principal,
@@ -264,9 +367,15 @@ class GradesExportService:
                 section_id=section_id,
                 question_version_id=question_version_id,
                 student_id=student_id,
+                since=since,
+                until=until,
+                evaluation_run_id=evaluation_run_id,
             )
         )
-        content = render_xlsx(rows) if fmt == "xlsx" else render_csv(rows)
+        rows = self._with_identities(rows, authorization=authorization)
+        content = (
+            render_xlsx(rows, selected) if fmt == "xlsx" else render_csv(rows, selected)
+        )
         extension = "xlsx" if fmt == "xlsx" else "csv"
         return ExportFile(
             content=content,
@@ -275,6 +384,33 @@ class GradesExportService:
             format=fmt,
             row_count=len(rows),
         )
+
+    def _with_identities(
+        self, rows: list[GradeRow], *, authorization: str | None
+    ) -> list[GradeRow]:
+        """按课序读取授权名单并合并姓名/学号；任何缺口都让本次导出失败。
+
+        **空结果直接返回**：没有行就没有身份可关联，此时要求 B4 可用只会让"这门课还没有提交"
+        表现为一次 503。行存在时则必须逐节取名单——缺一节即拒绝，不做部分合并。
+        """
+        if not rows:
+            return rows
+        if self._directory is None:
+            raise IdentityNotConfigured(
+                "grade export needs the B4 enrollment directory to include student numbers"
+                " and names; configure B2_B4_BASE_URL"
+            )
+        if not authorization:
+            raise IdentityMissingForRows(
+                "grade export needs the caller's access token to read the authorized roster"
+            )
+        rosters: dict[str, dict[str, EnrollmentIdentity]] = {}
+        for section in sorted({row.section_id for row in rows}):
+            lookup = self._directory.identities(
+                section_id=section, authorization=authorization
+            )
+            rosters[section] = dict(lookup.identities)
+        return merge_identities(rows, rosters)
 
 
 def _csv_text(row: GradeRow, field: str) -> str:

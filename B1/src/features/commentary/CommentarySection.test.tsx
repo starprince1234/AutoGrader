@@ -155,8 +155,7 @@ describe("教学评语轨（RQ-T-20）", () => {
     });
 
     const banner = await screen.findByTestId("commentary-forbidden");
-    expect(banner).toHaveTextContent("403");
-    expect(banner).toHaveTextContent("默认关闭");
+    expect(banner).toHaveTextContent("不能查看这段评语");
     // 403 不是"读取出错"：不得同时出现通用错误框（那会把授权结论说成故障）。
     expect(screen.queryByTestId("commentary-error")).toBeNull();
     stub.restore();
@@ -215,7 +214,7 @@ describe("AI 评分参考（RQ-T-30 / ADR-0014）", () => {
     expect(await screen.findByTestId("commentary-text")).toBeInTheDocument();
     expect(screen.queryByTestId("advisory-score")).toBeNull();
     // 正文照常，且明确说明"本次没有参考分"而不是留白。
-    expect(screen.getByTestId("advisory-absent")).toHaveTextContent("不渲染");
+    expect(screen.getByTestId("advisory-absent")).toHaveTextContent("没有生成参考分");
     stub.restore();
   });
 
@@ -225,7 +224,7 @@ describe("AI 评分参考（RQ-T-30 / ADR-0014）", () => {
     });
 
     expect(await screen.findByTestId("commentary-disclaimers-missing")).toHaveTextContent(
-      "契约要求它至少一项",
+      "评语缺少必要的说明",
     );
     // 契约原话：渲染参考分却不带标注，就是把模型的建议当成成绩。
     expect(screen.queryByTestId("advisory-score")).toBeNull();

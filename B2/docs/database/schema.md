@@ -19,7 +19,7 @@ B2 只使用 `b2` schema。禁止跨 schema 外键/SQL/视图/ORM；运行 login
 | `artifacts` | 0002 | 内容寻址存储的文件内容条目 | 内容摘要唯一（SHA-256 去重）；服务端生成路径，客户端不可指定 | B2 存储层创建；孤儿回收任务清理（只清**无引用**且已过保留窗口的条目，见下节） |
 | `submission_files` | 0002 | 提交内每个声明文件（路径 → 内容摘要） | 路径经白名单校验（`..`/绝对路径/反斜杠一律拒）；每文件一条 | 随 `submissions` 创建；**随提交级联删除**，而 B2 没有删除提交的路径（故实际不消失） |
 | `email_checkpoints` | 0002 | IMAP 收取检查点（幂等） | UID/UIDVALIDITY 或 `Message-ID` 唯一；终态含 `processed`/`rejected` | B2 邮件适配器创建；**没有清理路径**（幂等键必须长期可查） |
-| `intake_quarantines` | 0002（0013 补人工归属三列，0015 补行级课程范围，0016 补主题与处置留痕） | 无法唯一匹配 / 含危险附件的邮件隔离区；**人工归属/驳回的落点**（`CHG-0014`）；**行级授权的依据**（P13） | 记录原因码；不存正文与附件原文；`subject` 是**主题头**（可打印、折叠空白、≤200 字），不是正文；`resolution ∈ {attributed,dismissed}` + `resolved_at`/`resolved_by` 记录人工处置留痕（0016 起；历史行为 NULL，界面显示"未记录"）；`ck_intake_quarantines_decision_audit` 把结果与身份字段钉在一起（归属必须有学生，驳回必须没有学生；待处理不得带处置字段），它取代 0013 的 `ck_intake_quarantines_resolution`（旧约束"已处理 ⇔ 有学生"与驳回不相容）；`ck_intake_quarantines_scope` 强制 `scope_course_id`/`scope_section_id` 成对为空或非空；scope 只由匹配规则候选共识产生（`not_matched`/跨 scope `ambiguous`/拒绝 ⇒ NULL），URL/邮箱/发件人不参与；`resolution_note` 结构上限 1000（契约 1000，视图侧保守截断 500） | B2 邮件适配器创建（scope 与 subject 在同一事务写入）；人工归属/驳回由 `intake.quarantine` 的 `resolve`/`dismiss`（唯一写入者，各自只写这一行）；**仍然没有清理路径**（隔离记录等待人工处置；NULL scope 行只对管理员可见） |
+| `intake_quarantines` | 0002（0013 补人工归属三列，0015 补行级课程范围，0016 补主题与处置留痕，0019 补完成/暂存） | 无法唯一匹配 / 含危险附件的邮件隔离区；**匹配用户/暂存/作废的落点**（`CHG-0014`）；**行级授权的依据**（P13） | 记录原因码；不存正文与附件原文；`subject` 是**主题头**（可打印、折叠空白、≤200 字），不是正文；`resolution ∈ {attributed,completed,dismissed}` + `resolved_at`/`resolved_by` 记录人工处置留痕；`completed` 另带 `resolved_submission_id`（真实生成的提交）；`held` + `held_at`/`held_by` 是**暂存**（仍未处理，可恢复）；`ck_intake_quarantines_decision_audit` 把结果与身份字段钉在一起（归属/完成必须有学生，作废必须没有学生；待处理/暂存不得带处置字段），`ck_intake_quarantines_hold` 钉住暂存时间与操作人；`ck_intake_quarantines_scope` 强制课程/课序成对；scope 只由匹配规则候选共识产生；`resolution_note` 结构上限 1000（视图侧保守截断 500） | B2 邮件适配器创建（scope 与 subject 在同一事务写入）；`complete` 回邮箱取原邮件并走正常 `persist` 生成提交，`hold`/`dismiss` 只写这一行；**仍然没有清理路径**（记录等待人工处置；NULL scope 只对管理员可见） |
 | `artifact_gc_runs` | 0003 | 一次孤儿回收运行的计数与结束时间 | 每次回收一行，便于对账 | GC 任务创建；**没有清理路径**（回收审计是对账依据） |
 | `artifact_gc_audits` | 0003 | 回收审计（摘要、动作、结果） | 只删**无引用**内容；删除动作必须留审计 | GC 任务创建；审计行不随内容删除而消失，也没有清理路径 |
 | `outbox_events` | 0004（0009 补 `insert_seq`） | 出站事件 outbox（先写 outbox 再发，at-least-once） | `(subject, deduplication_key)` 唯一；`correlation_id` NOT NULL；`insert_seq` 提供**发布顺序**不变量；DLQ 不静默 | 写入方同事务创建；派发成功后标 `published_at`，超限进 DLQ；**没有清理路径**（已发布行保留作投递账本） |
@@ -33,16 +33,17 @@ B2 只使用 `b2` schema。禁止跨 schema 外键/SQL/视图/ORM；运行 login
 | `static_findings` | 0006 | 静态检查发现（规则 ID/severity/位置） | 每条规则必须在规则目录内登记；区分"未发现"与"未检查" | 静态阶段写；随 run 级联删除，而 B2 没有删除 run 的路径 |
 | `security_findings` | 0006 | 安全性发现（静态判定结论 + **执行期**沙箱违规，`detected_in ∈ {static, runtime}`） | 区分"未发现"与"未检查"；严重度与阻断判定一致；`char_length(message) <= 1000` | 安全判定与编排层（执行期违规）写；随 run 级联删除，而 B2 没有删除 run 的路径 |
 | `evaluation_commentaries` | 0010（0014 加参考分四列） | **教学评语轨**（`RQ-T-20` / `ADR-0009`）：一次运行一条模型评语 + 状态 + provenance（含 `input_scope` 白名单）；**0014 起**另含模型的顾问性参考分（`RQ-T-30` / `ADR-0014`）：`advisory_score` / `advisory_max_score` / `advisory_rationale` / `advisory_confidence` | 每 run 唯一（重新生成＝覆盖）；`ck_evaluation_commentaries_shape` 强制状态与字段配对（`pending` 无文本无时间且无参考分 / `ready` 有文本有时间、参考分**四列同空或同有** / `failed` 无文本有原因有时间且无参考分）；`input_scope` 必须是非空 JSON 数组（白名单必须可审计）；`ck_evaluation_commentaries_advisory_bounds` 把 `0 <= score <= max_score` 且 `max_score > 0` 钉在存储层（**越界值写不进来**，而不是被截断入库） | 评语生成时写；**删除本表不影响可重放性**——没有任何表引用它，评测链路也不读它 |
+| `evaluation_learning_hints` | 0016（`CHG-0030` / AI-FLOW-01B） | **学生分层学习提示**：一次 run 一行、`student_id` 为落库归属、1–3 条 `hint_steps`、provider/model/prompt/`context_scope`、幂等键与脱敏失败类别 | 每 run 唯一（`ready` 是终局，`failed` 可显式重试覆盖）；`ck_evaluation_learning_hints_shape` 强制状态与字段配对（`pending`/`failed` 无步骤、`ready` 1–3 条且有生成时间）；`context_scope` 非空 JSON 数组；**没有 `score`/`is_pass`/`result_digest`/`case_evidence`/源码列**——提示永远不能成为评分依据 | 学生 `POST .../learning-hints` 时写；**删除本表不影响权威分数与报告**；旧 run 的提示随 run 历史保留 |
 
-**表数一致性自检（可复算）**：`schema.py` 的 `sa.Table` 计数 **18** == 本表行数 **18** ==
-迁移 `0002`(5) + `0003`(2) + `0004`(1) + `0005`(1) + `0006`(8) + `0010`(1) 的和
+**表数一致性自检（可复算）**：`schema.py` 的 `sa.Table` 计数 **19** == 本表行数 **19** ==
+迁移 `0002`(5) + `0003`(2) + `0004`(1) + `0005`(1) + `0006`(8) + `0010`(1) + `0016`(1) 的和
 （`0011`/`0014` 只加列、`0012` 只改主键名与时间列精度、`0013` 只加三列，都不建表）。
 
 **`advisory_max_score` 的写入者只有一个**：`commentary/scope.py` 的 `collect_evidence`
 （对 `b2.case_evidence.weight` 求和，与 `evaluation/scoring.py` 的 `max_score += award.weight`
 同源同值）。它不是模型的输出——模型给出同名字段会让整次生成失败（`ADR-0014` 决策 2）。
 
-**表标准（`RQ-B-4-30`，迁移 0012 整改）**：18 张表的主键约束名必须是 `pk_<table>`
+**表标准（`RQ-B-4-30`，迁移 0012 整改）**：19 张表的主键约束名必须是 `pk_<table>`
 （Postgres 的隐式 `<table>_pkey` 不合标准），`created_at`/`updated_at` 必须是 `timestamptz(3)`。
 判据与 B4 的检查器同源，但 B2 侧有**独立读数**：`tests/test_migrations.py` 的三条用例直接查
 真实库的 `pg_constraint` 与 `information_schema.columns`，并在 upgrade/downgrade/upgrade 之间断言来回可逆。

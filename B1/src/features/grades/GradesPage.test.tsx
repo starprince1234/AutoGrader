@@ -19,6 +19,7 @@ import {
   evaluationCommentary,
   evaluationReport,
   gradeRow,
+  learningHintsResponse,
   sessionCreated,
 } from "../../testing/contractFixtures";
 import { signIn } from "../../auth/sessionStore";
@@ -120,6 +121,11 @@ function gradeRoutes(
       respond: () => jsonResponse({ items: [{ section_id: UUID_B, section_code: "01" }] }),
     },
     {
+      // 题目选择器读取公开题目列表（教师侧才有该筛选）；测试用空列表，标签回退为缩短的版本 ID。
+      path: "/api/v1/questions",
+      respond: () => jsonResponse({ items: [], next_cursor: null }),
+    },
+    {
       path: "/api/v1/grades",
       respond: ({ url }) => {
         const cursor = url.searchParams.get("cursor");
@@ -164,6 +170,22 @@ function gradeRoutes(
       // 未声明的请求会被 `installFetchStub` 拒绝，测试会静默走进"读取出错"分支。
       path: `/api/v1/evaluation-runs/${UUID_RUN}/commentary`,
       respond: () => jsonResponse(evaluationCommentary()),
+    },
+    {
+      // 学生下钻会渲染学习提示（AI-FLOW-01B），因此这条边界必须声明。
+      path: `/api/v1/evaluation-runs/${UUID_RUN}/learning-hints`,
+      respond: () =>
+        jsonResponse(
+          learningHintsResponse({
+            status: "not_requested",
+            hint_steps: [],
+            generation_id: null,
+            provider: null,
+            model: null,
+            prompt_version: null,
+            context_scope: [],
+          }),
+        ),
     },
     {
       path: "/api/v1/grades/export",
@@ -216,7 +238,7 @@ describe("成绩查询（RQ-B-1-30）", () => {
     // 未完成行按学号定位：状态列与得分列是本地化/格式化的，只有学号是稳定锚点。
     const unfinishedRow = within(table).getByText("20260002").closest("tr") as HTMLTableRowElement;
     const scoreCell = within(unfinishedRow).getByTestId("unfinished-score");
-    expect(scoreCell).toHaveTextContent("未完成");
+    expect(scoreCell).toHaveTextContent("未评分");
     // 得分列不得出现任何数字：未完成既不是 0 分，也不是任何分数。
     expect(scoreCell.textContent).not.toMatch(/\d/);
     // 状态列显示面向用户的中文状态标签，而不是内部英文状态码（`running`）。
@@ -226,8 +248,8 @@ describe("成绩查询（RQ-B-1-30）", () => {
       within(unfinishedRow).getByText(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/),
     ).toBeInTheDocument();
 
-    expect(screen.getByTestId("summary-scope-notice")).toHaveTextContent("不是权威汇总");
-    expect(screen.getByText(/平均分（已加载行）：90/)).toBeInTheDocument();
+    expect(screen.getByTestId("summary-scope-notice")).toHaveTextContent("统计仅基于已完成评测的成绩");
+    expect(screen.getByText(/平均分：90/)).toBeInTheDocument();
     expect(screen.getByTestId("unfinished-notice")).toHaveTextContent("显示状态而不是 0 分");
     stub.restore();
   });
@@ -243,7 +265,7 @@ describe("成绩查询（RQ-B-1-30）", () => {
       is_pass: true,
       evaluation_run_id: null,
     });
-    const { stub, user } = await openGrades("teacher", {
+    const { stub } = await openGrades("teacher", {
       gradePages: [
         {
           items: [
@@ -262,11 +284,8 @@ describe("成绩查询（RQ-B-1-30）", () => {
     });
 
     const table = screen.getByTestId("grades-table");
-    expect(within(table).getAllByRole("row")).toHaveLength(2); // 表头 + 1 行
-    expect(screen.getByTestId("grades-load-more")).toBeInTheDocument();
 
-    await user.click(screen.getByTestId("grades-load-more"));
-
+    // 汇总需要全量分页，因此页面会自动取完后续页（不再要求教师手工点"加载更多"）。
     await waitFor(() => expect(within(table).getAllByRole("row")).toHaveLength(3));
     expect(table).toHaveTextContent("20260003");
     expect(screen.getByText(/成绩明细（已加载 2 行）/)).toBeInTheDocument();
@@ -321,7 +340,7 @@ describe("成绩查询（RQ-B-1-30）", () => {
     // 通过的那一个用例：`resource`/`artifacts` 都是 null → 如实显示"未测量/无数据"。
     const passed = within(drilldown).getByTestId(`case-${UUID_A}`);
     expect(within(passed).getByTestId("resource-unmeasured")).toHaveTextContent("未测量");
-    expect(within(passed).getByTestId("artifacts-missing")).toHaveTextContent("未包含文件级结论");
+    expect(within(passed).getByTestId("artifacts-missing")).toHaveTextContent("没有提供文件改动信息");
     expect(within(passed).queryAllByTestId("limit-hit")).toHaveLength(0);
     stub.restore();
   });
@@ -345,7 +364,7 @@ describe("成绩查询（RQ-B-1-30）", () => {
     const card = within(drilldown).getByTestId(`case-${UUID_A}`);
     expect(within(card).getByTestId("resource-unmeasured")).toHaveTextContent("未测量");
     expect(within(card).getByTestId("artifacts-missing")).toBeInTheDocument();
-    expect(within(card).getByTestId("explanation-missing")).toHaveTextContent("未给出说明");
+    expect(within(card).getByTestId("explanation-missing")).toHaveTextContent("没有提供逐步说明");
     // 任何"0 B / 0.00 s / 0 MB"式的读数都不允许出现：没测过不等于用了 0
     // （提示文案里出现的那个"0"是解释文字，不是度量值，因此按"数值 + 单位"判定）。
     expect(within(card).getByTestId("case-resource").textContent).not.toMatch(
@@ -375,15 +394,16 @@ describe("成绩查询（RQ-B-1-30）", () => {
 
   it("学生看不到导出入口（可见性只是体验；服务端仍会 403）", async () => {
     const { stub } = await openGrades("student");
-    expect(screen.queryByTestId("export-grades")).toBeNull();
+    expect(screen.queryByTestId("open-export")).toBeNull();
     stub.restore();
   });
 
   it("导出：由 B2 生成文件后下载，B1 不重新拼接数据", async () => {
     const { stub, user } = await openGrades("teacher");
 
-    await user.selectOptions(screen.getByLabelText("格式"), "csv");
-    await user.click(screen.getByTestId("export-grades"));
+    await user.click(screen.getByTestId("open-export"));
+    await user.selectOptions(await screen.findByLabelText("格式"), "csv");
+    await user.click(screen.getByTestId("download-export"));
 
     await waitFor(() => expect(objectUrlSpy).toHaveBeenCalledTimes(1));
     const exportRequest = stub.requests.find((request) =>
@@ -391,7 +411,9 @@ describe("成绩查询（RQ-B-1-30）", () => {
     );
     expect(exportRequest?.url.searchParams.get("course_id")).toBe(UUID_A);
     expect(exportRequest?.url.searchParams.get("format")).toBe("csv");
-    expect(await screen.findByText(/导出已触发/)).toBeInTheDocument();
+    // 导出与页面共用同一筛选范围：没有输入时间就不发送 from/to。
+    expect(exportRequest?.url.searchParams.get("from")).toBeNull();
+    expect(await screen.findByTestId("export-success")).toHaveTextContent("成绩已下载");
     stub.restore();
   });
 
@@ -422,8 +444,9 @@ describe("成绩查询（RQ-B-1-30）", () => {
     await selectCourse(user);
     await screen.findByTestId("grades-table");
 
-    await user.click(screen.getByTestId("export-grades"));
-    expect(await screen.findByTestId("export-error")).toHaveTextContent("403");
+    await user.click(screen.getByTestId("open-export"));
+    await user.click(screen.getByTestId("download-export"));
+    expect(await screen.findByTestId("export-error")).toHaveTextContent("没有导出成绩的权限");
     expect(objectUrlSpy).not.toHaveBeenCalled();
     stub.restore();
   });
@@ -576,13 +599,15 @@ describe("谁还没交（RQ-B-1-30 验收 4 的操作化形态）", () => {
     expect(within(panel).queryByTestId("cohort-summary")).toBeNull();
     expect(within(panel).queryByTestId("cohort-table")).toBeNull();
 
-    // 而且真的停下来了：请求数停在翻页上限附近，没有无限增长。
-    // （允许少量背景重取：测试用的 QueryClient `staleTime: 0`，标签切换会触发一次。）
+    // 而且真的停下来了：请求数有上界，没有无限增长。
+    // 上界是 `3 × MAX_AUTO_PAGES`：明细页与「谁还没交」各有一轮自动翻页，而测试的 QueryClient
+    // `staleTime: 0` 会在挂载新观察者时把已加载的 40 页再重取一遍。判据是**有界且到达上限后停止**，
+    // 不是恰好等于页数。
     const gradeRequests = stub.requests.filter(
       (request) => request.url.pathname === "/api/v1/grades",
     );
     expect(gradeRequests.length).toBeGreaterThanOrEqual(MAX_AUTO_PAGES);
-    expect(gradeRequests.length).toBeLessThanOrEqual(MAX_AUTO_PAGES + 4);
+    expect(gradeRequests.length).toBeLessThanOrEqual(MAX_AUTO_PAGES * 3 + 8);
     stub.restore();
   });
 });

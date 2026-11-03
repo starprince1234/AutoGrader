@@ -136,6 +136,7 @@ function VersionRow({
             className="button button--ghost"
             to="/submit/$questionVersionId"
             params={{ questionVersionId: versionId }}
+            search={{}}
           >
             {myGrade ? t("assignments.actionResubmit") : t("assignments.answer")}
           </Link>

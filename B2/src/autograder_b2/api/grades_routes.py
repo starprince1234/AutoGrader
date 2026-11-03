@@ -55,10 +55,16 @@ from autograder_b2.auth.tokens import AuthenticationError, Principal
 from autograder_b2.grades import (
     DEFAULT_LIMIT,
     MAX_LIMIT,
+    IdentityLookupError,
+    IdentityMissingForRows,
+    IdentityNotConfigured,
     InvalidCursorError,
     InvalidFilterError,
+    UnsupportedExportColumn,
     UnsupportedExportFormat,
     grade_page_body,
+    parse_timestamp,
+    resolve_export_columns,
 )
 from autograder_b2.logging.logger import log_dependency_unavailable, log_event
 from autograder_b2.runtime import B2Runtime
@@ -81,6 +87,7 @@ def build_grades_router(runtime: B2Runtime) -> APIRouter:
         section_id: str | None = None,
         question_version_id: str | None = None,
         student_id: str | None = None,
+        evaluation_run_id: str | None = None,
         cursor: str | None = None,
         limit: str | None = None,
     ) -> Response:
@@ -97,6 +104,9 @@ def build_grades_router(runtime: B2Runtime) -> APIRouter:
             return _unprocessable(instance, "course_id is required")
         try:
             size = _parse_limit(limit)
+            # `from` 是 Python 关键字，只能按契约里的名字从查询串读（同 `quality-summary` 的做法）。
+            since = parse_timestamp(request.query_params.get("from"), "from")
+            until = parse_timestamp(request.query_params.get("to"), "to")
         except InvalidFilterError as error:
             return _unprocessable(instance, str(error))
 
@@ -108,6 +118,9 @@ def build_grades_router(runtime: B2Runtime) -> APIRouter:
                 section_id=section_id,
                 question_version_id=question_version_id,
                 student_id=student_id,
+                since=since,
+                until=until,
+                evaluation_run_id=evaluation_run_id,
                 limit=size,
                 cursor=cursor or None,
             )
@@ -135,7 +148,9 @@ def build_grades_router(runtime: B2Runtime) -> APIRouter:
         section_id: str | None = None,
         question_version_id: str | None = None,
         student_id: str | None = None,
+        evaluation_run_id: str | None = None,
         format: str | None = None,
+        columns: str | None = None,
     ) -> Response:
         instance = request.url.path
         unavailable = runtime.grades_unavailable()
@@ -149,6 +164,12 @@ def build_grades_router(runtime: B2Runtime) -> APIRouter:
         if not course_id:
             return _unprocessable(instance, "course_id is required")
         requested = DEFAULT_EXPORT_FORMAT if not format else format
+        try:
+            since = parse_timestamp(request.query_params.get("from"), "from")
+            until = parse_timestamp(request.query_params.get("to"), "to")
+            selected = resolve_export_columns(columns)
+        except (InvalidFilterError, UnsupportedExportColumn) as error:
+            return _unprocessable(instance, str(error))
 
         assert runtime.exporter is not None
         try:
@@ -158,6 +179,12 @@ def build_grades_router(runtime: B2Runtime) -> APIRouter:
                 section_id=section_id,
                 question_version_id=question_version_id,
                 student_id=student_id,
+                since=since,
+                until=until,
+                evaluation_run_id=evaluation_run_id,
+                columns=selected,
+                # 转交调用者自己的 bearer 头读 B4 名单：不新增服务凭据，也不扩大权限范围。
+                authorization=request.headers.get("authorization"),
                 fmt=requested,
             )
         except AuthorizationError:
@@ -166,6 +193,20 @@ def build_grades_router(runtime: B2Runtime) -> APIRouter:
             return _unprocessable(instance, str(error))
         except (InvalidFilterError, InvalidCursorError) as error:
             return _unprocessable(instance, str(error))
+        except IdentityNotConfigured as error:
+            # 没有 B4 地址 ⇒ 不可能生成带姓名/学号的成绩单。明确 503，不输出缺身份的文件。
+            return _not_available(instance, str(error))
+        except IdentityLookupError as error:
+            log_dependency_unavailable(
+                logger, dependency="b4-enrollment", error=error, stage="grades export"
+            )
+            runtime.record_failure()
+            return _not_available(instance, str(error))
+        except IdentityMissingForRows as error:
+            # 名单里没有某些成绩行的 student_id：契约要求导出失败而不是伪成功（409）。
+            return problem_response(
+                Problem(409, "conflict", "Conflict", str(error)), instance
+            )
         except SQLAlchemyError as error:
             # 依赖不可用**既有状态也有日志**（RQ-B-2-99 场景 2-99-D）：状态侧是 503 +
             # `record_failure()`（**只如实累计、不翻转健康判定**，理由见该方法 docstring）；

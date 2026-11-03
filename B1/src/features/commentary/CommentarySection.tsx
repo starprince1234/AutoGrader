@@ -97,7 +97,17 @@ function Disclaimers({ commentary }: { commentary: EvaluationCommentary }) {
   );
 }
 
-export function CommentarySection({ runId }: { runId: string }) {
+export function CommentarySection({
+  runId,
+  showAdvisory = true,
+}: {
+  runId: string;
+  /**
+   * 是否渲染 `advisory_score`。**学生视图必须传 `false`**：契约把参考分定义为模型的顾问性
+   * 建议，而学生看到"62 / 100"只会把它当成另一个分数。默认 `true` 是给教师视图用的。
+   */
+  showAdvisory?: boolean;
+}) {
   const session = useSession();
   const commentary = useEvaluationCommentary(runId);
   const generate = useGenerateCommentary(runId);
@@ -123,8 +133,9 @@ export function CommentarySection({ runId }: { runId: string }) {
 
   return (
     <div className="stack" data-testid="commentary-section">
-      {/* 参考分只在这里出现，且只在服务端真的给出非空 `advisory_score` 时出现。 */}
-      {advisory !== null && disclaimersPresent ? (
+      {/* 参考分只在这里出现，且只在服务端真的给出非空 `advisory_score` 时出现。
+          学生视图（`showAdvisory=false`）整块不渲染——契约要求它只对教师/助教可见。 */}
+      {showAdvisory && advisory !== null && disclaimersPresent ? (
         <AdvisoryScoreBlock advisory={advisory} />
       ) : null}
 
@@ -200,8 +211,9 @@ export function CommentarySection({ runId }: { runId: string }) {
         {data ? <Disclaimers commentary={data} /> : null}
 
         {data?.provenance ? (
-          <div data-testid="commentary-provenance">
-            <h3>{t("commentary.provenance")}</h3>
+          // 技术元数据默认收起：它用于复核"这次评语出自哪套系统"，不是主阅读内容。
+          <details data-testid="commentary-provenance">
+            <summary>{t("commentary.provenanceSummary")}</summary>
             <p className="muted">{t("commentary.provenanceHint")}</p>
             <ul className="muted">
               <li>
@@ -221,7 +233,7 @@ export function CommentarySection({ runId }: { runId: string }) {
                 <li key={field}>{field}</li>
               ))}
             </ul>
-          </div>
+          </details>
         ) : null}
 
       </Panel>

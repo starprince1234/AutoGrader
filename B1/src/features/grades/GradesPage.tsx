@@ -1,10 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { t } from "../../i18n";
 import type { GradeRow } from "../../api/types";
 import { isApiError } from "../../api/problem";
 import { loadedCourses, useCourses, useSections } from "../../api/directory";
-import { useSession } from "../../auth/sessionContext";
 import { courseLabel as formatCourseLabel } from "../../api/directory";
+import { useLoadAllPages } from "../../api/pagination";
+import { useSession } from "../../auth/sessionContext";
 import {
   canExportGrades,
   canGradeSubmission,
@@ -26,13 +27,43 @@ import {
 } from "../../ui/components";
 import { log, newRequestId } from "../../logging/logger";
 import { formatDateTime, shortenId } from "../../ui/format";
-import { sortRowsForDisplay, scoreDistribution, summarizeLoadedRows } from "./aggregate";
+import { scoreDistribution, summarizeLoadedRows } from "./aggregate";
 import { GradeDrilldown } from "./GradeDrilldown";
 import { GradesChart } from "./GradesChart";
 import type { EChartsLoader } from "./echartsLoader";
 import { SubmissionMatrix } from "./SubmissionMatrix";
-import { downloadGradesExport, loadedGrades, useGrades, type ExportFormat } from "./useGrades";
+import {
+  downloadGradesExport,
+  loadedGrades,
+  useGrades,
+  type ExportFormat,
+  type GradeFilter,
+} from "./useGrades";
 import { ManualGradeDrawer } from "./ManualGradeDrawer";
+import { useGradeIdentities, identityKey, type GradeIdentity } from "./useGradeIdentities";
+import { useQuestionVersionOptions } from "./useQuestionVersionOptions";
+import { localInputToUtc, rangeProblem, type TimeRangeProblem } from "./timeRange";
+import {
+  OPTIONAL_EXPORT_FIELDS,
+  optionalExportFieldLabel,
+  type OptionalExportField,
+} from "./exportColumns";
+
+/**
+ * 成绩页（P11；RQ-B-1-30 成绩与证据 + RQ-B-1-60 导出）。
+ *
+ * 四条读法上的纪律：
+ * 1. **未完成 ≠ 0 分**：`score` 为 null 的行只显示状态；平均分/通过率只用有权威分的行。
+ * 2. **汇总只在数据完整时出现**：游标分页会自动取完；被截断、请求失败或仍在加载时显示
+ *    "当前数据不完整，暂不提供全班汇总"，绝不用已加载页冒充全班。
+ * 3. **身份关联经 B4 授权名单**：教师表格的学号/姓名按 `(section_id, student_id)` 从
+ *    `GET /sections/{id}/enrollments` 关联；映射不到显示"名单中未找到"，不把平台 ID 当学号。
+ *    关联只影响**显示**；导出文件仍完全由 B2 生成（同一筛选、同一口径）。
+ * 4. **学生只看本人**：没有班级/姓名/导出入口；表格列与教师不同，且不显示任何他人数据。
+ *
+ * `initialRunId` 来自 URL（P10 的"查看本次结果"）：打开对应 report；关闭时清掉 URL。
+ * 该状态同时作为 `evaluation_run_id` 查询参数，让表格范围与"正在看的这一次"一致。
+ */
 
 const STATE_TONE: Record<GradeRow["state"], "ok" | "warn" | "bad" | "idle"> = {
   received: "idle",
@@ -44,269 +75,379 @@ const STATE_TONE: Record<GradeRow["state"], "ok" | "warn" | "bad" | "idle"> = {
   failed: "bad",
 };
 
-/** 两个视图共用同一组筛选条件：成绩明细与「谁还没交」必须看同一个作用域。 */
 type GradesTab = "detail" | "missing";
+type DisplayRow = { row: GradeRow; identity: GradeIdentity | null };
 
-export function GradesPage({ chartLoader }: { chartLoader?: EChartsLoader } = {}) {
+const TIME_PROBLEM_KEY: Record<TimeRangeProblem, Parameters<typeof t>[0]> = {
+  fromInvalid: "grades.timeFromInvalid",
+  toInvalid: "grades.timeToInvalid",
+  order: "grades.timeOrder",
+};
+
+export function GradesPage({
+  chartLoader,
+  initialRunId = null,
+  onRunChange,
+}: {
+  chartLoader?: EChartsLoader;
+  initialRunId?: string | null;
+  onRunChange?: (runId: string | null) => void;
+} = {}) {
   const session = useSession();
+  const teacherView = canViewTeacherEvidence(session);
+  const cohortView = canViewCohortGrades(session);
+  const exportAllowed = canExportGrades(session) && cohortView;
   const courses = useCourses();
   const courseOptions = loadedCourses(courses.data?.pages);
+  const scopeCourse = session.scope[0]?.course_id ?? "";
   const [courseId, setCourseId] = useState("");
   const [sectionId, setSectionId] = useState("");
   const [questionVersionId, setQuestionVersionId] = useState("");
+  const [fromInput, setFromInput] = useState("");
+  const [toInput, setToInput] = useState("");
+  const [drilldownRunId, setDrilldownRunId] = useState<string | null>(initialRunId);
+  const [tab, setTab] = useState<GradesTab>("detail");
+  const [exportOpen, setExportOpen] = useState(false);
   const [format, setFormat] = useState<ExportFormat>("xlsx");
-  const [drilldownRunId, setDrilldownRunId] = useState<string | null>(null);
+  const [selectedColumns, setSelectedColumns] = useState<OptionalExportField[]>([]);
   const [exportError, setExportError] = useState<unknown>(null);
   const [exportMessage, setExportMessage] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
-  const [tab, setTab] = useState<GradesTab>("detail");
   // 打分抽屉只记哪一次提交，其余状态由抽屉自己读（含乐观锁需要的 updated_at）。
   const [gradeTarget, setGradeTarget] = useState<string | null>(null);
 
-  // 默认选中第一个可见课程：成绩列表需要一个课程作用域，而多数用户只被授权一门课。
-  // 留空会让页面首屏显示"已加载 0 行"，看起来像没有成绩，而不是"还没选课程"。
-  const effectiveCourseId = courseId === "" ? (courseOptions[0]?.course_id ?? "") : courseId;
+  const effectiveCourseId = courseId === "" ? (courseOptions[0]?.course_id ?? scopeCourse) : courseId;
+  // 学生没有课程/课序/题目筛选，也不需要读课程目录与题库：只对教师侧加载这两份目录。
+  const sections = useSections(cohortView && effectiveCourseId !== "" ? effectiveCourseId : null);
+  const questionOptions = useQuestionVersionOptions(
+    cohortView && effectiveCourseId !== "" ? effectiveCourseId : null,
+    cohortView,
+  );
+  const questionLabels = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const option of questionOptions.options) {
+      map.set(
+        option.questionVersionId,
+        t("grades.questionOption", { title: option.title, version: option.version }),
+      );
+    }
+    return map;
+  }, [questionOptions.options]);
 
-  const sections = useSections(effectiveCourseId === "" ? null : effectiveCourseId);
-  const filter = useMemo(
+  useEffect(() => {
+    setDrilldownRunId(initialRunId);
+  }, [initialRunId]);
+
+  const timeProblem = rangeProblem(fromInput, toInput);
+  const fromUtc = timeProblem === null ? localInputToUtc(fromInput) : null;
+  const toUtc = timeProblem === null ? localInputToUtc(toInput) : null;
+  const activeRunId = drilldownRunId;
+
+  const filter: GradeFilter = useMemo(
     () => ({
       courseId: effectiveCourseId === "" ? null : effectiveCourseId,
       sectionId: sectionId === "" ? null : sectionId,
       questionVersionId: questionVersionId === "" ? null : questionVersionId,
+      fromUtc: fromUtc === "" ? null : fromUtc,
+      toUtc: toUtc === "" ? null : toUtc,
+      evaluationRunId: activeRunId,
     }),
-    [effectiveCourseId, sectionId, questionVersionId],
+    [effectiveCourseId, sectionId, questionVersionId, fromUtc, toUtc, activeRunId],
   );
-  const grades = useGrades(filter);
+
+  const grades = useGrades(filter, { enabled: timeProblem === null });
   const loaded = useMemo(() => loadedGrades(grades.data?.pages), [grades.data]);
-  const rows = useMemo(() => sortRowsForDisplay(loaded), [loaded]);
-  const summary = useMemo(() => summarizeLoadedRows(rows), [rows]);
-  const buckets = useMemo(() => scoreDistribution(rows), [rows]);
+  const { complete, capped } = useLoadAllPages({
+    // 只有明细标签页负责自动翻页：两个视图同时自动翻页会让同一个游标被并发推进，
+    // 请求数与顺序都会失控（而汇总只需要在明细视图里等全量）。
+    hasNextPage: tab === "detail" && grades.hasNextPage,
+    isFetchingNextPage: grades.isFetchingNextPage,
+    fetchNextPage: grades.fetchNextPage,
+    pageCount: grades.data?.pages.length ?? 0,
+  });
 
-  const teacherView = canViewTeacherEvidence(session);
-  const cohortView = canViewCohortGrades(session);
-
-  const detailView = (
-    <>
-      <Panel
-        title={t("grades.summary", { count: summary.rowCount })}
-        actions={
-          canExportGrades(session) ? (
-            <div className="inline">
-              <Field label={t("grades.exportFormat")} htmlFor="export-format">
-                <select
-                  id="export-format"
-                  value={format}
-                  onChange={(event) => setFormat(event.target.value as ExportFormat)}
-                >
-                  <option value="xlsx">XLSX</option>
-                  <option value="csv">CSV</option>
-                </select>
-              </Field>
-              <button
-                type="button"
-                className="button"
-                data-testid="export-grades"
-                disabled={effectiveCourseId === "" || exporting}
-                onClick={async () => {
-                  setExportError(null);
-                  setExportMessage(null);
-                  setExporting(true);
-                  const requestId = newRequestId();
-                  try {
-                    const result = await downloadGradesExport(filter, format);
-                    log({
-                      event: "grades_export_triggered",
-                      request_id: requestId,
-                      format,
-                      filename: result.filename,
-                    });
-                    setExportMessage(
-                      `${t("grades.exportTriggered")} ${result.filename}（${result.bytes} B）`,
-                    );
-                  } catch (error) {
-                    setExportError(error);
-                  } finally {
-                    setExporting(false);
-                  }
-                }}
-              >
-                {exporting ? t("grades.exporting") : t("grades.export")}
-              </button>
-            </div>
-          ) : null
-        }
-      >
-        <ul>
-          <li>
-            {t("grades.summarySubmissions")}：{summary.rowCount}
-          </li>
-          <li>
-            {t("grades.summaryAverage")}：
-            {summary.averageScore === null ? t("grades.notScored") : summary.averageScore}
-          </li>
-          <li>
-            {t("grades.summaryPassRate")}：
-            {summary.passRate === null ? t("grades.notScored") : `${Math.round(summary.passRate * 100)}%`}
-          </li>
-          <li>
-            {t("grades.unfinished")}：{summary.unfinishedCount}
-          </li>
-        </ul>
-        <Banner tone="warn" testId="summary-scope-notice">
-          {t("grades.summaryScopeNotice")}
-        </Banner>
-        <GradesChart buckets={buckets} loader={chartLoader} />
-        <p className="muted">{t("grades.distribution")}</p>
-        {exportMessage ? <Banner tone="success">{exportMessage}</Banner> : null}
-        {exportError ? (
-          <Banner tone="error" testId="export-error">
-            {t("grades.exportFailed", {
-              reason: isApiError(exportError) && exportError.isForbidden
-                ? t("grades.exportForbidden")
-                : String(exportError),
-            })}
-          </Banner>
-        ) : null}
-        <p className="muted">{t("grades.exportNoRebuild")}</p>
-      </Panel>
-
-      <Panel
-        title={t("grades.countLoaded", { count: rows.length })}
-        actions={
-          <LoadMoreActions
-            loadedCount={rows.length}
-            hasNextPage={grades.hasNextPage}
-            isFetchingNextPage={grades.isFetchingNextPage}
-            onLoadMore={() => {
-              void grades.fetchNextPage();
-            }}
-            testId="grades"
-          />
-        }
-      >
-        {effectiveCourseId === "" ? (
-          <p className="muted">{t("grades.course")}</p>
-        ) : grades.isPending ? (
-          <Spinner />
-        ) : grades.isError ? (
-          <ErrorState error={grades.error} />
-        ) : (
-          <Table<GradeRow>
-            testId="grades-table"
-            label={t("grades.countLoaded", { count: rows.length })}
-            rows={rows}
-            getRowKey={(row, index) => `${row.submission_id}-${index}`}
-            columns={[
-              {
-                key: "student_number",
-                // B2 的 `student_number` / `display_name` **恒为 null**（B2 只拥有 `b2`，
-                // 姓名与学号属 B4；见 B2/grades/query.py 的说明）。因此这一列的表头是
-                // "学生"而不是"学号"：回退值 `student_id` 是平台用户 ID，把它显示在
-                // "学号"表头下就是在给数据贴错标签。
-                header: t("grades.student"),
-                // 行序由 `sortRowsForDisplay` 决定（学号为主键、`student_id` 为次键）：
-                // 声明出来，读屏用户才知道这个顺序是有意义的。
-                sort: "ascending",
-                render: (row) =>
-                  row.student_number ?? (
-                    <span className="mono-id" title={`学生 ID：${row.student_id}`}>
-                      {shortenId(row.student_id)}
-                    </span>
-                  ),
-              },
-              {
-                key: "display_name",
-                header: t("grades.displayName"),
-                render: (row) => row.display_name ?? t("common.none"),
-              },
-              {
-                key: "state",
-                header: t("grades.state"),
-                render: (row) => (
-                  <StatusPill tone={STATE_TONE[row.state]}>
-                    {t(`grades.state.${row.state}`)}
-                  </StatusPill>
-                ),
-              },
-              {
-                key: "score",
-                header: t("grades.score"),
-                align: "right",
-                // 未完成的行 score 为 null：显示状态，不显示 0 分。
-                render: (row) => {
-                  // awaiting_manual 既不是 0 分也不是“未完成”：它表示“等老师打分”。
-                  if (row.grade_status === "awaiting_manual") {
-                    return (
-                      <span className="muted" data-testid="awaiting-grade">
-                        {t("grades.gradeStatus.awaiting_manual")}
-                      </span>
-                    );
-                  }
-                  return typeof row.score === "number" ? (
-                    row.score
-                  ) : (
-                    <span className="muted" data-testid="unfinished-score">
-                      {t("grades.unfinished")}
-                    </span>
-                  );
-                },
-              },
-              {
-                key: "max_score",
-                header: t("grades.maxScore"),
-                align: "right",
-                render: (row) => row.max_score ?? t("common.none"),
-              },
-              {
-                key: "submitted_at",
-                header: t("grades.submittedAt"),
-                render: (row) => formatDateTime(row.submitted_at, t("common.none")),
-              },
-              {
-                key: "grade_action",
-                header: t("grades.gradeAction"),
-                render: (row) =>
-                  canGradeSubmission(session) ? (
-                    <button
-                      type="button"
-                      className="button button--ghost"
-                      data-testid={`grade-${row.submission_id}`}
-                      onClick={() => setGradeTarget(row.submission_id)}
-                    >
-                      {t("grades.gradeAction")}
-                    </button>
-                  ) : (
-                    <span className="muted">
-                      {t(`grades.gradeStatus.${row.grade_status ?? "deterministic"}`)}
-                    </span>
-                  ),
-              },
-              {
-                key: "evidence",
-                header: t("grades.evidence"),
-                render: (row) =>
-                  row.evaluation_run_id ? (
-                    <button
-                      type="button"
-                      className="button button--ghost"
-                      data-testid={`drilldown-${row.evaluation_run_id}`}
-                      onClick={() => setDrilldownRunId(row.evaluation_run_id ?? null)}
-                    >
-                      {t("grades.evidence")}
-                    </button>
-                  ) : (
-                    <span className="muted">{t("common.none")}</span>
-                  ),
-              },
-            ]}
-          />
-        )}
-        {gradeTarget ? (
-          <ManualGradeDrawer submissionId={gradeTarget} onClose={() => setGradeTarget(null)} />
-        ) : null}
-      </Panel>
-    </>
+  const sectionIds = useMemo(
+    () => loaded.map((row) => row.section_id).filter((id): id is string => Boolean(id)),
+    [loaded],
   );
+  const identities = useGradeIdentities(sectionIds, cohortView);
+
+  const displayRows = useMemo<DisplayRow[]>(() => {
+    const rows = loaded.map((row) => ({
+      row,
+      identity: cohortView
+        ? (identities.bySectionAndStudent.get(
+            identityKey(row.section_id ?? "", row.student_id),
+          ) ?? null)
+        : null,
+    }));
+    return rows.sort((a, b) => {
+      const numberA = a.identity?.studentNumber ?? a.row.student_number ?? "";
+      const numberB = b.identity?.studentNumber ?? b.row.student_number ?? "";
+      if (numberA !== numberB) return numberA.localeCompare(numberB);
+      return a.row.student_id.localeCompare(b.row.student_id);
+    });
+  }, [loaded, identities.bySectionAndStudent, cohortView]);
+
+  const rowsForSummary = useMemo(() => loaded, [loaded]);
+  const summary = useMemo(() => summarizeLoadedRows(rowsForSummary), [rowsForSummary]);
+  const buckets = useMemo(() => scoreDistribution(rowsForSummary), [rowsForSummary]);
+  const summaryComplete = complete && !capped && !grades.isError;
+  const filtersActive =
+    sectionId !== "" ||
+    questionVersionId !== "" ||
+    fromInput !== "" ||
+    toInput !== "" ||
+    activeRunId !== null;
+
+  const clearFilters = () => {
+    setSectionId("");
+    setQuestionVersionId("");
+    setFromInput("");
+    setToInput("");
+    if (activeRunId !== null) {
+      setDrilldownRunId(null);
+      onRunChange?.(null);
+    }
+  };
+
+  const openRun = (runId: string) => {
+    setDrilldownRunId(runId);
+    onRunChange?.(runId);
+  };
+  const closeRun = () => {
+    setDrilldownRunId(null);
+    onRunChange?.(null);
+  };
+
+  const questionLabel = (versionId: string) =>
+    questionLabels.get(versionId) ?? shortenId(versionId);
+
+  const drilldownRow = displayRows.find((entry) => entry.row.evaluation_run_id === drilldownRunId);
+
+  const evidenceButton = (row: GradeRow) =>
+    row.evaluation_run_id ? (
+      <button
+        type="button"
+        className="button button--ghost"
+        data-testid={`drilldown-${row.evaluation_run_id}`}
+        onClick={() => openRun(row.evaluation_run_id as string)}
+      >
+        {t("grades.evidence")}
+      </button>
+    ) : (
+      <span className="muted">{t("common.none")}</span>
+    );
+
+  const stateCell = (row: GradeRow) => (
+    <StatusPill tone={STATE_TONE[row.state]}>{t(`grades.state.${row.state}`)}</StatusPill>
+  );
+  const scoreCell = (row: GradeRow) =>
+    row.grade_status === "awaiting_manual" ? (
+      <span className="muted" data-testid="awaiting-grade">
+        {t("grades.gradeStatus.awaiting_manual")}
+      </span>
+    ) : typeof row.score === "number" ? (
+      <span data-testid="score">
+        {row.score} / {row.max_score ?? t("common.none")}
+      </span>
+    ) : (
+      <span className="muted" data-testid="unfinished-score">
+        {t("grades.unscored")}
+      </span>
+    );
+  const gradeActionCell = (row: GradeRow) =>
+    canGradeSubmission(session) ? (
+      <button
+        type="button"
+        className="button button--ghost"
+        data-testid={`grade-${row.submission_id}`}
+        onClick={() => setGradeTarget(row.submission_id)}
+      >
+        {t("grades.gradeAction")}
+      </button>
+    ) : (
+      <span className="muted">
+        {t(`grades.gradeStatus.${row.grade_status ?? "deterministic"}`)}
+      </span>
+    );
+  const resultCell = (row: GradeRow) =>
+    row.state === "completed" ? (
+      row.is_pass === true ? (
+        <StatusPill tone="ok">{t("grades.pass")}</StatusPill>
+      ) : (
+        <StatusPill tone="bad">{t("grades.fail")}</StatusPill>
+      )
+    ) : (
+      <span className="muted">{t("grades.notScored")}</span>
+    );
+
+  const detailTable = (
+    <Panel
+      title={t("grades.countLoaded", { count: displayRows.length })}
+      testId="grades-table-panel"
+      actions={
+        <LoadMoreActions
+          loadedCount={displayRows.length}
+          hasNextPage={grades.hasNextPage}
+          isFetchingNextPage={grades.isFetchingNextPage}
+          onLoadMore={() => {
+            void grades.fetchNextPage();
+          }}
+          testId="grades"
+        />
+      }
+    >
+      {effectiveCourseId === "" ? (
+        <Banner tone="info">{t("grades.noCourse")}</Banner>
+      ) : timeProblem !== null ? (
+        <Banner tone="warn" testId="grades-time-problem">
+          {t(TIME_PROBLEM_KEY[timeProblem])}
+        </Banner>
+      ) : grades.isPending ? (
+        <Spinner />
+      ) : grades.isError ? (
+        <ErrorState error={grades.error} />
+      ) : displayRows.length === 0 ? (
+        <div className="stack">
+          <p className="muted" data-testid="grades-empty">
+            {filtersActive ? t("grades.noMatch") : t("grades.empty")}
+          </p>
+          {filtersActive ? (
+            <button type="button" className="button" data-testid="clear-grades-filters" onClick={clearFilters}>
+              {t("grades.clearFilters")}
+            </button>
+          ) : null}
+        </div>
+      ) : (
+        <Table<DisplayRow>
+          testId="grades-table"
+          label={t("grades.countLoaded", { count: displayRows.length })}
+          rows={displayRows}
+          getRowKey={(entry) => entry.row.submission_id}
+          columns={
+            cohortView
+              ? [
+                  {
+                    key: "student_number",
+                    header: t("grades.studentNumber"),
+                    sort: "ascending",
+                    render: (entry) =>
+                      entry.identity?.studentNumber ?? (
+                        <span className="muted" data-testid="identity-missing">
+                          {t("grades.identityMissing")}
+                        </span>
+                      ),
+                  },
+                  {
+                    key: "display_name",
+                    header: t("grades.displayName"),
+                    render: (entry) => entry.identity?.displayName ?? t("grades.identityMissing"),
+                  },
+                  {
+                    key: "question",
+                    header: t("grades.question"),
+                    render: (entry) => questionLabel(entry.row.question_version_id),
+                  },
+                  {
+                    key: "submitted_at",
+                    header: t("grades.submittedAt"),
+                    render: (entry) => formatDateTime(entry.row.submitted_at, t("common.none")),
+                  },
+                  { key: "state", header: t("grades.state"), render: (entry) => stateCell(entry.row) },
+                  { key: "score", header: t("grades.scoreSlashMax"), align: "right", render: (entry) => scoreCell(entry.row) },
+                  { key: "result", header: t("grades.result"), render: (entry) => resultCell(entry.row) },
+                  { key: "grade", header: t("grades.gradeAction"), render: (entry) => gradeActionCell(entry.row) },
+                  { key: "evidence", header: t("grades.evidence"), render: (entry) => evidenceButton(entry.row) },
+                ]
+              : [
+                  {
+                    key: "question",
+                    header: t("grades.question"),
+                    render: (entry) =>
+                      questionLabel(entry.row.question_version_id),
+                  },
+                  {
+                    key: "submitted_at",
+                    header: t("grades.submittedAt"),
+                    render: (entry) => formatDateTime(entry.row.submitted_at, t("common.none")),
+                  },
+                  { key: "state", header: t("grades.state"), render: (entry) => stateCell(entry.row) },
+                  { key: "score", header: t("grades.scoreSlashMax"), align: "right", render: (entry) => scoreCell(entry.row) },
+                  { key: "result", header: t("grades.result"), render: (entry) => resultCell(entry.row) },
+                  { key: "evidence", header: t("grades.evidence"), render: (entry) => evidenceButton(entry.row) },
+                ]
+          }
+        />
+      )}
+      {gradeTarget ? (
+        <ManualGradeDrawer submissionId={gradeTarget} onClose={() => setGradeTarget(null)} />
+      ) : null}
+    </Panel>
+  );
+
+  const summaryPanel = cohortView ? (
+    <Panel title={t("grades.summaryTitle")} testId="grades-summary">
+      {activeRunId !== null ? (
+        <Banner tone="info" testId="summary-single-run">
+          {t("grades.summarySingleRun")}
+        </Banner>
+      ) : !summaryComplete ? (
+        <Banner tone="warn" testId="summary-incomplete">
+          {grades.isError
+            ? t("grades.summaryError")
+            : capped
+              ? t("grades.summaryTruncated")
+              : t("grades.summaryLoading")}
+        </Banner>
+      ) : (
+        <>
+          <p className="muted" data-testid="summary-scope">
+            {t("grades.summaryScope")}
+          </p>
+          <ul>
+            <li>
+              {t("grades.summarySubmissions")}：{summary.rowCount}
+            </li>
+            <li>
+              {t("grades.summaryAverage")}：
+              {summary.averageScore === null ? t("grades.notScored") : summary.averageScore}
+              <span className="muted"> {t("grades.summarySample", { count: summary.scoredCount })}</span>
+            </li>
+            <li>
+              {t("grades.summaryPassRate")}：
+              {summary.passRate === null ? t("grades.notScored") : `${Math.round(summary.passRate * 100)}%`}
+              <span className="muted"> {t("grades.summaryPassDenominator", { count: summary.scoredCount })}</span>
+            </li>
+            <li>
+              {t("grades.unfinished")}：{summary.unfinishedCount}
+            </li>
+          </ul>
+          <Banner tone="info" testId="summary-scope-notice">
+            {t("grades.summaryScopeNotice")}
+          </Banner>
+          {displayRows.length > 0 ? (
+            <>
+              <GradesChart buckets={buckets} loader={chartLoader} />
+              <p className="muted">{t("grades.distribution")}</p>
+            </>
+          ) : null}
+        </>
+      )}
+      {identities.isError ? (
+        <Banner tone="warn" testId="identity-roster-error">
+          {t("grades.identityRosterError")}
+          <button type="button" className="button button--ghost" onClick={identities.retry}>
+            {t("common.retry")}
+          </button>
+        </Banner>
+      ) : identities.isLoading ? (
+        <p className="muted" data-testid="identity-loading">
+          {t("grades.identityLoading")}
+        </p>
+      ) : null}
+    </Panel>
+  ) : null;
 
   return (
     <div className="stack">
@@ -318,13 +459,23 @@ export function GradesPage({ chartLoader }: { chartLoader?: EChartsLoader } = {}
             <select
               id="grades-course"
               value={effectiveCourseId}
+              disabled={!cohortView && courseOptions.length === 0}
               onChange={(event) => {
+                // 切换课程会清空课序/题目/时间与旧游标：跨课程共用筛选是数据串班的最短路径。
                 setCourseId(event.target.value);
                 setSectionId("");
+                setQuestionVersionId("");
+                setFromInput("");
+                setToInput("");
               }}
             >
-              {/* 课程是成绩查询的必需作用域，且默认选中第一门可见课程；留一个空选项
-                  只会得到一个永远选不中的条目。 */}
+              {courseOptions.length === 0 && effectiveCourseId === "" ? (
+                <option value="">{t("grades.noCourse")}</option>
+              ) : null}
+              {/* 学生不一定能看到课程目录；此时至少显示会话所在的课程作用域，避免出现空白下拉。 */}
+              {courseOptions.length === 0 && effectiveCourseId !== "" ? (
+                <option value={effectiveCourseId}>{shortenId(effectiveCourseId)}</option>
+              ) : null}
               {courseOptions.map((course) => (
                 <option key={course.course_id} value={course.course_id}>
                   {formatCourseLabel(course)}
@@ -332,50 +483,133 @@ export function GradesPage({ chartLoader }: { chartLoader?: EChartsLoader } = {}
               ))}
             </select>
           </Field>
-          <Field label={t("grades.section")} htmlFor="grades-section">
-            <select
-              id="grades-section"
-              value={sectionId}
-              onChange={(event) => setSectionId(event.target.value)}
-              disabled={effectiveCourseId === ""}
+
+          {cohortView ? (
+            <>
+              <Field label={t("grades.section")} htmlFor="grades-section">
+                <select
+                  id="grades-section"
+                  value={sectionId}
+                  onChange={(event) => setSectionId(event.target.value)}
+                  disabled={effectiveCourseId === ""}
+                >
+                  <option value="">{t("common.any")}</option>
+                  {(sections.data ?? []).map((section) => (
+                    <option key={section.sectionId} value={section.sectionId}>
+                      {section.label}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field label={t("grades.question")} htmlFor="grades-question">
+                <select
+                  id="grades-question"
+                  value={questionVersionId}
+                  onChange={(event) => setQuestionVersionId(event.target.value)}
+                  disabled={effectiveCourseId === ""}
+                >
+                  <option value="">{t("common.any")}</option>
+                  {questionOptions.options.map((option) => (
+                    <option key={option.questionVersionId} value={option.questionVersionId}>
+                      {t("grades.questionOption", {
+                        title: option.title,
+                        version: option.version,
+                      })}
+                      {option.status === "published" ? "" : ` · ${t(`questions.status.${option.status}`)}`}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+
+              <Field
+                label={t("grades.from")}
+                htmlFor="grades-from"
+                error={timeProblem === "fromInvalid" ? t("grades.timeFromInvalid") : null}
+              >
+                <input
+                  id="grades-from"
+                  type="datetime-local"
+                  value={fromInput}
+                  onChange={(event) => setFromInput(event.target.value)}
+                />
+              </Field>
+
+              <Field
+                label={t("grades.to")}
+                htmlFor="grades-to"
+                error={
+                  timeProblem === "toInvalid"
+                    ? t("grades.timeToInvalid")
+                    : timeProblem === "order"
+                      ? t("grades.timeOrder")
+                      : null
+                }
+              >
+                <input
+                  id="grades-to"
+                  type="datetime-local"
+                  value={toInput}
+                  onChange={(event) => setToInput(event.target.value)}
+                />
+              </Field>
+            </>
+          ) : null}
+        </div>
+
+        <p className="muted">{t("grades.timeHint")}</p>
+
+        {exportAllowed ? (
+          <div className="inline">
+            <button
+              type="button"
+              className="button"
+              data-testid="open-export"
+              disabled={effectiveCourseId === "" || timeProblem !== null}
+              onClick={() => {
+                setExportError(null);
+                setExportMessage(null);
+                setExportOpen(true);
+              }}
             >
-              <option value="">{t("common.any")}</option>
-              {(sections.data ?? []).map((section) => (
-                <option key={section.sectionId} value={section.sectionId}>
-                  {section.label}
-                </option>
-              ))}
-            </select>
-          </Field>
-          <Field label={t("grades.questionVersion")} htmlFor="grades-version">
-            <input
-              id="grades-version"
-              value={questionVersionId}
-              onChange={(event) => setQuestionVersionId(event.target.value)}
-            />
-          </Field>
-        </div>
-        <div className="inline">
-          <span className="muted" data-testid="grades-courses-count">
-            {t("common.coursesLoaded", { count: courseOptions.length })}
-          </span>
+              {t("grades.export")}
+            </button>
+            <button type="button" className="button button--ghost" onClick={clearFilters}>
+              {t("grades.clearFilters")}
+            </button>
+          </div>
+        ) : null}
+
+        {courseOptions.length === 0 && courses.isError ? <ErrorState error={courses.error} /> : null}
+        {sections.isError ? <ErrorState error={sections.error} /> : null}
+        {questionOptions.isError ? <ErrorState error={questionOptions.error} /> : null}
+        {questionOptions.hasNextPage ? (
           <LoadMoreActions
-            loadedCount={courseOptions.length}
-            hasNextPage={courses.hasNextPage}
-            isFetchingNextPage={courses.isFetchingNextPage}
+            loadedCount={questionOptions.options.length}
+            hasNextPage={questionOptions.hasNextPage}
+            isFetchingNextPage={questionOptions.isFetchingNextPage}
             onLoadMore={() => {
-              void courses.fetchNextPage();
+              void questionOptions.fetchNextPage();
             }}
-            testId="courses"
+            testId="question-options"
           />
-        </div>
+        ) : null}
+
+        {activeRunId ? (
+          <Banner tone="info" testId="single-run-notice">
+            {t("grades.singleRunNotice", { run: shortenId(activeRunId) })}
+            <button type="button" className="button button--ghost" onClick={closeRun}>
+              {t("grades.showAll")}
+            </button>
+          </Banner>
+        ) : null}
 
         <Banner tone="info" testId="unfinished-notice">
           {t("grades.stateNotice")}
         </Banner>
-        {courses.isError ? <ErrorState error={courses.error} /> : null}
-        {sections.isError ? <ErrorState error={sections.error} /> : null}
       </Panel>
+
+      {summaryPanel}
 
       {cohortView ? (
         <Tabs
@@ -384,7 +618,7 @@ export function GradesPage({ chartLoader }: { chartLoader?: EChartsLoader } = {}
           activeId={tab}
           onChange={(id) => setTab(id as GradesTab)}
           tabs={[
-            { id: "detail", label: t("grades.tabs.detail"), content: detailView },
+            { id: "detail", label: t("grades.tabs.detail"), content: detailTable },
             {
               id: "missing",
               label: t("grades.tabs.missing"),
@@ -393,8 +627,6 @@ export function GradesPage({ chartLoader }: { chartLoader?: EChartsLoader } = {}
                   filter={{
                     courseId: filter.courseId,
                     sectionId: filter.sectionId,
-                    // 契约的 `listGrades` 只接受单个 `question_version_id`；
-                    // 空筛选 = 该课程/课序下的全部提交。
                     questionVersionIds:
                       filter.questionVersionId === null ? null : [filter.questionVersionId],
                   }}
@@ -404,16 +636,158 @@ export function GradesPage({ chartLoader }: { chartLoader?: EChartsLoader } = {}
           ]}
         />
       ) : (
-        detailView
+        detailTable
       )}
 
+      {exportOpen ? (
+        <Modal title={t("grades.exportTitle")} testId="export-drawer" onClose={() => setExportOpen(false)}>
+          <div className="stack">
+            <p className="muted">{t("grades.exportIntro")}</p>
+            <Field label={t("grades.exportFormat")} htmlFor="export-format">
+              <select
+                id="export-format"
+                value={format}
+                onChange={(event) => setFormat(event.target.value as ExportFormat)}
+              >
+                <option value="xlsx">XLSX</option>
+                <option value="csv">CSV</option>
+              </select>
+            </Field>
+
+            <div>
+              <h3>{t("grades.exportRange")}</h3>
+              <p className="muted" data-testid="export-range">
+                {fromInput === "" && toInput === ""
+                  ? t("grades.exportAllTime")
+                  : t("grades.exportRangeSummary", {
+                      from: fromInput === "" ? "—" : fromInput,
+                      to: toInput === "" ? "—" : toInput,
+                    })}
+              </p>
+              <p className="muted">{t("grades.exportRangeHint")}</p>
+            </div>
+
+            <div>
+              <h3>{t("grades.exportRequired")}</h3>
+              <ul className="muted" data-testid="export-required-columns">
+                {[
+                  "studentNumber",
+                  "displayName",
+                  "course",
+                  "section",
+                  "question",
+                  "score",
+                  "maxScore",
+                  "submittedAt",
+                  "evaluationRun",
+                ].map((key) => (
+                  <li key={key}>
+                    <label>
+                      <input type="checkbox" checked disabled readOnly />{" "}
+                      {t(`grades.exportColumn.${key}` as Parameters<typeof t>[0])}
+                    </label>
+                  </li>
+                ))}
+              </ul>
+              <p className="muted">{t("grades.exportRequiredHint")}</p>
+            </div>
+
+            <div>
+              <h3>{t("grades.exportOptional")}</h3>
+              {OPTIONAL_EXPORT_FIELDS.map((field) => (
+                <label key={field} className="inline">
+                  <input
+                    type="checkbox"
+                    data-testid={`export-column-${field}`}
+                    checked={selectedColumns.includes(field)}
+                    onChange={(event) => {
+                      setSelectedColumns((previous) =>
+                        event.target.checked
+                          ? [...previous, field]
+                          : previous.filter((item) => item !== field),
+                      );
+                    }}
+                  />
+                  {t(optionalExportFieldLabel(field))}
+                </label>
+              ))}
+              <p className="muted">{t("grades.exportOptionalHint")}</p>
+            </div>
+
+            <div className="inline">
+              <button
+                type="button"
+                className="button"
+                data-testid="download-export"
+                disabled={exporting || timeProblem !== null}
+                onClick={async () => {
+                  setExportError(null);
+                  setExportMessage(null);
+                  setExporting(true);
+                  const requestId = newRequestId();
+                  try {
+                    const result = await downloadGradesExport(
+                      filter,
+                      format,
+                      selectedColumns,
+                    );
+                    log({
+                      event: "grades_export_downloaded",
+                      request_id: requestId,
+                      format,
+                      columns: selectedColumns,
+                    });
+                    setExportMessage(t("grades.exportDownloaded", { filename: result.filename }));
+                    setExportOpen(false);
+                  } catch (error) {
+                    setExportError(error);
+                  } finally {
+                    setExporting(false);
+                  }
+                }}
+              >
+                {exporting ? t("grades.exporting") : t("grades.exportDownload")}
+              </button>
+              <button type="button" className="button button--ghost" onClick={() => setExportOpen(false)}>
+                {t("common.cancel")}
+              </button>
+            </div>
+
+            {exportError ? (
+              <Banner tone="error" testId="export-error">
+                {t("grades.exportFailed", {
+                  reason:
+                    isApiError(exportError) && exportError.isForbidden
+                      ? t("grades.exportForbidden")
+                      : isApiError(exportError) && exportError.status === 409
+                        ? t("grades.exportIdentityMissing")
+                        : isApiError(exportError) && exportError.requestId
+                          ? `${String(exportError)}（request_id ${exportError.requestId}）`
+                          : String(exportError),
+                })}
+              </Banner>
+            ) : null}
+            {timeProblem !== null ? (
+              <Banner tone="warn">{t(TIME_PROBLEM_KEY[timeProblem])}</Banner>
+            ) : null}
+          </div>
+        </Modal>
+      ) : null}
+
+      {exportMessage ? (
+        <Banner tone="success" testId="export-success">
+          {exportMessage}
+        </Banner>
+      ) : null}
+
       {drilldownRunId ? (
-        <Modal
-          title={t("grades.drilldownTitle")}
-          testId="drilldown-modal"
-          onClose={() => setDrilldownRunId(null)}
-        >
-          <GradeDrilldown runId={drilldownRunId} view={teacherView ? "teacher" : "student"} />
+        <Modal title={t("grades.drilldownTitle")} testId="drilldown-modal" onClose={closeRun}>
+          <GradeDrilldown
+            runId={drilldownRunId}
+            view={teacherView ? "teacher" : "student"}
+            runState={drilldownRow?.row.state}
+            questionVersionId={drilldownRow?.row.question_version_id}
+          />
         </Modal>
       ) : null}
     </div>

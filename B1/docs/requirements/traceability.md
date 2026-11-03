@@ -99,3 +99,12 @@
 ## 变更规则
 
 需求编号变更按 `../../../MAIN/docs/requirements/rq-catalog.md` 第 7 节执行：先改 MAIN 目录 → 再改本表 → 再改 `../collaboration/workpackages.md` → 最后写代码。
+
+## 成员四本批（2026-10，CHG-0030 / 契约 0.23.0）
+
+| 需求 | 状态 | 证据 |
+|---|---|---|
+| RQ-B-1-50（作答与提交） | `已完成`（代码 + 定向自动化；真实浏览器/后端未执行） | P10 双栏题干+编辑器、草稿恢复先询问、删除确认、`submission_id`/`evaluation_run_id` 写回 URL、刷新恢复、SSE 去重、终态跳 P11；`SubmitPage.test.tsx` / `SubmitPage.flow.test.tsx`；未验证项见 `phases/active/phase-07-submission-and-grades.md` §3 |
+| RQ-B-1-30（成绩与证据） | `已完成`（代码 + 定向自动化） | 服务端时间范围/按 run 反查、学生/教师分栏、B4 名单身份关联、完整数据才出汇总、`?evaluation_run_id=` 深链、参考分只对教师；未打开真实导出文件 |
+| RQ-B-1-60（按时间范围/列导出） | `已完成`（前端请求侧） | 导出 Drawer 的格式/时间/可选列；文件由 B2 生成（B1 不重拼），`columns` 与页面筛选同源；XLSX/CSV 由 B2 测试覆盖 |
+| AI-FLOW-01B（学生分层提示） | `已完成`（前端消费侧） | `LearningHintsSection` 六态、逐层展开、隐藏/重展不发请求、仅 completed run、返回作业保留草稿；真实 provider 未联调 |

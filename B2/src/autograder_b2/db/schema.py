@@ -16,7 +16,7 @@ SCHEMA = "b2"
 #: 本代码期望的迁移版本（必须与 `module.yaml: database.migration_head` 和 Alembic head 三者一致）。
 #: 用途：readyness 探测据此判断"库结构与代码是否匹配"——连接得上但版本落后同样是**不可用**，
 #: 否则 health 会谎报健康而受权读请求全线 500。三者一致性由 `tests/test_migrations.py` 断言。
-EXPECTED_SCHEMA_REVISION = "20261028_0018"
+EXPECTED_SCHEMA_REVISION = "20261029_0019"
 
 metadata = sa.MetaData(schema=SCHEMA)
 
@@ -116,6 +116,11 @@ intake_quarantines = sa.Table(
     sa.Column("resolution", sa.Text(), nullable=True),
     sa.Column("resolved_at", TIMESTAMP(timezone=True, precision=3), nullable=True),
     sa.Column("resolved_by", sa.Uuid(), nullable=True),
+    # 迁移 0019（老师复核闭环）：匹配用户后的提交、暂存标记与暂存留痕。
+    sa.Column("resolved_submission_id", sa.Uuid(), nullable=True),
+    sa.Column("held", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+    sa.Column("held_at", TIMESTAMP(timezone=True, precision=3), nullable=True),
+    sa.Column("held_by", sa.Uuid(), nullable=True),
 )
 
 artifact_gc_runs = sa.Table(
@@ -336,6 +341,31 @@ evaluation_commentaries = sa.Table(
     sa.Column("advisory_max_score", sa.Numeric(), nullable=True),
     sa.Column("advisory_rationale", sa.Text(), nullable=True),
     sa.Column("advisory_confidence", sa.Text(), nullable=True),
+)
+
+#: 学生分层学习提示（AI-FLOW-01B，迁移 0015）。
+#:
+#: 与 `evaluation_commentaries` 分开：提示只能由 run owner 学生读写，且没有教师逐条查看的出口；
+#: 一个 run 最多一行（`uq_..._evaluation_run_id`）。表里没有分数/证据/源码列——提示永远不能成为
+#: 分数依据，这一点在存储层就是结构性的。
+evaluation_learning_hints = sa.Table(
+    "evaluation_learning_hints",
+    metadata,
+    sa.Column("evaluation_learning_hint_id", sa.Uuid(), primary_key=True),
+    sa.Column("evaluation_run_id", sa.Uuid(), nullable=False),
+    sa.Column("student_id", sa.Uuid(), nullable=False),
+    sa.Column("status", sa.Text(), nullable=False),
+    sa.Column("hint_steps", JSONB(), nullable=False),
+    sa.Column("provider", sa.Text(), nullable=False),
+    sa.Column("model", sa.Text(), nullable=False),
+    sa.Column("prompt_version", sa.Text(), nullable=False),
+    sa.Column("context_scope", JSONB(), nullable=False),
+    sa.Column("idempotency_key", sa.Text(), nullable=False),
+    sa.Column("failure_category", sa.Text(), nullable=True),
+    sa.Column("request_id", sa.Text(), nullable=True),
+    sa.Column("requested_at", sa.DateTime(timezone=True), nullable=False),
+    sa.Column("generated_at", sa.DateTime(timezone=True), nullable=True),
+    sa.UniqueConstraint("evaluation_run_id", name="uq_evaluation_learning_hints_evaluation_run_id"),
 )
 
 # 迁移 0017：教师给的分数是判断而不是计算，所以与确定性分数并列存放，而不是替换它。

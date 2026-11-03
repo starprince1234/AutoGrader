@@ -207,6 +207,7 @@ export function QuestionDetailPage({
                   className="button"
                   to="/submit/$questionVersionId"
                   params={{ questionVersionId: version.data.question_version_id }}
+                  search={{}}
                 >
                   {t("questions.submit")}
                 </Link>

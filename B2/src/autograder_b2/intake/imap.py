@@ -287,6 +287,39 @@ class EmailCheckpointStore:
             )
         )
 
+    def mark_processed(
+        self,
+        connection: Connection,
+        *,
+        mailbox: str,
+        uidvalidity: int,
+        uid: int,
+        submission_id: str,
+        now: datetime,
+    ) -> None:
+        """把已存在的 `quarantined` checkpoint 改成 `processed`（匹配用户后的闭环）。
+
+        必须在**提交持久化的同一事务**里调用：checkpoint 与提交要么一起成功，要么一起回滚。
+        """
+        result = connection.execute(
+            sa.update(email_checkpoints)
+            .where(
+                sa.and_(
+                    email_checkpoints.c.mailbox == mailbox,
+                    email_checkpoints.c.uidvalidity == uidvalidity,
+                    email_checkpoints.c.uid == uid,
+                )
+            )
+            .values(
+                status="processed",
+                reason_code=None,
+                submission_id=uuid.UUID(submission_id),
+                processed_at=now,
+            )
+        )
+        if result.rowcount != 1:
+            raise RuntimeError("the quarantine checkpoint disappeared during completion")
+
     @staticmethod
     def _lookup(
         connection: Connection,
@@ -536,6 +569,96 @@ class EmailIntakeService:
             uidvalidity=uidvalidity,
             fetched=fetched,
             outcomes=tuple(outcomes),
+        )
+
+    # --- 人工完成（匹配用户） ---------------------------------------------------
+
+    def fetch_raw(self, *, uidvalidity: int, uid: int) -> bytes:
+        """按隔离记录里的邮箱位置取回原报文；UIDVALIDITY 不一致即拒绝（UID 已不可信）。"""
+        with self._client_factory(self._settings) as client:
+            current = client.select()
+            if current != uidvalidity:
+                raise ImapProtocolError(
+                    "mailbox UIDVALIDITY changed; the original message can no longer be located"
+                )
+            return client.fetch_message(uid)
+
+    def ingest_raw_for_target(
+        self,
+        *,
+        raw: bytes,
+        student_id: str,
+        course_id: str,
+        section_id: str,
+        question_version_id: str,
+        mailbox: str,
+        uidvalidity: int,
+        uid: int,
+        message_id: str | None,
+    ) -> str:
+        """把人工选定的身份用于原邮件：同一套附件闸门 + 同一条 `persist`，返回提交 id。"""
+        message = parse_message(raw, max_attachments=self.limits.max_files)
+        if message_id is not None and message.message_id != message_id:
+            raise AttachmentRejected(
+                "message_mismatch",
+                "the message at this mailbox position is not the recorded message",
+            )
+        accepted = screen_attachments(message, limits=self.limits)
+        files = tuple((item.filename, item.content) for item in accepted)
+        envelope = build_submission_envelope(
+            submission_id=str(uuid.uuid4()),
+            student_id=student_id,
+            course_id=course_id,
+            section_id=section_id,
+            question_version_id=question_version_id,
+            idempotency_key=email_idempotency_key(
+                mailbox=mailbox,
+                message_id=message.message_id,
+                uidvalidity=uidvalidity,
+                uid=uid,
+            ),
+            intake="email",
+            provenance=EmailProvenance(
+                mailbox=mailbox,
+                uidvalidity=uidvalidity,
+                uid=uid,
+                message_id=message_id or message.message_id,
+            ),
+            correlation_id=str(uuid.uuid4()),
+            files=files,
+        )
+        result = self._intake.persist(
+            envelope,
+            files,
+            on_persist=lambda connection, created: _persist_manual_message(
+                connection,
+                created=created,
+                message=message,
+                checkpoints=self._checkpoints,
+                mailbox=mailbox,
+                uidvalidity=uidvalidity,
+                uid=uid,
+            ),
+        )
+        return result.submission_id
+
+    def mark_checkpoint_processed(
+        self,
+        connection: Connection,
+        *,
+        mailbox: str,
+        uidvalidity: int,
+        uid: int,
+        submission_id: str,
+        now: datetime,
+    ) -> None:
+        self._checkpoints.mark_processed(
+            connection,
+            mailbox=mailbox,
+            uidvalidity=uidvalidity,
+            uid=uid,
+            submission_id=submission_id,
+            now=now,
         )
 
     # --- 归一化 ----------------------------------------------------------------
@@ -988,6 +1111,44 @@ __all__ = [
     "email_idempotency_key",
     "security_logger",
 ]
+
+
+def _persist_manual_message(
+    connection: Connection,
+    *,
+    created: str,
+    message: object,
+    checkpoints: EmailCheckpointStore,
+    mailbox: str,
+    uidvalidity: int,
+    uid: int,
+) -> None:
+    """人工完成时：把已存在的 quarantined checkpoint 改为 processed，并写下正文摘录。
+
+    不能复用 `_persist_message`：它会 `INSERT` checkpoint，而该邮件已有一条 `quarantined`
+    checkpoint（唯一约束会冲突）。匹配用户是"改变同一封邮件的处置结果"，不是"重新收一次信"。
+    """
+    checkpoints.mark_processed(
+        connection,
+        mailbox=mailbox,
+        uidvalidity=uidvalidity,
+        uid=uid,
+        submission_id=created,
+        now=utc_now(),
+    )
+    excerpt = getattr(message, "body_excerpt", None)
+    if excerpt:
+        connection.execute(
+            insert(intake_messages).values(
+                intake_message_id=str(uuid.uuid4()),
+                submission_id=created,
+                subject=getattr(message, "subject", None),
+                sender=message.sender,
+                body_excerpt=excerpt,
+                truncated=bool(getattr(message, "body_truncated", False)),
+                received_at=utc_now(),
+            )
+        )
 
 
 def _persist_message(

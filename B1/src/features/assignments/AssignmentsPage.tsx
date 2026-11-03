@@ -5,6 +5,7 @@ import { MAX_AUTO_PAGES } from "../../api/pagination";
 import type { AssignmentPublic, GradeRow } from "../../api/types";
 import { useSession } from "../../auth/sessionContext";
 import { canReviewQuarantine, canViewCohortGrades } from "../../auth/visibility";
+import { useQuarantineMail } from "../review/useReviewMail";
 import { formatDateTime, shortenId } from "../../ui/format";
 import { courseLabel as formatCourseLabel } from "../../api/directory";
 import {
@@ -199,6 +200,7 @@ function StudentAssignmentList({
                 className="button button--ghost"
                 to="/submit/$questionVersionId"
                 params={{ questionVersionId: target }}
+                search={{}}
               >
                 {label}
               </Link>
@@ -461,6 +463,25 @@ function TeacherProgress({
 export function AssignmentsPage() {
   const session = useSession();
   const cohortView = canViewCohortGrades(session);
+  // 复核入口的红点只回答"有没有待处理"，不显示数量：列表接口没有 total，拿一页计数当总数
+  // 会撒谎。limit=1 只判断是否存在。
+  const quarantineIdentity = session.subject ?? session.username ?? "anonymous";
+  const pendingQuarantine = useQuarantineMail({
+    identity: quarantineIdentity,
+    enabled: canReviewQuarantine(session),
+    filter: {
+      courseId: null,
+      sectionId: null,
+      resolved: false,
+      held: false,
+      reasonCode: null,
+      cursor: null,
+      limit: 1,
+    },
+  });
+  const hasPendingQuarantine =
+    (pendingQuarantine.data?.pages ?? []).some((page) => page.items.length > 0) ||
+    Boolean(pendingQuarantine.data?.pages.at(-1)?.nextCursor);
   // 作用域：学生用会话里的课程/课序（与作答页同一约定）；教师的两个视图都由页面上的
   // 课程/课序选择器决定——列表与提交情况必须看同一个作用域，否则计数与列表对不上。
   const scope = session.scope[0] ?? null;
@@ -582,6 +603,21 @@ export function AssignmentsPage() {
               data-testid="assignments-quarantine-link"
             >
               {t("review.mail.title")}
+              {hasPendingQuarantine ? (
+                <span
+                  aria-label={t("review.pendingBadge")}
+                  data-testid="assignments-quarantine-badge"
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: "50%",
+                    background: "var(--color-bad)",
+                    display: "inline-block",
+                    marginLeft: 6,
+                    verticalAlign: "middle",
+                  }}
+                />
+              ) : null}
             </Link>
           ) : null}
         </div>
