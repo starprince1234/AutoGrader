@@ -790,6 +790,19 @@ paths:
           description: |
             The course changed since `expected_updated_at` (someone else renamed it first).
         '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+    delete:
+      operationId: deleteCourse
+      summary: Retire a course (soft delete)
+      description: |
+        The row is kept and marked inactive: submissions, grades and audit records refer to the
+        course by id, so removing it outright would leave history pointing at nothing. The course
+        disappears from `listCourses`, which is what "deleted" means for the teacher.
+      tags: [courses]
+      responses:
+        '204': {description: Retired.}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
 
   /api/v1/courses/{course_id}/sections:
     parameters:
@@ -814,6 +827,24 @@ paths:
         '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
         '403': {$ref: './common.yaml#/components/responses/Forbidden'}
         '404': {$ref: './common.yaml#/components/responses/NotFound'}
+  /api/v1/courses/{course_id}/sections/{section_id}:
+    parameters:
+      - {name: course_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+      - {name: section_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    delete:
+      operationId: deleteSection
+      summary: Delete a class (its enrollments go with it)
+      description: |
+        Deleting a class removes its roster rows and its course grants. Assignments that named
+        this section are outside B4's schema and are not checked here -- deleting a class that
+        still has assignments is the caller's call, not something B4 can validate across modules.
+      tags: [courses]
+      responses:
+        '204': {description: Deleted.}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
     post:
       operationId: createSection
       summary: Create a section (teacher or admin)
@@ -1211,6 +1242,9 @@ components:
         course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
         section_code: {type: string, minLength: 1, maxLength: 64}
         term: {type: [string, 'null'], maxLength: 64}
+        #: 该课序最近一次成功导入的名单文件名；从未导入过时为 null（界面退回课序号）。
+        class_name:
+          type: [string, "null"]
         #: 该课序下已导入的学生人数。
         enrollment_count: {type: integer, minimum: 0}
         created_at:

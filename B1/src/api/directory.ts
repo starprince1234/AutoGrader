@@ -98,6 +98,34 @@ export function courseLabel(course: { course_code?: string | null; title: string
   return code === "" ? course.title : `${code} · ${course.title}`;
 }
 
+/** 删除课程：软删，课程从列表消失，但历史记录仍指向它。 */
+export function useDeleteCourse() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (courseId: string): Promise<void> =>
+      apiRequest<void>(`/api/v1/courses/${encodeURIComponent(courseId)}`, { method: "DELETE" }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.courses });
+    },
+  });
+}
+
+/** 删除班级（课序）：连带删除该班名单与课程授权。 */
+export function useDeleteSection(courseId: string | null) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (sectionId: string): Promise<void> =>
+      apiRequest<void>(
+        `/api/v1/courses/${encodeURIComponent(courseId ?? "")}/sections/${encodeURIComponent(sectionId)}`,
+        { method: "DELETE" },
+      ),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.sections(courseId ?? "") });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.courses });
+    },
+  });
+}
+
 /** 重命名课程：只改 title；`expected_updated_at` 是乐观锁，避免两人同时改互相覆盖。 */
 export function useRenameCourse() {
   const queryClient = useQueryClient();

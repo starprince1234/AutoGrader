@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import Connection, and_, func, select, update
+from sqlalchemy import Connection, and_, delete, func, select, update
 
 from ..audit import (
     ACTION_COURSE_CREATED,
@@ -33,7 +33,7 @@ from ..authorization import (
     resolve_principal,
     visible_course_ids,
 )
-from ..db.tables import courses, enrollments, sections
+from ..db.tables import courses, enrollments, roster_imports, sections
 from ..db.tables import roles as roles_table
 from ..errors import bad_request, conflict, forbidden, not_found
 from ..logging import get_logger
@@ -126,6 +126,7 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
             )
             .order_by(courses.c.created_at.desc(), courses.c.course_id.desc())
         )
+        statement = statement.where(courses.c.is_active.is_(True))
         if visible is not None:
             if not visible:
                 return {"items": [], "next_cursor": None}
@@ -302,14 +303,36 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
             .group_by(enrollments.c.section_id)
             .subquery()
         )
+        # Class name comes from the most recent successful roster import:
+        # teachers recognise the file they imported, not the internal section code.
+        latest_import = (
+            select(
+                roster_imports.c.section_id,
+                roster_imports.c.filename,
+                func.row_number()
+                .over(
+                    partition_by=roster_imports.c.section_id,
+                    order_by=roster_imports.c.created_at.desc(),
+                )
+                .label("rank"),
+            ).subquery()
+        )
         rows = connection.execute(
             select(
                 sections,
                 func.coalesce(enrollment_count.c.enrollment_count, 0).label("enrollment_count"),
+                latest_import.c.filename,
             )
             .select_from(
                 sections.outerjoin(
                     enrollment_count, enrollment_count.c.section_id == sections.c.section_id
+                ).outerjoin(
+                    latest_import,
+                    and_(
+                        latest_import.c.section_id == sections.c.section_id,
+                        latest_import.c.rank == 1,
+                        latest_import.c.filename.is_not(None),
+                    ),
                 )
             )
             .where(sections.c.course_id == course_id)
@@ -323,6 +346,7 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
                     "section_code": row.section_code,
                     "term": row.term,
                     "enrollment_count": row.enrollment_count,
+                    "class_name": row.filename,
                     "created_at": _rfc3339(row.created_at),
                 }
                 for row in rows
@@ -544,6 +568,91 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
             "enrollment.deleted",
             extra={"event": "enrollment.deleted", "enrollment_id": str(enrollment_id)},
         )
+        return Response(status_code=204)
+
+    @router.delete("/api/v1/courses/{course_id}/sections/{section_id}", status_code=204)
+    def delete_section(
+        course_id: uuid.UUID,
+        section_id: uuid.UUID,
+        caller=Depends(dependencies.principal),
+        connection: Connection = Depends(dependencies.connection),
+    ) -> Response:
+        """Hard delete: the class and its roster rows go; the course stays."""
+        row = connection.execute(
+            select(sections).where(
+                sections.c.section_id == section_id, sections.c.course_id == course_id
+            )
+        ).fetchone()
+        if row is None:
+            raise not_found("The section does not exist in this course.")
+        try:
+            ensure_course_write(caller, course_id=course_id)
+        except Exception as error:
+            audit_denial(
+                engine,
+                principal=caller,
+                detail="deleting a class requires write access to its course",
+            )
+            raise error
+
+        with engine.begin() as write:
+            write.execute(delete(enrollments).where(enrollments.c.section_id == section_id))
+            write.execute(
+                delete(roles_table).where(
+                    roles_table.c.course_id == course_id, roles_table.c.section_id == section_id
+                )
+            )
+            write.execute(delete(sections).where(sections.c.section_id == section_id))
+            AuditLog(write).record(
+                action=ACTION_SECTION_CREATED,
+                outcome=OUTCOME_SUCCESS,
+                actor=actor_of(caller),
+                target_type="section",
+                target_id=section_id,
+                course_id=course_id,
+                section_id=section_id,
+                detail=f"deleted class {row.section_code!r} with its roster rows",
+            )
+        return Response(status_code=204)
+
+    @router.delete("/api/v1/courses/{course_id}", status_code=204)
+    def delete_course(
+        course_id: uuid.UUID,
+        caller=Depends(dependencies.principal),
+        connection: Connection = Depends(dependencies.connection),
+    ) -> Response:
+        """Soft delete: `is_active=false`, so history keeps pointing at a real course."""
+        row = connection.execute(
+            select(courses).where(courses.c.course_id == course_id)
+        ).fetchone()
+        if row is None:
+            raise not_found("The course does not exist.")
+        try:
+            ensure_course_write(caller, course_id=course_id)
+        except Exception as error:
+            audit_denial(
+                engine,
+                principal=caller,
+                detail="retiring a course requires write access to it",
+            )
+            raise error
+
+        now = _now()
+        with engine.begin() as write:
+            write.execute(
+                update(courses)
+                .where(courses.c.course_id == course_id)
+                .values(is_active=False, updated_at=now)
+            )
+            AuditLog(write).record(
+                action=ACTION_COURSE_CREATED,
+                outcome=OUTCOME_SUCCESS,
+                actor=actor_of(caller),
+                target_type="course",
+                target_id=course_id,
+                course_id=course_id,
+                detail=f"retired course {row.course_code!r} / {row.title!r}",
+            )
         return Response(status_code=204)
 
     return router

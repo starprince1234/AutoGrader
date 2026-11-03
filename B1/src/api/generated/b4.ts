@@ -454,7 +454,13 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Retire a course (soft delete)
+         * @description The row is kept and marked inactive: submissions, grades and audit records refer to the
+         *     course by id, so removing it outright would leave history pointing at nothing. The course
+         *     disappears from `listCourses`, which is what "deleted" means for the teacher.
+         */
+        delete: operations["deleteCourse"];
         options?: never;
         head?: never;
         /**
@@ -482,9 +488,34 @@ export interface paths {
         /** List sections (课序) of a course */
         get: operations["listSections"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/courses/{course_id}/sections/{section_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                course_id: components["schemas"]["Uuid"];
+                section_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
         /** Create a section (teacher or admin) */
         post: operations["createSection"];
-        delete?: never;
+        /**
+         * Delete a class (its enrollments go with it)
+         * @description Deleting a class removes its roster rows and its course grants. Assignments that named
+         *     this section are outside B4's schema and are not checked here -- deleting a class that
+         *     still has assignments is the caller's call, not something B4 can validate across modules.
+         */
+        delete: operations["deleteSection"];
         options?: never;
         head?: never;
         patch?: never;
@@ -800,6 +831,7 @@ export interface components {
             course_id: components["schemas"]["Uuid"];
             section_code: string;
             term?: string | null;
+            class_name?: string | null;
             enrollment_count: number;
             created_at?: components["schemas"]["Timestamp"] | null;
         };
@@ -1734,6 +1766,29 @@ export interface operations {
             409: components["responses"]["Conflict"];
         };
     };
+    deleteCourse: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                course_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Retired. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
     updateCourse: {
         parameters: {
             query?: never;
@@ -1804,6 +1859,7 @@ export interface operations {
             header?: never;
             path: {
                 course_id: components["schemas"]["Uuid"];
+                section_id: components["schemas"]["Uuid"];
             };
             cookie?: never;
         };
@@ -1829,6 +1885,30 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+        };
+    };
+    deleteSection: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                course_id: components["schemas"]["Uuid"];
+                section_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     listEnrollments: {

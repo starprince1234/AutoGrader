@@ -23,6 +23,8 @@ import {
   useCreateCourse,
   useRenameCourse,
   useSections,
+  useDeleteCourse,
+  useDeleteSection,
 } from "../../api/directory";
 import { useDeleteEnrollment, useEnrollments } from "./useEnrollments";
 
@@ -56,6 +58,8 @@ export function RosterPage() {
 
   const selectedCourseId = search.course_id ?? "";
   const classes = useSections(selectedCourseId === "" ? null : selectedCourseId);
+  const deleteCourse = useDeleteCourse();
+  const deleteSection = useDeleteSection(selectedCourseId === "" ? null : selectedCourseId);
   const [expandedClass, setExpandedClass] = useState<string | null>(null);
 
   const openRename = async (row: CoursePublic) => {
@@ -152,6 +156,7 @@ export function RosterPage() {
                 key: "actions",
                 header: t("roster.column.actions"),
                 render: (row) => (
+                  <span className="inline">
                   <button
                     type="button"
                     className="button button--ghost"
@@ -160,6 +165,17 @@ export function RosterPage() {
                   >
                     {t("roster.rename.entry")}
                   </button>
+                  <button
+                    type="button"
+                    className="button button--ghost allowlist-entry__delete"
+                    aria-label={t("roster.course.delete", { name: row.title })}
+                    title={t("roster.course.delete", { name: row.title })}
+                    data-testid={`course-delete-${row.course_id}`}
+                    onClick={() => deleteCourse.mutate(row.course_id)}
+                  >
+                    <TrashIcon />
+                  </button>
+                  </span>
                 ),
               },
             ]}
@@ -193,7 +209,8 @@ export function RosterPage() {
                           onClick={() => setExpandedClass(isOpen ? null : option.sectionId)}
                         >
                           <span className="allowlist-batch__name">
-                            <span aria-hidden="true">{isOpen ? "▾" : "▸"}</span> {option.label}
+                            <span aria-hidden="true">{isOpen ? "▾" : "▸"}</span>{" "}
+                            {row.class_name ?? option.label}
                           </span>
                           <span
                             className="muted"
@@ -204,6 +221,20 @@ export function RosterPage() {
                           <span className="muted">
                             {(row.created_at ?? "").slice(0, 19).replace("T", " ")}
                           </span>
+                        </button>
+                        <button
+                          type="button"
+                          className="button button--ghost allowlist-entry__delete"
+                          aria-label={t("roster.classes.delete", {
+                            name: row.class_name ?? option.label,
+                          })}
+                          title={t("roster.classes.delete", {
+                            name: row.class_name ?? option.label,
+                          })}
+                          data-testid={`class-delete-${option.sectionId}`}
+                          onClick={() => deleteSection.mutate(option.sectionId)}
+                        >
+                          <TrashIcon />
                         </button>
                       </div>
                       {isOpen ? <ClassStudents sectionId={option.sectionId} /> : null}
@@ -407,5 +438,17 @@ function ClassStudents({ sectionId }: { sectionId: string }) {
         </li>
       ))}
     </ul>
+  );
+}
+
+/** 垃圾桶图标：注册名单、班级行、课程行共用同一枚，避免三处各画一个。 */
+function TrashIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+      <path
+        d="M9 3h6l1 2h4v2H4V5h4l1-2zm-3 6h12l1 12H7L6 9zm3 2v8h2v-8H9zm4 0v8h2v-8h-2z"
+        fill="currentColor"
+      />
+    </svg>
   );
 }
