@@ -1468,7 +1468,7 @@ export const messages = {
 "review.mail.reasonUnknown": "其他原因",
 "review.mail.scopeNote": "只显示你有权查看的课程与课序的邮件记录。",
 "review.mail.countLoaded": "邮件记录（当前显示 {count} 条）",
-"review.backToAssignments": "返回作业",
+"review.backToAssignments": "← 返回作业列表",
 "review.pendingBadge": "有待处理的邮件记录",
 "review.mail.pendingTitle": "待处理记录（当前显示 {count} 条）",
 "review.mail.heldTitle": "暂存记录（当前显示 {count} 条）",

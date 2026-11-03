@@ -6,9 +6,8 @@ import { isApiError } from "../../api/problem";
 import { loadedCourses, useSections } from "../../api/directory";
 import { useCourses } from "../../api/directory";
 import { useQuestionList } from "../questions/useQuestions";
-import { Banner, Drawer, Field, Modal } from "../../ui/components";
+import { Banner, Field, Modal } from "../../ui/components";
 import { useCreateAssignment } from "./useAssignments";
-import { courseLabel as formatCourseLabel } from "../../api/directory";
 
 /**
  * 新建作业（P04 的主操作）。
@@ -124,7 +123,7 @@ export function AssignmentComposer({
 
   return (
     <>
-      <Drawer title={t("assignments.create.title")} onClose={onClose} testId="assignment-composer">
+      <Modal title={t("assignments.create.title")} onClose={onClose} testId="assignment-composer">
         <div className="stack">
           <Field label={t("grades.course")} htmlFor="compose-course">
             <select
@@ -139,7 +138,7 @@ export function AssignmentComposer({
             >
               {courseOptions.map((course) => (
                 <option key={course.course_id} value={course.course_id}>
-                  {formatCourseLabel(course)}
+                  {course.title}
                 </option>
               ))}
             </select>
@@ -253,7 +252,7 @@ export function AssignmentComposer({
             </button>
           </div>
         </div>
-      </Drawer>
+      </Modal>
 
       {previewing ? (
         <Modal title={t("assignments.create.confirmTitle")} onClose={() => setPreviewing(false)}>

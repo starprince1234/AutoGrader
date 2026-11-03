@@ -1213,11 +1213,14 @@ def check_local_configuration_consistency() -> None:
         for path in sorted((base / "alembic" / "versions").glob("*.py")):
             text = path.read_text(encoding="utf-8")
             revision = re.search(r'^revision\s*=\s*["\']([^"\']+)["\']', text, re.M)
-            down = re.search(r'^down_revision\s*=\s*["\']([^"\']+)["\']', text, re.M)
+            # `down_revision` may be a tuple when a revision merges two branches
+            # (`down_revision = ("20261028_0018", "20260915_0016")`). Treating only the first
+            # string as the parent reported every merged parent as a head of its own.
+            down = re.search(r"^down_revision\s*=\s*(.+)$", text, re.M)
             if revision:
                 revisions[revision.group(1)] = path.name
             if down:
-                referenced.add(down.group(1))
+                referenced.update(re.findall(r'["\']([^"\']+)["\']', down.group(1)))
         heads = sorted(set(revisions) - referenced)
         manifest = yaml.safe_load((base / "module.yaml").read_text(encoding="utf-8"))
         declared = manifest["database"]["migration_head"]

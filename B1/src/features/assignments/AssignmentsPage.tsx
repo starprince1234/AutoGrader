@@ -7,7 +7,6 @@ import { useSession } from "../../auth/sessionContext";
 import { canReviewQuarantine, canViewCohortGrades } from "../../auth/visibility";
 import { useQuarantineMail } from "../review/useReviewMail";
 import { formatDateTime, shortenId } from "../../ui/format";
-import { courseLabel as formatCourseLabel } from "../../api/directory";
 import {
   Banner,
   EmptyState,
@@ -642,7 +641,7 @@ export function AssignmentsPage() {
                 >
                   {courseOptions.map((course) => (
                     <option key={course.course_id} value={course.course_id}>
-                      {formatCourseLabel(course)}
+                      {course.title}
                     </option>
                   ))}
                 </select>
@@ -657,7 +656,7 @@ export function AssignmentsPage() {
                   <option value="">{t("common.any")}</option>
                   {(sections.data ?? []).map((section) => (
                     <option key={section.sectionId} value={section.sectionId}>
-                      {section.label}
+                      {section.row.section_code}
                     </option>
                   ))}
                 </select>
@@ -688,7 +687,7 @@ export function AssignmentsPage() {
                       cohort={cohort}
                       sectionLabelOf={(sectionId) =>
                         (sections.data ?? []).find((option) => option.sectionId === sectionId)
-                          ?.label ?? shortenId(sectionId)
+                          ?.row.section_code ?? shortenId(sectionId)
                       }
                     />
                   ),
