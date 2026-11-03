@@ -668,7 +668,7 @@ export function AssignmentsPage() {
                   ))}
                 </select>
               </Field>
-              <Field label={t("grades.section")} htmlFor="assignment-section">
+              <Field label={t("assignments.section")} htmlFor="assignment-section">
                 <select
                   id="assignment-section"
                   value={selectedSectionId}

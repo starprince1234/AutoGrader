@@ -935,6 +935,7 @@ export const messages = {
     "grades.countLoaded": "成绩明细（已加载 {count} 行）",
     "grades.filter": "查询条件",
     "grades.course": "课程",
+    "assignments.section": "课序",
     "grades.section": "课序（可选）",
     "grades.questionVersion": "题目版本（可选）",
     "grades.apply": "查询",

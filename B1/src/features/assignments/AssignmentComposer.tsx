@@ -155,7 +155,7 @@ export function AssignmentComposer({
           </Field>
 
           <Field
-            label={t("grades.section")}
+            label={t("assignments.section")}
             htmlFor="compose-section"
             error={sectionId === "" ? undefined : undefined}
           >
@@ -284,7 +284,7 @@ export function AssignmentComposer({
                 </dd>
               </div>
               <div>
-                <dt className="muted">{t("grades.section")}</dt>
+                <dt className="muted">{t("assignments.section")}</dt>
                 <dd>{sectionLabelOf(sectionId)}</dd>
               </div>
               <div>
