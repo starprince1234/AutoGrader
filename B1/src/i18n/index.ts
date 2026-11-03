@@ -374,6 +374,7 @@ export const messages = {
 "roster.import.submit": "确认导入",
 "roster.import.classOption": "{name}（{count} 人）",
 "roster.import.noClasses": "还没有已注册的班级，请先到「用户管理 → 注册名单」添加。",
+"roster.import.networkHint": "请求没有到达服务端：可能是后端还没部署这个接口，或网关把请求拦住了。",
 "roster.rename.codeLabel": "课程序号",
 "roster.rename.entry": "重命名",
 "roster.rename.title": "重命名课程",

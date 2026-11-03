@@ -480,7 +480,19 @@ export function RosterPage() {
             ) : null}
             {attachClass.isError ? (
               <Banner tone="error" testId="import-roster-error">
-                {describeApiError(attachClass.error)}
+                <p>{describeApiError(attachClass.error)}</p>
+                {isApiError(attachClass.error) ? (
+                  <p className="muted" data-testid="import-error-status">
+                    HTTP {attachClass.error.status}
+                    {attachClass.error.problem?.instance
+                      ? ` · ${attachClass.error.problem.instance}`
+                      : ""}
+                  </p>
+                ) : (
+                  <p className="muted" data-testid="import-error-network">
+                    {t("roster.import.networkHint")}
+                  </p>
+                )}
               </Banner>
             ) : null}
             <div className="inline">
