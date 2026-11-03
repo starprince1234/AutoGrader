@@ -10,11 +10,10 @@ type FieldErrors = { username?: string; password?: string };
 type FormError = { message: string; requestId?: string };
 
 /**
- * 登录表单本体（页面与导览页浮窗共用）。
+ * 登录表单本体（导览页浮窗与旧地址回跳共用）。
  *
- * 只负责"输入 → 校验 → signIn → 把安全的目标路径交给调用方"；页面/浮窗各自决定
- * 成功后如何导航。两个入口共用同一套错误分类与密码可见性行为，避免浮窗成为
- * 一条规则更少的旁路。
+ * 只负责"输入 → 校验 → signIn → 把安全的目标路径交给调用方"；浮窗决定成功后如何导航。
+ * 两个入口共用同一套错误分类与密码可见性行为，避免回跳入口成为一条规则更少的旁路。
  */
 export function LoginForm({
   redirect,

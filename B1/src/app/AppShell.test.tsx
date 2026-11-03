@@ -93,6 +93,9 @@ function renderApp(initialEntry: string) {
   const indexRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/",
+    validateSearch: (search: Record<string, unknown>) => ({
+      redirect: typeof search.redirect === "string" ? search.redirect : undefined,
+    }),
     component: () => <Placeholder label="导览页" />,
   });
   const loginRoute = createRoute({
@@ -158,14 +161,14 @@ function renderApp(initialEntry: string) {
 }
 
 describe("P01 根入口与会话恢复", () => {
-  it("匿名打开受保护深链：先骨架，再到登录页并保留原站内路径", async () => {
+  it("匿名打开受保护深链：先骨架，再回导览页并保留原站内路径", async () => {
     await establishSession("anonymous");
     const router = renderApp("/grades?course_id=abc");
 
     // 受保护内容一帧都不渲染
     expect(screen.queryByText("成绩页")).not.toBeInTheDocument();
 
-    await waitFor(() => expect(router.state.location.pathname).toBe("/login"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/"));
     expect((router.state.location.search as { redirect?: string }).redirect).toBe(
       "/grades?course_id=abc",
     );
@@ -195,7 +198,7 @@ describe("P01 根入口与会话恢复", () => {
     expect(router.state.location.pathname).toBe("/forgot-password");
   });
 
-  it("已登录用户打开登录页会被送回作业页，不出现第二套表单", async () => {
+  it("已登录用户打开旧登录地址也会被送回作业页", async () => {
     await establishSession("student");
     const router = renderApp("/login");
 
@@ -304,7 +307,7 @@ describe("角色导航与右上角账户区", () => {
     await waitFor(() => expect(router.state.location.pathname).toBe("/"));
   });
 
-  it("退出登录清空会话并回到干净的登录页（不保留 redirect）", async () => {
+  it("退出登录清空会话并回到干净的导览页（不保留 redirect）", async () => {
     const user = userEvent.setup();
     await establishSession("student");
     const router = renderApp("/grades");
@@ -312,7 +315,7 @@ describe("角色导航与右上角账户区", () => {
     await screen.findByTestId("session-identity");
     await user.click(screen.getByTestId("account-logout"));
 
-    await waitFor(() => expect(router.state.location.pathname).toBe("/login"));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/"));
     expect((router.state.location.search as { redirect?: string }).redirect).toBeUndefined();
     expect(getSessionState().status).toBe("anonymous");
     const logoutCalls = stub?.requests.filter(

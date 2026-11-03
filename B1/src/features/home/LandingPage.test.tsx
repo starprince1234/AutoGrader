@@ -41,11 +41,17 @@ afterEach(() => {
   sessionStorage.clear();
 });
 
-function renderLanding() {
+function renderLanding(initialEntry = "/") {
   const rootRoute = createRootRoute({ component: () => <Outlet /> });
   const landingRoute = createRoute({
     getParentRoute: () => rootRoute,
     path: "/",
+    validateSearch: (search: Record<string, unknown>) => ({
+      redirect: typeof search.redirect === "string" ? search.redirect : undefined,
+      registered: typeof search.registered === "string" ? search.registered : undefined,
+      reset: typeof search.reset === "string" ? search.reset : undefined,
+      login: search.login === true,
+    }),
     component: LandingPage,
   });
   const placeholders = [
@@ -64,7 +70,7 @@ function renderLanding() {
   );
   const router = createRouter({
     routeTree: rootRoute.addChildren([landingRoute, ...placeholders]),
-    history: createMemoryHistory({ initialEntries: ["/"] }),
+    history: createMemoryHistory({ initialEntries: [initialEntry] }),
   });
   renderWithProviders(<RouterProvider router={router} />);
   return router;
@@ -107,6 +113,16 @@ describe("P01 导览页", () => {
     expect(within(student).queryByText("课程与名单")).not.toBeInTheDocument();
     expect(within(student).queryByText("复核工作区")).not.toBeInTheDocument();
     expect(within(teacher).queryByText("我的作业")).not.toBeInTheDocument();
+  });
+
+  it("注册成功回到导览页时自动打开浮窗并显示成功提示", async () => {
+    renderLanding("/?registered=created");
+
+    const dialog = await screen.findByTestId("login-dialog");
+    expect(within(dialog).getByTestId("login-registered")).toHaveTextContent(
+      "账号已创建，请登录。",
+    );
+    expect(screen.getByTestId("landing-page")).toBeInTheDocument();
   });
 
   it("匿名点击教师端入口：当前页打开登录浮窗，不跳转新页面", async () => {

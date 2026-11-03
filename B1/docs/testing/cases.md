@@ -3,7 +3,7 @@
 本表是"需求能否被证明满足"的检查单。`层次` 取值：单元 / 组件 / 契约 / 安全 / 端到端。
 `当前状态` 取值：`存在`（有真实测试且通过）／`部分`（B1 侧已覆盖，另一半须由提供方断言或需真实后端）／`待建`。
 
-测试实跑结果：**51 个测试文件 / 452 个用例全部通过**（`vitest run`，见
+测试实跑结果：**51 个测试文件 / 455 个用例全部通过**（`vitest run`，见
 `../phases/active/phase-09-landing-portal.md` 的"真实执行的命令与结果"一节；
 含上游合入的课程/名单、人工评分与用户管理用例）。
 浏览器视觉验收：1440px 的登录浮窗与页头已用本地构建截图复核；768/390px、深色模式与真实账号
@@ -118,20 +118,20 @@
 | TC-B1-114 | P13-A | 组件+契约 | 未处理记录（可归属/不可归属两类） | 点「驳回」→ 填备注 → 确认 | 确认前不发 POST；POST 体只有 `{note}`；成功后提示"邮件已驳回"并刷新；已处理行不再显示归属/驳回；不可归属原因码同样可驳回 | 存在 | 同上 |
 | TC-B1-115 | P13-A/P13-B | 组件+安全 | 令牌 scope 只含课程 A；`/courses` 还返回课程 B；URL 带课程 B | 打开两个标签的课程下拉 | 下拉只出现 A（及 scope 内的课序）；URL 的无权课程回落到 A，不把 B 发给服务端 | 存在 | `MailReviewTab.test.tsx`、`QualityReviewTab.test.tsx` |
 
-| TC-B1-104 | P01 | 组件 | 匿名打开受保护深链 | 等待会话恢复 | 先显示骨架、不渲染受保护内容；去登录页并在 `?redirect=` 保留原站内路径（含筛选） | 存在 | `src/app/AppShell.test.tsx` |
+| TC-B1-104 | P01 | 组件 | 匿名打开受保护深链 | 等待会话恢复 | 先显示骨架、不渲染受保护内容；回导览页并在 `?redirect=` 保留原站内路径（含筛选），登录浮窗完成后回原处 | 存在 | `src/app/AppShell.test.tsx` |
 | TC-B1-105 | P01 | 组件 | 已登录打开 `/` | 观察导览页与页头 | 仍显示双列导览页（不自动跳作业页），已登录身份与退出按钮可见；导览页不渲染应用侧栏；页头没有契约版本、欢迎语或课程作用域 UUID | 存在 | `src/app/AppShell.test.tsx`、`LandingPage.test.tsx`、`src/app/navigation.test.ts` |
-| TC-B1-106 | P02 | 组件 | 空字段 / 错误凭据 / 有效凭据 | 提交登录 | 空字段就地报错且不发请求并聚焦；401 统一文案；成功后回原深链或作业页；提交中只发一次 | 存在 | `src/features/auth/LoginPage.test.tsx` |
-| TC-B1-107 | P01/P02 | 组件+安全 | `//host`、绝对 URL、反斜线/多层编码、`/login`、根路径 | 登录回跳 | 一律拒绝并落到站内默认页；basepath 下最终 URL 为 `/app/...` | 存在 | `src/auth/redirect.test.ts`、`LoginPage.test.tsx`、`src/app/routerBasepath.test.ts` |
+| TC-B1-106 | P02 | 组件 | 空字段 / 错误凭据 / 有效凭据 | 提交登录 | 空字段就地报错且不发请求并聚焦；401 统一文案；成功后回原深链或作业页；提交中只发一次 | 存在 | `src/features/auth/LoginForm.test.tsx` |
+| TC-B1-107 | P01/P02 | 组件+安全 | `//host`、绝对 URL、反斜线/多层编码、`/login`、根路径 | 登录回跳 | 一律拒绝并落到站内默认页；basepath 下最终 URL 为 `/app/...` | 存在 | `src/auth/redirect.test.ts`、`LoginForm.test.tsx`、`src/app/routerBasepath.test.ts` |
 | TC-B1-108 | P03 | 组件 | 学号格式错误 / 名单外身份 / 验证码错误 / 用户名冲突 / 注册成功 | 发码与创建账号 | 格式错误不发请求；服务端 409/422 映射到字段；失败保留身份字段、清空密码与验证码；成功后去登录并显示「账号已创建，请登录。」 | 存在 | `src/features/auth/RegisterPage.test.tsx`、`registrationValidation.test.ts`、`registrationErrors.test.ts` |
 | TC-B1-109 | P01 | 组件 | 学生 / 教师 / 管理员 / 角色未知 | 打开应用外壳 | 学生 2 项、教师 4 项、管理员 4 项业务入口 + 用户管理；角色未知 fail-closed；「用户管理」在管理员侧栏，不在右上角下拉里 | 存在 | `src/app/navigation.test.ts`、`AppShell.test.tsx` |
-| TC-B1-110 | P01 | 组件+安全 | 抽屉打开/选页、主动退出登录 | 小屏导航与右上角账户区 | 焦点进入抽屉，Escape/遮罩/选页都能关闭并归还焦点；用户名与「退出登录」按钮直接可见；退出只发一次 logout、清空本地查询缓存并进入不带 redirect 的登录页 | 存在 | `src/ui/components.test.tsx`、`AppShell.test.tsx` |
+| TC-B1-110 | P01 | 组件+安全 | 抽屉打开/选页、主动退出登录 | 小屏导航与右上角账户区 | 焦点进入抽屉，Escape/遮罩/选页都能关闭并归还焦点；用户名与「退出登录」按钮直接可见；退出只发一次 logout、清空本地查询缓存并**回到导览页**（不带 redirect） | 存在 | `src/ui/components.test.tsx`、`AppShell.test.tsx` |
 | TC-B1-111 | — | 组件 | `Field` 带 hint 与错误 / 无错误 | 读屏属性检查 | hint 与 error 经 `aria-describedby` 关联到控件；`aria-invalid` 只在出错时出现 | 存在 | `src/ui/components.test.tsx` |
 | TC-B1-112 | P02/P03 | 组件 | 已登录用户访问 `/login` 或 `/register` | 直接打开 | 被送回作业页；不渲染第二套认证表单，也不显示已登录身份/退出按钮 | 存在 | `src/app/AppShell.test.tsx` |
-| TC-B1-113 | P02 | 组件+安全 | 登录失败前后点击密码显示按钮 | 输入密码并触发 401 | 输入框 `type` 在 `password`/`text` 间切换；失败后按钮与可见状态仍保留，可继续查看/隐藏 | 存在 | `src/features/auth/LoginPage.test.tsx` |
+| TC-B1-113 | P02 | 组件+安全 | 登录失败前后点击密码显示按钮 | 输入密码并触发 401 | 输入框 `type` 在 `password`/`text` 间切换；失败后按钮与可见状态仍保留，可继续查看/隐藏 | 存在 | `src/features/auth/LoginForm.test.tsx` |
 | TC-B1-114 | P02 | 组件 | 邮箱格式错误 / 邮箱合法 | 点击「发送验证码」 | 格式错误就地报错且零请求；合法邮箱显示通用提示「如果该邮箱已注册…」并进入冷却 | 存在 | `src/features/auth/ForgotPasswordPage.test.tsx` |
 | TC-B1-115 | P02 | 组件+安全 | 验证码错误 / 新密码过短 / 两次不一致 | 提交重置 | 验证码错误落到验证码字段；密码规则在本地拦截；不把服务端细节或账号存在性暴露给用户 | 存在 | `src/features/auth/ForgotPasswordPage.test.tsx` |
-| TC-B1-116 | P02 | 组件 | 完整重置成功 | 邮箱 + 验证码 + 新密码提交 | 只发一次 `password-reset` 请求；成功后回 `/login?reset=done`，登录页显示「密码已重置，请使用新密码登录。」 | 存在 | `src/features/auth/ForgotPasswordPage.test.tsx`、`LoginPage.test.tsx` |
-| TC-B1-117 | P01 | 组件 | 匿名访客打开 `/` | 看第一视图 | 左教师、右学生两栏；教师端只有作业管理/题库/班级成绩/课程与名单/复核工作区，学生端只有我的作业/我的成绩；两栏互不串功能；页面没有欢迎语、功能磁贴、版本号、页脚提示或开发者文案 | 存在 | `src/features/home/LandingPage.test.tsx`（6 个用例）、`src/features/home/LandingPage.tsx` |
+| TC-B1-116 | P02 | 组件 | 完整重置成功 | 邮箱 + 验证码 + 新密码提交 | 只发一次 `password-reset` 请求；成功后回 `/` 并带 `reset=done`，导览页登录浮窗显示「密码已重置，请使用新密码登录。」 | 存在 | `src/features/auth/ForgotPasswordPage.test.tsx`、`LoginForm.test.tsx` |
+| TC-B1-117 | P01 | 组件 | 匿名访客打开 `/` | 看第一视图 | 左教师、右学生两栏；教师端只有作业管理/题库/班级成绩/课程与名单/复核工作区，学生端只有我的作业/我的成绩；两栏互不串功能；页面没有欢迎语、功能磁贴、版本号、页脚提示或开发者文案 | 存在 | `src/features/home/LandingPage.test.tsx`（7 个用例）、`src/features/home/LandingPage.tsx` |
 | TC-B1-118 | P01/P02 | 组件+契约 | 匿名点教师端/学生端入口；随后在浮窗登录；或会话仍有效（最近登录） | 观察浮窗、跳转与会话恢复 | 点击时**不离开导览页**，在当前页打开登录浮窗并只记 `{portal, path}`（不写令牌/用户名）；会话仍有效则**跳过登录**直接进入目标功能，匹配后清除一次性意图；匿名在浮窗登录成功后直达所点功能；学生入口被点后意图是 `student`，不会带成 `teacher` | 存在 | `LandingPage.test.tsx`、`src/app/AppShell.test.tsx`、`src/auth/portal.test.ts` |
 | TC-B1-119 | P01/P02 | 组件+安全 | 学生账号带教师端意图 / 教师账号带学生端意图 / 混合角色 / 角色未知 | 打开目标页并刷新 | 角色与门户不匹配时显示阻断面板，**不渲染错误一端的功能视图**；刷新仍阻断；可返回导览页重选；已登录时错误一端的入口禁用并说明；教师侧角色与学生的混合账号只走教师端；角色未知时两端都 fail-closed | 存在 | `src/app/AppShell.test.tsx`、`LandingPage.test.tsx`、`src/auth/portal.test.ts` |
 
