@@ -3,7 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { t } from "../../i18n";
 import type { CreateAssignmentRequest, QuestionVersionSummary } from "../../api/types";
 import { isApiError } from "../../api/problem";
-import { loadedCourses, useSections } from "../../api/directory";
+import { loadedCourses, useMergedSections } from "../../api/directory";
 import { useCourses } from "../../api/directory";
 import { useQuestionList } from "../questions/useQuestions";
 import { Banner, Field, Modal } from "../../ui/components";
@@ -48,7 +48,17 @@ export function AssignmentComposer({
   const [previewing, setPreviewing] = useState(false);
 
   const selectedCourseId = courseId || (courseOptions[0]?.course_id ?? "");
-  const sections = useSections(selectedCourseId || null);
+  // 课程按名字出现一次；同名课程的区别由课序体现，因此课序列表合并同名课程。
+  const courseTitles = [...new Set(courseOptions.map((course) => course.title))];
+  const selectedCourseTitle =
+    courseOptions.find((course) => course.course_id === selectedCourseId)?.title ??
+    courseTitles[0] ??
+    "";
+  const mergedSections = useMergedSections(
+    courseOptions
+      .filter((course) => course.title === selectedCourseTitle)
+      .map((course) => course.course_id),
+  );
   const questions = useQuestionList(
     selectedCourseId || null,
     { publishedOnly: true, tags: [] },
@@ -71,7 +81,7 @@ export function AssignmentComposer({
 
   const create = useCreateAssignment();
   const sectionLabelOf = (id: string) =>
-    sections.data?.find((option) => option.sectionId === id)?.label ?? id;
+    mergedSections.options.find((option) => option.sectionId === id)?.row.section_code ?? id;
 
   const submit = () => {
     setError(null);
@@ -153,15 +163,22 @@ export function AssignmentComposer({
               id="compose-section"
               value={sectionId}
               onChange={(event) => {
+                const option = mergedSections.options.find(
+                  (candidate) => candidate.sectionId === event.target.value,
+                );
+                // 课序带着课程：选中它同时确定"哪门课的哪个班"。
+                if (option) {
+                  setCourseId(option.row.course_id);
+                }
                 setSectionId(event.target.value);
                 setSelected([]);
               }}
               disabled={create.isPending || selectedCourseId === ""}
             >
               <option value="">{t("common.select")}</option>
-              {(sections.data ?? []).map((option) => (
+              {mergedSections.options.map((option, index) => (
                 <option key={option.sectionId} value={option.sectionId}>
-                  {option.label}
+                  {index + 1}
                 </option>
               ))}
             </select>

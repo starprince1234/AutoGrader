@@ -19,7 +19,12 @@ import {
   Table,
   Tabs,
 } from "../../ui/components";
-import { loadedCourses, useCourses, useSections } from "../../api/directory";
+import {
+  loadedCourses,
+  useCourses,
+  useMergedSections,
+  useSections,
+} from "../../api/directory";
 import {
   buildCohort,
   cohortJudged,
@@ -492,17 +497,21 @@ export function AssignmentsPage() {
 
   const courses = useCourses();
   const courseOptions = loadedCourses(courses.data?.pages);
-  // 同名课程（不同课程序号）真实存在；只有确实重名时才在选项里补一句课程序号，
-  // 平时不给每个名字都挂尾巴。
-  const duplicateTitles = new Set(
-    [...courseOptions.reduce((counts, course) => {
-      counts.set(course.title, (counts.get(course.title) ?? 0) + 1);
-      return counts;
-    }, new Map<string, number>())]
-      .filter(([, count]) => count > 1)
-      .map(([title]) => title),
-  );
+
   const selectedCourseId = courseId || (courseOptions[0]?.course_id ?? "");
+  // 界面上的课程按**名字**出现（同名课程只出现一次）；区别由课序体现。
+  const courseTitles = [...new Set(courseOptions.map((course) => course.title))];
+  const selectedCourseTitle =
+    courseOptions.find((course) => course.course_id === selectedCourseId)?.title ??
+    courseTitles[0] ??
+    "";
+  // 同名课程的课序合并成一个列表：否则第二门课的班级永远选不到。
+  const mergedSections = useMergedSections(
+    courseOptions
+      .filter((course) => course.title === selectedCourseTitle)
+      .map((course) => course.course_id),
+  );
+
   const selectedSectionId = sectionId || scope?.section_id || "";
   const sections = useSections(
     cohortView && selectedCourseId !== "" ? selectedCourseId : null,
@@ -643,17 +652,18 @@ export function AssignmentsPage() {
               <Field label={t("grades.course")} htmlFor="assignment-course">
                 <select
                   id="assignment-course"
-                  value={selectedCourseId}
+                  value={selectedCourseTitle}
                   onChange={(event) => {
-                    setCourseId(event.target.value);
+                    const next = courseOptions.find(
+                      (course) => course.title === event.target.value,
+                    );
+                    setCourseId(next?.course_id ?? "");
                     setSectionId("");
                   }}
                 >
-                  {courseOptions.map((course) => (
-                    <option key={course.course_id} value={course.course_id}>
-                      {duplicateTitles.has(course.title)
-                        ? `${course.title}（课程序号 ${course.course_code ?? "—"}）`
-                        : course.title}
+                  {courseTitles.map((title) => (
+                    <option key={title} value={title}>
+                      {title}
                     </option>
                   ))}
                 </select>
@@ -662,11 +672,19 @@ export function AssignmentsPage() {
                 <select
                   id="assignment-section"
                   value={selectedSectionId}
-                  onChange={(event) => setSectionId(event.target.value)}
+                  onChange={(event) => {
+                    const option = mergedSections.options.find(
+                      (candidate) => candidate.sectionId === event.target.value,
+                    );
+                    // 课序自带课程：选中它同时确定"哪门课的哪个班"，避免只按序号定位。
+                    if (option) {
+                      setCourseId(option.row.course_id);
+                    }
+                    setSectionId(event.target.value);
+                  }}
                   disabled={selectedCourseId === ""}
                 >
-                  <option value="">{t("common.any")}</option>
-                  {(sections.data ?? []).map((section, index) => (
+                  {(mergedSections.options ?? []).map((section, index) => (
                     <option key={section.sectionId} value={section.sectionId}>
                       {index + 1}
                     </option>

@@ -13,7 +13,11 @@ import uuid
 from datetime import datetime
 from collections.abc import Sequence
 
-from ..auth import Principal, require_course_write, require_course_read
+from ..auth import (
+    Principal,
+    require_course_read,
+    require_section_write,
+)
 from ..dto.internal import AssignmentCreateInputModel
 from ..errors import DraftAssignmentReference, NotFound
 from ..infra.db import Database
@@ -29,7 +33,8 @@ def create_assignment(
     payload: AssignmentCreateInputModel,
     now: datetime,
 ) -> tuple[Assignment, list[AssignmentItem]]:
-    actor = require_course_write(principal, payload.course_id)
+    # 作业按 (课程, 课序) 定位：只授权课程不够，课序号在每门课里都从 1 开始。
+    actor = require_section_write(principal, payload.course_id, payload.section_id)
     with database.protected_session() as session:
         bank = QuestionBankRepository(session)
         drafts: list[str] = []

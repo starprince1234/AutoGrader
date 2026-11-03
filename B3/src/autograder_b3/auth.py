@@ -45,6 +45,11 @@ class Principal:
     roles: frozenset[str] = frozenset()
     course_ids: frozenset[UUID] = frozenset()
     section_ids: frozenset[UUID] = frozenset()
+    #: 授权的 `(course_id, section_id)` 配对。扁平的两个集合丢掉了配对关系，无法回答
+    #: "这个课序属于这门课吗"，而作业必须按 (课程, 课序) 定位，不能只按序号。
+    scope_pairs: frozenset[tuple[UUID, UUID]] = frozenset()
+    #: 只授予了整门课（scope 里没有 section_id）的课程：这些课程下的任何课序都可用。
+    course_wide: frozenset[UUID] = frozenset()
     is_service: bool = False
     token_id: str | None = None
 
@@ -104,6 +109,28 @@ def require_course_write(principal: Principal | None, course_id: UUID) -> Princi
         raise Forbidden("only a teacher or administrator may modify the question bank")
     if not actor.in_course(course_id):
         raise Forbidden("the requested course is outside the caller's authorization scope")
+    return actor
+
+
+def require_section_write(
+    principal: Principal | None, course_id: UUID, section_id: UUID
+) -> Principal:
+    """Require write access to **this class of this course**.
+
+    Authorizing the course alone is not enough: `section_id` is opaque to B3, so a caller
+    authorized for course A could otherwise attach an assignment to a section of course B -- and
+    since section codes repeat as 1/2/3 per course, "the same number" would silently mean a
+    different class.
+    """
+    actor = require_course_write(principal, course_id)
+    if actor.is_service:
+        return actor
+    if actor.is_admin:
+        return actor
+    if course_id in actor.course_wide:
+        return actor
+    if (course_id, section_id) not in actor.scope_pairs:
+        raise Forbidden("the requested class is outside the caller's authorization scope")
     return actor
 
 
@@ -221,7 +248,7 @@ class JwksTokenVerifier:
         if unknown:
             raise Unauthenticated("token carries an unknown role")
 
-        course_ids, section_ids = _parse_scope(claims.get("scope"))
+        course_ids, section_ids, scope_pairs, course_wide = _parse_scope(claims.get("scope"))
         subject = claims.get("sub")
         if not isinstance(subject, str) or not subject:
             raise Unauthenticated("token subject is missing")
@@ -230,6 +257,8 @@ class JwksTokenVerifier:
             roles=frozenset(roles),
             course_ids=course_ids,
             section_ids=section_ids,
+            scope_pairs=scope_pairs,
+            course_wide=course_wide,
             token_id=claims.get("jti") if isinstance(claims.get("jti"), str) else None,
         )
 
@@ -254,11 +283,15 @@ class JwksTokenVerifier:
             raise Unauthenticated("token is not valid yet")
 
 
-def _parse_scope(raw: Any) -> tuple[frozenset[UUID], frozenset[UUID]]:
+def _parse_scope(
+    raw: Any,
+) -> tuple[frozenset[UUID], frozenset[UUID], frozenset[tuple[UUID, UUID]], frozenset[UUID]]:
     course_ids: set[UUID] = set()
     section_ids: set[UUID] = set()
+    scope_pairs: set[tuple[UUID, UUID]] = set()
+    course_wide: set[UUID] = set()
     if raw is None:
-        return frozenset(), frozenset()
+        return frozenset(), frozenset(), frozenset(), frozenset()
     if not isinstance(raw, list):
         raise Unauthenticated("token scope claim is malformed")
     for entry in raw:
@@ -273,10 +306,20 @@ def _parse_scope(raw: Any) -> tuple[frozenset[UUID], frozenset[UUID]]:
         section_id = entry.get("section_id")
         if section_id is not None:
             try:
-                section_ids.add(UUID(str(section_id)))
+                parsed_section = UUID(str(section_id))
             except ValueError as exc:
                 raise Unauthenticated("token scope carries a malformed section_id") from exc
-    return frozenset(course_ids), frozenset(section_ids)
+            section_ids.add(parsed_section)
+            if course_id is not None:
+                scope_pairs.add((UUID(str(course_id)), parsed_section))
+        elif course_id is not None:
+            course_wide.add(UUID(str(course_id)))
+    return (
+        frozenset(course_ids),
+        frozenset(section_ids),
+        frozenset(scope_pairs),
+        frozenset(course_wide),
+    )
 
 
 def _roles_claim(claims: Mapping[str, Any]) -> list[str]:
