@@ -492,6 +492,16 @@ export function AssignmentsPage() {
 
   const courses = useCourses();
   const courseOptions = loadedCourses(courses.data?.pages);
+  // 同名课程（不同课程序号）真实存在；只有确实重名时才在选项里补一句课程序号，
+  // 平时不给每个名字都挂尾巴。
+  const duplicateTitles = new Set(
+    [...courseOptions.reduce((counts, course) => {
+      counts.set(course.title, (counts.get(course.title) ?? 0) + 1);
+      return counts;
+    }, new Map<string, number>())]
+      .filter(([, count]) => count > 1)
+      .map(([title]) => title),
+  );
   const selectedCourseId = courseId || (courseOptions[0]?.course_id ?? "");
   const selectedSectionId = sectionId || scope?.section_id || "";
   const sections = useSections(
@@ -641,7 +651,9 @@ export function AssignmentsPage() {
                 >
                   {courseOptions.map((course) => (
                     <option key={course.course_id} value={course.course_id}>
-                      {course.title}
+                      {duplicateTitles.has(course.title)
+                        ? `${course.title}（课程序号 ${course.course_code ?? "—"}）`
+                        : course.title}
                     </option>
                   ))}
                 </select>
@@ -654,9 +666,9 @@ export function AssignmentsPage() {
                   disabled={selectedCourseId === ""}
                 >
                   <option value="">{t("common.any")}</option>
-                  {(sections.data ?? []).map((section) => (
+                  {(sections.data ?? []).map((section, index) => (
                     <option key={section.sectionId} value={section.sectionId}>
-                      {section.row.section_code}
+                      {index + 1}
                     </option>
                   ))}
                 </select>
@@ -685,10 +697,12 @@ export function AssignmentsPage() {
                     <TeacherProgress
                       assignments={assignments.assignments}
                       cohort={cohort}
-                      sectionLabelOf={(sectionId) =>
-                        (sections.data ?? []).find((option) => option.sectionId === sectionId)
-                          ?.row.section_code ?? shortenId(sectionId)
-                      }
+                      sectionLabelOf={(sectionId) => {
+                        const index = (sections.data ?? []).findIndex(
+                          (option) => option.sectionId === sectionId,
+                        );
+                        return index >= 0 ? String(index + 1) : shortenId(sectionId);
+                      }}
                     />
                   ),
               },
