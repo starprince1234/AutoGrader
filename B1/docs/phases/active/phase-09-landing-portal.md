@@ -65,7 +65,7 @@
 | `node node_modules/eslint/bin/eslint.js . --max-warnings 0`（B1） | 通过（0 error / 0 warning） |
 | `node node_modules/vitest/vitest.mjs run`（B1 全量） | **51 个测试文件 / 455 个用例全部通过**（exit 0；含上游合入用例） |
 | `node node_modules/vite/bin/vite.js build`（B1） | 通过 |
-| 线上入口复核（提交 `8b66c3f`） | `https://www.91idc.me/app/` HTTP 200，页面引用 `/app/assets/index-BlNt63qZ.js` 与 `/app/assets/index-BY-1nChA.css`；bundle 含「教师端登录」「学生端登录」「account__logout」，**不含** `account-menu`；Vercel 部署状态 `success`；`https://api.91idc.me/health/ready` 四个模块均 healthy |
+| 线上入口复核（提交 `20ccdc2`） | `https://www.91idc.me/app/` HTTP 200，页面引用 `/app/assets/index-CtScbMTo.js` 与 `/app/assets/index-Dh050zIm.css`；bundle 含「教师端登录」「学生端登录」「account__logout」，**不含** `account-menu` 与 `LoginPage`；Vercel 部署状态 `success`；`https://api.91idc.me/health/ready` 四个模块均 healthy |
 
 契约由上游合并升到 `0.24.0`（含课程/名单、人工评分与用户管理相关接口）；B1 已重新生成
 `src/api/generated/*` 并通过 `api:check`。本功能的浮窗登录与账户区不改变契约。
