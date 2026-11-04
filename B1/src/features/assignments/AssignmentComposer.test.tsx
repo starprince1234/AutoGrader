@@ -164,7 +164,7 @@ describe("新建作业（P04）", () => {
     const user = userEvent.setup();
 
     await screen.findByTestId("compose-version-list");
-    await user.selectOptions(screen.getByLabelText("课序（可选）"), UUID_B);
+    await user.selectOptions(screen.getByLabelText("课序"), UUID_B);
     await user.click(screen.getByRole("checkbox"));
     await user.click(screen.getByTestId("assignment-compose-preview"));
 
@@ -182,7 +182,7 @@ describe("新建作业（P04）", () => {
 
     await screen.findByTestId("compose-version-list");
     await user.type(screen.getByLabelText("作业名称"), "第一次作业");
-    await user.selectOptions(screen.getByLabelText("课序（可选）"), UUID_B);
+    await user.selectOptions(screen.getByLabelText("课序"), UUID_B);
     await user.click(screen.getByRole("checkbox"));
 
     // 第一次点击只是打开预览：仍无写入。
@@ -225,7 +225,7 @@ describe("新建作业（P04）", () => {
 
     await screen.findByTestId("compose-version-list");
     await user.type(screen.getByLabelText("作业名称"), "第一次作业");
-    await user.selectOptions(screen.getByLabelText("课序（可选）"), UUID_B);
+    await user.selectOptions(screen.getByLabelText("课序"), UUID_B);
     await user.click(screen.getByRole("checkbox"));
     await user.click(screen.getByTestId("assignment-compose-preview"));
     await user.click(screen.getByTestId("assignment-compose-confirm-button"));

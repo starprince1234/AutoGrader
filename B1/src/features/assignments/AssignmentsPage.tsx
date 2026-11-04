@@ -5,8 +5,8 @@ import { MAX_AUTO_PAGES } from "../../api/pagination";
 import type { AssignmentPublic, GradeRow } from "../../api/types";
 import { useSession } from "../../auth/sessionContext";
 import { canReviewQuarantine, canViewCohortGrades } from "../../auth/visibility";
+import { useQuarantineMail } from "../review/useReviewMail";
 import { formatDateTime, shortenId } from "../../ui/format";
-import { courseLabel as formatCourseLabel } from "../../api/directory";
 import {
   Banner,
   EmptyState,
@@ -19,7 +19,12 @@ import {
   Table,
   Tabs,
 } from "../../ui/components";
-import { loadedCourses, useCourses, useSections } from "../../api/directory";
+import {
+  loadedCourses,
+  useCourses,
+  useMergedSections,
+  useSections,
+} from "../../api/directory";
 import {
   buildCohort,
   cohortJudged,
@@ -462,6 +467,25 @@ function TeacherProgress({
 export function AssignmentsPage() {
   const session = useSession();
   const cohortView = canViewCohortGrades(session);
+  // 复核入口的红点只回答"有没有待处理"，不显示数量：列表接口没有 total，拿一页计数当总数
+  // 会撒谎。limit=1 只判断是否存在。
+  const quarantineIdentity = session.subject ?? session.username ?? "anonymous";
+  const pendingQuarantine = useQuarantineMail({
+    identity: quarantineIdentity,
+    enabled: canReviewQuarantine(session),
+    filter: {
+      courseId: null,
+      sectionId: null,
+      resolved: false,
+      held: false,
+      reasonCode: null,
+      cursor: null,
+      limit: 1,
+    },
+  });
+  const hasPendingQuarantine =
+    (pendingQuarantine.data?.pages ?? []).some((page) => page.items.length > 0) ||
+    Boolean(pendingQuarantine.data?.pages.at(-1)?.nextCursor);
   // 作用域：学生用会话里的课程/课序（与作答页同一约定）；教师的两个视图都由页面上的
   // 课程/课序选择器决定——列表与提交情况必须看同一个作用域，否则计数与列表对不上。
   const scope = session.scope[0] ?? null;
@@ -473,7 +497,21 @@ export function AssignmentsPage() {
 
   const courses = useCourses();
   const courseOptions = loadedCourses(courses.data?.pages);
+
   const selectedCourseId = courseId || (courseOptions[0]?.course_id ?? "");
+  // 界面上的课程按**名字**出现（同名课程只出现一次）；区别由课序体现。
+  const courseTitles = [...new Set(courseOptions.map((course) => course.title))];
+  const selectedCourseTitle =
+    courseOptions.find((course) => course.course_id === selectedCourseId)?.title ??
+    courseTitles[0] ??
+    "";
+  // 同名课程的课序合并成一个列表：否则第二门课的班级永远选不到。
+  const mergedSections = useMergedSections(
+    courseOptions
+      .filter((course) => course.title === selectedCourseTitle)
+      .map((course) => course.course_id),
+  );
+
   const selectedSectionId = sectionId || scope?.section_id || "";
   const sections = useSections(
     cohortView && selectedCourseId !== "" ? selectedCourseId : null,
@@ -583,6 +621,21 @@ export function AssignmentsPage() {
               data-testid="assignments-quarantine-link"
             >
               {t("review.mail.title")}
+              {hasPendingQuarantine ? (
+                <span
+                  aria-label={t("review.pendingBadge")}
+                  data-testid="assignments-quarantine-badge"
+                  style={{
+                    width: 8,
+                    height: 8,
+                    borderRadius: "50%",
+                    background: "var(--color-bad)",
+                    display: "inline-block",
+                    marginLeft: 6,
+                    verticalAlign: "middle",
+                  }}
+                />
+              ) : null}
             </Link>
           ) : null}
         </div>
@@ -599,30 +652,41 @@ export function AssignmentsPage() {
               <Field label={t("grades.course")} htmlFor="assignment-course">
                 <select
                   id="assignment-course"
-                  value={selectedCourseId}
+                  value={selectedCourseTitle}
                   onChange={(event) => {
-                    setCourseId(event.target.value);
+                    const next = courseOptions.find(
+                      (course) => course.title === event.target.value,
+                    );
+                    setCourseId(next?.course_id ?? "");
                     setSectionId("");
                   }}
                 >
-                  {courseOptions.map((course) => (
-                    <option key={course.course_id} value={course.course_id}>
-                      {formatCourseLabel(course)}
+                  {courseTitles.map((title) => (
+                    <option key={title} value={title}>
+                      {title}
                     </option>
                   ))}
                 </select>
               </Field>
-              <Field label={t("grades.section")} htmlFor="assignment-section">
+              <Field label={t("assignments.section")} htmlFor="assignment-section">
                 <select
                   id="assignment-section"
                   value={selectedSectionId}
-                  onChange={(event) => setSectionId(event.target.value)}
+                  onChange={(event) => {
+                    const option = mergedSections.options.find(
+                      (candidate) => candidate.sectionId === event.target.value,
+                    );
+                    // 课序自带课程：选中它同时确定"哪门课的哪个班"，避免只按序号定位。
+                    if (option) {
+                      setCourseId(option.row.course_id);
+                    }
+                    setSectionId(event.target.value);
+                  }}
                   disabled={selectedCourseId === ""}
                 >
-                  <option value="">{t("common.any")}</option>
-                  {(sections.data ?? []).map((section) => (
+                  {(mergedSections.options ?? []).map((section, index) => (
                     <option key={section.sectionId} value={section.sectionId}>
-                      {section.label}
+                      {index + 1}
                     </option>
                   ))}
                 </select>
@@ -651,10 +715,12 @@ export function AssignmentsPage() {
                     <TeacherProgress
                       assignments={assignments.assignments}
                       cohort={cohort}
-                      sectionLabelOf={(sectionId) =>
-                        (sections.data ?? []).find((option) => option.sectionId === sectionId)
-                          ?.label ?? shortenId(sectionId)
-                      }
+                      sectionLabelOf={(sectionId) => {
+                        const index = (sections.data ?? []).findIndex(
+                          (option) => option.sectionId === sectionId,
+                        );
+                        return index >= 0 ? String(index + 1) : shortenId(sectionId);
+                      }}
                     />
                   ),
               },

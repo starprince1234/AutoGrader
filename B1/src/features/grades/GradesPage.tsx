@@ -3,6 +3,7 @@ import { t } from "../../i18n";
 import type { GradeRow } from "../../api/types";
 import { isApiError } from "../../api/problem";
 import { loadedCourses, useCourses, useSections } from "../../api/directory";
+import { courseLabel as formatCourseLabel } from "../../api/directory";
 import { useLoadAllPages } from "../../api/pagination";
 import { useSession } from "../../auth/sessionContext";
 import {

@@ -1,4 +1,10 @@
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { apiRequest } from "./client";
 import type {
   CoursePage,
@@ -66,6 +72,38 @@ export function useSections(courseId: string | null) {
       }));
     },
   });
+}
+
+/**
+ * 若干课程名下的**全部课序**，按课程顺序拼接。
+ *
+ * 同名课程（不同课程序号）在界面上只显示一个名字，所以课序列表必须把这些课程的课序合在一起，
+ * 否则第二门课的班级永远选不到。每个课序自带 `row.course_id`，选中即可确定是"哪门课的哪个班"。
+ */
+export function useMergedSections(courseIds: readonly string[]) {
+  const queries = useQueries({
+    queries: courseIds.map((courseId) => ({
+      queryKey: queryKeys.sections(courseId),
+      queryFn: async (): Promise<SectionOption[]> => {
+        const payload = await apiRequest<SectionListBody>(
+          `/api/v1/courses/${encodeURIComponent(courseId)}/sections`,
+        );
+        return (payload.items ?? []).map((row) => ({
+          sectionId: row.section_id,
+          label: sectionLabel(row),
+          row,
+        }));
+      },
+    })),
+  });
+
+  const options = queries.flatMap((query) => query.data ?? []);
+  return {
+    options,
+    isPending: queries.some((query) => query.isPending),
+    isError: queries.some((query) => query.isError),
+    error: queries.find((query) => query.error)?.error ?? null,
+  };
 }
 
 /** 课序的展示文案：`课序号 · 学期`，学期为空就只显示课序号。 */

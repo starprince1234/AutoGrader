@@ -701,6 +701,10 @@ export function intakeQuarantineView(
     resolution: null,
     resolved_at: null,
     resolved_by: null,
+    resolved_submission_id: null,
+    held: false,
+    held_at: null,
+    held_by: null,
     ...overrides,
   } as IntakeQuarantineView;
 }

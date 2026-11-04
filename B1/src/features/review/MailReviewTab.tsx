@@ -4,6 +4,7 @@ import { isApiError } from "../../api/problem";
 import type { IntakeQuarantineView } from "../../api/types";
 import { loadedCourses, useCourses, useSections } from "../../api/directory";
 import { useEnrollments } from "../roster/useEnrollments";
+import { useAllAssignments } from "../assignments/useAssignments";
 import { useSession } from "../../auth/sessionContext";
 import { courseLabel as formatCourseLabel } from "../../api/directory";
 import {
@@ -19,15 +20,14 @@ import {
   Table,
 } from "../../ui/components";
 import { formatDateTime, shortenId } from "../../ui/format";
-import { queryKeys } from "../../app/queryClient";
-import { useQueryClient } from "@tanstack/react-query";
 import {
   loadedQuarantines,
+  useCompleteQuarantine,
   useDismissQuarantine,
   useQuarantineMail,
-  useResolveQuarantine,
+  useSetQuarantineHold,
 } from "./useReviewMail";
-import { isAttributableReason, REASON_CODES, reasonLabel } from "./reasonCodes";
+import { REASON_CODES, reasonLabel } from "./reasonCodes";
 import {
   readMailFilter,
   withMailFilter,
@@ -119,7 +119,6 @@ export function MailReviewTab({
   onChange: (next: ReviewSearch) => void;
 }) {
   const session = useSession();
-  const queryClient = useQueryClient();
   const filter = readMailFilter(search);
   const identity = session.subject ?? session.username ?? "anonymous";
   const isAdmin = session.rolesKnown && session.roles.includes("admin");
@@ -169,6 +168,7 @@ export function MailReviewTab({
       courseId: effectiveCourseId,
       sectionId: filter.sectionId,
       resolved: filter.resolved,
+      held: filter.held,
       reasonCode: filter.reasonCode,
       cursor: filter.cursor,
     },
@@ -182,21 +182,34 @@ export function MailReviewTab({
   const [issue, setIssue] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [pickerCourseId, setPickerCourseId] = useState("");
-  const [pickerSectionId, setPickerSectionId] = useState("");
+  const [matchAssignmentId, setMatchAssignmentId] = useState("");
+  const [matchVersionId, setMatchVersionId] = useState("");
   const [success, setSuccess] = useState<string | null>(null);
-  const resolve = useResolveQuarantine();
+  const complete = useCompleteQuarantine();
+  const hold = useSetQuarantineHold();
   const [dismissTarget, setDismissTarget] = useState<IntakeQuarantineView | null>(null);
   const [dismissNote, setDismissNote] = useState("");
   const [dismissIssue, setDismissIssue] = useState<string | null>(null);
   const [dismissConfirming, setDismissConfirming] = useState(false);
   const dismiss = useDismissQuarantine();
 
-  // 只有管理员处置未关联行时才需要课程/课序选择器；已关联行直接用记录 scope，
-  // 不再多发一次课序列表请求。
-  const needsPicker = resolveTarget !== null && resolveTarget.scope_course_id === null;
-  const pickerSections = useSections(needsPicker && pickerCourseId !== "" ? pickerCourseId : null);
-  const candidateSectionId =
-    resolveTarget?.scope_section_id ?? (pickerSectionId === "" ? null : pickerSectionId);
+  // 匹配用户：目标课程先取记录 scope；管理员处置未关联行时才需要手动选课程。
+  const matchCourseId =
+    resolveTarget === null
+      ? null
+      : (resolveTarget.scope_course_id ?? (pickerCourseId === "" ? null : pickerCourseId));
+  const matchSectionId = resolveTarget?.scope_section_id ?? null;
+  const assignments = useAllAssignments(
+    { courseId: matchCourseId, sectionId: matchSectionId },
+    { enabled: matchCourseId !== null },
+  );
+  const assignmentOptions = assignments.assignments.filter(
+    (assignment) => matchCourseId === null || assignment.course_id === matchCourseId,
+  );
+  const selectedAssignment =
+    assignmentOptions.find((assignment) => assignment.assignment_id === matchAssignmentId) ?? null;
+  const versionOptions = selectedAssignment?.question_version_ids ?? [];
+  const candidateSectionId = selectedAssignment?.section_id ?? matchSectionId;
   const enrollments = useEnrollments(candidateSectionId);
   const candidates = useMemo(
     () => (enrollments.data?.pages ?? []).flatMap((page) => page.items),
@@ -214,8 +227,9 @@ export function MailReviewTab({
     setIssue(null);
     setConfirming(false);
     setPickerCourseId(row.scope_course_id ?? "");
-    setPickerSectionId(row.scope_section_id ?? "");
-    resolve.reset();
+    setMatchAssignmentId("");
+    setMatchVersionId("");
+    complete.reset();
   };
 
   const closeResolve = () => {
@@ -224,10 +238,20 @@ export function MailReviewTab({
     setNote("");
     setIssue(null);
     setConfirming(false);
-    resolve.reset();
+    setMatchAssignmentId("");
+    setMatchVersionId("");
+    complete.reset();
   };
 
   const submit = () => {
+    if (selectedAssignment === null) {
+      setIssue(t("review.mail.issueAssignment"));
+      return;
+    }
+    if (matchVersionId === "") {
+      setIssue(t("review.mail.issueVersion"));
+      return;
+    }
     if (studentId === "") {
       setIssue(t("review.mail.issueStudent"));
       return;
@@ -241,19 +265,38 @@ export function MailReviewTab({
   };
 
   const confirm = () => {
-    if (!resolveTarget || studentId === "") return;
-    resolve.mutate(
+    if (!resolveTarget || !selectedAssignment || studentId === "" || matchVersionId === "") return;
+    complete.mutate(
       {
         quarantineId: resolveTarget.intake_quarantine_id,
-        body: { student_id: studentId, note: note.trim() === "" ? null : note.trim() },
+        body: {
+          student_id: studentId,
+          course_id: selectedAssignment.course_id,
+          section_id: selectedAssignment.section_id,
+          question_version_id: matchVersionId,
+          note: note.trim() === "" ? null : note.trim(),
+        },
       },
       {
         onSuccess: () => {
-          setSuccess(t("review.mail.resolvedOk"));
+          setSuccess(t("review.mail.completedOk"));
           closeResolve();
         },
         onError: () => {
           setConfirming(false);
+        },
+      },
+    );
+  };
+
+  const toggleHold = (row: IntakeQuarantineView) => {
+    hold.mutate(
+      { quarantineId: row.intake_quarantine_id, body: { held: !row.held } },
+      {
+        onSuccess: (view) => {
+          setSuccess(
+            view.held ? t("review.mail.heldOk") : t("review.mail.resumedOk"),
+          );
         },
       },
     );
@@ -308,6 +351,7 @@ export function MailReviewTab({
     courseId?: string | null;
     sectionId?: string | null;
     resolved?: boolean | null;
+    held?: boolean | null;
     reasonCode?: string | null;
   }) => {
     onChange(
@@ -315,6 +359,7 @@ export function MailReviewTab({
         courseId: next.courseId === undefined ? effectiveCourseId : next.courseId,
         sectionId: next.sectionId === undefined ? filter.sectionId : next.sectionId,
         resolved: next.resolved === undefined ? filter.resolved : next.resolved,
+        held: next.held === undefined ? filter.held : next.held,
         reasonCode: next.reasonCode === undefined ? filter.reasonCode : next.reasonCode,
       }),
     );
@@ -323,14 +368,29 @@ export function MailReviewTab({
   const forbidden = isApiError(query.error) && query.error.isForbidden;
 
   const resolutionText = (row: IntakeQuarantineView): string => {
+    if (row.held) return t("review.mail.heldState");
     if (!row.resolved) return t("review.mail.unresolved");
-    if (row.resolution === "dismissed") return t("review.mail.dismissedState");
+    if (row.resolution === "dismissed") return t("review.mail.invalidatedState");
+    if (row.resolution === "completed") return t("review.mail.completedState");
     if (row.resolution === "attributed") return t("review.mail.attributedState");
     // 0016 之前的历史行只有 `resolved=true`：如实显示"已处理"，不猜是哪一种。
     return t("review.mail.resolvedState");
   };
 
   const trailText = (row: IntakeQuarantineView): string | null => {
+    if (row.held) {
+      const heldActor =
+        row.held_by === null
+          ? t("review.mail.notProvided")
+          : row.held_by === session.subject
+            ? t("review.mail.actorYou")
+            : shortenId(row.held_by);
+      const heldTime =
+        row.held_at === null
+          ? t("review.mail.notProvided")
+          : formatDateTime(row.held_at, t("common.none"));
+      return t("review.mail.holdTrail", { actor: heldActor, time: heldTime });
+    }
     if (!row.resolved) return null;
     if (row.resolved_at === null && row.resolved_by === null) {
       return t("review.mail.trailUnknown");
@@ -397,16 +457,26 @@ export function MailReviewTab({
               <select
                 id="review-mail-resolved"
                 data-testid="review-mail-resolved"
-                value={filter.resolved === null ? "all" : filter.resolved ? "true" : "false"}
-                onChange={(event) =>
-                  changeFilter({
-                    resolved:
-                      event.target.value === "all" ? null : event.target.value === "true",
-                  })
+                value={
+                  filter.resolved === null
+                    ? "all"
+                    : filter.resolved
+                      ? "processed"
+                      : filter.held
+                        ? "held"
+                        : "pending"
                 }
+                onChange={(event) => {
+                  const value = event.target.value;
+                  if (value === "all") changeFilter({ resolved: null, held: null });
+                  else if (value === "processed") changeFilter({ resolved: true, held: null });
+                  else if (value === "held") changeFilter({ resolved: false, held: true });
+                  else changeFilter({ resolved: false, held: false });
+                }}
               >
-                <option value="false">{t("review.mail.unresolved")}</option>
-                <option value="true">{t("review.mail.resolvedState")}</option>
+                <option value="pending">{t("review.mail.pendingFilter")}</option>
+                <option value="held">{t("review.mail.heldFilter")}</option>
+                <option value="processed">{t("review.mail.processedFilter")}</option>
                 <option value="all">{t("review.mail.allStates")}</option>
               </select>
             </Field>
@@ -440,9 +510,13 @@ export function MailReviewTab({
 
       <Panel
         title={t(
-          filter.resolved === false
-            ? "review.mail.pendingTitle"
-            : "review.mail.countLoaded",
+          filter.resolved === true
+            ? "review.mail.processedTitle"
+            : filter.held === true
+              ? "review.mail.heldTitle"
+              : filter.resolved === false
+                ? "review.mail.pendingTitle"
+                : "review.mail.countLoaded",
           { count: rows.length },
         )}
         actions={
@@ -493,7 +567,22 @@ export function MailReviewTab({
                       {row.subject ?? t("review.mail.noSubject")}
                     </strong>
                     <div className="muted">
-                      {formatDateTime(row.recorded_at, t("common.none")).slice(0, 16)}
+                      {formatDateTime(row.recorded_at, t("common.none")).slice(0, 16)} ·{" "}
+                      <button
+                        type="button"
+                        className="muted"
+                        data-testid={`review-mail-detail-${row.intake_quarantine_id}`}
+                        onClick={() => setDetailTarget(row)}
+                        style={{
+                          border: 0,
+                          background: "none",
+                          padding: 0,
+                          cursor: "pointer",
+                          textDecoration: "underline",
+                        }}
+                      >
+                        {t("review.mail.detailAction")}
+                      </button>
                     </div>
                   </div>
                 ),
@@ -522,7 +611,13 @@ export function MailReviewTab({
                   <div>
                     <StatusPill
                       tone={
-                        !row.resolved ? "warn" : row.resolution === "dismissed" ? "idle" : "ok"
+                        row.held
+                          ? "warn"
+                          : !row.resolved
+                            ? "warn"
+                            : row.resolution === "dismissed"
+                              ? "idle"
+                              : "ok"
                       }
                     >
                       {resolutionText(row)}
@@ -536,15 +631,7 @@ export function MailReviewTab({
                 header: t("review.mail.action"),
                 render: (row) => (
                   <div className="row-actions">
-                    <button
-                      type="button"
-                      className="button button--ghost"
-                      data-testid={`review-mail-detail-${row.intake_quarantine_id}`}
-                      onClick={() => setDetailTarget(row)}
-                    >
-                      {t("review.mail.detailAction")}
-                    </button>
-                    {row.resolved || !isAttributableReason(row.reason_code) ? null : (
+                    {row.resolved ? null : (
                       <button
                         type="button"
                         className="button"
@@ -552,6 +639,16 @@ export function MailReviewTab({
                         onClick={() => openResolve(row)}
                       >
                         {t("review.mail.resolveAction")}
+                      </button>
+                    )}
+                    {row.resolved ? null : (
+                      <button
+                        type="button"
+                        className="button button--ghost"
+                        data-testid={`review-mail-hold-${row.intake_quarantine_id}`}
+                        onClick={() => toggleHold(row)}
+                      >
+                        {row.held ? t("review.mail.resumeAction") : t("review.mail.holdAction")}
                       </button>
                     )}
                     {row.resolved ? null : (
@@ -625,6 +722,14 @@ export function MailReviewTab({
                 </span>
               </p>
             ) : null}
+            {detailTarget.resolved_submission_id ? (
+              <p>
+                {t("review.mail.resolvedSubmission")}：
+                <span className="mono-id" title={detailTarget.resolved_submission_id}>
+                  {shortenId(detailTarget.resolved_submission_id)}
+                </span>
+              </p>
+            ) : null}
             {detailTarget.resolution_note ? (
               <p>
                 {t("review.mail.resolutionNote")}：{detailTarget.resolution_note}
@@ -649,52 +754,82 @@ export function MailReviewTab({
             </p>
 
             {resolveTarget.scope_course_id === null ? (
-              <>
-                <Field label={t("review.mail.course")} htmlFor="review-resolve-course">
-                  <select
-                    id="review-resolve-course"
-                    data-testid="review-resolve-course"
-                    value={pickerCourseId}
-                    onChange={(event) => {
-                      setPickerCourseId(event.target.value);
-                      setPickerSectionId("");
-                      setStudentId("");
-                    }}
-                  >
-                    <option value="">{t("common.selectPrompt")}</option>
-                    {courseOptions.map((course) => (
-                      <option key={course.course_id} value={course.course_id}>
-                        {formatCourseLabel(course)}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-                <Field label={t("review.mail.section")} htmlFor="review-resolve-section">
-                  <select
-                    id="review-resolve-section"
-                    data-testid="review-resolve-section"
-                    value={pickerSectionId}
-                    disabled={pickerCourseId === ""}
-                    onChange={(event) => {
-                      setPickerSectionId(event.target.value);
-                      setStudentId("");
-                      // 候选每次按选定课序现取：不复用上一个课序的名单。
-                      if (event.target.value !== "") {
-                        void queryClient.invalidateQueries({
-                          queryKey: queryKeys.enrollments(event.target.value),
-                        });
-                      }
-                    }}
-                  >
-                    <option value="">{t("common.selectPrompt")}</option>
-                    {(pickerSections.data ?? []).map((section) => (
-                      <option key={section.sectionId} value={section.sectionId}>
-                        {section.label}
-                      </option>
-                    ))}
-                  </select>
-                </Field>
-              </>
+              <Field label={t("review.mail.course")} htmlFor="review-resolve-course">
+                <select
+                  id="review-resolve-course"
+                  data-testid="review-resolve-course"
+                  value={pickerCourseId}
+                  onChange={(event) => {
+                    setPickerCourseId(event.target.value);
+                    setMatchAssignmentId("");
+                    setMatchVersionId("");
+                    setStudentId("");
+                  }}
+                >
+                  <option value="">{t("common.selectPrompt")}</option>
+                  {courseOptions.map((course) => (
+                    <option key={course.course_id} value={course.course_id}>
+                      {formatCourseLabel(course)}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            ) : null}
+
+            <Field label={t("review.mail.assignment")} htmlFor="review-resolve-assignment">
+              <select
+                id="review-resolve-assignment"
+                data-testid="review-resolve-assignment"
+                value={matchAssignmentId}
+                disabled={matchCourseId === null}
+                onChange={(event) => {
+                  const assignmentId = event.target.value;
+                  setMatchAssignmentId(assignmentId);
+                  const assignment = assignmentOptions.find(
+                    (option) => option.assignment_id === assignmentId,
+                  );
+                  setMatchVersionId(assignment?.question_version_ids[0] ?? "");
+                  setStudentId("");
+                }}
+              >
+                <option value="">{t("common.selectPrompt")}</option>
+                {assignmentOptions.map((assignment) => (
+                  <option key={assignment.assignment_id} value={assignment.assignment_id}>
+                    {assignment.title}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            <Field label={t("review.mail.questionVersion")} htmlFor="review-resolve-version">
+              <select
+                id="review-resolve-version"
+                data-testid="review-resolve-version"
+                value={matchVersionId}
+                disabled={selectedAssignment === null}
+                onChange={(event) => {
+                  setMatchVersionId(event.target.value);
+                  setStudentId("");
+                }}
+              >
+                <option value="">{t("common.selectPrompt")}</option>
+                {versionOptions.map((versionId) => (
+                  <option key={versionId} value={versionId}>
+                    {shortenId(versionId)}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            {assignments.isError ? (
+              <ErrorState error={assignments.error} testId="review-resolve-assignments-error" />
+            ) : null}
+            {matchCourseId !== null &&
+            !assignments.isPending &&
+            assignmentOptions.length === 0 ? (
+              <Banner tone="info" testId="review-resolve-no-assignments">
+                {t("review.mail.noAssignments")}
+              </Banner>
             ) : null}
 
             <Field label={t("review.mail.student")} htmlFor="review-resolve-student">
@@ -739,17 +874,17 @@ export function MailReviewTab({
               />
             </Field>
 
-            {resolve.isError && !resolve.isPending ? (
-              isApiError(resolve.error) && resolve.error.isConflict ? (
+            {complete.isError && !complete.isPending ? (
+              isApiError(complete.error) && complete.error.isConflict ? (
                 <Banner tone="warn" testId="review-resolve-conflict">
                   {t("review.mail.conflict")}
                 </Banner>
-              ) : isApiError(resolve.error) && resolve.error.isForbidden ? (
+              ) : isApiError(complete.error) && complete.error.isForbidden ? (
                 <Banner tone="error" testId="review-resolve-forbidden">
                   {t("review.mail.resolveForbidden")}
                 </Banner>
               ) : (
-                <ErrorState error={resolve.error} testId="review-resolve-error" />
+                <ErrorState error={complete.error} testId="review-resolve-error" />
               )
             ) : null}
 
@@ -759,7 +894,9 @@ export function MailReviewTab({
                 className="button"
                 data-testid="review-resolve-continue"
                 disabled={
-                  resolve.isPending ||
+                  complete.isPending ||
+                  selectedAssignment === null ||
+                  matchVersionId === "" ||
                   studentId === "" ||
                   selectedStudent === null ||
                   candidateSectionId === null
@@ -804,10 +941,10 @@ export function MailReviewTab({
                 type="button"
                 className="button"
                 data-testid="review-mail-confirm-submit"
-                disabled={resolve.isPending}
+                disabled={complete.isPending}
                 onClick={confirm}
               >
-                {resolve.isPending ? t("review.mail.submitting") : t("review.mail.confirmSubmit")}
+                {complete.isPending ? t("review.mail.submitting") : t("review.mail.confirmSubmit")}
               </button>
               <button
                 type="button"

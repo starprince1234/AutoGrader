@@ -423,22 +423,20 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
                 .order_by(registration_allowlist.c.student_number)
             ).fetchall()
 
-            base_code = (
-                payload.section_code.strip()
-                if payload.section_code and payload.section_code.strip()
-                else domain_class_name(batch.filename)
-            )
             taken = {
                 row[0]
                 for row in write.execute(
                     select(sections.c.section_code).where(sections.c.course_id == course_id)
                 ).fetchall()
             }
-            code = base_code
-            suffix = 2
-            while code in taken:
-                code = f"{base_code}-{suffix}"
-                suffix += 1
+            if payload.section_code and payload.section_code.strip():
+                code = payload.section_code.strip()
+            else:
+                # Section code is an ordinal inside the course: first free number.
+                ordinal = 1
+                while str(ordinal) in taken:
+                    ordinal += 1
+                code = str(ordinal)
 
             section_id = uuid.uuid4()
             now = _now()

@@ -25,6 +25,7 @@ export type ReviewSearch = {
   course_id?: string;
   section_id?: string;
   resolved?: "true" | "false" | "all";
+  held?: "true" | "false";
   reason_code?: string;
   cursor?: string;
   question_version_id?: string;
@@ -37,6 +38,8 @@ export type MailFilter = {
   courseId: string | null;
   sectionId: string | null;
   resolved: boolean | null;
+  /** 暂存筛选：`true` 只看暂存，`false` 排除暂存，`null` 不筛。 */
+  held: boolean | null;
   reasonCode: string | null;
   /** 起始游标：刷新时从该位置重开（追加不回写），而不是"已加载行数"。 */
   cursor: string | null;
@@ -82,6 +85,9 @@ export function parseReviewSearch(search: Record<string, unknown>): ReviewSearch
   if (search.resolved === "true" || search.resolved === "false" || search.resolved === "all") {
     parsed.resolved = search.resolved;
   }
+  if (search.held === "true" || search.held === "false") {
+    parsed.held = search.held;
+  }
   const reason = token(search.reason_code);
   if (reason && (REASON_CODES as readonly string[]).includes(reason)) {
     parsed.reason_code = reason as ReasonCode;
@@ -99,10 +105,15 @@ export function parseReviewSearch(search: Record<string, unknown>): ReviewSearch
 
 /** 已解析的邮件筛选。URL 省略 `resolved` 时按默认「未处理」（显式 false）处理。 */
 export function readMailFilter(search: ReviewSearch): MailFilter {
+  const resolved =
+    search.resolved === "true" ? true : search.resolved === "all" ? null : false;
   return {
     courseId: search.course_id ?? null,
     sectionId: search.section_id ?? null,
-    resolved: search.resolved === "true" ? true : search.resolved === "all" ? null : false,
+    resolved,
+    // 默认视图是"待处理"：既不含暂存，也不含已处理。
+    held:
+      search.held === "true" ? true : search.held === "false" ? false : resolved === false ? false : null,
     reasonCode: search.reason_code ?? null,
     cursor: search.cursor ?? null,
   };
@@ -130,6 +141,7 @@ export function withMailFilter(
     course_id: filter.courseId ?? undefined,
     section_id: filter.sectionId ?? undefined,
     resolved: filter.resolved === null ? "all" : filter.resolved ? "true" : "false",
+    held: filter.held === null ? undefined : filter.held ? "true" : "false",
     reason_code: filter.reasonCode ?? undefined,
   });
 }
@@ -176,6 +188,7 @@ function readMailSearch(search: ReviewSearch): ReviewSearch {
     course_id: search.course_id,
     section_id: search.section_id,
     resolved: search.resolved,
+    held: search.held,
     reason_code: search.reason_code,
     cursor: search.cursor,
   });

@@ -22,6 +22,7 @@
 | 决策 | `adr/` | 本模块不可逆决策 |
 | 运行手册 | `runbooks/local-development.md`、`runbooks/troubleshooting.md` | 可复制执行的命令与排障 |
 | 阶段记录 | `phases/active/`、`phases/archive/` | 真实完成证据 |
+| 设计系统 | `design/DESIGN.md` | 视觉语言、token、状态色、组件形态与动效的唯一真源（含浅/深两套截图） |
 | 协作 | `collaboration/*` | 冷启动、工作包、接口冻结、DoD、术语 |
 | 知识笔记 | `knowledge/README.md` | 可复用结论索引 |
 
@@ -31,7 +32,7 @@
 |---|---|---|
 | 应用壳（`src/main.tsx` + `src/app/**`） | `已完成`（导览页为第一视图） | `vite build` 实跑通过；`AppShell.test.tsx`（16 用例）+ `navigation.test.ts` + `routerBasepath.test.ts` 覆盖会话恢复门、导览页放行、门户意图守卫、角色导航、用户名与直接退出、退出回导览页、管理员侧栏入口与 basepath 回跳 |
 | 导览页与登录记忆（P09） | `已完成`（真实浏览器视觉未验收） | `LandingPage.test.tsx`（8 用例）+ `portal.test.ts`（4 用例）+ `AppShell` 门户守卫：教师/学生双列各入口、未登录在当前页登录浮窗完成登录后直达、**错端账号在浮窗内被拒绝并撤销会话**、已登录按角色直达、最近登录用户跳过登录、门户与角色不匹配时阻断且不串端；`/login` 仅作旧地址重定向；意图只存 `{portal, path}`，不存凭据 |
-| 契约锁 `contracts.lock` | `已完成` | 与 `../../MAIN/contracts` 摘要一致（**`0.24.0`**，摘要 `b5758d74…`）；`generate-api-types.mjs --check` 实跑通过 |
+| 契约锁 `contracts.lock` | `已完成` | 锁文件为 **`0.25.0`**（摘要 `b985940e…`）；但 `generate-api-types.mjs --check` **当前报漂移**：`src/api/generated/{common,b2,b3,b4}.ts` 与当前契约不一致（见下一行） |
 | 找回密码（P02 补充） | `部分`（B1 已完成；B4 集成测试未跑） | `ForgotPasswordPage.test.tsx`（6 用例）+ `LoginForm.test.tsx`（忘记入口、失败后密码显示按钮保留、重置成功提示）：字段校验、发码冷却、统一错误文案、成功后回导览页登录浮窗；**B4 pytest 需要 PostgreSQL/NATS，本机未执行**；真实 SMTP 与线上改密未验证 |
 | 密码可见性 | `已完成` | `Field` 行内 `trailing` 控件 + 页面自维护显示/隐藏状态；`LoginForm.test.tsx` 固定"失败后仍可查看/隐藏密码" |
 | `module.yaml` | `已完成` | 与 MAIN `manifest.schema.json` 一致 |
@@ -42,7 +43,7 @@
 | 出题辅助与确定性诊断（RQ-T-10） | `已完成` | `AuthoringPage.test.tsx`：模型建议与 `CMP-*` 规则分两块渲染；`409`/`status=unavailable` 显示「未启用」，与「检查过、无问题」区分；`disclaimers` 原文照录 |
 | 逐用例证据可视化（RQ-B-1-30 验收 3） | `已完成` | `GradesPage.test.tsx`：资源峰值（未测量 ≠ 0）、`limit_hit` 读作"哪个上限被触发"、文件改动清单、确定性说明；学生视图不渲染也不推导受保护的期望摘要/期望输出 |
 | 分页截断的诚实状态 | `已完成` | `GradesPage.test.tsx`、`AssignmentsPage.test.tsx`（4 用例）：`MAX_AUTO_PAGES` 触顶时显示截断说明、**不显示 spinner**、不下任何"未提交"判定；同时修掉"只走 2 页就停"的推进缺陷 |
-| 题目/提交界面（RQ-B-1-40/50） | `已完成` | `SafeMarkdown/QuestionDetailPage/SubmitPage/progress/draft/validation` 测试通过；题干图形受控端点已落地（`useQuestionAsset.ts`），没有阻塞项 |
+| 题目/提交界面（RQ-B-1-40/50） | `已完成` | `SafeMarkdown/QuestionDetailPage/SubmitPage/progress/draft/validation` 测试通过；题干图形受控端点已落地（`useQuestionAsset.ts`），没有阻塞项；作答页双栏（`submitLayout.css`，页面私有）随 P10 落地 |
 | 成绩/导出（RQ-B-1-30/60） | `已完成` | `GradesPage.test.tsx`、`aggregate.test.ts`；成绩按游标分页加载（「加载更多 / 已到末页」），汇总口径只覆盖已加载行 |
 | 谁还没交（RQ-B-1-30 验收 4 的操作化） | `已完成` | `GradesPage.test.tsx`：名单 × 成绩按 `student_id` 外连接（未提交 / 技术失败 / 未绑定账号各自成类） |
 | 用户与角色（RQ-B-4-50 的呈现侧） | `已完成` | `UsersPage.test.tsx`：账号列表按游标分页，不再静默截断 200 行 |
@@ -55,15 +56,20 @@
 | 题目质量热力图（CHG-0015） | `部分` | 已并入 `features/review/QualityReviewTab.tsx`（见上方"复核工作区 · 题目质量"行）；旧 `QualitySummaryPage.test.tsx` 随旧页面删除 |
 | 题库标签覆盖度（CHG-0020 + CHG-0022） | `部分` | `QuestionCoveragePanel.test.tsx`（13 用例）+ `QuestionListPage.test.tsx`（2 用例）：`tagged + untagged == total` 是唯一被展示与校验的恒等式（反向断言逐标签之和 21 不在页面上）、`untagged_questions` 单独一格、`tags` 按契约顺序原样渲染、点标签复用既有筛选（CHG-0022 后每个标签都可筛，防御分支已删除）、`404` → "尚未在 B3 实现"信息态（只请求一次、不客户端兜底）、`403` 原样带出 detail。**对着已声明契约构建、未经真实 B3 验证**（本批未对运行中的 host 发过请求） |
 | 「验证并发布」（CHG-0019 / ADR-0015） | `部分` | `ReferenceVerificationPanel.test.tsx`（15 用例）：两步显式动作（验证 ≠ 发布）+ 不自动重试/不自动发布；三态互不混淆（全通过可发布 / 未通过逐用例 `failure_category` / `503` 或全 `infrastructure_error` → "验证需要 Linux 沙箱环境"，文案不含"成功"也不含"验证失败"）；**全通过但 B3 未记录存证（`attestation_id: null`）→ 仍不可发布**；结论摘要与当前版本不一致 → 失效；换版本 → 结论不跨实例。**对着已声明契约构建、未经真实 B2 验证**（B2 尚未实现该端点） |
-| 测试框架（vitest） | `已完成` | `vitest run`：**51 文件 / 456 用例**全部通过（exit 0）；含上游合入的课程/名单、人工评分与用户管理用例 |
+| 测试框架（vitest） | `已完成` | 合并后实跑：**56 文件 / 484 用例**（含新增的 9 个光晕用例），summary 全部通过；进程退出码为 1，属 `phase-02 §4` 记录的 forks worker 拆卸偶发（summary 无失败用例，非用例失败） |
 | 真实 ESLint | `已完成` | `eslint . --max-warnings 0`：0 error / 0 warning |
-| API 类型生成（ADR-0002） | `已完成` | `node scripts/generate-api-types.mjs` / `--check`（契约 **`0.24.0`**，`API types match MAIN/contracts.`） |
+| API 类型生成（ADR-0002） | `部分` | `node scripts/generate-api-types.mjs --check` **报漂移**：`src/api/generated/{common,b2,b3,b4}.ts` 与当前 `0.25.0` 契约不一致；本轮只有文档冲突要解，没有擅自重新生成（生成物会改到其他人的契约面） |
 | 端到端（真实后端） | `部分`（覆盖度**已打通**；其余按页说明） | 真实 MAIN host `http://127.0.0.1:18000` + B2/B3/B4。**本轮真实浏览器复核**：`/app/questions` 的覆盖度面板渲染真实 B3 数据（`total=102 / tagged=4 / untagged=98`，逐标签与独立 SQL 一致）⇒ **覆盖度端到端成立**；旧隔离区与旧质量页当时正常渲染（空列表/筛选面板），但**已随 P13 合并删除，新 `/review` 尚未部署**；`/app/questions/<id>/edit` 的验证面板可用，但对**草稿**得到 B2 `422`（评测包只对已发布版本编译 → 该跨模块缺口已由 `CHG-0028` 处理，待 B3 落地后复测）。**证据包面板未在浏览器里打开**。**AI 参考分的非空渲染、`unavailable` 态、学生视图仍未做端到端**（原因见 phase-03 的"未验证项"） |
+| 设计系统（P10，Linear 式） | `已完成`（浅/深两套实拍；登录后业务页未截） | `src/styles.css` 整体重写、**类名未改**；追加**常驻背景光晕**（`src/ui/GeminiGlow.tsx` + `glowAnimation.ts`：Always-on、30fps 上限、`prefers-reduced-motion` 静态降级、打印隐藏）；合并后实跑 `tsc -b`、`eslint --max-warnings 0`、`vitest`（56 文件 / 484 用例）、`vite build` 均通过；真实构建产物经无头 Chromium 实拍导览页、登录浮窗、组件总览与光晕周期（浅/深），见 `design/screenshots/`；`api:check` 仍报生成类型漂移（见上一行，本轮未重新生成）；未验证项见 `phases/active/phase-10-linear-design-system.md` |
 
 > 归档门禁与完成定义见 `collaboration/definition-of-done.md` 与 `phases/archive/README.md`。
-> 本批并行记录：`phases/active/phase-09-submission-and-grades.md`（P10 读题+提交闭环、P11
+> 当前阶段记录：`phases/active/phase-10-linear-design-system.md`（Linear 设计系统重做：
+> 视觉语言由 Apple 式换成派生自 Linear 的工程克制风格，只改 `src/styles.css`、**类名未动**；
+> 按钮/输入/表格/状态胶囊/提示条/页签/弹窗的形态、字体层级与动效一并调整；浅色为主、深色跟随
+> 系统，渐变只做光；含真实门禁结果、浅/深两套实拍截图与未验证项）；**本批并行记录**：
+> `phases/active/phase-09-submission-and-grades.md`（P10 读题+提交闭环、P11
 > 时间范围/身份关联/导出列/深链/学习提示；契约 0.24.0 / CHG-0030；含实际命令、未验证项与待联调）；
-> 当前阶段记录：`phases/active/phase-09-landing-portal.md`（导览页与登录记忆：根路径 `/`
+> 上一阶段：`phases/active/phase-09-landing-portal.md`（导览页与登录记忆：根路径 `/`
 > 由重定向改为双列导览页，教师/学生各列各自入口；未登录时在当前页打开登录浮窗，登录后直达
 > 所点功能；最近登录用户跳过登录；门户意图只存角色与目标路径，角色不匹配时阻断；系统内右上角
 > 直接显示用户名和退出按钮，**退出后回到导览页**；独立登录页已删除，`/login` 只作旧地址重定向；

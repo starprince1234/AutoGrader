@@ -17,6 +17,8 @@ import {
   UUID_D,
   coursePage,
   courseSummary,
+  assignmentPage,
+  assignmentPublic,
   enrollmentPage,
   enrollmentPublic,
   intakeQuarantinePage,
@@ -54,6 +56,7 @@ const SESSION = "/api/v1/auth/session";
 const COURSES = "/api/v1/courses";
 const SECTIONS = `/api/v1/courses/${UUID_A}/sections`;
 const QUARANTINES = "/api/v1/intake/quarantines";
+const ASSIGNMENTS = "/api/v1/assignments";
 const ENROLLMENTS = `/api/v1/sections/${UUID_B}/enrollments`;
 
 function routesFor(options: {
@@ -105,15 +108,46 @@ function routesFor(options: {
       respond: () => jsonResponse(enrollmentPage(options.enrollments ?? [])),
     },
     {
+      method: "GET",
+      path: ASSIGNMENTS,
+      respond: () =>
+        jsonResponse(
+          assignmentPage([
+            assignmentPublic({
+              course_id: UUID_A,
+              section_id: UUID_B,
+              question_version_ids: [UUID_C],
+            }),
+          ]),
+        ),
+    },
+    {
       method: "POST",
-      path: `/api/v1/intake/quarantines/${UUID_C}/resolve`,
+      path: `/api/v1/intake/quarantines/${UUID_C}/complete`,
       respond: () =>
         options.resolveRespond?.() ??
         jsonResponse(
           intakeQuarantineView({
             intake_quarantine_id: UUID_C,
             resolved: true,
+            resolution: "completed",
             resolved_student_id: UUID_D,
+            resolved_submission_id: UUID_A,
+            resolved_at: "2026-09-15T09:00:00.000Z",
+            resolved_by: UUID_D,
+          }),
+        ),
+    },
+    {
+      method: "POST",
+      path: `/api/v1/intake/quarantines/${UUID_C}/hold`,
+      respond: () =>
+        jsonResponse(
+          intakeQuarantineView({
+            intake_quarantine_id: UUID_C,
+            held: false,
+            held_at: null,
+            held_by: null,
           }),
         ),
     },
@@ -149,6 +183,15 @@ async function waitForCandidate(studentNumber: string): Promise<void> {
     const options = Array.from(select.querySelectorAll("option"));
     expect(options.some((option) => option.textContent?.includes(studentNumber))).toBe(true);
   });
+}
+
+/** 匹配用户必须先选作业；选中后版本自动取第一个，名单按作业课序加载。 */
+async function chooseAssignment(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+  const select = await screen.findByTestId("review-resolve-assignment");
+  await waitFor(() => {
+    expect(select.querySelectorAll("option").length).toBeGreaterThan(1);
+  });
+  await user.selectOptions(select, UUID_A);
 }
 
 describe("P13-A 邮件提交标签", () => {
@@ -218,7 +261,7 @@ describe("P13-A 邮件提交标签", () => {
     expect(stub!.requests.length).toBe(before);
   });
 
-  it("不可归属的原因码不提供归属入口", async () => {
+  it("非身份类原因码也能匹配用户或标记作废", async () => {
     const row = intakeQuarantineView({
       intake_quarantine_id: UUID_C,
       reason_code: "archive_bomb",
@@ -228,11 +271,13 @@ describe("P13-A 邮件提交标签", () => {
     renderWithProviders(<Harness initial={MAIL_PATH} />);
 
     await screen.findByTestId("review-mail-table");
-    expect(screen.queryByTestId(`review-mail-resolve-${UUID_C}`)).toBeNull();
+    // 匹配用户是"人工补救"：只要原邮件仍能通过附件闸门，就不在列表层按原因码拦死。
+    expect(screen.getByTestId(`review-mail-resolve-${UUID_C}`)).toBeInTheDocument();
+    expect(screen.getByTestId(`review-mail-dismiss-${UUID_C}`)).toBeInTheDocument();
     expect(screen.getByTestId(`review-mail-detail-${UUID_C}`)).toBeInTheDocument();
   });
 
-  it("归属：确认前不 POST，确认后体只含 student_id/note", async () => {
+  it("匹配用户：确认前不 POST，确认后提交课程/作业/版本/学生", async () => {
     const user = userEvent.setup();
     const candidate = enrollmentPublic({ student_id: UUID_D });
     stub = installFetchStub(
@@ -243,6 +288,7 @@ describe("P13-A 邮件提交标签", () => {
 
     await user.click(await screen.findByTestId(`review-mail-resolve-${UUID_C}`));
     const drawer = await screen.findByTestId("review-mail-resolve-drawer");
+    await chooseAssignment(user);
     await waitForCandidate(candidate.student_number);
     await user.selectOptions(
       within(drawer).getByTestId("review-resolve-student"),
@@ -255,19 +301,25 @@ describe("P13-A 邮件提交标签", () => {
     expect(confirm).toHaveTextContent(candidate.display_name);
     // 确认框出现时还没有 POST。
     expect(
-      stub!.requests.filter((item) => item.method === "POST" && item.url.pathname.includes("resolve")),
+      stub!.requests.filter((item) => item.method === "POST" && item.url.pathname.includes("complete")),
     ).toHaveLength(0);
 
     await user.click(screen.getByTestId("review-mail-confirm-submit"));
     await waitFor(() => {
       const posts = stub!.requests.filter(
-        (item) => item.method === "POST" && item.url.pathname.endsWith("/resolve"),
+        (item) => item.method === "POST" && item.url.pathname.endsWith("/complete"),
       );
       expect(posts).toHaveLength(1);
-      expect(posts[0].body).toEqual({ student_id: UUID_D, note: null });
+      expect(posts[0].body).toEqual({
+        student_id: UUID_D,
+        course_id: UUID_A,
+        section_id: UUID_B,
+        question_version_id: UUID_C,
+        note: null,
+      });
     });
     expect(await screen.findByTestId("review-mail-resolved-ok")).toHaveTextContent(
-      "邮件已归属",
+      "已匹配用户并生成提交",
     );
   });
 
@@ -289,6 +341,7 @@ describe("P13-A 邮件提交标签", () => {
     renderWithProviders(<Harness initial={MAIL_PATH} />);
 
     await user.click(await screen.findByTestId(`review-mail-resolve-${UUID_C}`));
+    await chooseAssignment(user);
     await waitForCandidate(enrollmentPublic().student_number);
     await user.selectOptions(screen.getByTestId("review-resolve-student"), UUID_D);
     await user.click(screen.getByTestId("review-resolve-continue"));
@@ -309,6 +362,7 @@ describe("P13-A 邮件提交标签", () => {
     renderWithProviders(<Harness initial={MAIL_PATH} />);
 
     await user.click(await screen.findByTestId(`review-mail-resolve-${UUID_C}`));
+    await chooseAssignment(user);
     expect(await screen.findByTestId("review-resolve-no-candidates")).toHaveTextContent(
       "当前课序没有可选择的学生。",
     );
@@ -373,7 +427,7 @@ describe("P13-A 邮件提交标签", () => {
     });
   });
 
-  it("驳回：确认前不 POST，确认后体只含 note，成功后提示", async () => {
+  it("标记作废：确认前不 POST，确认后体只含 note，成功后提示", async () => {
     const user = userEvent.setup();
     stub = installFetchStub(
       routesFor({ rows: [intakeQuarantineView({ intake_quarantine_id: UUID_C })] }),
@@ -399,10 +453,10 @@ describe("P13-A 邮件提交标签", () => {
       expect(posted).toBeDefined();
       expect(posted!.body).toEqual({ note: "附件是误报" });
     });
-    expect(await screen.findByTestId("review-mail-resolved-ok")).toHaveTextContent("邮件已驳回");
+    expect(await screen.findByTestId("review-mail-resolved-ok")).toHaveTextContent("邮件已作废");
   });
 
-  it("已处理记录显示结果与处理人/时间，且不再提供归属或驳回", async () => {
+  it("已处理记录显示结果与处理人/时间，且不再提供匹配/暂存/作废", async () => {
     const row = intakeQuarantineView({
       intake_quarantine_id: UUID_C,
       resolved: true,
@@ -415,10 +469,35 @@ describe("P13-A 邮件提交标签", () => {
     renderWithProviders(<Harness initial={MAIL_PATH} />);
 
     const table = await screen.findByTestId("review-mail-table");
-    expect(within(table).getByText("已驳回")).toBeInTheDocument();
+    expect(within(table).getByText("已作废")).toBeInTheDocument();
     expect(within(table).getByText(/处理人：/)).toBeInTheDocument();
     expect(within(table).getByText("作业一提交")).toBeInTheDocument();
     expect(within(table).queryByTestId(`review-mail-resolve-${UUID_C}`)).toBeNull();
+    expect(within(table).queryByTestId(`review-mail-hold-${UUID_C}`)).toBeNull();
     expect(within(table).queryByTestId(`review-mail-dismiss-${UUID_C}`)).toBeNull();
+  });
+
+  it("暂存行显示「暂存」且可恢复，仍保留匹配/作废入口", async () => {
+    const user = userEvent.setup();
+    const row = intakeQuarantineView({
+      intake_quarantine_id: UUID_C,
+      held: true,
+      held_at: "2026-09-15T09:00:00.000Z",
+      held_by: UUID_D,
+    });
+    stub = installFetchStub(routesFor({ rows: [row] }));
+    await signIn("teacher1", "pw");
+    renderWithProviders(<Harness initial={{ tab: "mail" }} />);
+
+    const table = await screen.findByTestId("review-mail-table");
+    expect(within(table).getByText("暂存")).toBeInTheDocument();
+    expect(within(table).getByTestId(`review-mail-hold-${UUID_C}`)).toHaveTextContent("恢复处理");
+    await user.click(within(table).getByTestId(`review-mail-hold-${UUID_C}`));
+    await waitFor(() => {
+      const posted = stub!.requests.find(
+        (item) => item.method === "POST" && item.url.pathname.endsWith("/hold"),
+      );
+      expect(posted?.body).toEqual({ held: false });
+    });
   });
 });

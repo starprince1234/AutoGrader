@@ -3,12 +3,11 @@ import { useNavigate } from "@tanstack/react-router";
 import { t } from "../../i18n";
 import type { CreateAssignmentRequest, QuestionVersionSummary } from "../../api/types";
 import { isApiError } from "../../api/problem";
-import { loadedCourses, useSections } from "../../api/directory";
+import { loadedCourses, useMergedSections } from "../../api/directory";
 import { useCourses } from "../../api/directory";
 import { useQuestionList } from "../questions/useQuestions";
-import { Banner, Drawer, Field, Modal } from "../../ui/components";
+import { Banner, Field, Modal } from "../../ui/components";
 import { useCreateAssignment } from "./useAssignments";
-import { courseLabel as formatCourseLabel } from "../../api/directory";
 
 /**
  * 新建作业（P04 的主操作）。
@@ -49,7 +48,17 @@ export function AssignmentComposer({
   const [previewing, setPreviewing] = useState(false);
 
   const selectedCourseId = courseId || (courseOptions[0]?.course_id ?? "");
-  const sections = useSections(selectedCourseId || null);
+  // 课程按名字出现一次；同名课程的区别由课序体现，因此课序列表合并同名课程。
+  const courseTitles = [...new Set(courseOptions.map((course) => course.title))];
+  const selectedCourseTitle =
+    courseOptions.find((course) => course.course_id === selectedCourseId)?.title ??
+    courseTitles[0] ??
+    "";
+  const mergedSections = useMergedSections(
+    courseOptions
+      .filter((course) => course.title === selectedCourseTitle)
+      .map((course) => course.course_id),
+  );
   const questions = useQuestionList(
     selectedCourseId || null,
     { publishedOnly: true, tags: [] },
@@ -72,7 +81,7 @@ export function AssignmentComposer({
 
   const create = useCreateAssignment();
   const sectionLabelOf = (id: string) =>
-    sections.data?.find((option) => option.sectionId === id)?.label ?? id;
+    mergedSections.options.find((option) => option.sectionId === id)?.row.section_code ?? id;
 
   const submit = () => {
     setError(null);
@@ -124,7 +133,7 @@ export function AssignmentComposer({
 
   return (
     <>
-      <Drawer title={t("assignments.create.title")} onClose={onClose} testId="assignment-composer">
+      <Modal title={t("assignments.create.title")} onClose={onClose} testId="assignment-composer">
         <div className="stack">
           <Field label={t("grades.course")} htmlFor="compose-course">
             <select
@@ -139,14 +148,14 @@ export function AssignmentComposer({
             >
               {courseOptions.map((course) => (
                 <option key={course.course_id} value={course.course_id}>
-                  {formatCourseLabel(course)}
+                  {course.title}
                 </option>
               ))}
             </select>
           </Field>
 
           <Field
-            label={t("grades.section")}
+            label={t("assignments.section")}
             htmlFor="compose-section"
             error={sectionId === "" ? undefined : undefined}
           >
@@ -154,15 +163,22 @@ export function AssignmentComposer({
               id="compose-section"
               value={sectionId}
               onChange={(event) => {
+                const option = mergedSections.options.find(
+                  (candidate) => candidate.sectionId === event.target.value,
+                );
+                // 课序带着课程：选中它同时确定"哪门课的哪个班"。
+                if (option) {
+                  setCourseId(option.row.course_id);
+                }
                 setSectionId(event.target.value);
                 setSelected([]);
               }}
               disabled={create.isPending || selectedCourseId === ""}
             >
               <option value="">{t("common.select")}</option>
-              {(sections.data ?? []).map((option) => (
+              {mergedSections.options.map((option, index) => (
                 <option key={option.sectionId} value={option.sectionId}>
-                  {option.label}
+                  {index + 1}
                 </option>
               ))}
             </select>
@@ -253,7 +269,7 @@ export function AssignmentComposer({
             </button>
           </div>
         </div>
-      </Drawer>
+      </Modal>
 
       {previewing ? (
         <Modal title={t("assignments.create.confirmTitle")} onClose={() => setPreviewing(false)}>
@@ -268,7 +284,7 @@ export function AssignmentComposer({
                 </dd>
               </div>
               <div>
-                <dt className="muted">{t("grades.section")}</dt>
+                <dt className="muted">{t("assignments.section")}</dt>
                 <dd>{sectionLabelOf(sectionId)}</dd>
               </div>
               <div>

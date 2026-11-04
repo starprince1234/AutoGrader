@@ -410,6 +410,76 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/intake/quarantines/{intake_quarantine_id}/hold": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                intake_quarantine_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Put a quarantined message on hold, or resume it ("暂存")
+         * @description A reviewer can defer a row without deciding it. A held row is **not** resolved: it keeps
+         *     its place in the review flow, can still be completed or dismissed, and can be resumed with
+         *     `held=false`. The hold itself records who and when (`held_at`/`held_by`).
+         *
+         *     Row authorization is identical to the other intake operations: staff only for rows covered
+         *     by their token scope, administrators for any row; a resolved row returns `409`.
+         */
+        post: operations["setIntakeQuarantineHold"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/intake/quarantines/{intake_quarantine_id}/complete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                intake_quarantine_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Match the quarantined message to a student and create that student's submission
+         * @description "Match user" closes the loop that `resolveIntakeQuarantine` deliberately left open: the
+         *     server re-reads the **original message** from the mailbox position stored on the row
+         *     (`mailbox`/`uidvalidity`/`uid`), re-runs the attachment gates, and persists a normal
+         *     submission for the explicitly chosen `student_id`/`course_id`/`section_id`/
+         *     `question_version_id`. The quarantine row becomes `resolution=completed` and carries the
+         *     new `resolved_submission_id`; `email_checkpoints` moves from `quarantined` to `processed`
+         *     in the same submission transaction.
+         *
+         *     Preconditions and refusals:
+         *
+         *     * the row must be visible and processable under the same row-level scope rules as the
+         *       other intake operations; for a scoped row the chosen course/section must equal the
+         *       record's proven scope (`422` otherwise), and staff must hold the target scope (`403`);
+         *     * a resolved row returns `409`; a row whose message is gone (UIDVALIDITY changed, deleted,
+         *       fetch failed) returns `409` -- the platform does not store attachment bytes, so it cannot
+         *       invent them;
+         *     * the original message must still pass the current attachment gates (`422` otherwise);
+         *     * if email intake is not configured in this deployment the operation returns `503`:
+         *       there is no cached copy to fall back to.
+         *
+         *     The operation writes a normal submission (same persist path as the automatic flow), so
+         *     evaluation/outbox behaviour is exactly that of a submission created at intake time.
+         */
+        post: operations["completeIntakeQuarantine"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/reference-verifications": {
         parameters: {
             query?: never;
@@ -889,24 +959,39 @@ export interface components {
              */
             subject: string | null;
             /**
-             * @description The human decision: `attributed` (a student was named), `dismissed` (reviewed and
-             *     closed without attribution), or `null` for rows that are still pending or that were
-             *     resolved before the decision trail existed. `resolved` remains the boolean form so
-             *     older filtered pages keep their meaning.
+             * @description The human decision: `completed` (the original mail was re-read and turned into the
+             *     chosen student's submission), `attributed` (legacy manual attribution that recorded a
+             *     student but did not create a submission), `dismissed` (marked invalid/作废), or `null`
+             *     for rows that are still pending/held or that were resolved before the trail existed.
+             *     `resolved` remains the boolean form so older filtered pages keep their meaning.
              * @enum {string|null}
              */
-            resolution: "attributed" | "dismissed" | null;
+            resolution: "attributed" | "completed" | "dismissed" | null;
             /**
-             * @description When the human decision was recorded (server clock). `null` for pending rows and for
-             *     rows resolved before this field existed.
+             * @description When the human decision was recorded (server clock). `null` for pending/held rows and
+             *     for rows resolved before this field existed.
              */
             resolved_at: components["schemas"]["Timestamp"] | null;
             /**
              * @description The platform user id (`sub` of the access token) that recorded the decision, so the
-             *     audit trail names an actor rather than only a time. `null` for pending rows and for
+             *     audit trail names an actor rather than only a time. `null` for pending/held rows and for
              *     rows resolved before this field existed.
              */
             resolved_by: components["schemas"]["Uuid"] | null;
+            /**
+             * @description The submission created by "match user" (`resolution=completed`). Null for pending/held
+             *     rows, for dismissals and for the legacy `attributed` decision.
+             */
+            resolved_submission_id: components["schemas"]["Uuid"] | null;
+            /**
+             * @description "暂存": reviewed but deliberately deferred. A held row is **not** resolved; it stays
+             *     processable and can be resumed (`held=false`).
+             */
+            held: boolean;
+            /** @description When the row was put on hold; null unless `held=true`. */
+            held_at: components["schemas"]["Timestamp"] | null;
+            /** @description Who put the row on hold; null unless `held=true`. */
+            held_by: components["schemas"]["Uuid"] | null;
         };
         /**
          * @description A movable evidence bundle for one evaluation run (CHG-0014). Self-contained on purpose:
@@ -1861,6 +1946,11 @@ export interface operations {
                 section_id?: components["schemas"]["Uuid"];
                 reason_code?: string;
                 /**
+                 * @description `true` returns only rows the reviewer put on hold ("暂存"), `false` excludes held rows.
+                 *     Omitting it filters neither. Held rows are still unresolved and remain processable.
+                 */
+                held?: boolean;
+                /**
                  * @description `true` returns only processed records (attributed **or** dismissed), `false` only
                  *     unprocessed ones.
                  *
@@ -1963,6 +2053,77 @@ export interface operations {
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
             422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    setIntakeQuarantineHold: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                intake_quarantine_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    held: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Hold state updated; the record itself is still unresolved. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntakeQuarantineView"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    completeIntakeQuarantine: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                intake_quarantine_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    student_id: components["schemas"]["Uuid"];
+                    course_id: components["schemas"]["Uuid"];
+                    section_id: components["schemas"]["Uuid"];
+                    question_version_id: components["schemas"]["Uuid"];
+                    note?: string | null;
+                };
+            };
+        };
+        responses: {
+            /** @description Submission created and the record marked completed. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntakeQuarantineView"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["UnprocessableEntity"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     verifyReferenceAnswer: {

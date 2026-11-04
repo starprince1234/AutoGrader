@@ -150,6 +150,9 @@ def build_runtime(settings_source: Mapping[str, str]) -> IntakeRuntime:
     runtime.query = SubmissionQueryService(engine)
     runtime.quarantines = IntakeQuarantineService(engine)
     _wire_email_intake(runtime, settings_source, engine)
+    if runtime.email is not None:
+        # 匹配用户需要回邮箱取原邮件；没有邮件入口时服务仍可读列表/作废/暂存。
+        runtime.quarantines = IntakeQuarantineService(engine, email=runtime.email)
     return runtime
 
 

@@ -798,6 +798,8 @@ def test_uppercase_spelling_does_not_bypass_idempotency(
 QUARANTINES = "/api/v1/intake/quarantines"
 RESOLVE = "/api/v1/intake/quarantines/{quarantine}/resolve"
 DISMISS = "/api/v1/intake/quarantines/{quarantine}/dismiss"
+HOLD = "/api/v1/intake/quarantines/{quarantine}/hold"
+COMPLETE = "/api/v1/intake/quarantines/{quarantine}/complete"
 #: 只有这两种原因码能被人工归属（见 `intake.quarantine`）。
 MATCH_FAILURES = ("not_uniquely_matched", "ambiguous_match")
 
@@ -966,6 +968,10 @@ def test_quarantine_list_exposes_what_the_email_path_recorded(
         "resolution",
         "resolved_at",
         "resolved_by",
+        "resolved_submission_id",
+        "held",
+        "held_at",
+        "held_by",
     }
     assert item["intake_quarantine_id"] == quarantine_id
     assert item["intake"] == "email"
@@ -978,6 +984,8 @@ def test_quarantine_list_exposes_what_the_email_path_recorded(
     assert item["subject"] is None
     assert item["resolution"] is None
     assert item["resolved_at"] is None and item["resolved_by"] is None
+    assert item["resolved_submission_id"] is None
+    assert item["held"] is False and item["held_at"] is None and item["held_by"] is None
     assert item["recorded_at"].endswith("Z")
     # scope 来自写入侧（匹配规则共识），读取侧只做映射：两个字段必须如实带出。
     assert item["scope_course_id"] == student[1]
@@ -1551,3 +1559,168 @@ def test_quarantine_admin_may_resolve_unscoped_record(
         attributed,
         "管理员核对后归属",
     )
+
+
+def test_quarantine_hold_records_actor_and_resume(
+    client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
+) -> None:
+    actor = str(uuid.uuid4())
+    token = _auth(
+        signer.token(
+            user_id=actor,
+            roles=("teacher",),
+            scope=[{"course_id": student[1], "section_id": student[2]}],
+        )
+    )
+    quarantine_id = _seed_quarantine(
+        engine, scope_course_id=student[1], scope_section_id=student[2]
+    )
+    held = client.post(
+        HOLD.format(quarantine=quarantine_id), json={"held": True}, headers=token
+    )
+    assert held.status_code == 200, held.text
+    body = held.json()
+    assert body["held"] is True
+    assert body["held_by"] == actor
+    assert body["held_at"] is not None and body["held_at"].endswith("Z")
+    listed = client.get(
+        QUARANTINES, params={"held": "true", "resolved": "false"}, headers=token
+    )
+    assert [item["intake_quarantine_id"] for item in listed.json()["items"]] == [quarantine_id]
+
+    resumed = client.post(
+        HOLD.format(quarantine=quarantine_id), json={"held": False}, headers=token
+    )
+    assert resumed.status_code == 200, resumed.text
+    assert resumed.json()["held"] is False
+    assert resumed.json()["held_at"] is None and resumed.json()["held_by"] is None
+
+    # 已处理后不能再暂存；越权令牌连"它是否已处理"都读不到。
+    assert (
+        client.post(
+            RESOLVE.format(quarantine=quarantine_id),
+            json={"student_id": str(uuid.uuid4())},
+            headers=token,
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            HOLD.format(quarantine=quarantine_id), json={"held": True}, headers=token
+        ).status_code
+        == 409
+    )
+    foreign = _seed_quarantine(
+        engine, scope_course_id=student[1], scope_section_id=student[2], uid=2
+    )
+    assert (
+        client.post(
+            HOLD.format(quarantine=foreign), json={"held": True}, headers=_auth(_foreign_token(signer))
+        ).status_code
+        == 403
+    )
+
+
+def test_quarantine_complete_requires_email_and_valid_target(
+    client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
+) -> None:
+    quarantine_id = _seed_quarantine(
+        engine, scope_course_id=student[1], scope_section_id=student[2]
+    )
+    token = _auth(_staff_token(signer, student))
+    target = {
+        "student_id": str(uuid.uuid4()),
+        "course_id": student[1],
+        "section_id": student[2],
+        "question_version_id": student[3],
+    }
+    # 本测试运行时没有配置 IMAP：明确 503，不从客户端/缓存补附件字节。
+    unavailable = client.post(
+        COMPLETE.format(quarantine=quarantine_id), json=target, headers=token
+    )
+    assert unavailable.status_code == 503, unavailable.text
+    # 请求体先校验：缺字段/未知字段/非法 UUID 都是 422。
+    missing = client.post(
+        COMPLETE.format(quarantine=quarantine_id),
+        json={"student_id": target["student_id"]},
+        headers=token,
+    )
+    assert missing.status_code == 422, missing.text
+    unknown = client.post(
+        COMPLETE.format(quarantine=quarantine_id),
+        json={**target, "path": "/tmp/x"},
+        headers=token,
+    )
+    assert unknown.status_code == 422, unknown.text
+    bad_uuid = client.post(
+        COMPLETE.format(quarantine=quarantine_id),
+        json={**target, "question_version_id": "not-a-uuid"},
+        headers=token,
+    )
+    assert bad_uuid.status_code == 422, bad_uuid.text
+    # 目标课程不在令牌作用域内时先 403，不触碰邮箱。
+    outside = client.post(
+        COMPLETE.format(quarantine=quarantine_id),
+        json={**target, "course_id": str(uuid.uuid4())},
+        headers=token,
+    )
+    assert outside.status_code == 403, outside.text
+    assert _resolved_state(engine, quarantine_id) == (False, None, None)
+
+
+class _FakeCompletedEmail:
+    """只验证编排：取原信、按目标生成提交、把 checkpoint 标为 processed。"""
+
+    def __init__(self, submission_id: str) -> None:
+        self.submission_id = submission_id
+        self.target: dict[str, object] | None = None
+        self.marked = False
+
+    def fetch_raw(self, *, uidvalidity: int, uid: int) -> bytes:
+        assert (uidvalidity, uid) == (1, 7)
+        return b"raw"
+
+    def ingest_raw_for_target(self, **kwargs: object) -> str:
+        self.target = kwargs
+        return self.submission_id
+
+    def mark_checkpoint_processed(self, connection: object, **kwargs: object) -> None:
+        self.marked = True
+
+
+def test_quarantine_complete_writes_resolution_and_submission_id(
+    engine: Engine, student: tuple[str, str, str, str]
+) -> None:
+    from autograder_b2.auth.tokens import CourseScope, Principal
+    from autograder_b2.intake.quarantine import IntakeQuarantineService
+
+    quarantine_id = _seed_quarantine(
+        engine, scope_course_id=student[1], scope_section_id=student[2]
+    )
+    submission_id = str(uuid.uuid4())
+    email = _FakeCompletedEmail(submission_id)
+    service = IntakeQuarantineService(engine, email=email)  # type: ignore[arg-type]
+    principal = Principal(
+        user_id=str(uuid.uuid4()),
+        roles=("teacher",),
+        scopes=(CourseScope(course_id=student[1], section_id=student[2]),),
+        token_id=str(uuid.uuid4()),
+    )
+    view = service.complete(
+        principal=principal,
+        intake_quarantine_id=quarantine_id,
+        student_id=str(uuid.uuid4()),
+        course_id=student[1],
+        section_id=student[2],
+        question_version_id=student[3],
+        note="匹配用户",
+    )
+    assert view.resolved is True
+    assert view.resolution == "completed"
+    assert view.resolved_submission_id == submission_id
+    assert view.resolved_student_id is not None
+    assert view.held is False
+    assert email.marked is True
+    assert email.target is not None and email.target["course_id"] == student[1]
+    row = _quarantine_row(engine, quarantine_id)
+    assert row is not None and row.resolution == "completed"
