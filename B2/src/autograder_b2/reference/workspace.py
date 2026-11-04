@@ -26,6 +26,7 @@ B3 存的那份正文。写 CRLF 还是 LF 是作者在写题时决定的事，�
 
 from __future__ import annotations
 
+import os
 import shutil
 import uuid
 from pathlib import Path
@@ -53,7 +54,14 @@ class ReferenceAnswerWorkspace:
             raise ValueError("reference answer filename is not an allowed relative path")
         target = self._root / verification / f"case-{case}"
         target.mkdir(parents=True, exist_ok=True)
-        (target / filename).write_text(content, encoding="utf-8", newline="")
+        # The sandboxed process runs as `nobody` (uid 65534); this process runs under
+        # systemd's `UMask=0077`. Without these two explicit chmods the directory is
+        # 0700 and the entry script 0600, so `python3` inside nsjail cannot open its
+        # own script and every verification fails as a "crash" before producing output.
+        os.chmod(target, 0o777)
+        entry = target / filename
+        entry.write_text(content, encoding="utf-8", newline="")
+        os.chmod(entry, 0o644)
         return target
 
     def release(self, workspace: Path) -> None:
