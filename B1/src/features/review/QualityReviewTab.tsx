@@ -185,7 +185,7 @@ function QualityBody({ summary }: { summary: EvaluationQualitySummary }) {
       <div
         className="count-grid"
         data-testid="review-quality-counts"
-        style={{ gridTemplateColumns: "repeat(5, minmax(0, 1fr))" }}
+        style={{ gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}
       >
         <CountCard
           label={t("review.quality.answerers")}
