@@ -12,15 +12,28 @@
 
 ## 做了什么
 
-### 1. 页面切换（`.app-content` 入场）
+### 1. 页面切换（两级实现）
 
-`AppShell` 给内容容器加了 `key={location.pathname}`，换页时容器重挂一次，CSS
-`page-enter`（淡入 + 上浮 8px、240ms、`--ease-out`）随之重跑。
+**主路径：原生 View Transitions 交叉淡化**（`src/app/viewTransitions.ts`）
 
-- 为什么用 `key`：不重挂就没有"入场"这回事；而 `key` 只跟 **pathname** 走，
-  同一页改查询串（筛选、分页、tab）**不会重挂**，页面状态不丢。
-- 为什么不用 GSAP / ScrollTrigger：换页只需要一次 240ms 的入场，引一个动画库
-  会多 ~50KB 依赖和一套降级逻辑，收益不成比例。CSS 动画同样跑在合成器上。
+- 灵感来自 GSAP 文档里的 page-transition overlay、以及 uiverse 上的交叉淡化写法，
+  **但不引库**：用浏览器自己的 `document.startViewTransition`——先给旧页面拍快照，
+  等路由把内容换完再拍新页面，两张图由合成器交叉淡化，不碰布局、不重绘。
+- 为什么要手动接：本项目锁的 `@tanstack/react-router@1.170` **既没有 `viewTransition`
+  选项、也没有内建 `startViewTransition` 调用**（只有一句类型注释提到）。所以改成在
+  捕获阶段监听站内链接点击，在路由更新**之前**开启转场。
+- 只给 `.app-content` 命名 `view-transition-name: page-content`，**侧栏与顶栏不参与**，
+  视线不会跟着整屏晃：旧内容 180ms 淡出上移 6px，新内容 260ms 淡入上移 12px 落位。
+- 三条安全边界：不支持该 API 的浏览器（含 jsdom 测试环境）直接不安装；`reduce` 偏好
+  不安装；等待路由变化最多 300ms 就放行，链接没跳转也不会卡住。
+
+**兜底路径：CSS `page-enter`**
+
+不支持的浏览器仍保留原来的内容淡入上浮；`@supports (view-transition-name: page-content)`
+命中时自动关掉它，避免两层动画叠加。
+
+`AppShell` 给内容容器加 `key={location.pathname}`：换页时容器重挂一次，
+`key` 只跟 **pathname** 走，同一页改查询串（筛选、分页、tab）**不会重挂**，页面状态不丢。
 
 ### 2. 下拉：圆角 + 自绘展开菜单 + 弹出动画
 

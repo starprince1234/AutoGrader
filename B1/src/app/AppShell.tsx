@@ -22,6 +22,7 @@ import {
 import { AccountMenu } from "./AccountMenu";
 import { AuthLayout } from "./AuthLayout";
 import { isMainNavActive, mainNavItems, type MainNavItem } from "./navigation";
+import { installViewTransitions } from "./viewTransitions";
 import { Drawer } from "../ui/components";
 
 /** 不需要登录的路径：导览页、注册、忘记密码，以及只做重定向的旧 `/login`。 */
@@ -66,6 +67,10 @@ export function AppShell() {
   const requestedRedirect = safeRedirectTarget(
     readRedirectSearch(location.search),
   );
+
+  // 换页交叉淡化：装了原生 View Transitions 的浏览器走它（见 viewTransitions.ts），
+  // 不支持的浏览器什么都不做，`styles.css` 里的 page-enter 兜底。
+  useEffect(() => installViewTransitions(), []);
 
   // 退出或会话失效后清空业务缓存：共用机器上不能把上一位用户的数据留给下一位。
   useEffect(() => {

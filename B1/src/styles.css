@@ -505,6 +505,56 @@ samp {
   }
 }
 
+/*
+ * 换页的交叉淡化（原生 View Transitions）。
+ * `app/viewTransitions.ts` 在点击站内链接时开启转场；这里只定义"旧内容怎么走、新内容怎么来"。
+ * 只给内容区命名，侧栏与顶栏不参与——视线不会跟着整屏一起晃。
+ * 不支持 View Transitions 的浏览器读不到这些伪元素，继续用上面的 page-enter 兜底。
+ */
+.app-content {
+  view-transition-name: page-content;
+}
+
+::view-transition-old(page-content) {
+  animation: page-out 180ms var(--ease) both;
+}
+
+::view-transition-new(page-content) {
+  animation: page-in 260ms var(--ease-out) both;
+}
+
+@keyframes page-out {
+  to {
+    opacity: 0;
+    transform: translate3d(0, -6px, 0);
+  }
+}
+
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0);
+  }
+}
+
+/* 有原生转场时关掉 CSS 兜底动画，避免两层叠加。 */
+@supports (view-transition-name: page-content) {
+  .app-content {
+    animation: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-content {
+    animation: none !important;
+  }
+
+  ::view-transition-old(page-content),
+  ::view-transition-new(page-content) {
+    animation: none !important;
+  }
+}
+
 .app-content > .page-title:first-child {
   margin-top: var(--space-1);
 }
