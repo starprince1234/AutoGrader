@@ -250,16 +250,24 @@ export function usePublishQuestionVersion() {
  */
 export function useUploadQuestionAsset(questionId: string | null) {
   return useMutation({
-    mutationFn: async (input: AssetUploadInput): Promise<StemAssetUploadResult> => {
+    /**
+     * `questionId` 可以随这次调用一起给：题干页插图时题目可能刚被自动存成草稿，
+     * 那一刻组件拿到的 props 还是旧值，用调用参数传入才能落到正确的那道题上。
+     */
+    mutationFn: async (
+      input: AssetUploadInput & { questionId?: string },
+    ): Promise<StemAssetUploadResult> => {
+      const targetId = input.questionId ?? questionId;
       const requestId = newRequestId();
+      const { questionId: _override, ...body } = input;
       const asset = await apiRequest<StemAssetUploadResult>(
-        `/api/v1/questions/${encodeURIComponent(questionId as string)}/assets`,
-        { method: "POST", body: input, requestId },
+        `/api/v1/questions/${encodeURIComponent(targetId as string)}/assets`,
+        { method: "POST", body, requestId },
       );
       log({
         event: "question_asset_uploaded",
         request_id: requestId,
-        question_id: questionId,
+        question_id: targetId,
         asset_id: asset.asset_id,
         content_type: asset.content_type,
         size_bytes: asset.size_bytes,

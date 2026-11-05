@@ -691,8 +691,6 @@ export const messages = {
 "authoring.image.readFailed": "读不到这个文件，请重试。",
 "authoring.image.typeRejected": "不支持这种图片格式，请用 {types}。",
 "authoring.image.tooLarge": "图片最大 {max} MB。",
-"authoring.image.needDraft": "保存草稿后再插入图片",
-"authoring.image.draftSavedPickAgain": "草稿已保存，再点一次「选择文件」就能选图了。",
 "authoring.image.publishedFrozen": "已发布的版本不能再改图片，请先另存为新版本。",
 
     // ------------------------------------------------- 夹具上传（RQ-B-3-50）

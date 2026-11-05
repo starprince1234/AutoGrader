@@ -29,6 +29,7 @@ import {
   questionPublic,
   questionVersionPublic,
   sessionCreated,
+  UUID_C,
 } from "../../testing/contractFixtures";
 import { signIn } from "../../auth/sessionStore";
 import { setLogSink } from "../../logging/logger";
@@ -239,6 +240,23 @@ describe("分步向导", () => {
     expect(screen.getByTestId("wizard-dot-basic")).toHaveTextContent("✓");
     // 还没写题干，所以第二步仍是空心圆。
     expect(screen.getByTestId("wizard-dot-stem")).toHaveAttribute("data-done", "false");
+  });
+
+  it("题干页的「下一步」在框体最下面（图片区之后、右下角）", async () => {
+    stub = installFetchStub(baseRoutes());
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+
+    await goToStep(user, "stem");
+    const uploader = await screen.findByTestId("image-uploader");
+    const next = screen.getByTestId("step-next");
+    // 图片区在前、下一步在后：老师填完题干与图片再继续。
+    expect(
+      uploader.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // 右下角对齐（`.wizard__save` 负责 flex-end）。
+    expect(next.parentElement?.className).toContain("wizard__save");
   });
 
   it("切换步骤不丢已经填的内容", async () => {
@@ -489,13 +507,36 @@ describe("新建题目（POST /api/v1/questions）", () => {
     expect(screen.getByText(/保存的是草稿/)).toBeInTheDocument();
   });
 
-  it("题干页点「选择文件」只建「够上传」的最小草稿，不被最后一步的校验拦住", async () => {
+  it("选完图片才在后台存一份最小草稿并上传：教师不用先手动保存", async () => {
     stub = installFetchStub(
       baseRoutes([
         {
           method: "POST",
           path: "/api/v1/questions",
           respond: () => jsonResponse(questionPublic({ status: "draft" })),
+        },
+        {
+          // 草稿建好之后页面会取回它的版本 DTO（用于渲染发布门禁）。
+          path: `/api/v1/question-versions/${UUID_A}`,
+          respond: () =>
+            jsonResponse(
+              questionVersionPublic({
+                question_version_id: UUID_A,
+                version: 1,
+                status: "draft",
+                content_digest: SHA_A,
+              }),
+            ),
+        },
+        {
+          method: "POST",
+          path: `/api/v1/questions/${UUID_A}/assets`,
+          respond: () =>
+            jsonResponse({
+              asset_id: UUID_C,
+              content_type: "image/png",
+              size_bytes: 12,
+            }),
         },
       ]),
     );
@@ -508,27 +549,43 @@ describe("新建题目（POST /api/v1/questions）", () => {
     await goToStep(user, "stem");
     await user.type(screen.getByLabelText("题干"), "# 统计");
 
-    // 这时"标准输出比较"和"用例分值"都还没填——插图不该被它们挡住。
-    await user.click(screen.getByTestId("image-pick"));
+    // 「选择文件」不是假按钮：直接就能选图（不需要先保存草稿）。
+    const picker = screen.getByTestId("image-pick");
+    expect(picker).toBeEnabled();
+    expect(screen.queryByTestId("image-need-draft")).toBeNull();
 
-    const request = await waitFor(() => {
+    const file = new File([new Uint8Array([1, 2, 3])], "shot.png", { type: "image/png" });
+    await user.upload(screen.getByTestId("image-file") as HTMLInputElement, file);
+
+    // 先建"够上传"的最小草稿：只发契约必需的四项，不含最后一步才填的内容。
+    const createRequest = await waitFor(() => {
       const found = stub?.requests.find(
         (item) => item.method === "POST" && item.url.pathname === "/api/v1/questions",
       );
       if (!found) throw new Error("尚未发出最小草稿请求");
       return found;
     });
-    const body = request.body as Record<string, unknown>;
+    const body = createRequest.body as Record<string, unknown>;
     expect(body.title).toBe("统计行数");
     expect(body.stem_markdown).toBe("# 统计");
     expect(body.language).toBe("python");
     expect((body.adapter as Record<string, unknown>).kind).toBe("stdin");
-    // 只发契约必需的字段：受保护内容、用例与比对方式都不在这次请求里。
     expect(body.reference_answer).toBeUndefined();
     expect(body.cases).toBeUndefined();
     expect((body.adapter as Record<string, unknown>).comparison).toBeUndefined();
 
-    expect(await screen.findByTestId("toast")).toHaveTextContent("再点一次");
+    // 再上传到那道草稿上，并把图片写进题干。
+    await waitFor(() => {
+      const uploadRequest = stub?.requests.find(
+        (item) => item.method === "POST" && item.url.pathname === `/api/v1/questions/${UUID_A}/assets`,
+      );
+      expect(uploadRequest).toBeDefined();
+      expect((uploadRequest?.body as Record<string, unknown>).content_type).toBe("image/png");
+    });
+    await waitFor(() => {
+      const stem = screen.getByLabelText("题干") as HTMLTextAreaElement;
+      expect(stem.value).toContain(`/api/v1/questions/${UUID_A}/assets/${UUID_C}`);
+    });
   });
 
   it("校验失败的原因拼成一句话，不会出现「。；」连在一起", async () => {

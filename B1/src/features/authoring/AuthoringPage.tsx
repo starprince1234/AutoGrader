@@ -110,8 +110,6 @@ export function AuthoringPage({
   const showToast = useCallback((message: string) => {
     setToast({ key: Date.now(), message });
   }, []);
-  // 点【选择文件】但题目还没保存时：先存一次草稿，成功后再提示"点第二次真正选图"。
-  const [pendingUpload, setPendingUpload] = useState(false);
 
   // 预填只发生一次：数据到齐后填入公开 DTO 里**真的存在**的字段，之后不再覆盖用户的编辑。
   const [seeded, setSeeded] = useState(false);
@@ -210,11 +208,6 @@ export function AuthoringPage({
         {
           onSuccess: () => {
             setBaseline(effectiveForm);
-            if (pendingUpload) {
-              // 草稿已建立、上传目标有了：请老师再点一次（浏览器不允许 await 后自动弹对话框）。
-              setPendingUpload(false);
-              showToast(t("authoring.image.draftSavedPickAgain"));
-            }
           },
         },
       );
@@ -229,45 +222,41 @@ export function AuthoringPage({
         onSuccess: (result) => {
           setSavedVersionId(result.versions?.[0]?.question_version_id ?? null);
           setBaseline(effectiveForm);
-          if (pendingUpload) {
-            setPendingUpload(false);
-            showToast(t("authoring.image.draftSavedPickAgain"));
-          }
         },
       },
     );
   };
 
   /**
-   * 点【选择文件】但题目还没有 id 时调用：先建一份"够上传"的最小草稿。
+   * 插图时向本页要一个题目 id：还没有题目就先在后台存一份"够上传"的最小草稿。
    *
-   * 这里刻意**不跑完整保存校验**：图床挂在题目上，只要有 id 就能上传；而"标准输出比较"
-   * "用例分值"是最后一步的东西，拿它们拦住插图只会让老师看到一串与插图无关的报错。
-   * 只校验这次真的必需的三件事：课程、标题、题干。
+   * 教师不需要先手动保存（2.0：插图不再要求先存草稿）。这里刻意**不跑完整保存校验**：
+   * 图床挂在题目上，只要有 id 就能上传；而"标准输出比较""用例分值"是最后一步的东西，
+   * 拿它们拦住插图只会让老师看到一串与插图无关的报错。真正必需的是课程、标题、题干。
    */
-  const ensureDraftForUpload = () => {
-    if (targetQuestionId !== null) return;
-    if (createQuestion.isPending || pendingUpload) return;
+  const ensureQuestionIdForUpload = async (): Promise<string | null> => {
+    if (targetQuestionId !== null) return targetQuestionId;
     if (courseId === "") {
       showToast(t("authoring.courseRequired"));
-      return;
+      return null;
     }
     const build = buildDraftSkeleton(form);
     if (!build.ok) {
       showToast(issueMessage(build.issues));
-      return;
+      return null;
     }
-    setPendingUpload(true);
-    createQuestion.mutate(
-      { courseId, input: build.input, generationId },
-      {
-        onSuccess: () => {
-          setPendingUpload(false);
-          showToast(t("authoring.image.draftSavedPickAgain"));
-        },
-        onError: () => setPendingUpload(false),
-      },
-    );
+    try {
+      const created = await createQuestion.mutateAsync({
+        courseId,
+        input: build.input,
+        generationId,
+      });
+      setBaseline(form);
+      return created.question_id;
+    } catch {
+      // 失败的细节由下方 `mutation.isError` 的横幅呈现，这里只需要"没拿到 id"。
+      return null;
+    }
   };
 
   const requestLeave = () => {
@@ -569,24 +558,21 @@ export function AuthoringPage({
                 </div>
               </div>
 
-              {/* 保存草稿放在题干图片**之前**：先存草稿，再插入图片（图片地址要靠草稿的 id）。 */}
-              {nextRow}
-
               <div className="inline">
                 <h3>{t("authoring.image.title")}</h3>
-                <span className="hint-chip" data-testid="image-need-draft">
-                  {t("authoring.image.needDraft")}
-                </span>
               </div>
               <ImageUploader
                 questionId={targetQuestionId}
                 // 已发布版本的内容冻结（服务端 409）；其余情况只要草稿存在就能上传。
                 frozen={asNewVersion && targetQuestionId !== null}
-                onNeedDraft={ensureDraftForUpload}
+                ensureQuestionId={ensureQuestionIdForUpload}
                 onInsert={(snippet) =>
                   setForm({ ...form, stemMarkdown: insertIntoStem(form.stemMarkdown, snippet) })
                 }
               />
+
+              {/* 「下一步」放在这一屏的最下面：老师填完题干与图片再继续。 */}
+              {nextRow}
             </Panel>
           ) : null}
 

@@ -7,17 +7,21 @@ import { useUploadQuestionAsset } from "./useAuthoring";
 /**
  * 题干图片上传（RQ-B-3-10，`uploadQuestionAsset`）。
  *
- * 四条与契约对齐的行为：
+ * 教师视角只有一件事：**选一张图，它就出现在题干里**——不需要先手动保存草稿。
  *
- * 1. **不上传服务令牌、不自算摘要**：请求体只有 `content_base64` / `content_type` / `alt_text`，
- *    摘要由 B3 从字节算出。前端把摘要当成"服务端告诉我的绑定值"，不参与生成它。
- * 2. **资源挂在题目上**：没有题目 id 就没有上传目标。因此题目还没保存时，点【选择文件】不是
- *    什么都不做（旧版本那个"假按钮"），而是先请父页面把草稿存下来（`onNeedDraft`），
- *    再让老师点第二次真正选图——浏览器不允许在 `await` 之后替用户弹文件对话框，所以第二次
- *    点击必须是人手点。
- * 3. **已发布版本的内容是冻结的**：`frozen` 时按钮禁用并说明原因，不假装上传成功。
- * 4. **失败不插入**：只有拿到服务端返回的 `asset_id` 才拼受控 Markdown 地址；失败时表单原样保留，
- *    题干里不会出现一个坏 URL（那会让 P07 出现"图片暂时无法显示"而且没人知道为什么）。
+ * 但契约里资源挂在题目上（`/questions/{id}/assets`），没有题目 id 就没有上传目标。折中放在这里：
+ * **选完文件之后**再向父页面要一次题目 id（`ensureQuestionId`，父页面负责把表单存成一份最小草稿），
+ * 拿到 id 立刻上传并插入。于是：
+ *
+ * 1. 点【选择文件】永远能打开文件对话框（它是用户手势，不依赖任何保存状态）；
+ * 2. "先存草稿"是后台的一步，不是教师必须理解的前置条件；
+ * 3. 缺课程/标题/题干这类真的拦得住的情况，用红色提示说明缺什么，而不是静默失败。
+ *
+ * 其余三条与契约对齐的行为不变：
+ * - **不上传服务令牌、不自算摘要**：请求体只有 `content_base64` / `content_type` / `alt_text`，
+ *   摘要由 B3 从字节算出；前端把摘要当成"服务端告诉我的绑定值"，不参与生成它。
+ * - **已发布版本的内容是冻结的**：`frozen` 时按钮禁用并说明原因，不假装上传成功。
+ * - **失败不插入**：只有拿到 `asset_id` 才拼受控 Markdown 地址；题干里不会出现一个坏 URL。
  *
  * 插入的地址形如 `/api/v1/questions/{question_id}/assets/{asset_id}`：它是**受控资源路径**，
  * 由 `useQuestionAsset` 带令牌读取，`urlPolicy` 也只允许这一类同源地址。
@@ -25,22 +29,23 @@ import { useUploadQuestionAsset } from "./useAuthoring";
 export function ImageUploader({
   questionId,
   onInsert,
+  ensureQuestionId,
   frozen = false,
-  onNeedDraft,
 }: {
   questionId: string | null;
   onInsert: (snippet: string) => void;
+  /** 还没有题目 id 时向父页面要一个（父页面会存一份最小草稿）；返回 `null` 表示没拿到。 */
+  ensureQuestionId?: () => Promise<string | null>;
   /** 已发布版本：内容冻结，服务端会 409。 */
   frozen?: boolean;
-  /** 还没有题目 id 时的"先去存草稿"回调；由父页面负责校验与保存。 */
-  onNeedDraft?: () => void;
 }) {
   const upload = useUploadQuestionAsset(questionId);
   const inputRef = useRef<HTMLInputElement>(null);
   const [alt, setAlt] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [preparing, setPreparing] = useState(false);
 
-  const pick = (file: File | undefined) => {
+  const pick = async (file: File | undefined) => {
     setError(null);
     if (!file) return;
     if (!IMAGE_CONTENT_TYPES.includes(file.type as (typeof IMAGE_CONTENT_TYPES)[number])) {
@@ -51,37 +56,45 @@ export function ImageUploader({
       setError(t("authoring.image.tooLarge", { max: Math.round(MAX_IMAGE_BYTES / 1024 / 1024) }));
       return;
     }
-    const reader = new FileReader();
-    reader.onerror = () => setError(t("authoring.image.readFailed"));
-    reader.onload = () => {
-      const result = reader.result;
-      if (typeof result !== "string") {
-        setError(t("authoring.image.readFailed"));
+
+    // 先把题目 id 定下来（必要时由父页面在后台存一份最小草稿），再读字节并上传。
+    let targetId = questionId;
+    if (targetId === null) {
+      setPreparing(true);
+      try {
+        targetId = ensureQuestionId ? await ensureQuestionId() : null;
+      } finally {
+        setPreparing(false);
+      }
+      if (targetId === null) {
+        if (inputRef.current) inputRef.current.value = "";
         return;
       }
-      // `readAsDataURL` 的产物是 `data:<type>;base64,<payload>`；只把 payload 上行。
-      const base64 = result.includes(",") ? result.slice(result.indexOf(",") + 1) : "";
-      if (base64 === "") {
-        setError(t("authoring.image.readFailed"));
-        return;
-      }
-      upload.mutate(
-        { content_type: file.type, content_base64: base64, alt_text: alt.trim() === "" ? null : alt.trim() },
-        {
-          onSuccess: (asset) => {
-            if (!questionId) return;
-            onInsert(assetMarkdown(questionId, asset.asset_id, alt.trim() || asset.asset_id));
-            setAlt("");
-            if (inputRef.current) inputRef.current.value = "";
-          },
+    }
+
+    const base64 = await readBase64(file).catch(() => "");
+    if (base64 === "") {
+      setError(t("authoring.image.readFailed"));
+      return;
+    }
+    upload.mutate(
+      {
+        questionId: targetId,
+        content_type: file.type,
+        content_base64: base64,
+        alt_text: alt.trim() === "" ? null : alt.trim(),
+      },
+      {
+        onSuccess: (asset) => {
+          onInsert(assetMarkdown(targetId as string, asset.asset_id, alt.trim() || asset.asset_id));
+          setAlt("");
+          if (inputRef.current) inputRef.current.value = "";
         },
-      );
-    };
-    reader.readAsDataURL(file);
+      },
+    );
   };
 
-  const needsDraft = questionId === null;
-  const busy = upload.isPending;
+  const busy = upload.isPending || preparing;
 
   return (
     <div className="stack" data-testid="image-uploader">
@@ -95,8 +108,8 @@ export function ImageUploader({
       </Field>
       <div className="inline">
         {/*
-          原生 file 控件会自带一行「未选择文件」：那行字既不可去掉也不可样式化，所以把控件
-          藏起来（`hidden`），只留一个「选择文件」按钮。
+          原生 file 控件自带一行「未选择文件」，既不可去掉也不可样式化，所以把它藏起来、
+          只留一个可见按钮。点按钮直接打开同一个文件对话框——不需要先保存草稿。
         */}
         <input
           ref={inputRef}
@@ -105,22 +118,17 @@ export function ImageUploader({
           accept={IMAGE_CONTENT_TYPES.join(",")}
           data-testid="image-file"
           hidden
-          disabled={needsDraft || frozen || busy}
-          onChange={(event) => pick(event.target.files?.[0])}
+          disabled={frozen || busy}
+          onChange={(event) => {
+            void pick(event.target.files?.[0]);
+          }}
         />
         <button
           type="button"
           className="button button--ghost"
           data-testid="image-pick"
           disabled={frozen || busy}
-          onClick={() => {
-            if (needsDraft) {
-              // 先存草稿，拿到题目 id 之后才能上传；父页面保存成功后会提示"再点一次"。
-              onNeedDraft?.();
-              return;
-            }
-            inputRef.current?.click();
-          }}
+          onClick={() => inputRef.current?.click()}
         >
           {t("authoring.image.pick")}
         </button>
@@ -144,4 +152,22 @@ export function ImageUploader({
       ) : null}
     </div>
   );
+}
+
+/** 读成 base64（只取 `data:` 里的 payload）。失败时抛出，由调用方转成一句人话。 */
+function readBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("read failed"));
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result !== "string") {
+        reject(new Error("read failed"));
+        return;
+      }
+      const comma = result.indexOf(",");
+      resolve(comma === -1 ? "" : result.slice(comma + 1));
+    };
+    reader.readAsDataURL(file);
+  });
 }
