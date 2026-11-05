@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AutoGrader B3 Question Bank API
-  version: 0.26.0
+  version: 0.27.0
   description: |
     Question bank: stems with graphics, reference answers, immutable question
     versions, assignments, three test-suite adapters and de-identified statistics.
@@ -588,6 +588,42 @@ paths:
         '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
         '403': {$ref: './common.yaml#/components/responses/Forbidden'}
         '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
+  /api/v1/question-versions/{question_version_id}/draft-content:
+    parameters:
+      - {name: question_version_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    get:
+      operationId: getDraftContent
+      summary: A draft version's protected content, for the authoring edit page
+      description: |
+        `CHG-0017` made every protected field optional on write so that an edit never has to
+        carry the hidden cases out of the bank and back. That left the edit page unable to show
+        the author's **own existing** cases: a teacher whose verification failed could only add
+        new cases and never correct an existing one.
+
+        This endpoint closes that gap for the authoring path only, and the three restrictions
+        are the whole reason it is safe to have:
+
+        - **scope**: the caller must hold write scope on the version's course (teacher or
+          administrator) - the same rule the PATCH path uses. A student can never reach it.
+        - **state**: only a **draft** version is readable. Published content is frozen;
+          editing it starts a new draft, and `409` says so.
+        - **content**: exactly the reference answer and the test cases, i.e. what a teacher has
+          to be able to correct. Fixture bytes and other protected material keep travelling on
+          their own endpoints.
+
+        Deliberately **not** a field on `QuestionVersionPublic`: that DTO is served to every
+        reader of the bank, and this content must never leave the course.
+      responses:
+        '200':
+          description: The draft's own reference answer and cases.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/QuestionDraftContent'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
 
   /api/v1/question-versions/{question_version_id}/reference-answer:
     parameters:
@@ -1724,6 +1760,20 @@ components:
             arguments_json: {type: [string, "null"]}
           additionalProperties: false
       additionalProperties: false
+
+    QuestionDraftContent:
+      type: object
+      description: |
+        PROTECTED. A draft version's own reference answer and test cases, for the authoring
+        edit page. Readable only by a teacher with write scope on the course, and only while the
+        version is a draft (`getDraftContent`).
+      required: [reference_answer, cases]
+      additionalProperties: false
+      properties:
+        reference_answer: {type: [string, "null"]}
+        cases:
+          type: array
+          items: {$ref: '#/components/schemas/TestCaseInput'}
 
     TestCaseInput:
       type: object

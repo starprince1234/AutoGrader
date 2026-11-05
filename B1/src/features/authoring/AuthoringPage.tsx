@@ -42,7 +42,7 @@ import {
   type DraftForm,
   type DraftIssue,
 } from "./draft";
-import { useCreateQuestion, useUpdateQuestionDraft } from "./useAuthoring";
+import { useCreateQuestion, useDraftContent, useUpdateQuestionDraft } from "./useAuthoring";
 import { Select } from "../../ui/Select";
 
 /**
@@ -127,6 +127,47 @@ export function AuthoringPage({
     setCourseId(question.data.course_id);
     setSeeded(true);
   }, [newestVersion.data, question.data, questionId, seeded]);
+
+  /**
+   * 编辑页把**草稿自己的**参考答案与用例读回来（教师、仅草稿）。
+   *
+   * 没有它，编辑页只能"重新声明"用例：验证没通过时老师想改原来那条也改不了，只能再加一条。
+   * 服务端只对本课程可写的人、且版本仍是草稿时放行。
+   */
+  const newestVersionStatus = question.data?.versions?.[0]?.status ?? null;
+  const draftContent = useDraftContent(
+    questionId !== null && newestVersionStatus === "draft" ? newestVersionId : null,
+  );
+  const [protectedSeeded, setProtectedSeeded] = useState(false);
+
+  useEffect(() => {
+    if (protectedSeeded || !draftContent.data) return;
+    const content = draftContent.data;
+    setForm((previous) => {
+      const next: DraftForm = {
+        ...previous,
+        referenceAnswer: content.reference_answer ?? "",
+        cases: content.cases.map((item) => ({
+          name: item.name,
+          weight: String(item.weight),
+          visibleToStudent: item.visible_to_student,
+          stdin: item.stdin ?? "",
+          args: (item.args ?? []).join(" "),
+          expectedStdout: item.expected_stdout ?? "",
+          expectedStderr: item.expected_stderr ?? "",
+          expectedExitCode:
+            item.expected_exit_code === null || item.expected_exit_code === undefined
+              ? ""
+              : String(item.expected_exit_code),
+        })),
+        // 现在拿到的是**真实的那份集合**，替换确认不再有意义。
+        confirmCaseReplacement: true,
+      };
+      setBaseline(next);
+      return next;
+    });
+    setProtectedSeeded(true);
+  }, [draftContent.data, protectedSeeded]);
 
   // 保存/创建后用来渲染发布状态与信号面板的版本（由**服务端返回的 id** 取回，不拼对象）。
   const createdVersionId = createQuestion.data?.versions?.[0]?.question_version_id ?? null;
@@ -583,7 +624,7 @@ export function AuthoringPage({
                 }}
               />
               {/* 编辑时提交用例 = 整体替换一份本页读不到的集合。必须由人显式确认一次。 */}
-              {questionId !== null && form.cases.length > 0 ? (
+              {questionId !== null && form.cases.length > 0 && !protectedSeeded ? (
                 <div className="field" data-testid="authoring-cases-replace">
                   <label className="inline" htmlFor="authoring-confirm-cases">
                     <input

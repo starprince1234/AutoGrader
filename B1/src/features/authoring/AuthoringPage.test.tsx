@@ -1092,6 +1092,86 @@ describe("修改草稿（PATCH /api/v1/questions/{question_id}）", () => {
   });
 });
 
+describe("编辑页读回草稿的用例（3.0 之后的修改诉求）", () => {
+  it("已存的参考答案与用例会被读回来，可以就地修改并保存", async () => {
+    stub = installFetchStub(
+      baseRoutes([
+        {
+          path: `/api/v1/questions/${QUESTION_ID}`,
+          method: "GET",
+          respond: () => jsonResponse(draftQuestion()),
+        },
+        {
+          path: `/api/v1/question-versions/${DRAFT_VERSION}`,
+          respond: () =>
+            jsonResponse(
+              questionVersionPublic({
+                question_version_id: DRAFT_VERSION,
+                version: 1,
+                status: "draft",
+                content_digest: SHA_A,
+              }),
+            ),
+        },
+        {
+          path: `/api/v1/question-versions/${DRAFT_VERSION}/draft-content`,
+          respond: () =>
+            jsonResponse({
+              reference_answer: "print(2)",
+              cases: [
+                {
+                  name: "基本用例",
+                  ordinal: 0,
+                  weight: 1,
+                  visible_to_student: false,
+                  stdin: "a\n",
+                  args: [],
+                  expected_stdout: "2\n",
+                  expected_stderr: null,
+                  expected_exit_code: 0,
+                },
+              ],
+            }),
+        },
+        {
+          method: "PATCH",
+          path: `/api/v1/questions/${QUESTION_ID}`,
+          respond: () => jsonResponse(draftQuestion()),
+        },
+      ]),
+    );
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(QUESTION_ID);
+
+    // 参考答案被读回来。
+    await goToStep(user, "reference");
+    await waitFor(() => expect(screen.getByLabelText("参考答案")).toHaveValue("print(2)"));
+
+    // 用例也被读回来：原来那条能看见、能改，不需要"重新声明一遍"。
+    await goToStep(user, "cases");
+    expect(await screen.findByTestId("case-0")).toBeInTheDocument();
+    expect(screen.getByTestId("case-0")).toHaveTextContent("基本用例");
+    expect(screen.getByLabelText(/用例名/)).toHaveValue("基本用例");
+    // 现在拿到的是真实集合，替换确认框不再出现。
+    expect(screen.queryByTestId("authoring-cases-replace")).toBeNull();
+
+    await user.type(screen.getByLabelText("标准输入"), "改过的输入");
+    await goToStep(user, "comparison");
+    await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
+    await user.click(screen.getByTestId("authoring-save"));
+
+    const request = await waitFor(() => {
+      const found = stub?.requests.find((item) => item.method === "PATCH");
+      if (!found) throw new Error("尚未发出修改请求");
+      return found;
+    });
+    const cases = (request.body as Record<string, unknown>).cases as Record<string, unknown>[];
+    expect(cases[0].stdin).toBe("a\n改过的输入");
+    expect(cases[0].name).toBe("基本用例");
+  });
+});
+
 describe("验证并发布入口（CHG-0019 / ADR-0015）", () => {
   it("草稿版本显示验证入口与门禁说明，未验证前没有发布动作", async () => {
     stub = installFetchStub(

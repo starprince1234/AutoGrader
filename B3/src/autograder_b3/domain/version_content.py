@@ -70,6 +70,71 @@ class VersionContent:
         )
 
 
+class EditableDraftContent:
+    """A draft's own reference answer and cases, for the authoring edit page.
+
+    Protected content that the *author* of a draft must be able to correct: `CHG-0017` made
+    every protected field optional on write, which meant an edit page could only re-declare
+    cases, never show the existing ones. Only a teacher holding write scope on the version's
+    course can load this, and only while the version is still a draft.
+    """
+
+    __slots__ = ("reference_answer", "cases")
+
+    def __init__(self, *, reference_answer: str | None, cases) -> None:
+        self.reference_answer = reference_answer
+        self.cases = tuple(cases)
+
+    def to_wire(self) -> dict:
+        return {
+            "reference_answer": self.reference_answer,
+            "cases": [
+                {
+                    "name": case.name,
+                    "ordinal": case.ordinal,
+                    "weight": case.weight,
+                    "visible_to_student": case.visible_to_student,
+                    "stdin": case.stdin,
+                    "args": list(case.args),
+                    "expected_stdout": case.expected_stdout,
+                    "expected_stderr": case.expected_stderr,
+                    "expected_exit_code": case.expected_exit_code,
+                }
+                for case in self.cases
+            ],
+        }
+
+
+def load_editable_draft_content(database, *, question_version_id, principal) -> EditableDraftContent:
+    """Load a **draft** version's own answer + cases for its author.
+
+    Raises ``NotFound`` when the version or its question is gone, ``Forbidden`` when the caller
+    has no write scope on the course (the same rule the PATCH path uses), and ``Conflict`` when
+    the version is no longer a draft - published content is frozen, and editing it starts a new
+    draft instead of mutating it.
+    """
+    from ..auth import require_course_write
+    from ..errors import Conflict, NotFound
+    from ..infra.models import Question
+
+    with database.protected_session() as session:
+        version = session.get(QuestionVersion, question_version_id)
+        if version is None:
+            raise NotFound("question version not found")
+        question = session.get(Question, version.question_id)
+        if question is None or question.deleted_at is not None:
+            raise NotFound("question not found")
+        require_course_write(principal, question.course_id)
+        if version.status != "draft":
+            raise Conflict("only a draft version can be read back for editing")
+        content = load_version_content(session, version, require_reference_answer=False)
+        answers = content.snapshot.reference_answers
+        return EditableDraftContent(
+            reference_answer=answers[0].body if answers else None,
+            cases=content.snapshot.cases,
+        )
+
+
 def load_version_content(
     session, version: QuestionVersion, *, require_reference_answer: bool = True
 ) -> VersionContent:

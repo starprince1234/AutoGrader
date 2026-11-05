@@ -36,6 +36,7 @@ from ..domain import (
     list_assignment_versions,
     list_questions,
     load_asset_for_delivery,
+    load_editable_draft_content,
     load_evaluation_package,
     load_learning_context,
     load_reference_answer,
@@ -773,6 +774,33 @@ def evaluation_package_endpoint(request: Request, question_version_id: uuid.UUID
     )
     # Deliberately NOT serialize_public: this is the internal DTO's own wire form.
     return package.to_wire()
+
+
+@router.get("/api/v1/question-versions/{question_version_id}/draft-content")
+def draft_content_endpoint(request: Request, question_version_id: uuid.UUID) -> dict:
+    """A draft's own reference answer and cases, for the authoring edit page.
+
+    Teacher-only and draft-only (see ``load_editable_draft_content``): the author has to be
+    able to *correct* an existing case after a failed verification, which is impossible from a
+    response that never carries protected content back. Students and published versions are
+    refused before any content is read.
+    """
+    context = _context(request)
+    dependencies = _dependencies(request)
+    content = load_editable_draft_content(
+        dependencies.database,
+        question_version_id=question_version_id,
+        principal=context.principal,
+    )
+    log_event(
+        get_logger("api.question_versions"),
+        "draft.content.served",
+        request_id=context.request_id,
+        question_version_id=str(question_version_id),
+        case_count=len(content.cases),
+        status_code=200,
+    )
+    return content.to_wire()
 
 
 @router.get("/api/v1/question-versions/{question_version_id}/reference-answer")

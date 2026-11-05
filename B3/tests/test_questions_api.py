@@ -630,6 +630,39 @@ def _tags_of(client, question_id) -> list[str]:
     return response.json()["tags"]
 
 
+def test_draft_content_returns_the_authors_own_reference_answer_and_cases(
+    client, auth_headers
+):
+    """The edit page must be able to *correct* an existing case (not only add one).
+
+    `CHG-0017` keeps protected fields out of every public DTO, so without this endpoint a
+    teacher whose verification failed could never see or fix the stored case again.
+    """
+    payload = draft_payload()
+    created = client.post(
+        "/api/v1/questions",
+        params={"course_id": str(COURSE_A)},
+        json=payload,
+        headers=auth_headers("teacher-a"),
+    )
+    assert created.status_code == 201, created.text
+    version_id = created.json()["versions"][0]["question_version_id"]
+
+    response = client.get(
+        f"/api/v1/question-versions/{version_id}/draft-content",
+        headers=auth_headers("teacher-a"),
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["reference_answer"] == payload["reference_answer"]
+    assert [case["ordinal"] for case in body["cases"]] == [0]
+    assert body["cases"][0]["stdin"] == payload["cases"][0]["stdin"]
+
+    # 未认证不能读：这是受保护内容，不是公开 DTO。
+    anonymous = client.get(f"/api/v1/question-versions/{version_id}/draft-content")
+    assert anonymous.status_code == 401
+
+
 def test_tags_round_trip_through_create_and_update(client, auth_headers):
     payload = draft_payload()
     payload["tags"] = ["text-tools", "processes"]
