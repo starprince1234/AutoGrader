@@ -61,20 +61,11 @@
   );
 
   /*
-   * 常驻背景光晕（Gemini 式色彩浸染）。变量由 `src/ui/GeminiGlow.tsx` 的
-   * requestAnimationFrame 逐帧改写，每条色带只有四个量：
-   * 颜色（含 alpha 由权重折算）、顶端满色位置、淡出位置、权重。
-   * `a` 是正在退场的上一条色带，`b` 是正在进场的新色带；`--glow-opacity` 做呼吸。
-   * 位置必须满足 head < tail，否则浏览器会按前一个色标钳制，画出硬边。
+   * 常驻背景光晕（Gemini 式色彩浸染）。色相顺序与节奏在 `src/ui/glowPalette.ts`，
+   * 每一层色带的颜色与相位由 `src/ui/GeminiGlow.tsx` 写成行内变量／延迟，
+   * 这里只管"怎么画、怎么动"。
+   * 光晕整体强度上限：浅色主题里它只是"很淡的一层光"，绝不压过内容。
    */
-  --glow-a: rgba(74, 159, 217, 1);
-  --glow-a-head: 18%;
-  --glow-a-tail: 34%;
-  --glow-b: rgba(61, 184, 176, 0);
-  --glow-b-head: 8%;
-  --glow-b-tail: 22%;
-  --glow-opacity: 0.9;
-  /* 光晕整体强度上限：浅色主题里它只是"很淡的一层光"，绝不压过内容。 */
   --glow-strength: 0.6;
   --glow-blend: normal;
   /* 纹理：噪点用 data URI 内联（不额外请求），透明度极低且缓慢漂移。 */
@@ -207,15 +198,16 @@ body {
 /* ------------------------------------------------------------ 常驻光晕层 */
 
 /*
- * 背景光晕（Gemini 式色彩浸染）：挂在 <body> 的第一个子元素上，`position: fixed` +
- * `z-index: -1`，因此**和内容完全解耦**——它不属于任何页面的布局，切换路由时既不重挂也不打断
- * 动画，导览页、登录页、业务页、弹窗之上都在同一层玻璃后面。
+ * 背景光晕（Gemini 式色彩浸染）：挂在 `Root` 的最外层，`position: fixed` + `z-index: -1`，
+ * 因此**和内容完全解耦**——不属于任何页面的布局，切换路由时既不重挂也不打断动画。
  *
- * 视觉实现（对应参考文档的四条关键特征）：
- * 1. 纵向线性渐变 + 顶部偏左的径向径向渐变叠加，彩色只覆盖上半屏，下方是 white 兜底；
- * 2. 彩色色标的**位置**由脚本逐帧下推，读起来是"颜色从顶边长出来、慢慢浸染下去"；
- * 3. `--glow-texture` 是内联 SVG 噪点，透明度 5% 上下并极慢漂移，读作丝绸/水波的细纹；
- * 4. `--glow-opacity` 做秒级呼吸。
+ * 视觉实现：
+ * 1. 每个色相一个图层（六层，见 `src/ui/glowPalette.ts`），每层都是"纵向满色 → 56% 淡出"
+ *    的线性渐变，再叠左右两个径向渐变，读作"两个光源"的体积感；
+ * 2. 动画只跑 `opacity` 与 `transform`（合成器属性），**没有任何逐帧重画的渐变**——
+ *    旧版用 rAF 每帧改写渐变几何，等于每秒重画 30 次全屏渐变，那是卡顿的根因；
+ * 3. 相邻两层的 opacity 斜坡互补，任意时刻总和恒为 1，所以深度全程不变；
+ * 4. `--glow-texture` 是内联 SVG 噪点，透明度 5% 上下并极慢漂移，读作丝绸/水波的细纹。
  * 卡片、表格、表单全部是不透明表面（`--color-surface`），光晕只从面板之间的缝隙透出来，
  * 所以不会削弱任何读数。
  */
@@ -226,31 +218,71 @@ body {
   overflow: hidden;
   pointer-events: none;
   background: var(--color-bg);
-  /* 脚本未执行时的静态兜底：和 body 的渐变一致，避免"先白后彩"的闪。 */
+  /* 兜底底色：和 body 的渐变一致，避免"先白后彩"的闪。 */
   background-image: var(--gradient-page);
 }
 
-/*
- * 彩色浸染层：两条色带，各自"顶部满色 → head 处仍满 → tail 处淡到透明"。
- * 每条色带内部色标严格递增（head < tail），这是不出现硬边的前提；
- * 每带再叠左右两个径向渐变，让宽屏上的光有"两个光源"的体积感，而不是一条横贯的色带。
- * 这里不用 mask-image：给渐变填充本身加遮罩会在遮罩边界留下一条硬线。
- */
-.gemini-glow::before {
-  content: "";
+/* 整组：静态强度上限 + 主题指定的混合方式。这一层不动，动画全在子层上。 */
+.gemini-glow__bands {
   position: absolute;
   inset: 0;
-  background:
-    radial-gradient(1040px 560px at 15% -12%, var(--glow-a) 0%, transparent 72%),
-    radial-gradient(780px 430px at 70% -22%, var(--glow-a) 0%, transparent 74%),
-    linear-gradient(178deg, var(--glow-a) 0%, var(--glow-a) var(--glow-a-head), transparent var(--glow-a-tail)),
-    radial-gradient(900px 480px at 44% -18%, var(--glow-b) 0%, transparent 70%),
-    radial-gradient(700px 380px at 96% -6%, var(--glow-b) 0%, transparent 76%),
-    linear-gradient(163deg, var(--glow-b) 0%, var(--glow-b) var(--glow-b-head), transparent var(--glow-b-tail));
-  /* 两条带的 alpha 之和恒为 1（脚本算好写进颜色里），交接处没有亮度台阶。 */
-  opacity: calc(var(--glow-opacity) * var(--glow-strength));
+  opacity: var(--glow-strength);
   mix-blend-mode: var(--glow-blend);
-  transition: opacity 600ms var(--ease);
+}
+
+/*
+ * 一层色带：顶部满色、到 56% 淡到透明；上沿多伸出去 14%，
+ * 于是它向下漂移时顶边始终被盖住，不会露出底色。
+ * 偶数层光源偏左、奇数层偏右（下面的 `--b`），保留原来两个光源的交替感。
+ */
+.gemini-glow__band {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -14%;
+  bottom: 0;
+  background:
+    radial-gradient(1040px 560px at 15% -12%, var(--band-color) 0%, transparent 72%),
+    radial-gradient(780px 430px at 70% -22%, var(--band-color) 0%, transparent 74%),
+    linear-gradient(178deg, var(--band-color) 0%, var(--band-color) 20%, transparent 56%);
+  opacity: 0;
+  will-change: opacity, transform;
+  animation-name: glow-fall;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  animation-fill-mode: both;
+}
+
+.gemini-glow__band--b {
+  background:
+    radial-gradient(900px 480px at 44% -18%, var(--band-color) 0%, transparent 70%),
+    radial-gradient(700px 380px at 96% -6%, var(--band-color) 0%, transparent 76%),
+    linear-gradient(163deg, var(--band-color) 0%, var(--band-color) 22%, transparent 58%);
+}
+
+/*
+ * 一个色相的一生：从全透明淡入并向下漂 7%，再淡出并继续漂 7%。
+ * 关键性质：六层各错开 1/6 轮，斜坡两两互补，**任意时刻 opacity 之和恒为 1**，
+ * 所以画面深度不变（不会有"忽然变深"），而"出现/消失"都发生在 alpha = 0 处，
+ * 也就没有色带突然冒出来／突然重置的观感。
+ */
+@keyframes glow-fall {
+  0% {
+    opacity: 0;
+    transform: translate3d(0, 0, 0);
+  }
+  16.667% {
+    opacity: 1;
+    transform: translate3d(0, 7%, 0);
+  }
+  33.333% {
+    opacity: 0;
+    transform: translate3d(0, 14%, 0);
+  }
+  100% {
+    opacity: 0;
+    transform: translate3d(0, 14%, 0);
+  }
 }
 
 /* 细密纹理：内联噪点 + 极慢平移；`mix-blend-mode: overlay` 让它在深色下也有质感。 */
@@ -275,15 +307,20 @@ body {
   }
 }
 
-/* 系统开启「减少动态效果」时不跑光晕（不闪、不漂、不呼吸），只留静态底色。 */
+/* 系统开启「减少动态效果」时不跑光晕：停掉漂移与换色，只留一层静态色。 */
 @media (prefers-reduced-motion: reduce) {
-  .gemini-glow::before,
-  .gemini-glow::after {
+  .gemini-glow__band {
     animation: none !important;
-    transition: none;
+    opacity: 0;
+  }
+
+  /* 只留第一层当作静态底色，不再闪烁、不再呼吸。 */
+  .gemini-glow__band:first-child {
+    opacity: 1;
   }
 
   .gemini-glow::after {
+    animation: none !important;
     opacity: calc(var(--glow-texture-opacity) * 0.6);
   }
 }

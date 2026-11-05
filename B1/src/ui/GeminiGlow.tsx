@@ -1,86 +1,58 @@
-import { useEffect } from "react";
-import { glowFrame, type GlowFrame } from "./glowAnimation";
+import type { CSSProperties } from "react";
+import { GLOW_CYCLE_S, GLOW_PALETTE, GLOW_PHASE_S } from "./glowPalette";
 
 /**
  * 常驻背景光晕（Gemini 式色彩浸染）的宿主组件。
  *
  * 它不属于任何页面：`Root` 在最外层渲染一次，`position: fixed; z-index: -1`，
- * 因此**一直存在、不需要触发**，路由切换也不会重挂动画。
+ * 因此一直存在、不需要触发，路由切换也不会重挂动画。
  *
- * 参考文档的关键特征是"颜色从屏幕边缘向内浸染"而不是整屏同时换色。CSS 的
- * `transition` 不支持对 `background-image` 做插值，所以这里用 `requestAnimationFrame`
- * 逐帧改写 CSS 自定义属性，再由样式表把这些变量拼成"径向 + 纵向"两层渐变
- * （见 `styles.css` 的「常驻光晕层」一节与 `glowAnimation.ts` 的色带模型）。
+ * ## 为什么不再用 rAF 逐帧改写渐变
  *
- * 三条硬约束：
- * 1. **不干扰可读性**：色带整体不透明度被 `--glow-strength` 再压一次（亮色 ≈0.72、深色 ≈0.32），
- *    且最深只到 56%；卡片与表格是 opaque 表面，光只从面板缝隙透出来。
- * 2. **尊重动效偏好**：`prefers-reduced-motion: reduce` 时只写一帧静态值，不开循环。
- * 3. **不阻塞首屏**：首帧立刻写一次变量，避免"先白后彩"的闪烁；页面不可见时暂停 rAF。
+ * 旧版用 `requestAnimationFrame`（30fps）把色带的颜色与几何位置写进 CSS 变量，
+ * 再由样式表拼成全屏渐变。变量一变，整块全屏渐变就要**重新光栅化**——等于每秒重画
+ * 30 次全屏渐变，帧率一掉就是肉眼可见的"一卡一卡"；而且两条色带的 alpha 叠加与
+ * 5 秒呼吸会让深浅在交接处跳一下。
+ *
+ * 现在每个色相是一个**固定图层**（六层，颜色与渐变都不变），动画只跑 `opacity`
+ * 与 `transform` 两个合成器属性：
+ * - 不需要每帧重画渐变，也不需要 rAF，JS 一次都不跑；
+ * - 相邻两层错开六分之一轮、斜坡互补（见 `styles.css` 的 `glow-fall`），
+ *   **任意时刻叠加的透明度总和恒为 1**，所以深浅全程不变，没有"忽然变深"；
+ * - 每层在透明状态下淡入、再淡出，同时向下漂移，"出现/消失"都发生在 alpha=0 处，
+ *   所以没有"色带突然重置"的观感。
+ *
+ * 三条硬约束保持不变：
+ * 1. **不干扰可读性**：整组再乘一次 `--glow-strength`（亮色 0.6、深色 0.3）；
+ *    卡片与表格是不透明表面，光只从面板缝隙透出来。
+ * 2. **尊重动效偏好**：`prefers-reduced-motion: reduce` 时样式表直接停掉动画，
+ *    只留一层静态色（不再呼吸、不再漂移）。
+ * 3. **不阻塞首屏**：颜色与相位都是行内静态值，首帧就是最终状态，不存在"先白后彩"。
  */
-
-const CSS_PREFIX = "--glow-";
-
-/** 把一帧写进 `:root`：两条色带各自是"颜色（alpha=权重）/ 顶端满色位置 / 淡出位置"。 */
-function applyFrame(root: HTMLElement, frames: GlowFrame): void {
-  const bands = [
-    ["a", frames.vanishing],
-    ["b", frames.rising],
-  ] as const;
-  for (const [key, band] of bands) {
-    root.style.setProperty(`${CSS_PREFIX}${key}`, band.color);
-    root.style.setProperty(`${CSS_PREFIX}${key}-head`, `${band.head.toFixed(2)}%`);
-    root.style.setProperty(`${CSS_PREFIX}${key}-tail`, `${band.tail.toFixed(2)}%`);
-  }
-  root.style.setProperty(`${CSS_PREFIX}opacity`, frames.opacity.toFixed(3));
-}
-
 export function GeminiGlow() {
-  useEffect(() => {
-    const root = document.documentElement;
-    const reduceMotion =
-      typeof globalThis.matchMedia === "function" &&
-      globalThis.matchMedia("(prefers-reduced-motion: reduce)").matches;
-
-    if (reduceMotion) {
-      // 静态一帧：色带停在初始位置、不呼吸，也不启动 rAF。
-      applyFrame(root, glowFrame(0));
-      return undefined;
-    }
-
-    let frame = 0;
-    let startedAt: number | null = null;
-    let lastPaint = Number.NEGATIVE_INFINITY;
-    /**
-     * 30fps 上限：色相变化本来就慢，60fps 只是让每一帧都重算一次大面积渐变。
-     * 降到 30fps 肉眼几乎无差，但省一半的样式重算与合成。
-     */
-    const MIN_FRAME_MS = 1000 / 30;
-
-    const tick = (now: number) => {
-      if (startedAt === null) startedAt = now;
-      if (now - lastPaint >= MIN_FRAME_MS) {
-        lastPaint = now;
-        applyFrame(root, glowFrame(now - startedAt));
-      }
-      frame = globalThis.requestAnimationFrame(tick);
-    };
-    frame = globalThis.requestAnimationFrame(tick);
-
-    // 标签页不可见时停掉循环，回来时从当前时刻继续（不补帧、不跳变）。
-    const onVisibility = () => {
-      globalThis.cancelAnimationFrame(frame);
-      if (document.visibilityState === "hidden") return;
-      startedAt = null;
-      frame = globalThis.requestAnimationFrame(tick);
-    };
-    document.addEventListener("visibilitychange", onVisibility);
-
-    return () => {
-      globalThis.cancelAnimationFrame(frame);
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, []);
-
-  return <div className="gemini-glow" aria-hidden="true" data-testid="gemini-glow" />;
+  return (
+    <div className="gemini-glow" aria-hidden="true" data-testid="gemini-glow">
+      <div className="gemini-glow__bands">
+        {GLOW_PALETTE.map((color, index) => (
+          <div
+            key={color.name}
+            // 偶数层用左偏光源、奇数层用右偏光源，保留"两个光源"的体积感。
+            className={
+              index % 2 === 0 ? "gemini-glow__band" : "gemini-glow__band gemini-glow__band--b"
+            }
+            data-testid="gemini-glow-band"
+            data-color={color.name}
+            style={
+              {
+                "--band-color": `rgb(${color.rgb})`,
+                animationDuration: `${GLOW_CYCLE_S}s`,
+                // 负延迟 = 直接从中间相位开始，所以六层一开始就均匀铺满整轮。
+                animationDelay: `${-index * GLOW_PHASE_S}s`,
+              } as CSSProperties
+            }
+          />
+        ))}
+      </div>
+    </div>
+  );
 }
