@@ -132,6 +132,9 @@ export function ImageUploader({
         >
           {t("authoring.image.pick")}
         </button>
+        <span className="hint-chip" data-testid="image-pick-hint">
+          {t("authoring.image.pickHint")}
+        </span>
         {busy ? <span className="muted">{t("authoring.image.uploading")}</span> : null}
       </div>
       <p className="muted">{t("authoring.image.hint")}</p>

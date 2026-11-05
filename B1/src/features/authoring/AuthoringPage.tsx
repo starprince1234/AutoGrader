@@ -411,7 +411,11 @@ export function AuthoringPage({
             </Link>
           </Banner>
         ) : null}
-        {createQuestion.data ? (
+        {/*
+          保存成功只留一套反馈：已经显示了「题目已保存（版本…）」时，不再重复一条「题目已保存。」。
+          只有在"创建了但还没取出保存结果"这一小段时间里，才用创建横幅补位。
+        */}
+        {createQuestion.data && !savedVersion.data ? (
           <Banner tone="success" testId="authoring-created">
             <p>{t("authoring.created")}</p>
             <p className="muted">{t("authoring.createdDraftHint")}</p>

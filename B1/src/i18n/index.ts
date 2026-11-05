@@ -534,6 +534,7 @@ export const messages = {
 "authoring.caseStdinHelp": "只对这一个用例生效",
 "authoring.adapterStdinHelp": "所有用例共用的标准输入",
 "authoring.image.pick": "选择文件",
+"authoring.image.pickHint": "双击选择文件",
 "authoring.ai.open": "AI 出题",
 "authoring.ai.back": "返回出题",
 "authoring.ai.pageTitle": "AI 出题",
@@ -625,7 +626,7 @@ export const messages = {
 "authoring.created": "题目已保存。",
 "authoring.updated": "题目已保存（版本 {version}，{status}）。",
 "authoring.createdDraftHint": "保存的是草稿：发布之后学生才能看到这道题。",
-"authoring.createdNext": "这一页已经保存过这道题，为避免重复创建已停止再次保存；要继续修改请点「继续编辑」。",
+"authoring.createdNext": "这一页可以继续修改：最后一步的「保存草稿」会存到这道题上。",
 "authoring.openDetail": "查看题目",
 
     // ------------------------------------------------- AI 草稿生成（AI-FLOW-01A）
