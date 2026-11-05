@@ -2073,6 +2073,11 @@ samp {
  * 第一眼就是两栏：左侧教师端、右侧学生端。两栏都是简单标题 + 链接列表，
  * 不做功能磁贴或欢迎语；登录记忆与入口端校验由 AppShell 负责。
  * 顶部的光来自全局光晕层（`.gemini-glow`）；两栏靠发丝线与「教师端/学生端」抬头区分，不用两块彩色。
+ *
+ * 本轮只做外观（卡片门户 + 排版纪律），**结构、按钮、弹窗与任何交互逻辑都没动**：
+ * - 两栏不等宽（教师端入口多，给多一点宽），形成主次；
+ * - 每行前面加等宽编号（CSS 计数器，无 DOM 改动），行高与点击区域保持不变；
+ * - 卡片 hover 只加深描边，不位移、不放大——"顺手"优先。
  */
 .landing {
   position: relative;
@@ -2112,13 +2117,14 @@ samp {
   font-size: 12.5px;
 }
 
-/* 两栏按内容高度对齐，不拉成两张等高的空卡片（空卡的留白比内容还多）。 */
+/* 两栏按内容高度对齐，不拉成两张等高的空卡片（空卡的留白比内容还多）。
+   教师端入口多（5 个），给它略宽的份额，形成主次；窄屏仍是单列（见 767px 媒体查询）。 */
 .landing__main {
   position: relative;
   z-index: 1;
   flex: 1;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr);
   gap: var(--space-5);
   align-items: start;
   padding: var(--space-4) 0 56px;
@@ -2134,6 +2140,13 @@ samp {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-card);
+  /* 只过渡描边/阴影：卡片本身不位移、不放大，指针移动时版面是稳的。 */
+  transition: border-color var(--dur-base) var(--ease), box-shadow var(--dur-base) var(--ease);
+}
+
+.landing__column:hover,
+.landing__column:focus-within {
+  border-color: var(--color-border-strong);
 }
 
 /* 顶端 2px 发丝是两栏的唯一色差：教师端 accent，学生端中性。
@@ -2196,6 +2209,8 @@ samp {
 
 .landing__lead {
   margin: 0;
+  /* 控制每行字数，宽屏上不会拉成一条很难扫的长句。 */
+  max-width: 46ch;
   font-size: 13.5px;
   line-height: 1.6;
 }
@@ -2205,10 +2220,39 @@ samp {
   padding: 0;
   list-style: none;
   border-top: 1px solid var(--color-border);
+  /* 行首编号用 CSS 计数器生成：不改 DOM、不加可聚焦元素、不挡点击。 */
+  counter-reset: landing-entry;
 }
 
 .landing__list li {
+  position: relative;
   border-bottom: 1px solid var(--color-border);
+  counter-increment: landing-entry;
+}
+
+/* 编号：等宽数字 + 固定小数位，滚读时对齐；hover 时随整行一起变 accent。 */
+.landing__list li::before {
+  content: counter(landing-entry, decimal-leading-zero);
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.06em;
+  color: var(--color-text-faint);
+  pointer-events: none;
+  transition: color var(--dur-fast) var(--ease);
+}
+
+.landing__list li:hover::before {
+  color: var(--color-accent);
+}
+
+/* 禁用的入口（角色不匹配）不点亮编号，避免看起来"可点"。 */
+.landing__list li:has(.landing__link--disabled):hover::before {
+  color: var(--color-text-faint);
 }
 
 .landing__link {
@@ -2217,7 +2261,8 @@ samp {
   justify-content: space-between;
   gap: var(--space-4);
   min-height: 62px;
-  padding: 12px 8px;
+  /* 左侧留给编号；点击区域仍是整行（与改动前一致）。 */
+  padding: 12px 8px 12px 44px;
   border-radius: var(--radius-sm);
   color: var(--color-text);
   transition: background var(--dur-fast) var(--ease), color var(--dur-fast) var(--ease);
@@ -2247,6 +2292,16 @@ samp {
   flex-direction: column;
   gap: 3px;
   min-width: 0;
+  /* hover 时整块文字右移 2px：只动 transform，不触发重排，版面不会"跳"。 */
+  transition: transform var(--dur-fast) var(--ease);
+}
+
+.landing__link:hover .landing__link-main {
+  transform: translateX(2px);
+}
+
+.landing__link--disabled:hover .landing__link-main {
+  transform: none;
 }
 
 .landing__link-label {
