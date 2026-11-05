@@ -14,7 +14,7 @@ import {
  *
  * 这些断言钉住三件容易写错、且会影响授权观感的事：
  * 1. 未知 tab / 未知原因码 / 非法布尔值**丢弃**，不是原样发给服务端；
- * 2. 切换标签必须移除另一标签的专属参数（否则会把 A 标签的筛选带进 B 标签）；
+ * 2. 切换标签时另一标签的条件移到 `<tab>_*` 暂存，切回来仍然在（互不覆盖）；
  * 3. `resolved` 的 URL 三态（false / true / all）与请求语义（显式布尔 / 省略）一一对应。
  */
 describe("复核工作区的 URL 状态", () => {
@@ -74,38 +74,66 @@ describe("复核工作区的 URL 状态", () => {
     expect(next.cursor).toBeUndefined();
   });
 
-  it("切换标签移除另一标签的专属参数", () => {
+  it("切换标签时各自保留查询条件，互不覆盖", () => {
     const mail = parseReviewSearch({
       tab: "mail",
       course_id: UUID_A,
       resolved: "false",
-      question_version_id: UUID_B,
     });
     const quality = withTab(mail, "quality");
     expect(quality.tab).toBe("quality");
+    // 质量标签没有自己的条件：不继承邮件的课程/状态。
     expect(quality.course_id).toBeUndefined();
     expect(quality.resolved).toBeUndefined();
-    expect(quality.question_version_id).toBe(UUID_B);
+    // 邮件条件被暂存，切回时恢复。
+    expect(quality.mail_course_id).toBe(UUID_A);
 
-    const back = withTab(
-      parseReviewSearch({ tab: "quality", question_version_id: UUID_B, course_id: UUID_A }),
-      "mail",
-    );
+    const qualityFilled = withQualityFilter(quality, {
+      courseId: UUID_B,
+      questionVersionId: "00000000-0000-4000-8000-0000000000c1",
+      from: null,
+      to: null,
+    });
+    const back = withTab(qualityFilled, "mail");
     expect(back.tab).toBe("mail");
-    expect(back.question_version_id).toBeUndefined();
     expect(back.course_id).toBe(UUID_A);
+    expect(back.resolved).toBe("false");
+    expect(back.question_version_id).toBeUndefined();
+    // 质量条件也被暂存，再切回去仍然在。
+    expect(back.quality_course_id).toBe(UUID_B);
+    expect(back.quality_question_version_id).toBe(
+      "00000000-0000-4000-8000-0000000000c1",
+    );
   });
 
-  it("质量筛选丢弃邮件专属参数并保留时间范围", () => {
+  it("质量筛选保留课程并暂存邮件条件", () => {
     const next = withQualityFilter(
       parseReviewSearch({ tab: "mail", course_id: UUID_A, resolved: "false" }),
-      { questionVersionId: UUID_B, from: "2026-09-15T00:00:00.000Z", to: null },
+      { courseId: UUID_A, questionVersionId: UUID_B, from: "2026-09-15T00:00:00.000Z", to: null },
     );
     expect(next).toEqual({
       tab: "quality",
+      course_id: UUID_A,
       question_version_id: UUID_B,
       from: "2026-09-15T00:00:00.000Z",
+      mail_course_id: UUID_A,
+      mail_resolved: "false",
+      mail_held: "false",
     });
+    expect(readQualityFilter(next).courseId).toBe(UUID_A);
     expect(readQualityFilter(next).to).toBeNull();
+  });
+
+  it("从题目详情进入时保留来源并自动读取课程/版本", () => {
+    const search = parseReviewSearch({
+      tab: "quality",
+      origin: "question",
+      course_id: UUID_A,
+      question_version_id: UUID_B,
+    });
+    expect(search.origin).toBe("question");
+    const filter = readQualityFilter(search);
+    expect(filter.courseId).toBe(UUID_A);
+    expect(filter.questionVersionId).toBe(UUID_B);
   });
 });

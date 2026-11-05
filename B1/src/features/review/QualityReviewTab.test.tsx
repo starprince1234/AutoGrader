@@ -84,6 +84,27 @@ function routesFor(overrides?: {
     },
     {
       method: "GET",
+      path: "/api/v1/questions",
+      respond: () =>
+        jsonResponse({
+          items: [
+            questionPublic({
+              course_id: UUID_A,
+              versions: [
+                {
+                  question_version_id: UUID_C,
+                  version: 3,
+                  status: "published",
+                  published_at: "2026-09-15T07:20:00.000Z",
+                },
+              ],
+            }),
+          ],
+          next_cursor: null,
+        }),
+    },
+    {
+      method: "GET",
       path: VERSION,
       respond: () => overrides?.versionRespond?.() ?? jsonResponse(questionVersionPublic()),
     },
@@ -117,28 +138,30 @@ function renderQuality(initial: ReviewSearch) {
   return renderWithProviders(<RouterProvider router={router} />);
 }
 
-const QUALITY_PATH: ReviewSearch = { tab: "quality", question_version_id: UUID_C };
+const QUALITY_PATH: ReviewSearch = {
+  tab: "quality",
+  course_id: UUID_A,
+  question_version_id: UUID_C,
+};
 
 describe("P13-B 题目质量标签", () => {
-  it("深链版本：展示去标识化聚合、三态安全、未测量、系统类别与零命中规则", async () => {
+  it("深链版本：自动预填课程/版本并直接展示统计", async () => {
     stub = installFetchStub(routesFor());
     await signIn("teacher1", "pw");
     renderQuality(QUALITY_PATH);
 
-    expect(await screen.findByTestId("review-quality-attempts-value")).toHaveTextContent("42");
-    expect(screen.getByTestId("review-quality-unmeasured-value")).toHaveTextContent("6");
-    expect(screen.getByTestId("review-quality-security-found-value")).toHaveTextContent("1");
-    expect(screen.getByTestId("review-quality-security-not-found-value")).toHaveTextContent("27");
-    expect(screen.getByTestId("review-quality-security-not-checked-value")).toHaveTextContent("14");
-    // 系统问题单列，不进入"其余失败类别"。
-    expect(screen.getByTestId("review-quality-category-system-value")).toHaveTextContent("5");
-    expect(screen.getByText("output_mismatch")).toBeInTheDocument();
-    // 零命中规则仍在目录里，且显示 0。
-    expect(screen.getByText("STAT-PY-013")).toBeInTheDocument();
-    expect(screen.queryByTestId("review-quality-small-sample")).toBeNull();
-    // 返回 P07 的链接保留当前版本（不回到最新版本）。
-    const back = screen.getByTestId("review-quality-back");
-    expect(back.getAttribute("href")).toContain(UUID_C);
+    expect(await screen.findByText("共 42 次评测")).toBeInTheDocument();
+    expect(screen.getByText("6 次未完成")).toBeInTheDocument();
+    expect(screen.getByText("1 次发现安全风险")).toBeInTheDocument();
+    expect(
+      screen.getByText("其中 5 次是系统/运行环境原因，不是学生代码问题。"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("输出结果不一致")).toBeInTheDocument();
+    // 只展示老师需要处理的项：零命中的规则不再占一行。
+    expect(screen.queryByText("STAT-PY-013")).toBeNull();
+    // 深链把课程/版本填进下拉，老师不用再手选。
+    expect(screen.getByTestId("review-quality-course")).toHaveValue(UUID_A);
+    expect(screen.getByTestId("review-quality-version")).toHaveValue(UUID_C);
 
     const summaryRequest = stub!.requests.find(
       (item) => item.method === "GET" && item.url.pathname === SUMMARY,
@@ -254,22 +277,31 @@ describe("P13-B 题目质量标签", () => {
     expect(await screen.findByTestId("review-quality-empty")).toHaveTextContent(
       "此版本在所选时间范围内没有评测记录。",
     );
-    expect(screen.queryByTestId("review-quality-small-sample")).toBeNull();
   });
 
-  it("样本较少时提示不足以判断区分度，但不清零原始计数", async () => {
+  it("没有失败用例或代码问题时，不堆空表", async () => {
     stub = installFetchStub(
       routesFor({
-        summaryRespond: () => jsonResponse(evaluationQualitySummary({ attempt_count: 3 })),
+        summaryRespond: () =>
+          jsonResponse(
+            evaluationQualitySummary({
+              attempt_count: 3,
+              case_failure_rates: [{ ordinal: 0, attempts: 3, failures: 0 }],
+              failure_categories: [],
+              static_rule_hits: [],
+            }),
+          ),
       }),
     );
     await signIn("teacher1", "pw");
     renderQuality(QUALITY_PATH);
 
-    expect(await screen.findByTestId("review-quality-small-sample")).toHaveTextContent(
-      "样本较少，目前不足以判断题目区分度。",
+    expect(await screen.findByText("共 3 次评测")).toBeInTheDocument();
+    expect(screen.getByTestId("review-quality-no-case-failures")).toHaveTextContent(
+      "这次统计里没有失败的测试用例。",
     );
-    expect(screen.getByTestId("review-quality-attempts-value")).toHaveTextContent("3");
+    expect(screen.queryByTestId("review-quality-rules")).toBeNull();
+    expect(screen.queryByTestId("review-quality-categories")).toBeNull();
   });
 
   it("聚合读取失败：保留筛选并给出可重试的错误（含 request_id）", async () => {
@@ -295,7 +327,7 @@ describe("P13-B 题目质量标签", () => {
     stub = installFetchStub(routesFor());
     await signIn("teacher1", "pw");
     renderQuality(QUALITY_PATH);
-    await screen.findByTestId("review-quality-attempts-value");
+    await screen.findByText("共 42 次评测");
 
     // datetime-local 只接受本地无时区形式，用 change 直接设值（逐字符输入没有意义）。
     fireEvent.change(screen.getByTestId("review-quality-from"), {
@@ -316,7 +348,7 @@ describe("P13-B 题目质量标签", () => {
     stub = installFetchStub(routesFor());
     await signIn("teacher1", "pw");
     renderQuality(QUALITY_PATH);
-    await screen.findByTestId("review-quality-attempts-value");
+    await screen.findByText("共 42 次评测");
 
     fireEvent.change(screen.getByTestId("review-quality-from"), {
       target: { value: "2026-09-15T10:00" },

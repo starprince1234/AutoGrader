@@ -111,7 +111,12 @@ export function QuestionDetailPage({
           <Link
             className="button button--ghost"
             to="/review"
-            search={{ tab: "quality", question_version_id: effectiveId }}
+            search={{
+              tab: "quality",
+              origin: "question",
+              course_id: shown.course_id,
+              question_version_id: effectiveId,
+            }}
             data-testid="question-quality-link"
           >
             {t("questions.qualityLink")}

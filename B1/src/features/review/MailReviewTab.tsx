@@ -27,7 +27,7 @@ import {
   useQuarantineMail,
   useSetQuarantineHold,
 } from "./useReviewMail";
-import { REASON_CODES, reasonLabel } from "./reasonCodes";
+import { isAttributableReason, REASON_CODES, reasonHint, reasonLabel } from "./reasonCodes";
 import {
   readMailFilter,
   withMailFilter,
@@ -51,10 +51,6 @@ import { Select } from "../../ui/Select";
  * 可见集合由 B2 的 SQL 谓词决定，页面拿不到它们、也不显示"隐藏行数"。
  */
 
-function truncate(value: string, limit: number): string {
-  return value.length <= limit ? value : `${value.slice(0, limit)}…`;
-}
-
 function scopeText(
   row: IntakeQuarantineView,
   courseMap: Map<string, { course_code: string | null; title: string }>,
@@ -75,41 +71,6 @@ function scopeText(
       ? t("review.mail.notProvided")
       : (sectionMap.get(row.scope_section_id) ?? shortenId(row.scope_section_id));
   return `${courseText} · ${sectionText}`;
-}
-
-/** 可复制的定位字段（Message-ID / UID）。剪贴板不可用时如实说明，不假装成功。 */
-function CopyToken({ label, value }: { label: string; value: string }) {
-  const [state, setState] = useState<"idle" | "ok" | "manual">("idle");
-  return (
-    <span className="row-actions">
-      <span className="mono-id" title={value}>
-        {value}
-      </span>
-      <button
-        type="button"
-        className="button button--ghost"
-        onClick={() => {
-          const clipboard = globalThis.navigator?.clipboard;
-          if (!clipboard || typeof clipboard.writeText !== "function") {
-            setState("manual");
-            return;
-          }
-          void clipboard
-            .writeText(value)
-            .then(() => setState("ok"))
-            .catch(() => setState("manual"));
-        }}
-      >
-        {t("review.mail.copy")}
-      </button>
-      {state === "ok" ? <span className="muted">{t("review.mail.copied")}</span> : null}
-      {state === "manual" ? (
-        <span className="muted" title={label}>
-          {t("review.mail.copyManual")}
-        </span>
-      ) : null}
-    </span>
-  );
 }
 
 export function MailReviewTab({
@@ -594,9 +555,7 @@ export function MailReviewTab({
                 render: (row) => (
                   <div>
                     <div>{reasonLabel(row.reason_code)}</div>
-                    <div className="muted" title={row.detail}>
-                      {truncate(row.detail, 18)}
-                    </div>
+                    <div className="muted">{reasonHint(row.reason_code)}</div>
                   </div>
                 ),
               },
@@ -632,7 +591,7 @@ export function MailReviewTab({
                 header: t("review.mail.action"),
                 render: (row) => (
                   <div className="row-actions">
-                    {row.resolved ? null : (
+                    {row.resolved || !isAttributableReason(row.reason_code) ? null : (
                       <button
                         type="button"
                         className="button"
@@ -690,47 +649,15 @@ export function MailReviewTab({
               {t("review.mail.mailbox")}：
               {detailTarget.mailbox === "" ? t("review.mail.notProvided") : detailTarget.mailbox}
             </p>
-            <div className="row-actions">
-              <span>{t("review.mail.messageId")}：</span>
-              {detailTarget.message_id ? (
-                <CopyToken label={t("review.mail.messageId")} value={detailTarget.message_id} />
-              ) : (
-                <span className="muted">{t("review.mail.notProvided")}</span>
-              )}
-            </div>
-            <div className="row-actions">
-              <span>{t("review.mail.uid")}：</span>
-              {typeof detailTarget.uid === "number" ? (
-                <CopyToken label={t("review.mail.uid")} value={String(detailTarget.uid)} />
-              ) : (
-                <span className="muted">{t("review.mail.notProvided")}</span>
-              )}
-            </div>
             <p>
               {t("review.mail.reason")}：{reasonLabel(detailTarget.reason_code)}
             </p>
-            <p>{t("review.mail.detail")}：{detailTarget.detail}</p>
+            <p className="muted">{reasonHint(detailTarget.reason_code)}</p>
             <p>
               {t("review.mail.state")}：
               {resolutionText(detailTarget)}
               {trailText(detailTarget) ? ` · ${trailText(detailTarget)}` : ""}
             </p>
-            {detailTarget.resolved_student_id ? (
-              <p>
-                {t("review.mail.resolvedStudent")}：
-                <span className="mono-id" title={detailTarget.resolved_student_id}>
-                  {shortenId(detailTarget.resolved_student_id)}
-                </span>
-              </p>
-            ) : null}
-            {detailTarget.resolved_submission_id ? (
-              <p>
-                {t("review.mail.resolvedSubmission")}：
-                <span className="mono-id" title={detailTarget.resolved_submission_id}>
-                  {shortenId(detailTarget.resolved_submission_id)}
-                </span>
-              </p>
-            ) : null}
             {detailTarget.resolution_note ? (
               <p>
                 {t("review.mail.resolutionNote")}：{detailTarget.resolution_note}

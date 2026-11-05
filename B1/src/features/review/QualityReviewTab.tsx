@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { Link } from "@tanstack/react-router";
 import { t } from "../../i18n";
 import { isApiError } from "../../api/problem";
 import type { EvaluationQualitySummary } from "../../api/types";
@@ -7,7 +6,6 @@ import { courseLabel as formatCourseLabel, loadedCourses, useCourses } from "../
 import { useSession } from "../../auth/sessionContext";
 import {
   Banner,
-  EmptyState,
   ErrorState,
   Field,
   LoadMoreActions,
@@ -19,8 +17,6 @@ import {
 import { isUuid } from "../../ui/format";
 import { useVersionContext, useVersionOptions } from "./useQualityVersions";
 import {
-  SMALL_SAMPLE_THRESHOLD,
-  isSmallSample,
   toContractTimestamp,
   toLocalInputValue,
   useQualitySummary,
@@ -44,59 +40,65 @@ import { Select } from "../../ui/Select";
  *   （同一数字画两遍会被读成两个指标）。
  */
 
-function CountCard({
-  label,
-  value,
-  testId,
-  tone = "idle",
-}: {
-  label: string;
-  value: number;
-  testId: string;
-  tone?: "ok" | "warn" | "bad" | "idle";
-}) {
-  return (
-    <div className="count-card" data-testid={testId}>
-      <StatusPill tone={tone}>{label}</StatusPill>
-      <p className="count-card__value" data-testid={`${testId}-value`}>
-        {value}
-      </p>
-    </div>
-  );
+/** 契约分类是机器词；老师看到的是"为什么错"，不是英文枚举。 */
+const CATEGORY_LABELS: Record<string, string> = {
+  timeout: "运行超时",
+  crash: "程序崩溃",
+  output_mismatch: "输出结果不一致",
+  resource_limit: "超出资源限制",
+  missing_output: "没有产生预期文件",
+  import_error: "依赖或导入错误",
+  security_blocked: "触发安全检查",
+  infrastructure_error: "系统/运行环境问题",
+  internal_error: "系统内部错误",
+};
+
+function categoryLabel(category: string): string {
+  return CATEGORY_LABELS[category] ?? "其他失败";
+}
+
+function severityLabel(severity: string): string {
+  if (severity === "warning") return "警告";
+  if (severity === "error") return "错误";
+  return "提示";
 }
 
 function CaseTable({ summary }: { summary: EvaluationQualitySummary }) {
+  const failed = summary.case_failure_rates.filter((row) => row.failures > 0);
+  if (failed.length === 0) {
+    return (
+      <p className="muted" data-testid="review-quality-no-case-failures">
+        {t("review.quality.noCaseFailures")}
+      </p>
+    );
+  }
   return (
     <div data-testid="review-quality-cases">
       <h3>{t("review.quality.caseRates")}</h3>
-      {summary.case_failure_rates.length === 0 ? (
-        <EmptyState>{t("review.quality.noCases")}</EmptyState>
-      ) : (
-        <Table
-          testId="review-quality-cases-table"
-          label={t("review.quality.caseRates")}
-          rows={summary.case_failure_rates}
-          getRowKey={(row) => String(row.ordinal)}
-          columns={[
-            { key: "ordinal", header: t("review.quality.caseOrdinal"), render: (row) => row.ordinal },
-            { key: "attempts", header: t("review.quality.attempts"), render: (row) => row.attempts },
-            { key: "failures", header: t("review.quality.failures"), render: (row) => row.failures },
-            {
-              key: "rate",
-              header: t("review.quality.failureRate"),
-              render: (row) =>
-                row.attempts === 0
-                  ? t("review.quality.noAttempts")
-                  : `${Math.round((row.failures / row.attempts) * 100)}%（${row.failures}/${row.attempts}）`,
-            },
-          ]}
-        />
-      )}
+      <Table
+        testId="review-quality-cases-table"
+        label={t("review.quality.caseRates")}
+        rows={failed}
+        getRowKey={(row) => String(row.ordinal)}
+        columns={[
+          { key: "ordinal", header: t("review.quality.caseOrdinal"), render: (row) => row.ordinal },
+          { key: "attempts", header: t("review.quality.attempts"), render: (row) => row.attempts },
+          { key: "failures", header: t("review.quality.failures"), render: (row) => row.failures },
+          {
+            key: "rate",
+            header: t("review.quality.failureRate"),
+            render: (row) =>
+              row.attempts === 0
+                ? t("review.quality.noAttempts")
+                : `${Math.round((row.failures / row.attempts) * 100)}%（${row.failures}/${row.attempts}）`,
+          },
+        ]}
+      />
     </div>
   );
 }
 
-function CategoryTables({ summary }: { summary: EvaluationQualitySummary }) {
+function OtherCauses({ summary }: { summary: EvaluationQualitySummary }) {
   const system = summary.failure_categories.filter(
     (item) => item.category === "infrastructure_error",
   );
@@ -104,130 +106,74 @@ function CategoryTables({ summary }: { summary: EvaluationQualitySummary }) {
     (item) => item.category !== "infrastructure_error",
   );
   const systemCount = system.reduce((total, item) => total + item.count, 0);
+  if (systemCount === 0 && others.length === 0) return null;
   return (
     <div data-testid="review-quality-categories">
       <h3>{t("review.quality.categories")}</h3>
-      <p className="inline" data-testid="review-quality-category-system">
-        <StatusPill tone="warn">{t("review.quality.categorySystem")}</StatusPill>
-        <span className="muted">
-          <span data-testid="review-quality-category-system-value">{systemCount}</span>{" "}
-          {t("review.quality.hits")}
-        </span>
-        <span className="muted">{t("review.quality.categorySystemHint")}</span>
-      </p>
-      {others.length === 0 ? (
-        <EmptyState>{t("review.quality.noOtherCategories")}</EmptyState>
-      ) : (
+      {systemCount > 0 ? (
+        <p className="muted" data-testid="review-quality-category-system">
+          {t("review.quality.systemCauses", { count: systemCount })}
+        </p>
+      ) : null}
+      {others.length > 0 ? (
         <Table
           testId="review-quality-category-table"
           label={t("review.quality.categories")}
           rows={others}
           getRowKey={(row) => row.category}
           columns={[
-            { key: "category", header: t("review.quality.category"), render: (row) => row.category },
+            { key: "category", header: t("review.quality.category"), render: (row) => categoryLabel(row.category) },
             { key: "count", header: t("review.quality.hits"), render: (row) => row.count },
           ]}
         />
-      )}
+      ) : null}
     </div>
   );
 }
 
 function QualityBody({ summary }: { summary: EvaluationQualitySummary }) {
+  const ruleHits = summary.static_rule_hits.filter((row) => row.count > 0);
   return (
     <div className="stack" data-testid="review-quality-summary">
-      <div
-        className="count-grid"
-        data-testid="review-quality-counts"
-        // 五个汇总数字在桌面端排成一行（共享 `.count-grid` 的 200px 下限会把第 5 个挤到
-        // 第二行，视觉上像漏了一格）；窄屏仍按可用宽度自动换行。
-        style={{ gridTemplateColumns: "repeat(auto-fit, minmax(165px, 1fr))" }}
-      >
-        <CountCard
-          label={t("review.quality.sampleSize")}
-          value={summary.attempt_count}
-          testId="review-quality-attempts"
-        />
-        <CountCard
-          label={t("review.quality.unmeasured")}
-          value={summary.unmeasured_runs}
-          testId="review-quality-unmeasured"
-          tone="warn"
-        />
-        <CountCard
-          label={t("review.quality.securityFound")}
-          value={summary.security_found}
-          testId="review-quality-security-found"
-          tone={summary.security_found > 0 ? "bad" : "idle"}
-        />
-        <CountCard
-          label={t("review.quality.securityNotFound")}
-          value={summary.security_not_found}
-          testId="review-quality-security-not-found"
-          tone="ok"
-        />
-        <CountCard
-          label={t("review.quality.securityNotChecked")}
-          value={summary.security_not_checked}
-          testId="review-quality-security-not-checked"
-          tone="warn"
-        />
+      <div className="inline" data-testid="review-quality-counts">
+        <StatusPill tone="idle">
+          {t("review.quality.attemptCount", { count: summary.attempt_count })}
+        </StatusPill>
+        {summary.unmeasured_runs > 0 ? (
+          <StatusPill tone="warn" data-testid="review-quality-unmeasured">
+            {t("review.quality.unmeasuredCount", { count: summary.unmeasured_runs })}
+          </StatusPill>
+        ) : null}
+        {summary.security_found > 0 ? (
+          <StatusPill tone="bad" data-testid="review-quality-security-found">
+            {t("review.quality.securityFoundCount", { count: summary.security_found })}
+          </StatusPill>
+        ) : null}
       </div>
-      <p className="muted">{t("review.quality.attemptScope")}</p>
-      <p className="muted" data-testid="review-quality-counts-only">
-        {t("review.quality.countsOnly")}
-      </p>
-
-      {/* 0 次运行已经有"没有评测记录"的说明：再叠一句"样本较少"会把两件事混成一件。 */}
-      {summary.attempt_count > 0 && isSmallSample(summary.attempt_count) ? (
-        <Banner tone="warn" testId="review-quality-small-sample">
-          {t("review.quality.smallSample")}
-          {t("review.quality.smallSampleAid", { threshold: SMALL_SAMPLE_THRESHOLD })}
-        </Banner>
-      ) : null}
 
       <CaseTable summary={summary} />
+      <OtherCauses summary={summary} />
 
-      <div data-testid="review-quality-security">
-        <h3>{t("review.quality.security")}</h3>
-        {/* 口径说明用列表而不是三列：三段文字长短不一时，三列会出现高低不齐的"台阶"。 */}
-        <ul className="muted">
-          <li>{t("review.quality.securityFoundMeaning")}</li>
-          <li>{t("review.quality.securityNotFoundMeaning")}</li>
-          <li>{t("review.quality.securityNotCheckedMeaning")}</li>
-        </ul>
-      </div>
-
-      <div data-testid="review-quality-resources">
-        <h3>{t("review.quality.resources")}</h3>
-        <p className="muted">{t("review.quality.resourceMeaning")}</p>
-      </div>
-
-      <CategoryTables summary={summary} />
-
-      <div data-testid="review-quality-rules">
-        <h3>{t("review.quality.rules")}</h3>
-        <p className="muted">{t("review.quality.rulesNote")}</p>
-        {summary.static_rule_hits.length === 0 ? (
-          <EmptyState>{t("review.quality.noRules")}</EmptyState>
-        ) : (
+      {ruleHits.length > 0 ? (
+        <div data-testid="review-quality-rules">
+          <h3>{t("review.quality.rules")}</h3>
           <Table
             testId="review-quality-rules-table"
             label={t("review.quality.rules")}
-            rows={summary.static_rule_hits}
+            rows={ruleHits}
             getRowKey={(row) => row.rule_id}
             columns={[
               { key: "rule_id", header: t("review.quality.ruleId"), render: (row) => row.rule_id },
               {
                 key: "severity",
                 header: t("review.quality.severity"),
-                render: (row) => row.severity,
+                render: (row) => severityLabel(row.severity),
               },
               { key: "count", header: t("review.quality.hits"), render: (row) => row.count },
             ]}
           />
-        )}
-      </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -242,7 +188,6 @@ export function QualityReviewTab({
   const session = useSession();
   const identity = session.subject ?? session.username ?? "anonymous";
   const filter = readQualityFilter(search);
-  const [courseId, setCourseId] = useState("");
   const [fromDraft, setFromDraft] = useState(toLocalInputValue(filter.from));
   const [toDraft, setToDraft] = useState(toLocalInputValue(filter.to));
   // 时间校验的错误位置：结束时间早于开始时间要指到结束时间字段。
@@ -262,7 +207,7 @@ export function QualityReviewTab({
   const courseOptions = loadedCourses(courses.data?.pages).filter(
     (course) => isAdmin || scopeCourseIds.has(course.course_id),
   );
-  const versionOptions = useVersionOptions(courseId === "" ? null : courseId);
+  const versionOptions = useVersionOptions(filter.courseId);
 
   const invalidVersion = filter.questionVersionId !== null && !isUuid(filter.questionVersionId);
   const context = useVersionContext(
@@ -299,6 +244,7 @@ export function QualityReviewTab({
     setIssue(null);
     onChange(
       withQualityFilter(search, {
+        courseId: filter.courseId,
         questionVersionId: filter.questionVersionId,
         from: fromValue,
         to: toValue,
@@ -312,6 +258,7 @@ export function QualityReviewTab({
     setToDraft("");
     onChange(
       withQualityFilter(search, {
+        courseId: filter.courseId,
         questionVersionId: filter.questionVersionId,
         from: null,
         to: null,
@@ -335,8 +282,19 @@ export function QualityReviewTab({
               <Select
                 id="review-quality-course"
                 data-testid="review-quality-course"
-                value={courseId}
-                onChange={(event) => setCourseId(event.target.value)}
+                value={filter.courseId ?? ""}
+                onChange={(event) => {
+                  const nextCourse = event.target.value === "" ? null : event.target.value;
+                  onChange(
+                    withQualityFilter(search, {
+                      courseId: nextCourse,
+                      // 换课程后旧版本必然不属于新课程；清空而不是留下一个会 403 的版本。
+                      questionVersionId: null,
+                      from: filter.from,
+                      to: filter.to,
+                    }),
+                  );
+                }}
               >
                 <option value="">{t("common.selectPrompt")}</option>
                 {courseOptions.map((course) => (
@@ -352,11 +310,12 @@ export function QualityReviewTab({
                 id="review-quality-version"
                 data-testid="review-quality-version"
                 value={filter.questionVersionId ?? ""}
-                disabled={courseId === ""}
+                disabled={filter.courseId === null}
                 onChange={(event) => {
                   const next = event.target.value === "" ? null : event.target.value;
                   onChange(
                     withQualityFilter(search, {
+                      courseId: filter.courseId,
                       questionVersionId: next,
                       from: filter.from,
                       to: filter.to,
@@ -489,19 +448,6 @@ export function QualityReviewTab({
             </Banner>
           ) : null}
           <QualityBody summary={summary.data} />
-          {context.questionId ? (
-            <div className="row-actions">
-              <Link
-                className="button button--ghost"
-                to="/questions/$questionId"
-                params={{ questionId: context.questionId }}
-                search={{ version: filter.questionVersionId ?? undefined }}
-                data-testid="review-quality-back"
-              >
-                {t("review.quality.back")}
-              </Link>
-            </div>
-          ) : null}
         </Panel>
       ) : null}
     </div>
