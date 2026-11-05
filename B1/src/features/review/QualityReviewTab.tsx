@@ -26,6 +26,7 @@ import {
   useQualitySummary,
 } from "./useReviewQuality";
 import { readQualityFilter, withQualityFilter, type ReviewSearch } from "./search";
+import { Select } from "../../ui/Select";
 
 /**
  * P13-B：题目质量标签（去标识化聚合）。
@@ -331,7 +332,7 @@ export function QualityReviewTab({
         <div className="stack">
           <div className="form-grid">
             <Field label={t("review.quality.course")} htmlFor="review-quality-course">
-              <select
+              <Select
                 id="review-quality-course"
                 data-testid="review-quality-course"
                 value={courseId}
@@ -343,11 +344,11 @@ export function QualityReviewTab({
                     {formatCourseLabel(course)}
                   </option>
                 ))}
-              </select>
+              </Select>
             </Field>
 
             <Field label={t("review.quality.version")} htmlFor="review-quality-version">
-              <select
+              <Select
                 id="review-quality-version"
                 data-testid="review-quality-version"
                 value={filter.questionVersionId ?? ""}
@@ -376,7 +377,7 @@ export function QualityReviewTab({
                       {option.label}
                     </option>
                   ))}
-              </select>
+              </Select>
             </Field>
 
             <Field

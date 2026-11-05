@@ -12,6 +12,7 @@ import {
   type CreateUserFieldName,
   type CreateUserFormState,
 } from "./userForm";
+import { Select } from "../../ui/Select";
 
 /**
  * 创建用户（P14 的 Drawer 表单，`POST /api/v1/users`）。
@@ -121,7 +122,7 @@ export function CreateUserDrawer({
         </Field>
 
         <Field label={t("users.roles")} htmlFor="create-user-role">
-          <select
+          <Select
             id="create-user-role"
             data-testid="create-user-role"
             value={form.role}
@@ -132,7 +133,7 @@ export function CreateUserDrawer({
                 {t(`role.${role}`)}
               </option>
             ))}
-          </select>
+          </Select>
         </Field>
 
         <Field

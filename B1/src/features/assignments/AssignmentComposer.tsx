@@ -8,6 +8,7 @@ import { useCourses } from "../../api/directory";
 import { useQuestionList } from "../questions/useQuestions";
 import { Banner, Field, Modal } from "../../ui/components";
 import { useCreateAssignment } from "./useAssignments";
+import { Select } from "../../ui/Select";
 
 /**
  * 新建作业（P04 的主操作）。
@@ -136,7 +137,7 @@ export function AssignmentComposer({
       <Modal title={t("assignments.create.title")} onClose={onClose} testId="assignment-composer">
         <div className="stack">
           <Field label={t("grades.course")} htmlFor="compose-course">
-            <select
+            <Select
               id="compose-course"
               value={selectedCourseId}
               onChange={(event) => {
@@ -151,7 +152,7 @@ export function AssignmentComposer({
                   {course.title}
                 </option>
               ))}
-            </select>
+            </Select>
           </Field>
 
           <Field
@@ -159,7 +160,7 @@ export function AssignmentComposer({
             htmlFor="compose-section"
             error={sectionId === "" ? undefined : undefined}
           >
-            <select
+            <Select
               id="compose-section"
               value={sectionId}
               onChange={(event) => {
@@ -181,7 +182,7 @@ export function AssignmentComposer({
                   {index + 1}
                 </option>
               ))}
-            </select>
+            </Select>
           </Field>
 
           <Field label={t("assignments.create.name")} htmlFor="compose-title">

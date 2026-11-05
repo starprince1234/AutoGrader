@@ -15,6 +15,7 @@ import {
   useUpdateUserRoles,
   useUsers,
 } from "./useUsers";
+import { Select } from "../../ui/Select";
 
 /**
  * 用户标签（P14 的一半：`GET/POST/PATCH/DELETE /api/v1/users`，仅管理员）。
@@ -267,7 +268,7 @@ export function UsersPage({
       <Panel title={t("users.filter")}>
         <div className="form-grid">
           <Field label={t("users.filterRole")} htmlFor="user-role-filter">
-            <select
+            <Select
               id="user-role-filter"
               data-testid="user-role-filter"
               value={roleFilter}
@@ -279,7 +280,7 @@ export function UsersPage({
                   {t(`role.${role}`)}
                 </option>
               ))}
-            </select>
+            </Select>
           </Field>
         </div>
         {createdUserId ? (
@@ -378,7 +379,7 @@ export function UsersPage({
               })}
             </p>
             <Field label={t("users.newRole")} htmlFor="role-change-select">
-              <select
+              <Select
                 id="role-change-select"
                 data-testid="role-change-select"
                 value={nextRole}
@@ -389,7 +390,7 @@ export function UsersPage({
                     {t(`role.${role}`)}
                   </option>
                 ))}
-              </select>
+              </Select>
             </Field>
 
             {concurrencyStamp(roleTarget) === null ? (

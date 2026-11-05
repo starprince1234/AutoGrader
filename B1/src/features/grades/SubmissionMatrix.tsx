@@ -19,6 +19,7 @@ import {
   type CohortStatus,
 } from "./cohort";
 import { useCohort, type CohortFilter } from "./useCohort";
+import { Select } from "../../ui/Select";
 
 /**
  * 「谁还没交」（RQ-B-1-30 验收 4 的操作化形态）。
@@ -126,7 +127,7 @@ export function SubmissionMatrix({ filter }: { filter: CohortFilter }) {
           ) : null}
 
           <Field label={t("grades.missing.filterLabel")} htmlFor="cohort-status">
-            <select
+            <Select
               id="cohort-status"
               value={statusFilter}
               onChange={(event) => setStatusFilter(event.target.value as CohortStatus | "all")}
@@ -137,7 +138,7 @@ export function SubmissionMatrix({ filter }: { filter: CohortFilter }) {
                   {filterLabel(status, cohort.counts[status])}
                 </option>
               ))}
-            </select>
+            </Select>
           </Field>
 
           {visible.length === 0 ? (

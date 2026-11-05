@@ -33,6 +33,7 @@ import {
   withMailFilter,
   type ReviewSearch,
 } from "./search";
+import { Select } from "../../ui/Select";
 
 /**
  * P13-A：邮件提交复核标签。
@@ -416,7 +417,7 @@ export function MailReviewTab({
         <div className="stack">
           <div className="form-grid">
             <Field label={t("review.mail.course")} htmlFor="review-mail-course">
-              <select
+              <Select
                 id="review-mail-course"
                 data-testid="review-mail-course"
                 value={effectiveCourseId ?? ""}
@@ -433,11 +434,11 @@ export function MailReviewTab({
                     {formatCourseLabel(course)}
                   </option>
                 ))}
-              </select>
+              </Select>
             </Field>
 
             <Field label={t("review.mail.section")} htmlFor="review-mail-section">
-              <select
+              <Select
                 id="review-mail-section"
                 data-testid="review-mail-section"
                 value={filter.sectionId ?? ""}
@@ -450,11 +451,11 @@ export function MailReviewTab({
                     {section.label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </Field>
 
             <Field label={t("review.mail.resolved")} htmlFor="review-mail-resolved">
-              <select
+              <Select
                 id="review-mail-resolved"
                 data-testid="review-mail-resolved"
                 value={
@@ -478,11 +479,11 @@ export function MailReviewTab({
                 <option value="held">{t("review.mail.heldFilter")}</option>
                 <option value="processed">{t("review.mail.processedFilter")}</option>
                 <option value="all">{t("review.mail.allStates")}</option>
-              </select>
+              </Select>
             </Field>
 
             <Field label={t("review.mail.reason")} htmlFor="review-mail-reason">
-              <select
+              <Select
                 id="review-mail-reason"
                 data-testid="review-mail-reason"
                 value={filter.reasonCode ?? ""}
@@ -494,7 +495,7 @@ export function MailReviewTab({
                     {reasonLabel(code)}
                   </option>
                 ))}
-              </select>
+              </Select>
             </Field>
           </div>
           {courses.isError ? <ErrorState error={courses.error} /> : null}
@@ -755,7 +756,7 @@ export function MailReviewTab({
 
             {resolveTarget.scope_course_id === null ? (
               <Field label={t("review.mail.course")} htmlFor="review-resolve-course">
-                <select
+                <Select
                   id="review-resolve-course"
                   data-testid="review-resolve-course"
                   value={pickerCourseId}
@@ -772,12 +773,12 @@ export function MailReviewTab({
                       {formatCourseLabel(course)}
                     </option>
                   ))}
-                </select>
+                </Select>
               </Field>
             ) : null}
 
             <Field label={t("review.mail.assignment")} htmlFor="review-resolve-assignment">
-              <select
+              <Select
                 id="review-resolve-assignment"
                 data-testid="review-resolve-assignment"
                 value={matchAssignmentId}
@@ -798,11 +799,11 @@ export function MailReviewTab({
                     {assignment.title}
                   </option>
                 ))}
-              </select>
+              </Select>
             </Field>
 
             <Field label={t("review.mail.questionVersion")} htmlFor="review-resolve-version">
-              <select
+              <Select
                 id="review-resolve-version"
                 data-testid="review-resolve-version"
                 value={matchVersionId}
@@ -818,7 +819,7 @@ export function MailReviewTab({
                     {shortenId(versionId)}
                   </option>
                 ))}
-              </select>
+              </Select>
             </Field>
 
             {assignments.isError ? (
@@ -833,7 +834,7 @@ export function MailReviewTab({
             ) : null}
 
             <Field label={t("review.mail.student")} htmlFor="review-resolve-student">
-              <select
+              <Select
                 id="review-resolve-student"
                 data-testid="review-resolve-student"
                 value={studentId}
@@ -846,7 +847,7 @@ export function MailReviewTab({
                     {row.display_name} · {row.student_number}
                   </option>
                 ))}
-              </select>
+              </Select>
             </Field>
 
             {enrollments.isError ? (

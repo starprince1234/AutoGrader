@@ -8,6 +8,7 @@ import {
   type FixtureMount,
 } from "./draft";
 import { useUploadFixture } from "./useAuthoring";
+import { Select } from "../../ui/Select";
 
 /** 文件大小的可读形式。只用在本页的夹具表里，因此留在本页而不是共享格式模块。 */
 function formatBytes(bytes: number): string {
@@ -135,7 +136,7 @@ export function FixtureEditor({
           />
         </Field>
         <Field label={t("authoring.fixture.mount")} htmlFor="fixture-mount">
-          <select
+          <Select
             id="fixture-mount"
             value={mount}
             onChange={(event) => setMount(event.target.value as FixtureMount)}
@@ -144,7 +145,7 @@ export function FixtureEditor({
             {onlyInputMounts ? null : (
               <option value="expected_output">{t("authoring.fixture.mountExpected")}</option>
             )}
-          </select>
+          </Select>
         </Field>
       </div>
       <p className="muted">{t("authoring.fixture.pathHint")}</p>

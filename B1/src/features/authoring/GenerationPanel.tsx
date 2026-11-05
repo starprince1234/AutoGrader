@@ -13,6 +13,7 @@ import {
   useGeneration,
   useGenerationCapabilities,
 } from "./useGeneration";
+import { Select } from "../../ui/Select";
 
 /**
  * 「让 AI 帮你出题」。
@@ -300,7 +301,7 @@ export function GenerationPanel({
       {!courseId ? (
         <div data-testid="generation-no-course">
           <Field label={t("authoring.generation.courseField")} htmlFor="generation-course">
-            <select
+            <Select
               id="generation-course"
               value=""
               onChange={(event) => onCourseChange(event.target.value)}
@@ -311,7 +312,7 @@ export function GenerationPanel({
                   {formatCourseLabel(course)}
                 </option>
               ))}
-            </select>
+            </Select>
           </Field>
           <p className="muted">{t("authoring.generation.needCourse")}</p>
         </div>
@@ -353,7 +354,7 @@ export function GenerationPanel({
 
         <div className="form-grid">
           <Field label={t("authoring.generation.difficulty")} htmlFor="generation-difficulty">
-            <select
+            <Select
               id="generation-difficulty"
               value={difficulty}
               onChange={(event) => setDifficulty(event.target.value)}
@@ -366,7 +367,7 @@ export function GenerationPanel({
                   </option>
                 );
               })}
-            </select>
+            </Select>
           </Field>
           <Field label={t("authoring.generation.caseCount")} htmlFor="generation-case-count">
             <input

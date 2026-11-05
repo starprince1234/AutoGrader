@@ -48,6 +48,7 @@ import {
   optionalExportFieldLabel,
   type OptionalExportField,
 } from "./exportColumns";
+import { Select } from "../../ui/Select";
 
 /**
  * 成绩页（P11；RQ-B-1-30 成绩与证据 + RQ-B-1-60 导出）。
@@ -456,7 +457,7 @@ export function GradesPage({
       <Panel title={t("grades.filter")}>
         <div className="form-grid">
           <Field label={t("grades.course")} htmlFor="grades-course">
-            <select
+            <Select
               id="grades-course"
               value={effectiveCourseId}
               disabled={!cohortView && courseOptions.length === 0}
@@ -481,13 +482,13 @@ export function GradesPage({
                   {formatCourseLabel(course)}
                 </option>
               ))}
-            </select>
+            </Select>
           </Field>
 
           {cohortView ? (
             <>
               <Field label={t("grades.section")} htmlFor="grades-section">
-                <select
+                <Select
                   id="grades-section"
                   value={sectionId}
                   onChange={(event) => setSectionId(event.target.value)}
@@ -499,11 +500,11 @@ export function GradesPage({
                       {section.label}
                     </option>
                   ))}
-                </select>
+                </Select>
               </Field>
 
               <Field label={t("grades.question")} htmlFor="grades-question">
-                <select
+                <Select
                   id="grades-question"
                   value={questionVersionId}
                   onChange={(event) => setQuestionVersionId(event.target.value)}
@@ -519,7 +520,7 @@ export function GradesPage({
                       {option.status === "published" ? "" : ` · ${t(`questions.status.${option.status}`)}`}
                     </option>
                   ))}
-                </select>
+                </Select>
               </Field>
 
               <Field
@@ -644,14 +645,14 @@ export function GradesPage({
           <div className="stack">
             <p className="muted">{t("grades.exportIntro")}</p>
             <Field label={t("grades.exportFormat")} htmlFor="export-format">
-              <select
+              <Select
                 id="export-format"
                 value={format}
                 onChange={(event) => setFormat(event.target.value as ExportFormat)}
               >
                 <option value="xlsx">XLSX</option>
                 <option value="csv">CSV</option>
-              </select>
+              </Select>
             </Field>
 
             <div>

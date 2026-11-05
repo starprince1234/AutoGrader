@@ -36,6 +36,7 @@ import { useCohort } from "../grades/useCohort";
 import { useAllGrades, gradesAvailability, type GradesAvailability } from "../grades/useGrades";
 import { useAllAssignments } from "./useAssignments";
 import { AssignmentComposer } from "./AssignmentComposer";
+import { Select } from "../../ui/Select";
 
 /**
  * 作业中心（契约 `AssignmentPublic`，CHG-0007）。
@@ -650,7 +651,7 @@ export function AssignmentsPage() {
           <Panel title={t("grades.filter")}>
             <div className="form-grid">
               <Field label={t("grades.course")} htmlFor="assignment-course">
-                <select
+                <Select
                   id="assignment-course"
                   value={selectedCourseTitle}
                   onChange={(event) => {
@@ -666,10 +667,10 @@ export function AssignmentsPage() {
                       {title}
                     </option>
                   ))}
-                </select>
+                </Select>
               </Field>
               <Field label={t("assignments.section")} htmlFor="assignment-section">
-                <select
+                <Select
                   id="assignment-section"
                   value={selectedSectionId}
                   onChange={(event) => {
@@ -689,7 +690,7 @@ export function AssignmentsPage() {
                       {index + 1}
                     </option>
                   ))}
-                </select>
+                </Select>
               </Field>
             </div>
             {courses.isError ? <ErrorState error={courses.error} /> : null}

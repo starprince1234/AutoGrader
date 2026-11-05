@@ -40,6 +40,7 @@ import {
   type DraftIssue,
 } from "./draft";
 import { useCreateQuestion, useUpdateQuestionDraft } from "./useAuthoring";
+import { Select } from "../../ui/Select";
 
 /**
  * 出题页（P08 新建 / P09 编辑，共用一个编辑器与同一条序列化路径）。
@@ -381,7 +382,7 @@ export function AuthoringPage({
               <div className="form-grid">
                 {questionId === null ? (
                   <Field label={t("authoring.course")} htmlFor="authoring-course">
-                    <select
+                    <Select
                       id="authoring-course"
                       value={courseId}
                       onChange={(event) => setCourseId(event.target.value)}
@@ -392,7 +393,7 @@ export function AuthoringPage({
                           {formatCourseLabel(course)}
                         </option>
                       ))}
-                    </select>
+                    </Select>
                   </Field>
                 ) : (
                   <Field label={t("authoring.course")} htmlFor="authoring-course-readonly">
@@ -408,7 +409,7 @@ export function AuthoringPage({
                   />
                 </Field>
                 <Field label={t("authoring.language")} htmlFor="authoring-language">
-                  <select
+                  <Select
                     id="authoring-language"
                     value={form.language}
                     onChange={(event) =>
@@ -420,7 +421,7 @@ export function AuthoringPage({
                         {t(`questions.language.${language}`)}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </Field>
                 <Field label={t("authoring.tags")} htmlFor="authoring-tags">
                   <input
@@ -587,7 +588,7 @@ export function AuthoringPage({
             <Panel title={t("authoring.comparison")} testId="step-comparison">
               <div className="form-grid">
                 <Field label={t("authoring.comparisonStdout")} htmlFor="authoring-comparison-stdout">
-                  <select
+                  <Select
                     id="authoring-comparison-stdout"
                     value={form.comparisonStdout}
                     onChange={(event) =>
@@ -603,10 +604,10 @@ export function AuthoringPage({
                         {t(`authoring.comparison.${policy}`)}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </Field>
                 <Field label={t("authoring.comparisonStderr")} htmlFor="authoring-comparison-stderr">
-                  <select
+                  <Select
                     id="authoring-comparison-stderr"
                     value={form.comparisonStderr}
                     onChange={(event) =>
@@ -622,7 +623,7 @@ export function AuthoringPage({
                         {t(`authoring.comparison.${policy}`)}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </Field>
                 <Field label={t("authoring.numericTolerance")} htmlFor="authoring-tolerance">
                   {/*
@@ -651,7 +652,7 @@ export function AuthoringPage({
                 <div className="stack">
                   <div className="form-grid">
                     <Field label={t("authoring.adapterKind")} htmlFor="authoring-adapter-kind">
-                      <select
+                      <Select
                         id="authoring-adapter-kind"
                         value={form.adapterKind}
                         onChange={(event) =>
@@ -666,7 +667,7 @@ export function AuthoringPage({
                             {t(`questions.adapter.${kind}`)}
                           </option>
                         ))}
-                      </select>
+                      </Select>
                     </Field>
                     <Field label={t("authoring.maxFiles")} htmlFor="authoring-max-files">
                       <input

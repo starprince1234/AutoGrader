@@ -30,6 +30,7 @@ import {
   useRosterImport,
   useSetRosterMapping,
 } from "./useRosterImport";
+import { Select } from "../../ui/Select";
 
 /**
  * 名单导入（P12 的第二个标签，不再是独立页面）。
@@ -167,7 +168,7 @@ function MappingForm({ preview }: { preview: RosterImportPreview }) {
               label={t("import.mappingTarget", { field: t(fieldMessageKey(field)) })}
               htmlFor={selectId}
             >
-              <select
+              <Select
                 id={selectId}
                 value={draft[field] ?? ""}
                 onChange={(event) => {
@@ -181,7 +182,7 @@ function MappingForm({ preview }: { preview: RosterImportPreview }) {
                     {column}
                   </option>
                 ))}
-              </select>
+              </Select>
             </Field>
           );
         })}

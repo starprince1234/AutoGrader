@@ -8,6 +8,7 @@ import { ReferenceVerificationPanel } from "../authoring/ReferenceVerificationPa
 import { RevisionSummary } from "./RevisionSummary";
 import { SafeMarkdown } from "./SafeMarkdown";
 import { useQuestion, useQuestionVersion } from "./useQuestions";
+import { Select } from "../../ui/Select";
 
 /**
  * 题目详情（P07，RQ-B-1-40）。
@@ -128,7 +129,7 @@ export function QuestionDetailPage({
         ) : (
           <div className="form-grid">
             <Field label={t("questions.versionSelect")} htmlFor="version-select">
-              <select
+              <Select
                 id="version-select"
                 data-testid="version-select"
                 value={effectiveId ?? ""}
@@ -143,7 +144,7 @@ export function QuestionDetailPage({
                       : ""}
                   </option>
                 ))}
-              </select>
+              </Select>
             </Field>
           </div>
         )}

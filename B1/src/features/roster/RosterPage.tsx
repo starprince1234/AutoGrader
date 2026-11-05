@@ -29,6 +29,7 @@ import {
 } from "../../api/directory";
 import { useAllowlistBatches } from "../admin/useAllowlist";
 import { useDeleteEnrollment, useEnrollments } from "./useEnrollments";
+import { Select } from "../../ui/Select";
 
 /**
  * 课程与名单（P12）：一张课程表 + 新建/重命名两个居中弹窗。
@@ -456,7 +457,7 @@ export function RosterPage() {
             }}
           >
             <Field label={t("roster.import.classLabel")} htmlFor="import-class">
-              <select
+              <Select
                 id="import-class"
                 value={attachBatchId}
                 data-testid="import-class"
@@ -471,7 +472,7 @@ export function RosterPage() {
                     })}
                   </option>
                 ))}
-              </select>
+              </Select>
             </Field>
             {batches.isPending ? <Spinner /> : null}
             {batches.isError ? <ErrorState error={batches.error} /> : null}

@@ -20,6 +20,7 @@ import type { QuestionPublic } from "../../api/types";
 import { parseTags } from "../authoring/draft";
 import { QuestionCoveragePanel } from "./QuestionCoveragePanel";
 import { useQuestionList } from "./useQuestions";
+import { Select } from "../../ui/Select";
 
 /**
  * 题库列表（P06，`listQuestions` + `getQuestionTagCoverage`）。
@@ -140,7 +141,7 @@ export function QuestionListPage() {
       <Panel title={t("questions.filter")}>
         <div className="form-grid">
           <Field label={t("import.course")} htmlFor="question-course">
-            <select
+            <Select
               id="question-course"
               value={courseId}
               onChange={(event) => setCourseId(event.target.value)}
@@ -151,7 +152,7 @@ export function QuestionListPage() {
                   {formatCourseLabel(course)}
                 </option>
               ))}
-            </select>
+            </Select>
           </Field>
           <Field label={t("questions.tagFilter")} htmlFor="question-tags">
             <input

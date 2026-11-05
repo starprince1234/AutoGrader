@@ -1461,6 +1461,171 @@ samp {
   box-shadow: var(--shadow-focus);
 }
 
+/* ------------------------------------------------------------ 自绘下拉 */
+
+/*
+ * 原生 <select> 仍然是真的控件（id、label for、键盘、读屏、表单值全靠它），
+ * 这里把它变成透明的一层压在自绘触发器上面；鼠标按下时 `Select.tsx` 会
+ * `preventDefault()` 掉系统菜单，改开自绘菜单——圆角与展开动效因此可控。
+ * 键盘用户 Tab 进来焦点仍落在原生 select 上，空格/回车依旧是系统菜单。
+ */
+.combo {
+  position: relative;
+  display: block;
+  width: 100%;
+}
+
+.combo__native {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.combo__native:disabled {
+  cursor: not-allowed;
+}
+
+.combo__trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 38px;
+  padding: 8px 12px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-md);
+  color: var(--color-text);
+  font-size: 14px;
+  letter-spacing: 0;
+  transition: border-color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+
+.combo__value {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 自绘 V 形箭头：open 时翻转 180°，是"菜单已展开"的即时反馈。 */
+.combo__chevron {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-right: 1.5px solid var(--color-text-faint);
+  border-bottom: 1.5px solid var(--color-text-faint);
+  transform: translateY(-2px) rotate(45deg);
+  transition: transform 160ms var(--ease), border-color var(--dur-fast) var(--ease);
+}
+
+.combo:hover .combo__trigger {
+  border-color: var(--color-text-faint);
+}
+
+.combo:hover .combo__chevron {
+  border-color: var(--color-text);
+}
+
+.combo:focus-within .combo__trigger {
+  border-color: var(--color-accent);
+  box-shadow: var(--shadow-focus);
+}
+
+.combo[data-open="true"] .combo__chevron {
+  transform: translateY(2px) rotate(225deg);
+}
+
+.combo:has(.combo__native:disabled) .combo__trigger {
+  opacity: 0.55;
+}
+
+/* 菜单：从触发器的顶边弹出（-6px + 轻微缩放），140ms，短到不打断操作。 */
+.combo__menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 6px);
+  left: 0;
+  right: 0;
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  max-height: 280px;
+  overflow-y: auto;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-raised);
+  transform-origin: top center;
+  animation: combo-pop 140ms var(--ease-out) both;
+}
+
+@keyframes combo-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.combo__option {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease);
+}
+
+.combo__option:hover:not(:disabled) {
+  background: var(--color-surface-2);
+}
+
+.combo__option.is-selected {
+  color: var(--color-accent);
+  font-weight: 600;
+}
+
+.combo__option:disabled {
+  color: var(--color-text-faint);
+  cursor: not-allowed;
+}
+
+/* 表格里的下拉跟随行内控件的 30px 尺寸。 */
+.table .combo__trigger {
+  min-height: 30px;
+  padding: 0 26px 0 8px;
+  font-size: 12.5px;
+}
+
+/* 和行内附加控件并排时仍然拉伸填满。 */
+.field__control > .combo {
+  flex: 1;
+  min-width: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .combo__menu {
+    animation: none !important;
+  }
+
+  .combo__chevron {
+    transition: none;
+  }
+}
+
 /* 被拒行：红底之外再加左侧 3px 实线，颜色不是唯一信号。 */
 .row--rejected {
   background: var(--color-bad-soft);

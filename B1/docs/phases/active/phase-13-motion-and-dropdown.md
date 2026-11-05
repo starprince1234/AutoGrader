@@ -22,16 +22,23 @@
 - 为什么不用 GSAP / ScrollTrigger：换页只需要一次 240ms 的入场，引一个动画库
   会多 ~50KB 依赖和一套降级逻辑，收益不成比例。CSS 动画同样跑在合成器上。
 
-### 2. 下拉圆角（方块 → 圆角）
+### 2. 下拉：圆角 + 自绘展开菜单 + 弹出动画
 
-- `.field select`：`appearance: none` + 自绘 V 形箭头 + **8px 圆角**（原来是原生方角箭头），
-  hover 时箭头从灰变正文色；输入框本身仍是原来的描边与聚焦环。
-- `.table select`：圆角 6px → **8px**，和页面里其它控件统一。
+新增 `src/ui/Select.tsx`，并把全仓 **34 处** `<select>` 换成 `<Select>`（16 个文件，纯标签替换 + 补一行 import）。
 
-**必须说明的限制**：原生 `<select>` 展开后的列表是**操作系统绘制**的（Windows 上是系统菜单），
-CSS 既不能给它圆角，也不能给它动效。想做到"展开有动画"，只能把全部 **34 处**原生 select
-换成自绘 listbox——那会改动 40 处 `selectOptions` 测试与键盘/读屏行为，属于功能级重构，
-本轮没有做，需要单独排期。
+做法是"**原生控件 + 自绘外观**"：
+- 原生 `<select>` 仍然留在原位（`id`、`label for`、键盘、读屏、表单值全靠它），只是 `opacity: 0`、
+  铺满触发器那一块，作为真正的交互层；
+- 鼠标按下时 `preventDefault()` 拦住**系统下拉菜单**，改开我们自己渲染的 `.combo__menu`：
+  **12px 圆角、`shadow-raised`、`combo-pop` 弹出动画（-6px + 0.97 缩放 + 淡入，140ms）**，
+  选中项用 accent、禁用项变灰；
+- 触发器是 8px 圆角 + 自绘 V 形箭头，展开时箭头翻转 180°，`focus-within` 有 accent 光环；
+- 选值：写回原生 select 的 value 并派发原生 `change` 事件 → React 的 `onChange` 照常触发，
+  **调用点里 `(event) => setX(event.target.value)` 一行没改**；
+- 键盘/读屏路径不变（焦点在原生 select 上，空格仍是系统菜单），
+  所以 **40 处 `userEvent.selectOptions` 测试一行没改，也全部通过**。
+
+表格里的下拉（`.table .combo__trigger`）跟随行内控件的 30px 尺寸。
 
 ### 3. 展开动效（我们自己控制的那部分）
 
