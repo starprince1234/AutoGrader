@@ -889,6 +889,20 @@ eleaseManualGrade、downloadSubmissionFile、
   `relock_contracts.py`；版本回到 `0.18.0`。
 
 **详细裁决**：[CHG-0030](../docs/contracts/changes/CHG-0030-grades-identity-export-learning-hints.md)
+## 0.26.0 — 题目质量汇总的独立作答人数
+
+- **级别**：P2（新增只读计数字段）
+- **状态**：已生效
+- **动机**：质量页需要区分"20 次提交来自 2 个学生"与"20 次提交来自 20 个学生"；
+  只给 `attempt_count` 会把重复提交误读成覆盖人数。
+- **新增字段**：`EvaluationQualitySummary.answerer_count`（distinct student_id 的计数，仍不返回任何标识）。
+- **影响模块**：B2（聚合查询）、B1（质量页五卡片中的「作答人数」）；B3/B4/B5 无行为改动，仅锁与版本同步。
+- **兼容性**：新增 required 字段，旧客户端会忽略；不删除、不改语义。
+- **验证**：B2 `test_quality_summary_aggregates_per_case_and_per_rule` 断言两个学生 = 2；契约一致性用例通过。
+- **回滚方式**：移除字段与聚合读数，版本回到 `0.25.0`，重跑 `relock_contracts.py`。
+
+---
+
 ## 0.25.0 — 隔离区匹配用户、暂存与标记作废
 
 - **级别**：P1 增补（新增 2 个 operation 与 4 个视图字段）

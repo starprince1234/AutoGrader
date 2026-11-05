@@ -150,15 +150,22 @@ describe("P13-B 题目质量标签", () => {
     await signIn("teacher1", "pw");
     renderQuality(QUALITY_PATH);
 
-    expect(await screen.findByText("共 42 次评测")).toBeInTheDocument();
-    expect(screen.getByText("6 次未完成")).toBeInTheDocument();
-    expect(screen.getByText("1 次发现安全风险")).toBeInTheDocument();
-    expect(
-      screen.getByText("其中 5 次是系统/运行环境原因，不是学生代码问题。"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("输出结果不一致")).toBeInTheDocument();
-    // 只展示老师需要处理的项：零命中的规则不再占一行。
-    expect(screen.queryByText("STAT-PY-013")).toBeNull();
+    expect(await screen.findByTestId("review-quality-answerers-value")).toHaveTextContent("18");
+    expect(screen.getByTestId("review-quality-attempts-value")).toHaveTextContent("42");
+    // 系统故障 = 5 次基础设施问题 + 6 次资源用量缺失。
+    expect(screen.getByTestId("review-quality-system-value")).toHaveTextContent("11");
+    expect(screen.getByTestId("review-quality-security-value")).toHaveTextContent("1");
+    expect(screen.getByTestId("review-quality-unchecked-value")).toHaveTextContent("14");
+    expect(screen.getByTestId("review-quality-hint")).toHaveTextContent("存在异常");
+    // 失败率降序：第 2 个用例 31/42 排在前面。
+    const table = screen.getByTestId("review-quality-cases-table");
+    const rows = table.querySelectorAll("tbody tr");
+    expect(rows[0]).toHaveTextContent("第 2 个用例");
+    expect(rows[0]).toHaveTextContent("74%");
+    expect(rows[0]).toHaveTextContent("11 / 31");
+    expect(screen.getByTestId("review-quality-abnormal-text")).toHaveTextContent(
+      "输出结果不一致：11次",
+    );
     // 深链把课程/版本填进下拉，老师不用再手选。
     expect(screen.getByTestId("review-quality-course")).toHaveValue(UUID_A);
     expect(screen.getByTestId("review-quality-version")).toHaveValue(UUID_C);
@@ -260,6 +267,7 @@ describe("P13-B 题目质量标签", () => {
         summaryRespond: () =>
           jsonResponse(
             evaluationQualitySummary({
+              answerer_count: 0,
               attempt_count: 0,
               case_failure_rates: [],
               failure_categories: [],
@@ -275,20 +283,26 @@ describe("P13-B 题目质量标签", () => {
     renderQuality(QUALITY_PATH);
 
     expect(await screen.findByTestId("review-quality-empty")).toHaveTextContent(
-      "此版本在所选时间范围内没有评测记录。",
+      "当前条件暂无评测记录",
     );
+    expect(screen.queryByTestId("review-quality-counts")).toBeNull();
   });
 
-  it("没有失败用例或代码问题时，不堆空表", async () => {
+  it("样本少与没有异常时，用提示条和一句空态说明，不堆空表", async () => {
     stub = installFetchStub(
       routesFor({
         summaryRespond: () =>
           jsonResponse(
             evaluationQualitySummary({
+              answerer_count: 3,
               attempt_count: 3,
               case_failure_rates: [{ ordinal: 0, attempts: 3, failures: 0 }],
               failure_categories: [],
               static_rule_hits: [],
+              unmeasured_runs: 0,
+              security_found: 0,
+              security_not_found: 0,
+              security_not_checked: 0,
             }),
           ),
       }),
@@ -296,9 +310,16 @@ describe("P13-B 题目质量标签", () => {
     await signIn("teacher1", "pw");
     renderQuality(QUALITY_PATH);
 
-    expect(await screen.findByText("共 3 次评测")).toBeInTheDocument();
-    expect(screen.getByTestId("review-quality-no-case-failures")).toHaveTextContent(
-      "这次统计里没有失败的测试用例。",
+    expect(await screen.findByTestId("review-quality-hint")).toHaveTextContent(
+      "样本较少，统计仅供参考",
+    );
+    expect(screen.getByTestId("review-quality-answerers-value")).toHaveTextContent("3");
+    // 没有失败也列出用例，失败率是 0；不是把整张表藏掉。
+    const table = screen.getByTestId("review-quality-cases-table");
+    expect(table.querySelector("tbody tr")).toHaveTextContent("第 1 个用例");
+    expect(table.querySelector("tbody tr")).toHaveTextContent("0%");
+    expect(screen.getByTestId("review-quality-abnormal-none")).toHaveTextContent(
+      "未检测到系统故障与安全风险",
     );
     expect(screen.queryByTestId("review-quality-rules")).toBeNull();
     expect(screen.queryByTestId("review-quality-categories")).toBeNull();
@@ -327,7 +348,7 @@ describe("P13-B 题目质量标签", () => {
     stub = installFetchStub(routesFor());
     await signIn("teacher1", "pw");
     renderQuality(QUALITY_PATH);
-    await screen.findByText("共 42 次评测");
+    await screen.findByTestId("review-quality-attempts-value");
 
     // datetime-local 只接受本地无时区形式，用 change 直接设值（逐字符输入没有意义）。
     fireEvent.change(screen.getByTestId("review-quality-from"), {
@@ -348,7 +369,7 @@ describe("P13-B 题目质量标签", () => {
     stub = installFetchStub(routesFor());
     await signIn("teacher1", "pw");
     renderQuality(QUALITY_PATH);
-    await screen.findByText("共 42 次评测");
+    await screen.findByTestId("review-quality-attempts-value");
 
     fireEvent.change(screen.getByTestId("review-quality-from"), {
       target: { value: "2026-09-15T10:00" },

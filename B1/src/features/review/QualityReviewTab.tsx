@@ -11,7 +11,6 @@ import {
   LoadMoreActions,
   Panel,
   Spinner,
-  StatusPill,
   Table,
 } from "../../ui/components";
 import { isUuid } from "../../ui/format";
@@ -57,18 +56,71 @@ function categoryLabel(category: string): string {
   return CATEGORY_LABELS[category] ?? "其他失败";
 }
 
-function severityLabel(severity: string): string {
-  if (severity === "warning") return "警告";
-  if (severity === "error") return "错误";
-  return "提示";
+function systemFailureCount(summary: EvaluationQualitySummary): number {
+  const infrastructure =
+    summary.failure_categories.find((item) => item.category === "infrastructure_error")?.count ??
+    0;
+  return infrastructure + summary.unmeasured_runs;
+}
+
+/** 后端与前端滚动发布时旧响应可能还没有该字段：退回提交总次数，避免卡片空白。 */
+function answererCount(summary: EvaluationQualitySummary): number {
+  return summary.answerer_count ?? summary.attempt_count;
+}
+
+function CountCard({
+  label,
+  value,
+  foot,
+  testId,
+  tone = "default",
+  marked = false,
+}: {
+  label: string;
+  value: number;
+  foot: string;
+  testId: string;
+  tone?: "default" | "warn" | "bad";
+  marked?: boolean;
+}) {
+  const background =
+    tone === "bad"
+      ? "var(--color-bad-soft)"
+      : tone === "warn" || marked
+        ? "var(--color-warn-soft)"
+        : "var(--color-surface-2)";
+  const border =
+    tone === "bad"
+      ? "var(--color-bad)"
+      : tone === "warn" || marked
+        ? "var(--color-warn)"
+        : "var(--color-border)";
+  return (
+    <div
+      className="count-card"
+      data-testid={testId}
+      style={{ background, borderColor: border }}
+    >
+      <span className="muted">{label}</span>
+      <p className="count-card__value" data-testid={`${testId}-value`}>
+        {value}
+      </p>
+      <span className="muted">{foot}</span>
+    </div>
+  );
 }
 
 function CaseTable({ summary }: { summary: EvaluationQualitySummary }) {
-  const failed = summary.case_failure_rates.filter((row) => row.failures > 0);
-  if (failed.length === 0) {
+  const rows = summary.case_failure_rates
+    .filter((row) => row.attempts > 0)
+    .sort((left, right) => {
+      const byRate = right.failures / right.attempts - left.failures / left.attempts;
+      return byRate !== 0 ? byRate : left.ordinal - right.ordinal;
+    });
+  if (rows.length === 0) {
     return (
       <p className="muted" data-testid="review-quality-no-case-failures">
-        {t("review.quality.noCaseFailures")}
+        {t("review.quality.noCaseRecords")}
       </p>
     );
   }
@@ -78,19 +130,23 @@ function CaseTable({ summary }: { summary: EvaluationQualitySummary }) {
       <Table
         testId="review-quality-cases-table"
         label={t("review.quality.caseRates")}
-        rows={failed}
+        rows={rows}
         getRowKey={(row) => String(row.ordinal)}
         columns={[
-          { key: "ordinal", header: t("review.quality.caseOrdinal"), render: (row) => row.ordinal },
-          { key: "attempts", header: t("review.quality.attempts"), render: (row) => row.attempts },
-          { key: "failures", header: t("review.quality.failures"), render: (row) => row.failures },
+          {
+            key: "name",
+            header: t("review.quality.caseName"),
+            render: (row) => t("review.quality.caseNameValue", { ordinal: row.ordinal + 1 }),
+          },
           {
             key: "rate",
             header: t("review.quality.failureRate"),
-            render: (row) =>
-              row.attempts === 0
-                ? t("review.quality.noAttempts")
-                : `${Math.round((row.failures / row.attempts) * 100)}%（${row.failures}/${row.attempts}）`,
+            render: (row) => `${Math.round((row.failures / row.attempts) * 100)}%`,
+          },
+          {
+            key: "passFail",
+            header: t("review.quality.passFailHeader"),
+            render: (row) => `${row.attempts - row.failures} / ${row.failures}`,
           },
         ]}
       />
@@ -98,82 +154,76 @@ function CaseTable({ summary }: { summary: EvaluationQualitySummary }) {
   );
 }
 
-function OtherCauses({ summary }: { summary: EvaluationQualitySummary }) {
-  const system = summary.failure_categories.filter(
-    (item) => item.category === "infrastructure_error",
-  );
-  const others = summary.failure_categories.filter(
-    (item) => item.category !== "infrastructure_error",
-  );
-  const systemCount = system.reduce((total, item) => total + item.count, 0);
-  if (systemCount === 0 && others.length === 0) return null;
+function AbnormalSummary({ summary }: { summary: EvaluationQualitySummary }) {
+  const parts = summary.failure_categories
+    .filter((item) => item.count > 0)
+    .map((item) => `${categoryLabel(item.category)}：${item.count}次`);
+  if (summary.security_found > 0) {
+    parts.push(`安全告警：${summary.security_found}次`);
+  }
+  if (summary.unmeasured_runs > 0) {
+    parts.push(`资源丢失：${summary.unmeasured_runs}次`);
+  }
   return (
-    <div data-testid="review-quality-categories">
-      <h3>{t("review.quality.categories")}</h3>
-      {systemCount > 0 ? (
-        <p className="muted" data-testid="review-quality-category-system">
-          {t("review.quality.systemCauses", { count: systemCount })}
+    <div data-testid="review-quality-abnormal">
+      <h3>{t("review.quality.abnormal")}</h3>
+      {parts.length > 0 ? (
+        <p data-testid="review-quality-abnormal-text">{parts.join(" ｜ ")}</p>
+      ) : (
+        <p className="muted" data-testid="review-quality-abnormal-none">
+          {t("review.quality.abnormalNone")}
         </p>
-      ) : null}
-      {others.length > 0 ? (
-        <Table
-          testId="review-quality-category-table"
-          label={t("review.quality.categories")}
-          rows={others}
-          getRowKey={(row) => row.category}
-          columns={[
-            { key: "category", header: t("review.quality.category"), render: (row) => categoryLabel(row.category) },
-            { key: "count", header: t("review.quality.hits"), render: (row) => row.count },
-          ]}
-        />
-      ) : null}
+      )}
     </div>
   );
 }
 
 function QualityBody({ summary }: { summary: EvaluationQualitySummary }) {
-  const ruleHits = summary.static_rule_hits.filter((row) => row.count > 0);
+  const systemFailures = systemFailureCount(summary);
   return (
     <div className="stack" data-testid="review-quality-summary">
-      <div className="inline" data-testid="review-quality-counts">
-        <StatusPill tone="idle">
-          {t("review.quality.attemptCount", { count: summary.attempt_count })}
-        </StatusPill>
-        {summary.unmeasured_runs > 0 ? (
-          <StatusPill tone="warn" data-testid="review-quality-unmeasured">
-            {t("review.quality.unmeasuredCount", { count: summary.unmeasured_runs })}
-          </StatusPill>
-        ) : null}
-        {summary.security_found > 0 ? (
-          <StatusPill tone="bad" data-testid="review-quality-security-found">
-            {t("review.quality.securityFoundCount", { count: summary.security_found })}
-          </StatusPill>
-        ) : null}
+      <div
+        className="count-grid"
+        data-testid="review-quality-counts"
+        style={{ gridTemplateColumns: "repeat(5, minmax(0, 1fr))" }}
+      >
+        <CountCard
+          label={t("review.quality.answerers")}
+          value={answererCount(summary)}
+          foot={t("review.quality.answerersFoot")}
+          testId="review-quality-answerers"
+          marked={answererCount(summary) < 5}
+        />
+        <CountCard
+          label={t("review.quality.attemptsTotal")}
+          value={summary.attempt_count}
+          foot={t("review.quality.attemptsFoot")}
+          testId="review-quality-attempts"
+        />
+        <CountCard
+          label={t("review.quality.systemFailures")}
+          value={systemFailures}
+          foot={t("review.quality.systemFailuresFoot")}
+          testId="review-quality-system"
+          tone={systemFailures > 0 ? "warn" : "default"}
+        />
+        <CountCard
+          label={t("review.quality.securityRisk")}
+          value={summary.security_found}
+          foot={t("review.quality.securityRiskFoot")}
+          testId="review-quality-security"
+          tone={summary.security_found > 0 ? "bad" : "default"}
+        />
+        <CountCard
+          label={t("review.quality.unchecked")}
+          value={summary.security_not_checked}
+          foot={t("review.quality.uncheckedFoot")}
+          testId="review-quality-unchecked"
+        />
       </div>
 
       <CaseTable summary={summary} />
-      <OtherCauses summary={summary} />
-
-      {ruleHits.length > 0 ? (
-        <div data-testid="review-quality-rules">
-          <h3>{t("review.quality.rules")}</h3>
-          <Table
-            testId="review-quality-rules-table"
-            label={t("review.quality.rules")}
-            rows={ruleHits}
-            getRowKey={(row) => row.rule_id}
-            columns={[
-              { key: "rule_id", header: t("review.quality.ruleId"), render: (row) => row.rule_id },
-              {
-                key: "severity",
-                header: t("review.quality.severity"),
-                render: (row) => severityLabel(row.severity),
-              },
-              { key: "count", header: t("review.quality.hits"), render: (row) => row.count },
-            ]}
-          />
-        </div>
-      ) : null}
+      <AbnormalSummary summary={summary} />
     </div>
   );
 }
@@ -446,8 +496,21 @@ export function QualityReviewTab({
             <Banner tone="info" testId="review-quality-empty">
               {t("review.quality.empty")}
             </Banner>
-          ) : null}
-          <QualityBody summary={summary.data} />
+          ) : (
+            <>
+              {systemFailureCount(summary.data) > 0 || summary.data.security_found > 0 ? (
+                <Banner tone="warn" testId="review-quality-hint">
+                  {t("review.quality.anomalyHint")}
+                </Banner>
+              ) : summary.data.answerer_count !== undefined &&
+                answererCount(summary.data) < 5 ? (
+                <Banner tone="warn" testId="review-quality-hint">
+                  {t("review.quality.smallSampleHint")}
+                </Banner>
+              ) : null}
+              <QualityBody summary={summary.data} />
+            </>
+          )}
         </Panel>
       ) : null}
     </div>
