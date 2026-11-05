@@ -1,10 +1,10 @@
 /**
  * 常驻光晕的色带（组件与样式表共享的唯一事实来源）。
  *
- * 为什么单独拆一个模块：色相顺序与节奏要同时被组件（写行内变量与 delay）和测试
+ * 为什么单独拆一个模块：色相顺序与节奏要同时被组件（写行内变量与相位）和测试
  * （断言错开、整轮时长）用到，放在一处才不会出现"改了颜色但样式表还是旧的"。
  *
- * 颜色只存 RGB 通道，透明度交给每层的 opacity 动画——这样六个图层只需要合成，
+ * 颜色只存 RGB 通道，透明度交给每层的 opacity 动画——图层只需要合成，
  * 不需要在运行期重画任何渐变（旧版逐帧改写渐变几何，是卡顿的根因）。
  */
 
@@ -34,10 +34,25 @@ export const GLOW_PALETTE: readonly GlowColor[] = [
 ];
 
 /**
- * 一个色相从"淡入到满"的时长（秒）。整轮 = 色相数 × 该值。
- * 取 10 秒：一次颜色交接要 10 秒才走完，整轮 60 秒——足够慢，不会抢注意力。
+ * 相邻两个色相交接的时长（秒）：每过这么久就有一个新颜色开始进场。
+ * 3 秒是"看得出在换、又不抢注意力"的节奏；整轮 = 色相数 × 该值 = 18 秒。
  */
-export const GLOW_PHASE_S = 10;
+export const GLOW_PHASE_S = 3;
 
-/** 走完六个色相的总时长（秒）。写进每层的 `animation-duration`。 */
+/** 走完六个色相的总时长（秒）。 */
 export const GLOW_CYCLE_S = GLOW_PALETTE.length * GLOW_PHASE_S;
+
+/**
+ * 图层数。**只要两层**（双缓冲）：一层淡出时另一层淡入，两者斜坡互补，
+ * 叠加的透明度恒为 1。层数从 6 降到 2 是为了显存——每个图层都是一张全屏纹理，
+ * 六张常驻会白白吃掉几百 MB 的 GPU 内存。
+ */
+export const GLOW_LAYER_COUNT = 2;
+
+/** 两层各跑一个"淡入 + 淡出"迭代，迭代时长 = 两个相位。 */
+export const GLOW_ITERATION_S = GLOW_PHASE_S * 2;
+
+/** 取色板里第 index 个色相（自动折返）。 */
+export function glowColorAt(index: number): GlowColor {
+  return GLOW_PALETTE[((index % GLOW_PALETTE.length) + GLOW_PALETTE.length) % GLOW_PALETTE.length];
+}

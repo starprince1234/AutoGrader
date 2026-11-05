@@ -19,14 +19,15 @@
 ## 改法
 
 1. **不再逐帧重画**。删掉 `glowAnimation.ts`（rAF 用的纯计算模型）与 `GeminiGlow` 里的 rAF：
-   现在每个色相是一个**固定图层**（六层，颜色与渐变都不变），动画只跑
-   `opacity` 与 `transform` 两个合成器属性。JS 一次都不跑，样式表全包。
+   现在动画只跑 `opacity` 与 `transform` 两个合成器属性，样式表全包，JS 不参与逐帧。
 2. **不再呼吸**。整组只乘一次静态的 `--glow-strength`（亮色 0.6、深色 0.3），
    没有随时间变化的整体透明度。
-3. **色带不再"重置"**。六层各错开 1/6 轮，`opacity` 斜坡两两互补 →
-   **任意时刻叠加的 opacity 之和恒为 1**；每层在 alpha=0 处淡入、淡出，
-   同时向下漂 14%（`glow-fall` 关键帧），读作"颜色一直往下落"，没有突现/突隐。
-4. **放慢**。`GLOW_PHASE_S` 从 1.6s → **10s**：一次颜色交接要 10 秒，整轮 60 秒。
+3. **两层双缓冲，压内存**。一屏里真正同时出现的只有两条色带（一条退场、一条进场），
+   所以**只要两个图层**：相位差半个迭代、斜坡互补 → 任意时刻叠加深浅恒为 1。
+   每个图层都是一张全屏纹理，层数直接决定显存占用（旧版六层，现在是它的三分之一）。
+   每层迭代到头时 opacity 正好是 0，**换色发生在看不见的时刻**，由
+   `animationiteration` 事件驱动（每 3 秒一次，只改一个 CSS 变量，没有累积状态）。
+4. **节奏**。`GLOW_PHASE_S = 3`：每 3 秒有一个新色相进场，整轮 18 秒。
 5. **明度校准（这是"忽然变深"的真凶）**。原色板渲染亮度跨度 0.49～0.79；
    保留色相与顺序，把亮度压进 **0.52～0.60**（跨度 0.30 → 0.08）。
    校准值写在 `glowPalette.ts`，实测见下表。
@@ -35,11 +36,11 @@
 
 | 文件 | 改动 |
 |---|---|
-| `src/ui/GeminiGlow.tsx` | 重写：六个色带图层 + 行内颜色/相位，**不再有 rAF** |
-| `src/ui/glowPalette.ts` | **新增**：色板与节奏（组件与测试的唯一事实来源） |
+| `src/ui/GeminiGlow.tsx` | 重写：**两个**色带图层 + `animationiteration` 换色，不再有 rAF |
+| `src/ui/glowPalette.ts` | **新增**：色板、节奏、层数（组件与测试的唯一事实来源） |
 | `src/ui/glowAnimation.ts`、`glowAnimation.test.ts` | **删除**：旧 rAF 模型的纯计算与其测试 |
-| `src/ui/GeminiGlow.test.tsx` | 重写：层数/颜色/错开相位、且**不再写 `:root` 变量、不再申请 rAF** |
-| `src/styles.css` | `.gemini-glow::before` 换成 `.gemini-glow__bands` + `.gemini-glow__band`（含 `glow-fall` 关键帧）；删掉随之失效的 `--glow-a*/--glow-b*/--glow-opacity`；减少动态效果时只留一层静态色 |
+| `src/ui/GeminiGlow.test.tsx` | 重写：层数=2、相位差、换色顺序沿色板循环、**不写 `:root`、不申请 rAF** |
+| `src/styles.css` | `.gemini-glow::before` 换成 `.gemini-glow__bands` + `.gemini-glow__band`（`glow-fall` 关键帧改为 0/50/100）；删掉失效的 `--glow-a*/--glow-b*/--glow-opacity`；减少动态效果时只留一层静态色 |
 
 ## 真实执行
 
@@ -47,10 +48,11 @@
 |---|---|
 | `tsc -b --pretty false` | 通过（exit 0） |
 | `eslint . --max-warnings 0` | 通过（exit 0） |
-| `vitest run src/ui` | `GeminiGlow.test.tsx` 3 个 + 组件测试 12 个，全部通过 |
+| `vitest run` 全量 | **55 个文件 / 478 个用例通过**（含重写后的 `GeminiGlow.test.tsx` 5 例） |
 | 色板明度校准（逐色渲染后取像素，强度 0.6） | 校准前 **0.487～0.789（跨度 0.302）**；校准后 **0.512～0.589（跨度 0.077）** |
-| 整轮动画的亮度（六相位取样，重叠后的合成结果） | **0.525～0.625（跨度 0.10）**，旧版同时还有 0.36～0.9 的呼吸叠加 |
-| 是否还有逐帧重绘 | 组件不写 `:root`、不申请 rAF；动画只剩 `opacity` / `transform` |
+| 整轮动画的亮度（多相位取样，重叠后的合成结果） | **0.525～0.625（跨度 0.10）**，旧版同时还有 0.36～0.9 的呼吸叠加 |
+| 显存相关 | 常驻全屏图层 **6 → 2**；无逐帧 JS、无随时间累积的状态 |
+| 节奏 | 每 `GLOW_PHASE_S = 3s` 换一个色相（整轮 18s） |
 
 ## 未验证
 

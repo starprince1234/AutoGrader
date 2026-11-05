@@ -261,23 +261,20 @@ body {
 }
 
 /*
- * 一个色相的一生：从全透明淡入并向下漂 7%，再淡出并继续漂 7%。
- * 关键性质：六层各错开 1/6 轮，斜坡两两互补，**任意时刻 opacity 之和恒为 1**，
- * 所以画面深度不变（不会有"忽然变深"），而"出现/消失"都发生在 alpha = 0 处，
- * 也就没有色带突然冒出来／突然重置的观感。
+ * 一层的一生：从全透明淡入并向下漂 7%，再淡出并继续漂 7%。
+ * 这里只有两层（见 `glowPalette.ts` 的 `GLOW_LAYER_COUNT`），相位差半个迭代，
+ * 所以 **任意时刻两层 opacity 之和恒为 1**：深度不变，不会有"忽然变深"。
+ * 迭代的首尾都是 opacity 0，所以换色（`animationiteration` 里改 `--band-color`）
+ * 与整体重来都发生在看不见的地方，没有"色带突然冒出来/重置"的观感。
  */
 @keyframes glow-fall {
   0% {
     opacity: 0;
     transform: translate3d(0, 0, 0);
   }
-  16.667% {
+  50% {
     opacity: 1;
     transform: translate3d(0, 7%, 0);
-  }
-  33.333% {
-    opacity: 0;
-    transform: translate3d(0, 14%, 0);
   }
   100% {
     opacity: 0;
