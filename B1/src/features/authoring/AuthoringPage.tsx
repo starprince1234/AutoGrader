@@ -32,6 +32,7 @@ import {
   TITLE_MAX_LENGTH,
   applyProposal,
   buildDraftInput,
+  buildDraftSkeleton,
   deriveTags,
   draftFormFrom,
   emptyDraftForm,
@@ -39,6 +40,7 @@ import {
   isDirty,
   parseTags,
   type DraftForm,
+  type DraftIssue,
 } from "./draft";
 import { useCreateQuestion, useUpdateQuestionDraft } from "./useAuthoring";
 import { Select } from "../../ui/Select";
@@ -60,6 +62,15 @@ import { Select } from "../../ui/Select";
  * 3. **未保存的编辑不会自己保住**：AI 候选与手工编辑都只存在当前页面。离开或刷新前若表单已改动，
  *    本页会明确提示"这些编辑不会保留"。
  */
+/**
+ * 把校验清单拼成**一条**提示：每条自带的句号去掉，用「；」连起来，最后补一个「。」
+ * （否则会出现"请选择输出比较方式。；第 1 个用例的分值要大于 0。"这种两个标点连在一起的样子）。
+ */
+function issueMessage(issues: DraftIssue[]): string {
+  const parts = issues.map((issue) => t(issue.key, issue.params).replace(/[。；;\s]+$/, ""));
+  return `${parts.join("；")}。`;
+}
+
 export function AuthoringPage({
   questionId,
   generationId = null,
@@ -186,7 +197,7 @@ export function AuthoringPage({
     });
     if (!build.ok) {
       // 校验失败不再占据一整块版面：把原因一次说清，几秒后自动消失。
-      showToast(build.issues.map((issue) => t(issue.key, issue.params)).join("；"));
+      showToast(issueMessage(build.issues));
       return;
     }
     if (targetQuestionId === null) {
@@ -223,6 +234,38 @@ export function AuthoringPage({
             showToast(t("authoring.image.draftSavedPickAgain"));
           }
         },
+      },
+    );
+  };
+
+  /**
+   * 点【选择文件】但题目还没有 id 时调用：先建一份"够上传"的最小草稿。
+   *
+   * 这里刻意**不跑完整保存校验**：图床挂在题目上，只要有 id 就能上传；而"标准输出比较"
+   * "用例分值"是最后一步的东西，拿它们拦住插图只会让老师看到一串与插图无关的报错。
+   * 只校验这次真的必需的三件事：课程、标题、题干。
+   */
+  const ensureDraftForUpload = () => {
+    if (targetQuestionId !== null) return;
+    if (createQuestion.isPending || pendingUpload) return;
+    if (courseId === "") {
+      showToast(t("authoring.courseRequired"));
+      return;
+    }
+    const build = buildDraftSkeleton(form);
+    if (!build.ok) {
+      showToast(issueMessage(build.issues));
+      return;
+    }
+    setPendingUpload(true);
+    createQuestion.mutate(
+      { courseId, input: build.input, generationId },
+      {
+        onSuccess: () => {
+          setPendingUpload(false);
+          showToast(t("authoring.image.draftSavedPickAgain"));
+        },
+        onError: () => setPendingUpload(false),
       },
     );
   };
@@ -539,11 +582,7 @@ export function AuthoringPage({
                 questionId={targetQuestionId}
                 // 已发布版本的内容冻结（服务端 409）；其余情况只要草稿存在就能上传。
                 frozen={asNewVersion && targetQuestionId !== null}
-                onNeedDraft={() => {
-                  // 还没有草稿：先保存一次，成功后提示"再点一次即可选图"。
-                  setPendingUpload(true);
-                  submit();
-                }}
+                onNeedDraft={ensureDraftForUpload}
                 onInsert={(snippet) =>
                   setForm({ ...form, stemMarkdown: insertIntoStem(form.stemMarkdown, snippet) })
                 }

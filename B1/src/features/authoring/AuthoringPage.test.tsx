@@ -489,6 +489,69 @@ describe("新建题目（POST /api/v1/questions）", () => {
     expect(screen.getByText(/保存的是草稿/)).toBeInTheDocument();
   });
 
+  it("题干页点「选择文件」只建「够上传」的最小草稿，不被最后一步的校验拦住", async () => {
+    stub = installFetchStub(
+      baseRoutes([
+        {
+          method: "POST",
+          path: "/api/v1/questions",
+          respond: () => jsonResponse(questionPublic({ status: "draft" })),
+        },
+      ]),
+    );
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+
+    await selectCourse(user);
+    await user.type(screen.getByLabelText("题目标题"), "统计行数");
+    await goToStep(user, "stem");
+    await user.type(screen.getByLabelText("题干"), "# 统计");
+
+    // 这时"标准输出比较"和"用例分值"都还没填——插图不该被它们挡住。
+    await user.click(screen.getByTestId("image-pick"));
+
+    const request = await waitFor(() => {
+      const found = stub?.requests.find(
+        (item) => item.method === "POST" && item.url.pathname === "/api/v1/questions",
+      );
+      if (!found) throw new Error("尚未发出最小草稿请求");
+      return found;
+    });
+    const body = request.body as Record<string, unknown>;
+    expect(body.title).toBe("统计行数");
+    expect(body.stem_markdown).toBe("# 统计");
+    expect(body.language).toBe("python");
+    expect((body.adapter as Record<string, unknown>).kind).toBe("stdin");
+    // 只发契约必需的字段：受保护内容、用例与比对方式都不在这次请求里。
+    expect(body.reference_answer).toBeUndefined();
+    expect(body.cases).toBeUndefined();
+    expect((body.adapter as Record<string, unknown>).comparison).toBeUndefined();
+
+    expect(await screen.findByTestId("toast")).toHaveTextContent("再点一次");
+  });
+
+  it("校验失败的原因拼成一句话，不会出现「。；」连在一起", async () => {
+    stub = installFetchStub(baseRoutes());
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+
+    await selectCourse(user);
+    await user.type(screen.getByLabelText("题目标题"), "统计行数");
+    await goToStep(user, "stem");
+    await user.type(screen.getByLabelText("题干"), "# 统计");
+    await goToStep(user, "comparison");
+    // 比对方式没选、用例分值为空 → 两条原因同时出现。
+    await user.click(screen.getByTestId("authoring-save"));
+
+    const toast = await screen.findByTestId("toast");
+    const text = toast.textContent ?? "";
+    expect(text).toContain("；");
+    expect(text).not.toContain("。；");
+    expect(text.endsWith("。")).toBe(true);
+  });
+
   it("标签留空时按语言与运行方式自动补上（2.0 第 4 条）", async () => {
     stub = installFetchStub(
       baseRoutes([

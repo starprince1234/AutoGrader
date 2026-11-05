@@ -483,6 +483,38 @@ export function buildDraftInput(
   };
 }
 
+/**
+ * 只够"建出一份草稿"的最小请求体。
+ *
+ * 图片上传的目标是 `/questions/{id}/assets`——**没有题目 id 就没有上传目标**。而 2.0 之后
+ * 保存草稿只在最后一步，教师在题干页插图时还填不到"标准输出比较""用例分值"那些最后一步的
+ * 项目。如果这时跑完整校验，老师只会看到一串与他当前动作无关的错误，图片也就永远插不进去。
+ *
+ * 契约 `QuestionDraftInput` 的必需字段只有 `title` / `stem_markdown` / `language` / `adapter`
+ * （`adapter` 只要求 `kind`），受保护内容与用例都可以省略。因此这里只发这四个：
+ * 先拿到题目 id 完成上传，之后在最后一步保存时再补齐其余内容（那是 PATCH）。
+ */
+export function buildDraftSkeleton(form: DraftForm): DraftBuild {
+  const issues: DraftIssue[] = [];
+  if (form.title.trim() === "") issues.push({ key: "authoring.issue.title" });
+  if (form.stemMarkdown.trim() === "") issues.push({ key: "authoring.issue.stem" });
+  if (issues.length > 0) return { ok: false, issues };
+  return {
+    ok: true,
+    tags: parseTags(form.tags),
+    input: {
+      title: form.title,
+      stem_markdown: form.stemMarkdown,
+      language: form.language,
+      adapter: { kind: form.adapterKind },
+      // 这两个上限在契约里有默认值，但生成的类型把它们标成必填；取表单里合法的现值，
+      // 万一教师在"运行配置"里填坏了就用契约默认值，不让插图被一个无关字段挡住。
+      max_files: intValue(form.maxFiles) ?? 20,
+      max_total_bytes: intValue(form.maxTotalBytes) ?? 1048576,
+    },
+  };
+}
+
 /** 适配器：按 `kind` 组装；夹具声明只使用**服务端返回**的摘要。 */
 function buildAdapter(form: DraftForm, issues: DraftIssue[]): AdapterManifest | null {
   if (form.comparisonStdout === "") {
