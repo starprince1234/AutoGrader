@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { useNavigate } from "@tanstack/react-router";
 import { t } from "../../i18n";
 import { courseLabel as formatCourseLabel, loadedCourses, useCourses } from "../../api/directory";
 import type { QuestionDraftProposal } from "../../api/types";
@@ -77,6 +77,7 @@ export function AuthoringPage({
   onGenerationId = () => {},
   aiView = false,
   onAiViewChange = () => {},
+  backTo = "questions",
 }: {
   questionId: string | null;
   /** AI 候选 id（来自 URL）。刷新后用它取回**服务端原始候选**。 */
@@ -85,6 +86,11 @@ export function AuthoringPage({
   /** 「AI 出题」视图（来自 URL）。新建题目之外不提供该视图。 */
   aiView?: boolean;
   onAiViewChange?: (next: boolean) => void;
+  /**
+   * 进入本页的来源：`detail` = 从题目详情页点「编辑草稿 / 另存为新版本」进来的，
+   * 右上角按钮显示「返回题目」并回到那道题；`questions` = 从题库列表进来的。
+   */
+  backTo?: "questions" | "detail";
 }) {
   const courses = useCourses();
   const courseOptions = loadedCourses(courses.data?.pages);
@@ -206,8 +212,14 @@ export function AuthoringPage({
       createQuestion.mutate(
         { courseId, input: build.input, generationId },
         {
-          onSuccess: () => {
+          onSuccess: (created) => {
             setBaseline(effectiveForm);
+            // 3.0：最后一步保存草稿之后直接去"查看题目"，不再停在编辑页。
+            void navigate({
+              to: "/questions/$questionId",
+              params: { questionId: created.question_id },
+              search: { version: created.versions?.[0]?.question_version_id },
+            });
           },
         },
       );
@@ -220,8 +232,15 @@ export function AuthoringPage({
         // PATCH 返回 `QuestionPublic`（CHG-0016）：新版本标识取自 `versions[0]`，再用它把
         // 版本 DTO 取回来渲染发布门禁（摘要只在版本 DTO 上）。
         onSuccess: (result) => {
-          setSavedVersionId(result.versions?.[0]?.question_version_id ?? null);
+          const versionId = result.versions?.[0]?.question_version_id ?? null;
+          setSavedVersionId(versionId);
           setBaseline(effectiveForm);
+          // 同上：保存成功后跳到这道题的详情页。
+          void navigate({
+            to: "/questions/$questionId",
+            params: { questionId: result.question_id },
+            search: { version: versionId ?? undefined },
+          });
         },
       },
     );
@@ -259,12 +278,27 @@ export function AuthoringPage({
     }
   };
 
+  /** 右上角按钮指向哪里：从详情页进来的回那道题，其余回题库列表（3.0 第 1 条）。 */
+  const leaveTo = () => {
+    if (backTo === "detail" && targetQuestionId !== null) {
+      void navigate({
+        to: "/questions/$questionId",
+        params: { questionId: targetQuestionId },
+        search: {
+          version: savedVersion.data?.question_version_id ?? newestVersionId ?? undefined,
+        },
+      });
+      return;
+    }
+    void navigate({ to: "/questions" });
+  };
+
   const requestLeave = () => {
     if (dirty) {
       setLeaveConfirm(true);
       return;
     }
-    void navigate({ to: "/questions" });
+    leaveTo();
   };
 
   /**
@@ -375,7 +409,7 @@ export function AuthoringPage({
           data-testid="authoring-back"
           onClick={requestLeave}
         >
-          {t("authoring.backToList")}
+          {backTo === "detail" ? t("authoring.backToDetail") : t("authoring.backToList")}
         </button>
       </div>
 
@@ -387,60 +421,6 @@ export function AuthoringPage({
       />
 
       {mutation.isError ? <ErrorState error={mutation.error} /> : null}
-        {savedVersion.data ? (
-          <Banner tone="success" testId="authoring-saved">
-            {t("authoring.updated", {
-              version: savedVersion.data.version,
-              status: t(`questions.status.${savedVersion.data.status}`),
-            })}
-            {" · "}
-            <Link
-              className="button button--ghost"
-              to="/questions/$questionId"
-              params={{ questionId: targetQuestionId ?? "" }}
-              search={{ version: savedVersion.data.question_version_id }}
-            >
-              {t("authoring.openDetail")}
-            </Link>
-            <Link
-              className="button button--ghost"
-              to="/questions/$questionId/edit"
-              params={{ questionId: targetQuestionId ?? "" }}
-            >
-              {t("authoring.keepEditing")}
-            </Link>
-          </Banner>
-        ) : null}
-        {/*
-          保存成功只留一套反馈：已经显示了「题目已保存（版本…）」时，不再重复一条「题目已保存。」。
-          只有在"创建了但还没取出保存结果"这一小段时间里，才用创建横幅补位。
-        */}
-        {createQuestion.data && !savedVersion.data ? (
-          <Banner tone="success" testId="authoring-created">
-            <p>{t("authoring.created")}</p>
-            <p className="muted">{t("authoring.createdDraftHint")}</p>
-            <p className="muted" data-testid="authoring-created-next">
-              {t("authoring.createdNext")}
-            </p>
-            <div className="inline">
-              <Link
-                className="button button--ghost"
-                to="/questions/$questionId"
-                params={{ questionId: createQuestion.data.question_id }}
-                search={{ version: undefined }}
-              >
-                {t("authoring.openDetail")}
-              </Link>
-              <Link
-                className="button button--ghost"
-                to="/questions/$questionId/edit"
-                params={{ questionId: createQuestion.data.question_id }}
-              >
-                {t("questions.editDraft")}
-              </Link>
-            </div>
-          </Banner>
-        ) : null}
 
       <div className="wizard">
         <StepNav current={step} completed={completed} onSelect={setStep} />
@@ -888,7 +868,7 @@ export function AuthoringPage({
               data-testid="authoring-leave-confirm"
               onClick={() => {
                 setLeaveConfirm(false);
-                void navigate({ to: "/questions" });
+                leaveTo();
               }}
             >
               {t("authoring.leaveAction")}

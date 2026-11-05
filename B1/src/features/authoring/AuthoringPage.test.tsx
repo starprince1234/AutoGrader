@@ -3,6 +3,7 @@ import { useState } from "react";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
+  Outlet,
   RouterProvider,
   createMemoryHistory,
   createRootRoute,
@@ -105,9 +106,11 @@ function baseRoutes(extra: StubbedRoute[] = []): StubbedRoute[] {
 function Harness({
   questionId,
   generationId = null,
+  backTo = "questions",
 }: {
   questionId: string | null;
   generationId?: string | null;
+  backTo?: "questions" | "detail";
 }) {
   const [aiView, setAiView] = useState(false);
   return (
@@ -116,13 +119,24 @@ function Harness({
       generationId={generationId}
       aiView={aiView}
       onAiViewChange={setAiView}
+      backTo={backTo}
     />
   );
 }
 
-function renderAuthoring(questionId: string | null, generationId: string | null = null) {
+function renderAuthoring(
+  questionId: string | null,
+  generationId: string | null = null,
+  backTo: "questions" | "detail" = "questions",
+) {
   const rootRoute = createRootRoute({
-    component: () => <Harness questionId={questionId} generationId={generationId} />,
+    // 保存成功后页面会跳到详情路由，因此根组件必须给出 Outlet，否则子路由渲染不出来。
+    component: () => (
+      <>
+        <Harness questionId={questionId} generationId={generationId} backTo={backTo} />
+        <Outlet />
+      </>
+    ),
   });
   const detailRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -240,6 +254,52 @@ describe("分步向导", () => {
     expect(screen.getByTestId("wizard-dot-basic")).toHaveTextContent("✓");
     // 还没写题干，所以第二步仍是空心圆。
     expect(screen.getByTestId("wizard-dot-stem")).toHaveAttribute("data-done", "false");
+  });
+
+  it("从题目详情页进来时，右上角是「返回题目」并回到那道题", async () => {
+    stub = installFetchStub(
+      baseRoutes([
+        { path: `/api/v1/questions/${QUESTION_ID}`, method: "GET", respond: () => jsonResponse(draftQuestion()) },
+        {
+          path: `/api/v1/question-versions/${DRAFT_VERSION}`,
+          respond: () =>
+            jsonResponse(
+              questionVersionPublic({
+                question_version_id: DRAFT_VERSION,
+                version: 1,
+                status: "draft",
+                content_digest: SHA_A,
+              }),
+            ),
+        },
+      ]),
+    );
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(QUESTION_ID, null, "detail");
+
+    const back = await screen.findByTestId("authoring-back");
+    expect(back).toHaveTextContent("返回题目");
+    await user.click(back);
+    // 回到的是那道题的详情页（测试路由渲染 detail target）。
+    expect(await screen.findByText("detail target")).toBeInTheDocument();
+  });
+
+  it("前四步点「下一步」不弹任何确认框，直接进入下一步", async () => {
+    stub = installFetchStub(baseRoutes());
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+
+    await selectCourse(user);
+    await user.type(screen.getByLabelText("题目标题"), "统计行数");
+    await user.click(screen.getByTestId("step-next"));
+
+    expect(await screen.findByTestId("step-stem")).toBeInTheDocument();
+    // 没有确认弹窗，也没有"题目已保存"这类提示框（3.0：下一步不该带出保存提示）。
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByTestId("authoring-saved")).toBeNull();
+    expect(screen.queryByTestId("authoring-created")).toBeNull();
   });
 
   it("题干页的「下一步」在框体最下面（图片区之后、右下角）", async () => {
@@ -503,8 +563,8 @@ describe("新建题目（POST /api/v1/questions）", () => {
     expect(cases[0].visible_to_student).toBe(false);
     expect((body.adapter as Record<string, unknown>).comparison).toEqual({ stdout: "exact" });
 
-    expect(await screen.findByTestId("authoring-created")).toBeInTheDocument();
-    expect(screen.getByText(/保存的是草稿/)).toBeInTheDocument();
+    // 3.0：保存成功后直接去"查看题目"，不再停在编辑页。
+    expect(await screen.findByText("detail target")).toBeInTheDocument();
   });
 
   it("选完图片才在后台存一份最小草稿并上传：教师不用先手动保存", async () => {
@@ -719,7 +779,7 @@ describe("新建题目（POST /api/v1/questions）", () => {
     expect(body.stem_markdown).toBe("题干");
     expect(body.language).toBe("python");
     expect(body.adapter).toBeDefined();
-    expect(await screen.findByTestId("authoring-created")).toBeInTheDocument();
+    expect(await screen.findByText("detail target")).toBeInTheDocument();
   });
 
   it("保存成功后不再允许重复创建（第二次点保存不会产生第二道题）", async () => {
@@ -763,22 +823,13 @@ describe("新建题目（POST /api/v1/questions）", () => {
 
     await fillCreateForm(user);
     await user.click(screen.getByTestId("authoring-save"));
-    await screen.findByTestId("authoring-created");
 
-    // 创建成功之后这一页仍然是 P08，但保存不再是"停手"：再点一次会 PATCH 这份刚建好的草稿，
-    // 而不是 POST 出第二道题（2.0：AI 草稿也要能继续编辑、上传图片）。
-    expect(screen.getByTestId("authoring-save")).toBeEnabled();
-    await user.click(screen.getByTestId("authoring-save"));
-    await waitFor(() => {
-      expect(stub?.requests.filter((item) => item.method === "PATCH")).toHaveLength(1);
-    });
+    // 3.0：保存成功后直接跳到"查看题目"，这一页已经离开，因此不可能再 POST 出第二道题。
+    expect(await screen.findByText("detail target")).toBeInTheDocument();
     const posts = stub.requests.filter(
       (item) => item.method === "POST" && item.url.pathname === "/api/v1/questions",
     );
     expect(posts).toHaveLength(1);
-    // 图片上传不再被"已创建"挡住：草稿有了 id 就能选图。
-    await goToStep(user, "stem");
-    expect(screen.getByTestId("image-pick")).toBeEnabled();
   });
 
   it("file 题型可选：夹具区出现，且没有上传输入夹具时拒绝保存", async () => {
@@ -883,7 +934,8 @@ describe("修改草稿（PATCH /api/v1/questions/{question_id}）", () => {
     const body = request.body as Record<string, unknown>;
     expect(body.revision_note).toBeUndefined();
     expect(body.reference_answer).toBe("print(2)");
-    expect(await screen.findByTestId("authoring-saved")).toBeInTheDocument();
+    // 保存成功后跳到这道题的详情页。
+    expect(await screen.findByText("detail target")).toBeInTheDocument();
   });
 
   it("最新版本已发布：保存为新版本，带 as_new_version=true 与 revision_note", async () => {
@@ -957,9 +1009,8 @@ describe("修改草稿（PATCH /api/v1/questions/{question_id}）", () => {
     expect((request.body as Record<string, unknown>).revision_note).toBe(
       "例题的截止时间写错了",
     );
-    // 保存结果展示的是**服务端返回的**新版本标识：先由 PATCH 的 `versions[0]` 得到，
-    // 再取回版本 DTO 渲染"待验证后才能发布"。断言它等于 versions[0]，而不是"调用成功"。
-    expect(await screen.findByTestId("authoring-saved")).toHaveTextContent("版本 3");
+    // 保存成功后带着**服务端返回的**新版本标识跳到详情页（再取回版本 DTO 渲染发布入口）。
+    expect(await screen.findByText("detail target")).toBeInTheDocument();
     const versionRequest = stub.requests.find(
       (item) => item.url.pathname === `/api/v1/question-versions/${NEW_VERSION}`,
     );
@@ -1022,7 +1073,11 @@ describe("修改草稿（PATCH /api/v1/questions/{question_id}）", () => {
       await fillAdapterExitCode(user);
       await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
       await user.click(screen.getByTestId("authoring-save"));
-      await screen.findByTestId("authoring-saved");
+      await waitFor(() => {
+        expect(
+          lines.filter((line) => line.event === "question_draft_updated").length,
+        ).toBeGreaterThan(0);
+      });
 
       const updateLog = lines.filter((line) => line.event === "question_draft_updated").at(-1);
       expect(updateLog).toBeDefined();
