@@ -101,8 +101,8 @@ export function QuestionListPage() {
   const [collapsedCourses, setCollapsedCourses] = useState<ReadonlySet<string>>(new Set());
   const [tagValue, setTagValue] = useState("");
   const [stemQuery, setStemQuery] = useState("");
-  // 2.0：发布状态筛选。默认「已发布」——题库首先是已发布题目的地方，草稿切换一档就能看到。
-  const [publishedState, setPublishedState] = useState<"published" | "draft">("published");
+  // 2.0/3.1：发布状态筛选。默认「全部状态」：题库首页要能一次看到自己所有的题（含草稿）。
+  const [publishedState, setPublishedState] = useState<"all" | "published" | "draft">("all");
 
   const verify = useVerifyReferenceAnswer();
   const publish = usePublishQuestionVersion();
@@ -113,6 +113,7 @@ export function QuestionListPage() {
   const questions = useQuestionList(
     author ? (courseId === "" ? null : courseId) : null,
     {
+      // 契约只有 published_only 布尔量：只有"已发布"这一档能在请求上表达。
       publishedOnly: publishedState === "published",
       tags: tagValue === "" ? [] : [tagValue],
     },
@@ -133,13 +134,11 @@ export function QuestionListPage() {
     return [...seen].sort((left, right) => left.localeCompare(right, "zh"));
   }, [loadedRows, tagValue]);
 
-  const statusRows = useMemo(
-    () =>
-      publishedState === "draft"
-        ? loadedRows.filter((row) => row.status === "draft")
-        : loadedRows,
-    [loadedRows, publishedState],
-  );
+  const statusRows = useMemo(() => {
+    // 「草稿」这一档在客户端筛（契约没有"只要草稿"的参数）；「全部状态」不过滤。
+    if (publishedState === "draft") return loadedRows.filter((row) => row.status === "draft");
+    return loadedRows;
+  }, [loadedRows, publishedState]);
 
   const query = stemQuery.trim().toLowerCase();
   const rows = useMemo(
@@ -246,10 +245,12 @@ export function QuestionListPage() {
             <Select
               id="question-published-state"
               value={publishedState}
-              onChange={(event) =>
-                setPublishedState(event.target.value === "draft" ? "draft" : "published")
-              }
+              onChange={(event) => {
+                const next = event.target.value;
+                setPublishedState(next === "published" || next === "draft" ? next : "all");
+              }}
             >
+              <option value="all">{t("questions.stateAll")}</option>
               <option value="published">{t("questions.statePublished")}</option>
               <option value="draft">{t("questions.stateDraft")}</option>
             </Select>
@@ -313,7 +314,7 @@ export function QuestionListPage() {
           <EmptyState>
             {query !== ""
               ? t("questions.noStemMatch")
-              : tagValue !== "" || publishedState === "draft"
+              : tagValue !== "" || publishedState !== "all"
                 ? t("questions.noMatches")
                 : t("questions.emptyBank")}
           </EmptyState>

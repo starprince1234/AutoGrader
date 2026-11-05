@@ -528,6 +528,7 @@ export const messages = {
 "questions.searchStem": "搜索题干",
 "questions.searchStemPlaceholder": "输入题干中的文字",
 "questions.publishedState": "发布状态",
+"questions.stateAll": "全部状态",
 "questions.tagAll": "全部标签",
 "questions.statePublished": "已发布",
 "questions.stateDraft": "草稿",

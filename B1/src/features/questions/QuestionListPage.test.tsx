@@ -200,14 +200,30 @@ describe("题目列表的游标分页", () => {
 
     const state = screen.getByLabelText("发布状态") as HTMLSelectElement;
     expect(state.tagName).toBe("SELECT");
-    expect([...state.options].map((option) => option.value)).toEqual(["published", "draft"]);
-    expect(state.value).toBe("published");
-    // 默认只要已发布：这是契约的 `published_only=true`。
+    // 3.1：新增「全部状态」并作为默认。
+    expect([...state.options].map((option) => option.value)).toEqual([
+      "all",
+      "published",
+      "draft",
+    ]);
+    expect(state.value).toBe("all");
+    // 默认「全部状态」= 契约的 published_only=false（连草稿一起），且客户端不过滤。
     await waitFor(() => {
       const first = stub?.requests.find((request) =>
         request.url.pathname.endsWith("/api/v1/questions"),
       );
-      expect(first?.url.searchParams.get("published_only")).toBe("true");
+      expect(first?.url.searchParams.get("published_only")).toBe("false");
+    });
+    const initialTable = screen.getByTestId("question-table");
+    await waitFor(() => expect(within(initialTable).getAllByRole("row")).toHaveLength(3)); // 表头 + 2 行
+
+    // 切到「已发布」：请求改成 published_only=true。
+    await user.selectOptions(state, "published");
+    await waitFor(() => {
+      const last = stub?.requests
+        .filter((request) => request.url.pathname.endsWith("/api/v1/questions"))
+        .at(-1);
+      expect(last?.url.searchParams.get("published_only")).toBe("true");
     });
 
     // 契约没有"只要草稿"的参数：这一档是 published_only=false + 客户端按状态过滤。
@@ -455,12 +471,12 @@ describe("题目列表上的标签覆盖度（CHG-0020）", () => {
       request.url.pathname.endsWith("/coverage"),
     );
     expect(firstCoverage?.url.searchParams.get("course_id")).toBe(UUID_A);
-    // 两个数字必须来自同一个作用域：列表按「已发布」筛选时，覆盖度也用同一个 published_only。
-    expect(firstCoverage?.url.searchParams.get("published_only")).toBe("true");
+    // 两个数字必须来自同一个作用域：默认「全部状态」时两边都是 published_only=false。
+    expect(firstCoverage?.url.searchParams.get("published_only")).toBe("false");
     const lastQuestions = stub.requests
       .filter((request) => request.url.pathname.endsWith("/api/v1/questions"))
       .at(-1);
-    expect(lastQuestions?.url.searchParams.get("published_only")).toBe("true");
+    expect(lastQuestions?.url.searchParams.get("published_only")).toBe("false");
   });
 
   it("点覆盖度里的标签即填入既有标签筛选（复用 tags 重复参数）", async () => {
