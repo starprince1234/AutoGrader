@@ -224,7 +224,9 @@ export function AppShell() {
           </nav>
         </aside>
         <main className="app-main">
-          <div className="app-content">
+          {/* `key` 跟着路径走：换页时内容区重挂一次，让 `.app-content` 的入场动画重新跑一遍。
+              同一路径下改查询串（筛选、分页）不会重挂，页面状态不丢。 */}
+          <div className="app-content" key={location.pathname}>
             {blockedPortal ? (
               <PortalMismatch
                 portal={blockedPortal}

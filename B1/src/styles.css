@@ -329,6 +329,14 @@ body {
   }
 }
 
+/* 系统开启「减少动态效果」时，换页与展开动画一律不跑，只保留最终状态。 */
+@media (prefers-reduced-motion: reduce) {
+  .app-content,
+  .allowlist-entries {
+    animation: none !important;
+  }
+}
+
 h1,
 h2,
 h3,
@@ -481,6 +489,20 @@ samp {
   max-width: 1080px;
   width: 100%;
   padding: var(--space-6) var(--space-5) 72px;
+  /* 换页时内容轻微上浮 + 淡入（由 AppShell 的 key=pathname 触发重挂，只跑一次）。
+     240ms、8px，短到不打断操作，长到足以让"啪一下换页"变柔和。 */
+  animation: page-enter 240ms var(--ease-out) both;
+}
+
+@keyframes page-enter {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .app-content > .page-title:first-child {
@@ -1144,8 +1166,23 @@ samp {
   line-height: 1.6;
 }
 
+/* 表单里的下拉：自绘箭头 + 圆角（原生箭头在 Windows 上是方角小块，和整体圆角不搭）。
+   展开后的列表是操作系统画的，CSS 改不了它——这一点已在 phase-13 文档里写明。 */
 .field select {
+  appearance: none;
+  border-radius: var(--radius-md);
+  padding-right: 32px;
   cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 50%, var(--color-text-faint) 50%),
+    linear-gradient(135deg, var(--color-text-faint) 50%, transparent 50%);
+  background-position: calc(100% - 17px) calc(50% + 1px), calc(100% - 12px) calc(50% + 1px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+
+.field select:hover {
+  background-image: linear-gradient(45deg, transparent 50%, var(--color-text) 50%),
+    linear-gradient(135deg, var(--color-text) 50%, transparent 50%);
 }
 
 .field input:hover,
@@ -1392,7 +1429,7 @@ samp {
   appearance: none;
   background: var(--color-surface);
   border: 1px solid var(--color-border-strong);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
   color: var(--color-text);
   height: 30px;
   padding: 0 26px 0 8px;
@@ -2125,7 +2162,7 @@ samp {
   flex: 1;
   display: grid;
   grid-template-columns: minmax(0, 1.12fr) minmax(0, 1fr);
-  gap: var(--space-5);
+  gap: var(--space-6);
   align-items: start;
   padding: var(--space-4) 0 56px;
 }
@@ -2135,7 +2172,7 @@ samp {
   display: flex;
   flex-direction: column;
   gap: var(--space-5);
-  padding: 26px;
+  padding: 28px;
   background: var(--gradient-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
@@ -2155,7 +2192,7 @@ samp {
   content: "";
   position: absolute;
   inset: 0 0 auto;
-  height: 2px;
+  height: 3px;
   border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   background: linear-gradient(
     90deg,
@@ -2167,12 +2204,12 @@ samp {
 }
 
 .landing__column--teacher::before {
+  /* 教师端用实色 accent 的一条细带：两端一眼能分开，又不用第二块彩色。 */
   background: linear-gradient(
     90deg,
     transparent 0%,
-    color-mix(in srgb, var(--color-accent) 72%, transparent) 24%,
-    color-mix(in srgb, var(--color-accent) 72%, transparent) 76%,
-    transparent 100%
+    var(--color-accent) 18%,
+    color-mix(in srgb, var(--color-accent) 55%, transparent) 100%
   );
 }
 
@@ -2186,7 +2223,7 @@ samp {
   margin: 0;
   font-size: 11.5px;
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--color-text-faint);
 }
@@ -2202,9 +2239,9 @@ samp {
 
 .landing__title {
   margin: 0;
-  font-size: 24px;
+  font-size: 26px;
   font-weight: 600;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.024em;
 }
 
 .landing__lead {
@@ -2238,7 +2275,8 @@ samp {
   top: 50%;
   transform: translateY(-50%);
   font-family: var(--font-mono);
-  font-size: 11px;
+  font-size: 12px;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.06em;
   color: var(--color-text-faint);
@@ -2260,7 +2298,7 @@ samp {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-4);
-  min-height: 62px;
+  min-height: 64px;
   /* 左侧留给编号；点击区域仍是整行（与改动前一致）。 */
   padding: 12px 8px 12px 44px;
   border-radius: var(--radius-sm);
@@ -2555,6 +2593,19 @@ samp {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 6px 16px;
+  /* 展开这一批名单时淡入并轻微下移：点开有"内容展开"的反馈，而不是瞬间出现。 */
+  animation: reveal-in 180ms var(--ease-out) both;
+}
+
+@keyframes reveal-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, -4px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }
 
 .allowlist-entry {
