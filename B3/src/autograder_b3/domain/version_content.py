@@ -105,6 +105,7 @@ class EditableDraftContent:
         }
 
 
+# (deploy retrigger) 
 def load_editable_draft_content(database, *, question_version_id, principal) -> EditableDraftContent:
     """Load a **draft** version's own answer + cases for its author.
 
