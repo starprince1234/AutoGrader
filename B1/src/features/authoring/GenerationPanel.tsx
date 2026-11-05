@@ -222,7 +222,7 @@ export function GenerationPanel({
     providerAvailable,
   });
   const missing = !courseId
-    ? t("authoring.save.needCourse")
+    ? t("authoring.courseRequired")
     : forbidden
       ? t("authoring.generation.noPermission")
       : capabilities.isError

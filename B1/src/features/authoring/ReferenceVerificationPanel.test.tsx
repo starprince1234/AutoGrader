@@ -93,10 +93,10 @@ describe("检验的发起", () => {
 
     expect(screen.getByTestId("reference-verification")).toBeInTheDocument();
     expect(screen.queryByTestId("reference-verification-result")).toBeNull();
-    // 发布条件在"还没检验"时也要说清楚。
-    const gate = screen.getByTestId("reference-gate");
-    expect(gate).toHaveTextContent("所有用例通过");
-    expect(gate).toHaveTextContent("检验有记录");
+    // 2.0：常驻的灰色说明（门禁三条、"每次都会真的跑一遍"等）已全部删掉，
+    // 面板上只留标题与按钮——这里断言它们确实不在了。
+    expect(screen.queryByTestId("reference-gate")).toBeNull();
+    expect(screen.queryByTestId("reference-no-auto")).toBeNull();
     expect(verificationRequests(active)).toHaveLength(0);
 
     await verify(userEvent.setup());
@@ -106,7 +106,7 @@ describe("检验的发起", () => {
     active.restore();
   });
 
-  it("点一次只检验一次，并说明不会自动重复", async () => {
+  it("点一次只检验一次（不会因为渲染自动重跑）", async () => {
     const active = await open({
       verify: () => jsonResponse(referenceVerification()),
     });
@@ -114,7 +114,6 @@ describe("检验的发起", () => {
 
     await screen.findByTestId("reference-verification-result");
     expect(verificationRequests(active)).toHaveLength(1);
-    expect(screen.getByTestId("reference-no-auto")).toHaveTextContent("自己点一次");
     active.restore();
   });
 
@@ -212,7 +211,9 @@ describe("结论的三种状态", () => {
     expect(within(rows[2]).getByTestId("reference-case-outcome-1")).toHaveTextContent("未通过");
     expect(screen.getByTestId("reference-case-category-1")).toHaveTextContent("输出不一致");
     expect(screen.queryByTestId("reference-case-category-0")).toBeNull();
-    expect(screen.getByTestId("reference-cases-meaning")).toHaveTextContent("不显示期望输出");
+    // 2.0：那句"只显示通过与否和失败类型"的灰字说明已删；表里本来就只给结论。
+    expect(screen.queryByTestId("reference-cases-meaning")).toBeNull();
+    expect(screen.queryByText(/不显示期望输出/)).toBeNull();
     expect(screen.queryByTestId("reference-publish")).toBeNull();
     active.restore();
   });

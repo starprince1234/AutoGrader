@@ -29,33 +29,14 @@ describe("分值与退出码", () => {
     expect(weight).toHaveValue("");
   });
 
-  it("期望退出码预置为 0，收在高级配置里", async () => {
-    const user = userEvent.setup();
+  it("不再有「展开高级配置」折叠面板（2.0 删除项）", () => {
     renderCases();
-
-    // 默认收起：字段不在页面上。
+    expect(screen.queryByTestId("case-advanced-0")).toBeNull();
+    expect(screen.queryByTestId("case-advanced-fields-0")).toBeNull();
+    // 折叠区里的三项输入不再出现在页面上。
+    expect(screen.queryByLabelText("命令行参数（空格分隔）")).toBeNull();
+    expect(screen.queryByLabelText("期望标准错误")).toBeNull();
     expect(screen.queryByLabelText("期望退出码")).toBeNull();
-    await user.click(screen.getByTestId("case-advanced-0"));
-    expect(screen.getByLabelText("期望退出码")).toHaveValue("0");
-  });
-});
-
-describe("高级配置折叠", () => {
-  it("默认收起，点一次展开（命令行参数 / 期望标准错误 / 退出码），再点收起", async () => {
-    const user = userEvent.setup();
-    renderCases();
-
-    expect(screen.queryByTestId("case-advanced-fields-0")).toBeNull();
-    expect(screen.getByTestId("case-advanced-0")).toHaveTextContent("展开高级配置");
-
-    await user.click(screen.getByTestId("case-advanced-0"));
-    expect(screen.getByTestId("case-advanced-fields-0")).toBeInTheDocument();
-    expect(screen.getByLabelText("命令行参数（空格分隔）")).toBeInTheDocument();
-    expect(screen.getByLabelText("期望标准错误")).toBeInTheDocument();
-    expect(screen.getByTestId("case-advanced-0")).toHaveTextContent("收起高级配置");
-
-    await user.click(screen.getByTestId("case-advanced-0"));
-    expect(screen.queryByTestId("case-advanced-fields-0")).toBeNull();
   });
 });
 
@@ -74,19 +55,13 @@ describe("用例名可以留空", () => {
   });
 });
 
-describe("复制与排序", () => {
-  it("复制用例：在原卡之后插入一份完整副本", async () => {
-    const user = userEvent.setup();
-    renderCases([{ ...emptyCase(), name: "基本用例", stdin: "a\n" }]);
-
-    await user.click(screen.getByTestId("case-copy-0"));
-
-    expect(screen.getByTestId("case-1")).toBeInTheDocument();
-    expect(screen.getByTestId("case-1")).toHaveTextContent("基本用例");
-    // 副本带着原来的标准输入：只改差异部分，不用全部重填。
-    const stdins = screen.getAllByLabelText("标准输入") as HTMLTextAreaElement[];
-    expect(stdins[0].value).toBe("a\n");
-    expect(stdins[1].value).toBe("a\n");
+describe("排序", () => {
+  it("不再有「复制用例」按钮（2.0 删除项）", () => {
+    renderCases([emptyCase(), emptyCase()]);
+    expect(screen.queryByTestId("case-copy-0")).toBeNull();
+    expect(screen.queryByTestId("case-copy-1")).toBeNull();
+    // 删除仍然在，并且仍然走二次确认。
+    expect(screen.getByTestId("case-remove-0")).toBeInTheDocument();
   });
 
   it("拖拽卡片即可调整顺序（顺序就是 ordinal）", async () => {

@@ -264,6 +264,9 @@ describe("教师界面只说人话", () => {
 
     await user.click(await screen.findByTestId("request-assistance"));
     await screen.findByTestId("assistance-result");
+    // 「检验并发布」现在在最后一步里：先切到那一步。
+    await user.click(await screen.findByTestId("wizard-step-comparison"));
+    await screen.findByTestId("step-comparison");
     await user.click(screen.getByTestId("reference-verify"));
     await screen.findByTestId("reference-verification-result");
 

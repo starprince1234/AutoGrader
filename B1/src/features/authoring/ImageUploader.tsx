@@ -7,13 +7,16 @@ import { useUploadQuestionAsset } from "./useAuthoring";
 /**
  * 题干图片上传（RQ-B-3-10，`uploadQuestionAsset`）。
  *
- * 三条与契约对齐的行为：
+ * 四条与契约对齐的行为：
  *
  * 1. **不上传服务令牌、不自算摘要**：请求体只有 `content_base64` / `content_type` / `alt_text`，
  *    摘要由 B3 从字节算出。前端把摘要当成"服务端告诉我的绑定值"，不参与生成它。
- * 2. **只在草稿版本上可用**：资源挂在题目上，已发布版本的内容是冻结的（服务端会 409）。
- *    因此题目尚未保存时这里的按钮是禁用的，并说明原因——不假装上传成功。
- * 3. **失败不插入**：只有拿到服务端返回的 `asset_id` 才拼受控 Markdown 地址；失败时表单原样保留，
+ * 2. **资源挂在题目上**：没有题目 id 就没有上传目标。因此题目还没保存时，点【选择文件】不是
+ *    什么都不做（旧版本那个"假按钮"），而是先请父页面把草稿存下来（`onNeedDraft`），
+ *    再让老师点第二次真正选图——浏览器不允许在 `await` 之后替用户弹文件对话框，所以第二次
+ *    点击必须是人手点。
+ * 3. **已发布版本的内容是冻结的**：`frozen` 时按钮禁用并说明原因，不假装上传成功。
+ * 4. **失败不插入**：只有拿到服务端返回的 `asset_id` 才拼受控 Markdown 地址；失败时表单原样保留，
  *    题干里不会出现一个坏 URL（那会让 P07 出现"图片暂时无法显示"而且没人知道为什么）。
  *
  * 插入的地址形如 `/api/v1/questions/{question_id}/assets/{asset_id}`：它是**受控资源路径**，
@@ -22,13 +25,15 @@ import { useUploadQuestionAsset } from "./useAuthoring";
 export function ImageUploader({
   questionId,
   onInsert,
-  disabled,
-  disabledReason,
+  frozen = false,
+  onNeedDraft,
 }: {
   questionId: string | null;
   onInsert: (snippet: string) => void;
-  disabled: boolean;
-  disabledReason?: string;
+  /** 已发布版本：内容冻结，服务端会 409。 */
+  frozen?: boolean;
+  /** 还没有题目 id 时的"先去存草稿"回调；由父页面负责校验与保存。 */
+  onNeedDraft?: () => void;
 }) {
   const upload = useUploadQuestionAsset(questionId);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -75,6 +80,9 @@ export function ImageUploader({
     reader.readAsDataURL(file);
   };
 
+  const needsDraft = questionId === null;
+  const busy = upload.isPending;
+
   return (
     <div className="stack" data-testid="image-uploader">
       <Field label={t("authoring.image.alt")} htmlFor="authoring-image-alt">
@@ -88,8 +96,7 @@ export function ImageUploader({
       <div className="inline">
         {/*
           原生 file 控件会自带一行「未选择文件」：那行字既不可去掉也不可样式化，所以把控件
-          藏起来（`hidden`），只留一个「选择文件」按钮。`htmlFor` 让点击按钮仍然打开同一个
-          文件对话框，键盘与读屏行为不变。
+          藏起来（`hidden`），只留一个「选择文件」按钮。
         */}
         <input
           ref={inputRef}
@@ -98,23 +105,31 @@ export function ImageUploader({
           accept={IMAGE_CONTENT_TYPES.join(",")}
           data-testid="image-file"
           hidden
-          disabled={disabled || upload.isPending}
+          disabled={needsDraft || frozen || busy}
           onChange={(event) => pick(event.target.files?.[0])}
         />
-        <label
+        <button
+          type="button"
           className="button button--ghost"
-          htmlFor="authoring-image-file"
-          aria-disabled={disabled || upload.isPending}
           data-testid="image-pick"
+          disabled={frozen || busy}
+          onClick={() => {
+            if (needsDraft) {
+              // 先存草稿，拿到题目 id 之后才能上传；父页面保存成功后会提示"再点一次"。
+              onNeedDraft?.();
+              return;
+            }
+            inputRef.current?.click();
+          }}
         >
           {t("authoring.image.pick")}
-        </label>
-        {upload.isPending ? <span className="muted">{t("authoring.image.uploading")}</span> : null}
+        </button>
+        {busy ? <span className="muted">{t("authoring.image.uploading")}</span> : null}
       </div>
       <p className="muted">{t("authoring.image.hint")}</p>
-      {disabled && disabledReason ? (
+      {frozen ? (
         <Banner tone="info" testId="image-disabled">
-          {disabledReason}
+          {t("authoring.image.publishedFrozen")}
         </Banner>
       ) : null}
       {error ? (

@@ -16,6 +16,7 @@ import {
   normalizeTag,
   parseTags,
   type DraftForm,
+  deriveTags,
 } from "./draft";
 
 /**
@@ -67,6 +68,17 @@ function issueKeys(form: DraftForm, options: BuildOptions = { newVersion: false,
   if (result.ok) throw new Error("expected validation issues, got a valid draft");
   return result.issues.map((issue) => issue.key);
 }
+
+describe("按题目特征补标签（文档 2.0 第 4 条）", () => {
+  it("语言 + 运行方式就是默认标签", () => {
+    expect(deriveTags("python", "stdin")).toEqual(["python", "stdin"]);
+    expect(deriveTags("bash", "file")).toEqual(["bash", "file"]);
+  });
+
+  it("不认识的值不硬造标签", () => {
+    expect(deriveTags("ruby", "network")).toEqual([]);
+  });
+});
 
 describe("标签的契约形状（CHG-0008）", () => {
   it("归一化到小写 + 短横线，并丢掉开头的非法字符", () => {

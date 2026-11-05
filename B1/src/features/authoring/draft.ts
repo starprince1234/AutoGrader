@@ -330,6 +330,24 @@ export function parseTags(raw: string): ParsedTags {
 }
 
 /**
+ * 按题目的**结构化特征**给出默认标签（文档 2.0 第 4 条：题库里的题目按特点打标签）。
+ *
+ * 只用写入时确定无误的两件事：语言（`python` / `bash`）与运行方式（`stdin` / `file` /
+ * `callable`）。这两个值本身就是契约里的枚举原值，天然满足标签形态（小写、以字母开头），
+ * 因此不需要"归一化"，也不会出现"系统把我的标签改写了"这种情况。
+ *
+ * 只在教师**一个标签都没填**时使用：填了就原样提交，绝不覆盖。
+ */
+export function deriveTags(language: string, adapterKind: string): string[] {
+  const tags: string[] = [];
+  if (language === "python" || language === "bash") tags.push(language);
+  if (adapterKind === "stdin" || adapterKind === "file" || adapterKind === "callable") {
+    tags.push(adapterKind);
+  }
+  return tags;
+}
+
+/**
  * 逻辑路径校验：与 B3 的 `validate_workspace_path` 同一条规则（工作区相对、无 `..`、无绝对路径、
  * 无盘符、无 `~`、无空段）。放在这里是为了让教师在输入时就看到原因，而不是上传后才收到 422。
  */

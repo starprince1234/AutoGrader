@@ -330,8 +330,8 @@ describe("题目详情与版本机制（RQ-B-1-40）", () => {
 
     const panel = await screen.findByTestId("reference-verification");
     expect(within(panel).getByTestId("reference-verify")).toBeInTheDocument();
-    // 门禁的语义写在这里：可发布 = 全通过 ∧ 存证已记录 ∧ 摘要未变。
-    expect(within(panel).getByTestId("reference-gate")).toHaveTextContent("这次检验有记录");
+    // 2.0：门禁的说明文字已删，语义仍在服务端与按钮行为里（见 ReferenceVerificationPanel 测试）。
+    expect(within(panel).queryByTestId("reference-gate")).toBeNull();
     // 未验证 → 没有发布动作。
     expect(within(panel).queryByTestId("reference-publish")).toBeNull();
     // 编辑入口在位：写路径不再是"看得到改不了"。
