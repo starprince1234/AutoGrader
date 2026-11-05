@@ -36,9 +36,14 @@ export function AiAuthoringView({
 }) {
   return (
     <div className="stack" data-testid="ai-authoring-view">
-      <div className="inline">
+      <div className="inline page-head">
         <PageTitle>{t("authoring.ai.pageTitle")}</PageTitle>
-        <button type="button" className="button button--ghost" data-testid="ai-back" onClick={onBack}>
+        <button
+          type="button"
+          className="button button--ghost page-head__end"
+          data-testid="ai-back"
+          onClick={onBack}
+        >
           {t("authoring.ai.back")}
         </button>
       </div>

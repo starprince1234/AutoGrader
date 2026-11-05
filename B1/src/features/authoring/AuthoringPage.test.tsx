@@ -1464,6 +1464,13 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
 
     await user.type(screen.getByLabelText("教学目标"), "让学生学会读标准输入");
     await user.click(screen.getByTestId("generation-generate"));
+    // 3.0：生成时就要求模型带上测试用例，并在预览里直接显示条数。
+    expect(await screen.findByTestId("generation-proposal-case-count")).toHaveTextContent("2");
+    const generationRequest = stub?.requests.find(
+      (item) => item.method === "POST" && item.url.pathname === "/api/v1/question-draft-generations",
+    );
+    expect((generationRequest?.body as Record<string, unknown>).desired_case_count).toBe(2);
+
 
     const request = await waitFor(() => {
       const found = stub?.requests.find(

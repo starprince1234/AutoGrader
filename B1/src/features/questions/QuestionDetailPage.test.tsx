@@ -274,6 +274,34 @@ describe("题目详情与版本机制（RQ-B-1-40）", () => {
     expect(within(related).getByTestId("version-related-note")).toHaveTextContent("无");
   });
 
+  it("版本框里不再有「作答入口对学生开放…」这句提示；返回题库列表在右上角", async () => {
+    stub = installFetchStub([
+      {
+        method: "POST",
+        path: "/api/v1/auth/session",
+        respond: () => jsonResponse(sessionCreated({ roles: ["teacher"] })),
+      },
+      {
+        path: `/api/v1/questions/${QUESTION_ID}`,
+        respond: () => jsonResponse(questionPublic()),
+      },
+      {
+        path: `/api/v1/question-versions/${VERSION_A}`,
+        respond: () => jsonResponse(questionVersionPublic({ question_version_id: VERSION_A })),
+      },
+    ]);
+    await signIn("teacher1", "pw");
+    renderQuestionDetail();
+
+    await screen.findByTestId("version-panel");
+    expect(screen.queryByTestId("submit-student-only")).toBeNull();
+    expect(screen.queryByText(/作答入口对学生开放/)).toBeNull();
+    // 返回按钮在标题同一行的右上角。
+    const back = screen.getByTestId("back-to-list");
+    expect(back.closest(".page-head")).not.toBeNull();
+    expect(back.className).toContain("page-head__end");
+  });
+
   it("编辑入口带上来源：from=detail（3.0：编辑页要显示「返回题目」）", async () => {
     stub = installFetchStub([
       {

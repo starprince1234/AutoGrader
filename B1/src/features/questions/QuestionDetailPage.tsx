@@ -61,13 +61,17 @@ export function QuestionDetailPage({
 
   return (
     <div className="stack">
-      <div className="inline">
-        <Link className="button button--ghost" to="/questions" data-testid="back-to-list">
+      {/* 返回按钮统一放页面右上角（3.0 第 3 条）。 */}
+      <div className="inline page-head">
+        <PageTitle>{shown.title}</PageTitle>
+        <Link
+          className="button button--ghost page-head__end"
+          to="/questions"
+          data-testid="back-to-list"
+        >
           {t("questions.backToList")}
         </Link>
       </div>
-
-      <PageTitle>{shown.title}</PageTitle>
 
       <div className="inline" data-testid="question-facts">
         <span className="muted">
@@ -205,12 +209,7 @@ export function QuestionDetailPage({
                   {t("questions.submit")}
                 </Link>
               </div>
-            ) : (
-              // 教师/助教看得到题干，但作答入口只对学生开放（服务端同样只接受学生提交）。
-              <p className="muted" data-testid="submit-student-only">
-                {t("questions.submitStudentOnly")}
-              </p>
-            )}
+            ) : null}
 
             {/* 3.0：版本框只留「选择版本 / 题型 / 状态 / 相关信息」。
                 有改动说明就原样展示，没有就固定写「无」。 */}

@@ -75,6 +75,10 @@ function ProposalPreview({
           {t("authoring.tags")}：
           {(proposal.tags ?? []).length === 0 ? "—" : (proposal.tags ?? []).join("、")}
         </li>
+        {/* 用例条数直接露在明面上：生成时就带上了测试用例，不用展开受保护内容才知道。 */}
+        <li data-testid="generation-proposal-case-count">
+          {t("authoring.generation.cases", { count: cases.length })}
+        </li>
         {proposal.adapter?.args?.length ? (
           <li>
             {t("authoring.adapterArgs")}：
@@ -249,9 +253,13 @@ export function GenerationPanel({
 
   const submit = () => {
     if (!courseId || !canGenerate) return;
-    const desiredCases = /^\d+$/.test(caseCount.trim())
-      ? Math.max(1, Number.parseInt(caseCount.trim(), 10))
-      : null;
+    // 老师没填用例数时给一个明确的默认值：不传的话模型常常一条用例都不给，
+    // 生成出来的草稿在「测试用例」这步就是空的（3.0 第 2 条）。
+    const desiredCases = caseCount.trim() === ""
+      ? 2
+      : /^\d+$/.test(caseCount.trim())
+        ? Math.max(1, Number.parseInt(caseCount.trim(), 10))
+        : null;
     create.mutate(
       {
         courseId,
