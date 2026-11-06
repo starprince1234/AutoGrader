@@ -12,6 +12,43 @@
 
 ---
 
+## 0.28.0 — 题库删除草稿与批量删除/批量发布（CHG-0029）
+
+- **级别**：P1 增补（新增 2 个 operation 与 3 个 schema）
+- **状态**：已生效
+- **动机**：题库此前**没有任何删除入口**：`archive` 只接受已发布版本，草稿只能永远留在库里。
+  一次误操作生成十来道草稿就无法收拾；批量整理（一次删多道、或把已校验的一批草稿一起发布）
+  也只能逐行点。这两件事在题库规模上来以后是日常操作，不是边角需求。
+- **新增 operation**：
+  - `deleteQuestionVersion`（`DELETE /api/v1/question-versions/{question_version_id}`）：只删草稿；
+    已发布/已归档 409（其内容是一次次证据的来源）、被作业引用的草稿 409、题目已软删 404；
+    删掉最后一条版本时把**题目本身软删**（`deleted_at` + `archived`），每次公开读取都过滤它，
+    于是题目从题库消失，而事件与统计引用过的行不动。
+  - `runQuestionVersionBatchOperation`（`POST /api/v1/question-versions/batch-operations`）：
+    `operation = delete | publish` + `question_version_ids`（1..100、`uniqueItems`）。逐项独立事务、
+    独立结论；发布复用单条发布的同一道门禁（存证 + 摘要一致），删除复用同一套拒绝规则——
+    **批量是循环，不是特权**。
+- **新增 schema**：`QuestionVersionBatchInput`、`QuestionVersionBatchResult`、
+  `QuestionVersionBatchOutcome`（`status` ∈ {applied, failed}，`error_code` ∈
+  {not_found, forbidden, conflict, unprocessable, internal}，`null` 当且仅当 applied）。
+- **变更文件**：`openapi/b3.yaml`（2 条路径 + 3 个 schema）、六份 `info.version`、
+  五份 `contracts.lock` 与模块清单同步到 `0.28.0`。
+- **受影响模块**：
+  - **B3**：`domain/versions.py` 的 `delete_version` 增加"被作业引用"与"题目软删"两段，
+    新增 `run_batch_operation`/`BatchOutcome`；仓库层新增 `mark_question_deleted`；
+    路由新增两个 handler；无迁移（`questions.deleted_at` 自 0002 起就存在）。
+  - **B1**：题库列表新增勾选列、批量操作条（批量发布/批量删除/取消选择），「发布」后面新增
+    红色垃圾桶删除按钮（仅草稿行可用）；题目详情「编辑草稿」后新增「删除草稿」；删除前确认框。
+  - **B2/B4/B5**：无行为改动，仅锁与版本同步。
+- **是否破坏兼容**：否（只新增 operation 与 schema；既有路径与字段不变）。
+- **验证**：B1 `pnpm typecheck`/`lint`/`api:check` 与 513 个用例通过；B3 新增 pytest
+  （删除草稿→软删题目、批量逐项结论、批量发布仍受存证门禁）需 PostgreSQL，本机未运行。
+- **摘要**：见五份 `contracts.lock`（按 `MAIN/contracts` 逐文件字节计算）。
+- **回滚方式**：还原契约与版本、移除 B1 的两个入口与 B3 的两个 operation，
+  重跑 relock，版本回到 `0.27.0`。
+
+---
+
 ## 0.1.0 — 初始化基线（baseline）
 
 - **级别**：baseline（契约首次建立，尚无任何模块实现）
