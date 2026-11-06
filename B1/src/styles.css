@@ -1317,6 +1317,110 @@ samp {
   box-shadow: none;
 }
 
+/* ------------------------------------------------------------ gooey 按钮 */
+
+/*
+ * 参考 Uiverse 上 cssbuttons-io 的 gooey 按钮：描边胶囊，悬停时三团"液滴"从底部涌上来，
+ * 靠 `filter: url(#goo)`（在 Root 里定义一次的 SVG 滤镜）把它们糊成一整块再填满。
+ *
+ * 与模板的差异，都是为了落进这套设计系统：
+ * - 颜色用 `--color-accent`（模板是写死的青色），描边 1px 而不是 4px；
+ * - 尺寸沿用页头按钮的 36px 高、胶囊圆角，不是模板那种大写字母的方角大按钮；
+ * - 过渡 420ms（模板 700ms）——短一点，点完就能看清已经切到"悬停态"。
+ * 模板的几何（三团 34% 宽、各自 delay）保持原样，否则液滴并不到一起。
+ */
+.gooey-button {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--color-accent) 55%, var(--color-border));
+  border-radius: var(--radius-pill);
+  background-color: transparent;
+  background-image: none;
+  color: var(--color-accent);
+  letter-spacing: 0.03em;
+  box-shadow: none;
+  transition: color 420ms var(--ease), border-color 420ms var(--ease);
+}
+
+.gooey-button:hover:not(:disabled),
+.gooey-button:focus-visible {
+  background-color: transparent;
+  background-image: none;
+  border-color: var(--color-accent);
+  color: #ffffff;
+  box-shadow: none;
+  transform: none;
+}
+
+.gooey-button:active:not(:disabled) {
+  transform: none;
+}
+
+/* 禁用时不涌液滴：文字与描边变灰，和 `.button:disabled` 的语义一致。 */
+.gooey-button:disabled {
+  background-color: transparent;
+  border-color: var(--color-border);
+  color: var(--color-text-faint);
+}
+
+.gooey-button:disabled .gooey-button__blobs {
+  display: none;
+}
+
+/* 文字压在液滴之上。 */
+.gooey-button__label {
+  position: relative;
+  z-index: 2;
+}
+
+/* 液滴容器：裁切 + 糊化。模板的 bottom/right 微调保留，否则底边会露一条缝。 */
+.gooey-button__blobs {
+  position: absolute;
+  inset: 0 -1px -3px 0;
+  z-index: 1;
+  overflow: hidden;
+  filter: url(#goo);
+  pointer-events: none;
+}
+
+.gooey-button__blob {
+  position: absolute;
+  bottom: 0;
+  width: 34%;
+  height: 100%;
+  border-radius: 100%;
+  background-color: var(--color-accent);
+  transform: scale(1.4) translateY(125%) translateZ(0);
+  transition: transform 420ms var(--ease);
+}
+
+.gooey-button__blob:nth-child(1) {
+  left: -5%;
+}
+
+.gooey-button__blob:nth-child(2) {
+  left: 30%;
+  transition-delay: 60ms;
+}
+
+.gooey-button__blob:nth-child(3) {
+  left: 66%;
+  transition-delay: 25ms;
+}
+
+.gooey-button:hover:not(:disabled) .gooey-button__blob,
+.gooey-button:focus-visible .gooey-button__blob {
+  transform: scale(1.4) translateY(0) translateZ(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gooey-button,
+  .gooey-button__blob {
+    transition: none;
+  }
+}
+
 .button--danger {
   background-image: none;
   background-color: transparent;

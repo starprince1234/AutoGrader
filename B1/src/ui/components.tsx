@@ -28,6 +28,37 @@ export function PageTitle({ children }: { children: ReactNode }) {
 }
 
 /**
+ * gooey 按钮：描边胶囊，悬停时三团"液滴"从底部涌上来、被 SVG 滤镜糊成一整块再填满。
+ *
+ * 来源是 Uiverse 上 cssbuttons-io 的写法（`filter: url(#goo)` + 三个圆各自 translateY）。
+ * 这里做了三处适配：颜色换成 `--color-accent`、尺寸沿用页头按钮的 36px 高、
+ * 三团用 `<span>` 而不是 `<div>`（button 里只能放行内内容）。
+ * 滤镜只在 `Root` 里定义一次。
+ */
+export function GooeyButton({
+  children,
+  className,
+  type = "button",
+  ...rest
+}: {
+  children: ReactNode;
+} & React.ButtonHTMLAttributes<HTMLButtonElement>) {
+  const classes = ["button", "button--ghost", "gooey-button", className]
+    .filter(Boolean)
+    .join(" ");
+  return (
+    <button type={type} {...rest} className={classes}>
+      <span className="gooey-button__label">{children}</span>
+      <span className="gooey-button__blobs" aria-hidden="true">
+        <span className="gooey-button__blob" />
+        <span className="gooey-button__blob" />
+        <span className="gooey-button__blob" />
+      </span>
+    </button>
+  );
+}
+
+/**
  * 游标分页列表的「加载更多 / 已到末页」控件（题目、成绩、名单、课程下拉共用）。
  *
  * 只取第一页且不给出"还有更多"的信号，会让后面的行**静默消失**：教师看到 200 行会以为

@@ -16,6 +16,25 @@ import { SessionProvider } from "../auth/SessionProvider";
 export function Root() {
   return (
     <ErrorBoundary>
+      {/*
+        gooey 按钮用的滤镜：三团"液滴"各自是圆，靠这个模糊 + 提高对比的矩阵糊成一整块。
+        放在根组件里只定义一次，导览页与内部页面的按钮都能引用 `url(#goo)`。
+        尺寸为 0、不参与布局，也不进读屏。
+      */}
+      <svg className="goo-defs" aria-hidden="true" focusable="false" width="0" height="0">
+        <defs>
+          <filter id="goo">
+            <feGaussianBlur in="SourceGraphic" stdDeviation="8" result="blur" />
+            <feColorMatrix
+              in="blur"
+              mode="matrix"
+              values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 19 -9"
+              result="goo"
+            />
+            <feComposite in="SourceGraphic" in2="goo" operator="atop" />
+          </filter>
+        </defs>
+      </svg>
       <QueryClientProvider client={queryClient}>
         <SessionProvider>
           <RouterProvider router={router} />

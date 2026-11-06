@@ -5,7 +5,7 @@ import { useSession } from "../../auth/sessionContext";
 import { signOut, type SessionState } from "../../auth/sessionStore";
 import { DEFAULT_AUTHENTICATED_PATH, safeRedirectTarget } from "../../auth/redirect";
 import { clearPortalIntent, portalAllows, rememberPortalIntent, type Portal } from "../../auth/portal";
-import { Modal } from "../../ui/components";
+import { GooeyButton, Modal } from "../../ui/components";
 import { LoginForm } from "../auth/LoginForm";
 
 type LandingTarget = "/assignments" | "/questions" | "/grades" | "/roster" | "/review";
@@ -178,16 +178,14 @@ export function LandingPage() {
               </button>
             </>
           ) : (
-            <button
-              type="button"
-              className="button button--ghost"
+            <GooeyButton
               data-testid="landing-login"
               onClick={() =>
                 setLoginIntent({ portal: null, target: DEFAULT_AUTHENTICATED_PATH })
               }
             >
               {t("login.submit")}
-            </button>
+            </GooeyButton>
           )}
         </div>
       </header>
