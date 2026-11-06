@@ -406,12 +406,12 @@ describe("AI 候选应用到表单（AI-FLOW-01A）", () => {
     expect(keys).toContain("authoring.issue.caseWeight");
   });
 
-  it("候选没给比较策略时取最严格的默认值，而不是留空让保存静默失败", () => {
+  it("候选没给比较策略时用「忽略行尾空白」，而不是精确匹配", () => {
     const applied = applyProposal(validForm({ comparisonStdout: "" }), {
       ...proposal,
       adapter: undefined,
     });
-    expect(applied.comparisonStdout).toBe("exact");
+    expect(applied.comparisonStdout).toBe("ignore_trailing_whitespace");
   });
 
   it("应用候选不丢弃已上传的夹具（摘要只来自服务端）", () => {
