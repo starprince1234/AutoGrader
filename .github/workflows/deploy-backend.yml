@@ -668,6 +668,14 @@ jobs:
             echo 'Workspace-related settings:'
             grep -E '^[A-Z0-9_]*(WORKSPACE|WORK_ROOT|WORKDIR|CASE_ROOT)[A-Z0-9_]*=' /etc/autograder/runtime.env || true
           fi
+          echo 'Sandbox canary (proves the sandbox can run a program at all):'
+          release="$(readlink -f /opt/autograder/current 2>/dev/null || true)"
+          if [ -n "$release" ] && [ -x "$release/MAIN/.venv/bin/python" ]; then
+            set -a; . /etc/autograder/runtime.env 2>/dev/null || true; set +a
+            "$release/MAIN/.venv/bin/python" -m autograder_b2.canary 2>&1 | tail -n 80 || true
+          else
+            echo 'canary=skipped (release or venv missing)'
+          fi
           echo 'Reference verification / sandbox journal (last 20 min, redacted):'
           journalctl -u autograder.service --since '-20 min' --no-pager -o cat 2>/dev/null \
             | grep -Ei 'reference|verification|sandbox|nsjail|case-|workspace|perm|denied|exec|entry_name|python3|bash' \
@@ -689,3 +697,26 @@ jobs:
           set -euo pipefail
           bash .github/scripts/deploy-ssh.sh ssh "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
             /usr/local/sbin/autograder-deployctl deploy "$GITHUB_SHA" "$DEPLOY_RELEASE_ID"
+
+      - name: Run the sandbox canary on the host
+        if: always() && (github.event_name == 'push' || inputs.operation == 'diagnose')
+        env:
+          DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
+          DEPLOY_SSH_USER: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
+          DEPLOY_SSH_PASSWORD: ${{ steps.doppler.outputs.DEPLOY_SSH_PASSWORD }}
+          DEPLOY_SSH_PORT: ${{ steps.doppler.outputs.DEPLOY_SSH_PORT }}
+        run: |
+          set -euo pipefail
+          bash .github/scripts/deploy-ssh.sh ssh "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" bash -s <<'REMOTE'
+          set -uo pipefail
+          release="$(readlink -f /opt/autograder/current 2>/dev/null || true)"
+          echo "current_release=$release"
+          if [ -z "$release" ] || [ ! -x "$release/MAIN/.venv/bin/python" ]; then
+            echo 'canary=skipped (release or venv missing)'
+            exit 0
+          fi
+          set -a
+          . /etc/autograder/runtime.env 2>/dev/null || true
+          set +a
+          "$release/MAIN/.venv/bin/python" -m autograder_b2.canary 2>&1 | tail -n 80 || true
+          REMOTE
