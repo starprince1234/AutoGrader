@@ -35,9 +35,12 @@ from ..dto.internal import PublishedVersionSnapshot
 from ..errors import (
     B3Error,
     Conflict,
+    Forbidden,
     InvalidStateTransition,
     NotFound,
     ProtectedContentMissing,
+    Unauthenticated,
+    UnprocessableEntity,
 )
 from ..events.envelope import build_question_version_published
 from ..infra.db import Database
@@ -283,18 +286,24 @@ def delete_version(
 BATCH_OPERATION_DELETE = "delete"
 BATCH_OPERATION_PUBLISH = "publish"
 
-#: ``B3Error.slug`` -> the contract's ``QuestionVersionBatchOutcome.error_code``.
-_BATCH_ERROR_CODES: dict[str, str] = {
-    "not-found": "not_found",
-    "forbidden": "forbidden",
-    "unauthorized": "forbidden",
-    "conflict": "conflict",
-    "invalid-state-transition": "conflict",
-    "unprocessable-entity": "unprocessable",
-    "protected-content-missing": "unprocessable",
-    "payload-too-large": "unprocessable",
-}
+def _batch_error_code(error: B3Error) -> str:
+    """Map a domain error onto the contract's stable per-item ``error_code``.
 
+    By **base class**, not by slug: ``Conflict`` and ``UnprocessableEntity`` each have
+    a dozen subclasses whose slugs keep growing, and a new one must not silently
+    degrade to ``internal``. That is exactly how "publish refused: no attestation"
+    first surfaced in production -- as ``internal`` -- although it is an ordinary
+    ``422`` condition.
+    """
+    if isinstance(error, NotFound):
+        return "not_found"
+    if isinstance(error, (Forbidden, Unauthenticated)):
+        return "forbidden"
+    if isinstance(error, UnprocessableEntity):
+        return "unprocessable"
+    if isinstance(error, Conflict):
+        return "conflict"
+    return "internal"
 
 @dataclass(frozen=True, slots=True)
 class BatchOutcome:
@@ -357,7 +366,7 @@ def run_batch_operation(
                 BatchOutcome(
                     question_version_id=question_version_id,
                     applied=False,
-                    error_code=_BATCH_ERROR_CODES.get(error.slug, "internal"),
+                    error_code=_batch_error_code(error),
                 )
             )
         else:

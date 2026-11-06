@@ -425,7 +425,7 @@ def test_batch_publish_cannot_skip_the_attestation_gate(database, settings):
         correlation_id=PUBLISH_AT_CORRELATION,
     )
     assert outcomes[0].applied is False
-    assert outcomes[0].error_code == "conflict"
+    assert outcomes[0].error_code == "unprocessable"
 
 
 def bank_version(session, question_version_id):
