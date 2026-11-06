@@ -548,6 +548,7 @@ export const messages = {
 "questions.deleteConflict": "这个版本不能删除：它已经发布，或者被作业引用。",
 "questions.deleteForbidden": "没有权限删除这道草稿。",
 "questions.deleteNotFound": "这道草稿已经不存在了。",
+"questions.batchMode": "批量操作",
 "questions.selectedCount": "已选 {count} 项",
 "questions.selectAll": "全选当前列表",
 "questions.selectRow": "选择这道题",

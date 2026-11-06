@@ -2065,6 +2065,8 @@ samp {
   align-items: center;
   gap: var(--space-2);
   flex-wrap: nowrap;
+  /* 需求 2：删除/继续编辑/发布必须同一行，不因列宽而折行。 */
+  white-space: nowrap;
 }
 
 /* 表格里的下拉（例如「用户与角色」直接改角色）不在 `.field` 里，否则会退回浏览器默认外观：
@@ -3624,4 +3626,25 @@ samp {
   padding: 0;
   width: 30px;
   min-width: 30px;
+}
+
+/* 列表标题行右侧：批量操作 + 实时选中数 + 加载更多，保持同一行不换行。 */
+.list-head-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+
+
+/* 需求 1：勾选框用强调色实心选中（原生 checkbox + accent-color，保留键盘与读屏行为）。 */
+.question-select {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--color-accent);
+  cursor: pointer;
+  vertical-align: middle;
 }

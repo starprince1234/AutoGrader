@@ -112,6 +112,33 @@ function TrashIcon() {
   );
 }
 
+/**
+ * 把视口放回删除前的滚动位置。
+ *
+ * 单条删除会让被删行之后的内容整体上移，浏览器要么把视口带向顶部、要么"跳一下"；
+ * 老师常常要连着删好几道，位置一跳就得重新找。这里在 React 提交与查询重取各自可能
+ * 改变布局之后各恢复一次，最后再补一次延时恢复，覆盖异步刷新。
+ */
+function restoreScroll(top: number): void {
+  const apply = () => {
+    if (Math.abs(window.scrollY - top) > 1) window.scrollTo({ top });
+  };
+  // 有些环境（含测试用的 jsdom）没有 requestAnimationFrame：退化成定时器，
+  // 但"恢复位置"这件事不能因为缺少一个动画帧 API 就不做。
+  const nextFrame = (callback: () => void) => {
+    if (typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(callback);
+    } else {
+      window.setTimeout(callback, 0);
+    }
+  };
+  nextFrame(() => {
+    apply();
+    nextFrame(apply);
+  });
+  window.setTimeout(apply, 250);
+}
+
 /** 这一行的**草稿**版本 id：删除与发布都只针对草稿（已发布只能归档）。 */
 function draftVersionIdOf(row: QuestionPublic): string | null {
   return (
@@ -149,6 +176,8 @@ export function QuestionListPage() {
   const batch = useBatchQuestionVersions();
   // 批量选择按 question_id 记：列表是"题目"为行，操作用的却是它们的草稿版本。
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  // 批量模式：未进入时列表不渲染任何复选框（需求 1）。
+  const [batchMode, setBatchMode] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<{
     questionIds: string[];
     versionIds: string[];
@@ -313,6 +342,8 @@ export function QuestionListPage() {
   const runDelete = async () => {
     if (deleteTarget === null) return;
     const { versionIds, batch: isBatch } = deleteTarget;
+    // 只有单条删除要求保持滚动位置（需求 3）；批量删除会删掉多行，位置本身没有意义。
+    const savedScrollY = isBatch ? null : window.scrollY;
     setDeleteTarget(null);
     try {
       if (!isBatch && versionIds.length === 1) {
@@ -329,6 +360,7 @@ export function QuestionListPage() {
       notify(deleteFailureMessage(error));
     } finally {
       setSelected(new Set());
+      if (savedScrollY !== null) restoreScroll(savedScrollY);
     }
   };
 
@@ -450,25 +482,44 @@ export function QuestionListPage() {
       <Panel
         title={t("questions.countLoaded", { count: rows.length })}
         actions={
-          <LoadMoreActions
-            loadedCount={loadedRows.length}
-            hasNextPage={questions.hasNextPage}
-            isFetchingNextPage={questions.isFetchingNextPage}
-            onLoadMore={() => {
-              void questions.fetchNextPage();
-            }}
-            testId="questions"
-          />
+          <div className="list-head-actions">
+            {/* 需求 1：未选任何题目时，右上角直接展示【批量操作】；点它才渲染复选框。 */}
+            <button
+              type="button"
+              className="button button--ghost"
+              data-testid="batch-mode-toggle"
+              aria-pressed={batchMode}
+              onClick={() => {
+                if (batchMode) setSelected(new Set());
+                setBatchMode(!batchMode);
+              }}
+            >
+              {t("questions.batchMode")}
+            </button>
+            {/* 与按钮并排、实时反映选中数量。 */}
+            <span className="muted" data-testid="batch-selected-count">
+              {t("questions.selectedCount", { count: selected.size })}
+            </span>
+            <LoadMoreActions
+              loadedCount={loadedRows.length}
+              hasNextPage={questions.hasNextPage}
+              isFetchingNextPage={questions.isFetchingNextPage}
+              onLoadMore={() => {
+                void questions.fetchNextPage();
+              }}
+              testId="questions"
+            />
+          </div>
         }
       >
-        {selected.size > 0 ? (
+        {batchMode ? (
           <div className="inline batch-bar" data-testid="batch-bar">
             <span className="muted">{t("questions.selectedCount", { count: selected.size })}</span>
             <button
               type="button"
               className="button button--ghost"
               data-testid="batch-publish"
-              disabled={batch.isPending}
+              disabled={batch.isPending || selected.size === 0}
               onClick={() => {
                 void runBatchPublish();
               }}
@@ -479,7 +530,7 @@ export function QuestionListPage() {
               type="button"
               className="button button--danger"
               data-testid="batch-delete"
-              disabled={batch.isPending}
+              disabled={batch.isPending || selected.size === 0}
               onClick={() => {
                 const questionIds: string[] = [];
                 const versionIds: string[] = [];
@@ -553,30 +604,36 @@ export function QuestionListPage() {
             rows={group.rows}
             getRowKey={(row) => row.question_id}
             columns={[
-              {
-                key: "select",
-                header: (
-                  <input
-                    type="checkbox"
-                    aria-label={t("questions.selectAll")}
-                    data-testid={`select-all-${index}`}
-                    checked={
-                      group.rows.length > 0 &&
-                      group.rows.every((row) => selected.has(row.question_id))
-                    }
-                    onChange={(event) => toggleGroup(group.rows, event.target.checked)}
-                  />
-                ),
-                render: (row) => (
-                  <input
-                    type="checkbox"
-                    aria-label={t("questions.selectRow")}
-                    data-testid={`select-${row.question_id}`}
-                    checked={selected.has(row.question_id)}
-                    onChange={(event) => toggleRow(row.question_id, event.target.checked)}
-                  />
-                ),
-              },
+              ...(batchMode
+                ? [
+                    {
+                      key: "select",
+                      header: (
+                        <input
+                          type="checkbox"
+                          className="question-select"
+                          aria-label={t("questions.selectAll")}
+                          data-testid={`select-all-${index}`}
+                          checked={
+                            group.rows.length > 0 &&
+                            group.rows.every((row) => selected.has(row.question_id))
+                          }
+                          onChange={(event) => toggleGroup(group.rows, event.target.checked)}
+                        />
+                      ),
+                      render: (row: QuestionPublic) => (
+                        <input
+                          type="checkbox"
+                          className="question-select"
+                          aria-label={t("questions.selectRow")}
+                          data-testid={`select-${row.question_id}`}
+                          checked={selected.has(row.question_id)}
+                          onChange={(event) => toggleRow(row.question_id, event.target.checked)}
+                        />
+                      ),
+                    },
+                  ]
+                : []),
               {
                 key: "title",
                 header: t("questions.title"),
@@ -644,7 +701,7 @@ export function QuestionListPage() {
                   const canPublish = row.status === "draft" && draftVersionId !== null;
                   const canDelete = row.status === "draft" && draftVersionId !== null;
                   return (
-                    <span className="inline">
+                    <span className="row-actions">
                       <Link
                         className="button button--ghost"
                         to="/questions/$questionId/edit"

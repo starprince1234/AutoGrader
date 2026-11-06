@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
@@ -203,8 +203,10 @@ describe("题库列表：批量操作", () => {
     const user = userEvent.setup();
     await openList();
 
-    expect(screen.queryByTestId("batch-bar")).toBeNull();
-    await user.click(screen.getByTestId("select-q-a"));
+    // 未进入批量模式时没有任何复选框（需求 1）。
+    expect(screen.queryByTestId("select-q-a")).toBeNull();
+    await user.click(screen.getByTestId("batch-mode-toggle"));
+    await user.click(await screen.findByTestId("select-q-a"));
     await user.click(screen.getByTestId("select-q-b"));
     expect(await screen.findByTestId("batch-bar")).toHaveTextContent("已选 2 项");
 
@@ -249,7 +251,8 @@ describe("题库列表：批量操作", () => {
     await openList();
 
     // 「全选当前列表」把已发布的也算进来：批量发布的版本集合只包含草稿。
-    await user.click(screen.getByTestId("select-all-0"));
+    await user.click(screen.getByTestId("batch-mode-toggle"));
+    await user.click(await screen.findByTestId("select-all-0"));
     await user.click(screen.getByTestId("batch-publish"));
 
     await waitFor(() => {
@@ -270,7 +273,8 @@ describe("题库列表：批量操作", () => {
     const user = userEvent.setup();
     await openList();
 
-    await user.click(screen.getByTestId("select-q-published"));
+    await user.click(screen.getByTestId("batch-mode-toggle"));
+    await user.click(await screen.findByTestId("select-q-published"));
     await user.click(screen.getByTestId("batch-delete"));
 
     expect(
@@ -292,10 +296,127 @@ describe("题库列表：表头全选", () => {
     const user = userEvent.setup();
     await openList();
 
-    await user.click(screen.getByTestId("select-all-0"));
+    await user.click(screen.getByTestId("batch-mode-toggle"));
+    await user.click(await screen.findByTestId("select-all-0"));
     expect(screen.getByTestId("batch-bar")).toHaveTextContent("已选 2 项");
     await user.click(screen.getByTestId("select-all-0"));
-    expect(screen.queryByTestId("batch-bar")).toBeNull();
+    expect(screen.getByTestId("batch-selected-count")).toHaveTextContent("已选 0 项");
     expect(UUID_A).not.toBe(DRAFT_VERSION);
+  });
+});
+
+describe("题目列表：批量操作入口与选中数量（需求 1）", () => {
+  it("初始不渲染复选框；点【批量操作】后每行出现复选框，再点一次收起", async () => {
+    stub = installFetchStub([...baseRoutes([draftQuestion("q-a"), draftQuestion("q-b")])]);
+    const user = userEvent.setup();
+    await openList();
+
+    const toggle = screen.getByTestId("batch-mode-toggle");
+    expect(toggle).toHaveTextContent("批量操作");
+    expect(screen.queryByTestId("select-q-a")).toBeNull();
+    expect(screen.queryByTestId("select-q-b")).toBeNull();
+
+    await user.click(toggle);
+    expect(await screen.findByTestId("select-q-a")).toBeInTheDocument();
+    expect(screen.getByTestId("select-q-b")).toBeInTheDocument();
+
+    await user.click(toggle);
+    expect(screen.queryByTestId("select-q-a")).toBeNull();
+  });
+
+  it("按钮旁的数量随勾选实时变化", async () => {
+    stub = installFetchStub([...baseRoutes([draftQuestion("q-a"), draftQuestion("q-b")])]);
+    const user = userEvent.setup();
+    await openList();
+
+    const count = screen.getByTestId("batch-selected-count");
+    expect(count).toHaveTextContent("已选 0 项");
+
+    await user.click(screen.getByTestId("batch-mode-toggle"));
+    await user.click(await screen.findByTestId("select-q-a"));
+    expect(count).toHaveTextContent("已选 1 项");
+
+    await user.click(screen.getByTestId("select-q-b"));
+    expect(count).toHaveTextContent("已选 2 项");
+
+    await user.click(screen.getByTestId("select-q-a"));
+    expect(count).toHaveTextContent("已选 1 项");
+  });
+
+  it("勾选框使用强调色实心样式（accent 类名）", async () => {
+    stub = installFetchStub([...baseRoutes([draftQuestion("q-a")])]);
+    const user = userEvent.setup();
+    await openList();
+
+    await user.click(screen.getByTestId("batch-mode-toggle"));
+    const box = (await screen.findByTestId("select-q-a")) as HTMLInputElement;
+    expect(box.className).toContain("question-select");
+    expect(box.type).toBe("checkbox");
+  });
+});
+
+describe("题目列表：操作按钮同一行（需求 2）", () => {
+  it("继续编辑 / 发布 / 删除三个按钮在同一个 nowrap 容器里", async () => {
+    stub = installFetchStub([...baseRoutes([draftQuestion("q-draft")])]);
+    await openList();
+
+    const remove = screen.getByTestId("delete-q-draft");
+    const container = remove.parentElement as HTMLElement;
+    expect(container.className).toBe("row-actions");
+    // 同一容器内也有编辑与发布——"不要单独换行"就是"不能各占一个容器"。
+    expect(within(container).getByTestId("edit-q-draft")).toBeInTheDocument();
+    expect(within(container).getByTestId("publish-q-draft")).toBeInTheDocument();
+  });
+});
+
+describe("题目列表：单条删除后保持滚动位置（需求 3）", () => {
+  it("删除一道题后把视口放回删除前的位置，而不是回到顶部", async () => {
+    // 浏览器在列表重排时会把视口带回顶部；这里用一个可变的 scrollY 模拟那一跳：
+    // 请求发出时记下当前位置，然后把它改成 0（"已经跳回顶部"），看页面是否恢复。
+    let scrollPosition = 640;
+    const scrollTargets: number[] = [];
+    let scrollYSpy: { mockRestore: () => void } | null = null;
+
+    stub = installFetchStub([
+      ...baseRoutes([draftQuestion("q-a"), draftQuestion("q-b")]),
+      {
+        method: "DELETE",
+        path: `/api/v1/question-versions/${DRAFT_VERSION}`,
+        respond: () => {
+          // DELETE 发出后列表重排，浏览器把视口带回顶部。
+          scrollPosition = 0;
+          return new Response(null, { status: 204 });
+        },
+      },
+    ]);
+
+    try {
+      const user = userEvent.setup();
+      await openList();
+
+      // 登录/渲染过程本身会动到这两个全局，所以模拟"滚动位置"放在列表出现之后。
+      scrollYSpy = vi.spyOn(window, "scrollY", "get").mockImplementation(() => scrollPosition);
+      vi.spyOn(window, "scrollTo").mockImplementation((options) => {
+        // 只把**明确给了目标位置**的调用记成"页面被滚到某处"。
+        const top =
+          typeof options === "number" ? options : (options as ScrollToOptions | undefined)?.top;
+        if (typeof top === "number") {
+          scrollPosition = top;
+          scrollTargets.push(top);
+        }
+      });
+
+      await user.click(screen.getByTestId("delete-q-a"));
+      await user.click(
+        within(await screen.findByTestId("delete-draft-modal")).getByTestId(
+          "delete-draft-confirm",
+        ),
+      );
+      // 恢复是在渲染之后做的（两次动画帧 + 一次 250ms 兜底），所以等"滚到 640"这件事本身。
+      await waitFor(() => expect(scrollTargets).toContain(640), { timeout: 2000 });
+      expect(scrollPosition).toBe(640);
+    } finally {
+      scrollYSpy?.mockRestore();
+    }
   });
 });
