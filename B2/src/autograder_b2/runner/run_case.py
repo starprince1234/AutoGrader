@@ -24,6 +24,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import contextlib
 import json
 import os
@@ -787,6 +789,10 @@ def elapsed_ms(started: float) -> int:
 # --- run_case -------------------------------------------------------------------------------
 
 
+def _diagnostic_logger() -> logging.Logger:
+    """沙箱失败诊断用的 logger（避免在模块顶层多一个全局名）。"""
+    return logging.getLogger("autograder_b2.runner.run_case")
+
 def run_case(
     package: EvaluationPackage,
     submission: SubmissionRunInput,
@@ -978,6 +984,26 @@ def _execute_case(
     stderr_text = stderr_bytes.decode("utf-8", errors="replace")
     sandbox_log_text = log_bytes.decode("utf-8", errors="replace")
     run_duration_ms = max(0, int((time.monotonic() - run_started) * 1000))
+    # 诊断：沙箱以非零码退出且**没有任何标准输出**时，把 nsjail 自己的日志尾部记进服务日志。
+    # nsjail 日志只含它自己的诊断（挂载、seccomp、cgroup、exec 失败），不含学生或参考解正文；
+    # 没有这一条时，"空输出 + 退出码 255" 只能靠猜。
+    if exit_code not in (0, None) and not stdout_text and sandbox_log_text:
+        _diagnostic_logger().info(
+            "runner.case.sandbox_log",
+            extra={
+                "b2_event": {
+                    "event": "runner.case.sandbox_log",
+                    "fields": {
+                        "exit_code": exit_code,
+                        "stdout_bytes": len(stdout_bytes),
+                        "stderr_bytes": len(stderr_bytes),
+                        "workspace": str(workspace),
+                        "sandbox_log": sandbox_log_text[:800],
+                    },
+                }
+            },
+        )
+
     after = snapshot_workspace(workspace)
     created = created_files(before, after)
     limit_exceeded_files = (
