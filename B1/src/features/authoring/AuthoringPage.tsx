@@ -624,6 +624,11 @@ export function AuthoringPage({
                 }}
               />
               {/* 编辑时提交用例 = 整体替换一份本页读不到的集合。必须由人显式确认一次。 */}
+              {questionId !== null && newestVersionStatus === "draft" && !protectedSeeded ? (
+                <Banner tone="info" testId="authoring-cases-not-loaded">
+                  {t("authoring.casesNotLoaded")}
+                </Banner>
+              ) : null}
               {questionId !== null && form.cases.length > 0 && !protectedSeeded ? (
                 <div className="field" data-testid="authoring-cases-replace">
                   <label className="inline" htmlFor="authoring-confirm-cases">

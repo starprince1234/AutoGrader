@@ -545,6 +545,7 @@ export const messages = {
 "authoring.stemPreview": "题干预览",
 "authoring.reference": "参考答案",
 "authoring.casesReplace": "我确认：用下面这些用例替换现有的全部用例",
+"authoring.casesNotLoaded": "这个后端还没有提供「读回已存用例」的能力，所以这里看不到以前保存的用例。只要你不在这一步重新声明并确认替换，保存时会保留服务器上原有的用例。",
 "authoring.casesReplaceHint": "页面读不到已保存的用例，提交会整体替换；只想改标题或标签时，把用例全部删掉即可。",
 "authoring.referenceAnswer": "参考答案",
 "authoring.cases": "测试用例（{count}）",
