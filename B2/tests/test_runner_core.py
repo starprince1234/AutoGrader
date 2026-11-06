@@ -2132,7 +2132,7 @@ class TestEvidence:
     ) -> None:
         workspace = prepare_workspace(tmp_path / "case")
         launcher = FakeLauncher(exit_code=255, stdout=b"", sandbox_log=message.encode("utf-8"))
-        with pytest.raises(SandboxUnavailableError, match="cgroup v2"):
+        with pytest.raises(SandboxUnavailableError, match="namespace"):
             run(load_package(), workspace, launcher=launcher)
         assert not (workspace.parent / f"{workspace.name}.nsjail.log").exists()
 

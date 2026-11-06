@@ -103,7 +103,7 @@ MESSAGE_LIMIT = 1000
 SANDBOX_LOG_MAX_BYTES = 256 * 1024
 
 # These are nsjail 3.4's own fatal cgroup setup messages, not student output.
-CGROUP_INITIALIZATION_FAILURES = (
+SANDBOX_INITIALIZATION_FAILURES = (
     "couldn't setup parent cgroup (cgroupv2)",
     "couldn't initialize cgroup 2 user namespace for pid=",
     "couldn't initialize user namespace for pid=",
@@ -986,9 +986,9 @@ def _execute_case(
     sandbox_log_text = log_bytes.decode("utf-8", errors="replace")
     run_duration_ms = max(0, int((time.monotonic() - run_started) * 1000))
     if exit_code == 255 and any(
-        marker in sandbox_log_text.lower() for marker in CGROUP_INITIALIZATION_FAILURES
+        marker in sandbox_log_text.lower() for marker in SANDBOX_INITIALIZATION_FAILURES
     ):
-        raise SandboxUnavailableError("nsjail failed to initialize the delegated cgroup v2")
+        raise SandboxUnavailableError("nsjail failed to initialize its cgroup or user namespace")
 
     after = snapshot_workspace(workspace)
     created = created_files(before, after)
