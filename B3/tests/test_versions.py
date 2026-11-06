@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -432,6 +432,58 @@ def bank_version(session, question_version_id):
     from autograder_b3.infra.repositories import QuestionBankRepository
 
     return QuestionBankRepository(session).get_version(question_version_id)
+
+
+def test_deleting_an_ai_generated_draft_keeps_the_generation_ledger(
+    database, settings
+):
+    """AI 生成的草稿必须能删：generation 行的 FK 是 `ON DELETE SET NULL`。
+
+    这是线上真实故障：`question_draft_generations.accepted_question_version_id` 的外键在
+    删除版本时置 NULL，而旧的检查约束要求"accepted_at 非空 ⇒ 版本 id 非空"，于是置 NULL 直接
+    违反约束（23514），B3 把它当 DBAPIError 处理成 500「the request could not be completed」。
+    结果是**只有 AI 生成的草稿删不掉**，手工建的草稿正常——正是这个差异暴露了它。
+    """
+    from autograder_b3.infra.models import QuestionDraftGeneration
+
+    question, version = create_question(
+        database, settings, principal=teacher_principal(), payload=draft_payload()
+    )
+    with database.protected_session() as session:
+        row = QuestionDraftGeneration(
+            generation_id=uuid.uuid4(),
+            course_id=COURSE_A,
+            owner_subject="teacher-a",
+            status="needs_review",
+            language="python",
+            adapter_kind="stdin",
+            provider="example-provider",
+            model="example-model",
+            prompt_version="b3-draft-generation-v1",
+            proposal=None,
+            warnings=[],
+            created_at=PUBLISH_AT,
+            expires_at=PUBLISH_AT + timedelta(days=1),
+            accepted_question_version_id=version.question_version_id,
+            accepted_at=PUBLISH_AT,
+            discarded_at=None,
+        )
+        session.add(row)
+        session.flush()
+
+    # 删除草稿版本：不允许因 generation 外键/检查约束而失败。
+    delete_version(
+        database,
+        principal=teacher_principal(),
+        question_version_id=version.question_version_id,
+        now=PUBLISH_AT,
+    )
+
+    with database.protected_session() as session:
+        survivor = session.get(QuestionDraftGeneration, row.generation_id)
+        assert survivor is not None, "审计行不能被级联删掉"
+        assert survivor.accepted_question_version_id is None
+        assert survivor.accepted_at is not None
 
 
 # --- assignments ---------------------------------------------------------

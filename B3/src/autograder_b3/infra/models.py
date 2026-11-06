@@ -399,8 +399,10 @@ class QuestionDraftGeneration(Base):
             "discarded_at IS NULL OR proposal IS NULL",
             name="ck_question_draft_generations_discarded_has_no_proposal",
         ),
+        # Migration 20261107_0006: an accepted candidate may lose its version (deleting a
+        # draft sets the FK to NULL), so the surviving rule is only "no proposal left".
         CheckConstraint(
-            "accepted_at IS NULL OR (proposal IS NULL AND accepted_question_version_id IS NOT NULL)",
+            "accepted_at IS NULL OR proposal IS NULL",
             name="ck_question_draft_generations_accepted_has_no_proposal",
         ),
         CheckConstraint("expires_at > created_at", name="ck_question_draft_generations_expiry"),

@@ -286,6 +286,7 @@ def delete_version(
 BATCH_OPERATION_DELETE = "delete"
 BATCH_OPERATION_PUBLISH = "publish"
 
+
 def _batch_error_code(error: B3Error) -> str:
     """Map a domain error onto the contract's stable per-item ``error_code``.
 
