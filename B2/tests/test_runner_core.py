@@ -142,6 +142,12 @@ CONFIG = "/tmp/b2.nsjail.cfg"
 #: `autograder_b2.runner.run_case` **模块**（包级名字 `run_case` 是冻结签名的函数，故按模块表取）。
 run_case_module = importlib.import_module("autograder_b2.runner.run_case")
 package_module = importlib.import_module("autograder_b2.runner.package")
+policy_module = importlib.import_module("autograder_b2.runner.policy")
+
+
+@pytest.fixture(autouse=True)
+def delegated_ids(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(policy_module, "_subordinate_id", lambda kind, caller: 231072)
 
 HOST_AVAILABILITY = probe_sandbox(RunnerPolicy())
 requires_unavailable_host = pytest.mark.skipif(
@@ -590,7 +596,7 @@ class TestNsjailConfig:
 
     @pytest.mark.parametrize(
         ("caller", "expected_first_outside"),
-        [(0, "65534"), (1000, "1000"), (99999, "99999")],
+        [(0, "65534"), (1000, "231072"), (99999, "231072")],
     )
     def test_uid_maps_are_caller_aware_and_never_fake_root(
         self, caller: int, expected_first_outside: str
@@ -605,6 +611,16 @@ class TestNsjailConfig:
         assert maps[1] == ("uidmap", "0", str(caller))
         assert maps[2] == ("gidmap", "65534", expected_first_outside)
         assert maps[3] == ("gidmap", "0", str(caller))
+
+    def test_unprivileged_maps_use_delegated_ids_and_helpers(self) -> None:
+        config = render_nsjail_config(
+            ledger_policy(), Path("/tmp/b2-workspace"), caller_uid=1000, caller_gid=1001
+        )
+        assert config.count("use_newidmap: true") == 4
+        assert uid_maps(ledger_policy(), caller_uid=1000, caller_gid=1001) == (
+            ("uidmap", "65534", "231072"), ("uidmap", "0", "1000"),
+            ("gidmap", "65534", "231072"), ("gidmap", "0", "1001"),
+        )
 
     def test_read_only_root_and_writable_workspace(self) -> None:
         config = render_nsjail_config(ledger_policy(), Path("/tmp/b2-workspace"))
@@ -2108,6 +2124,7 @@ class TestEvidence:
         [
             "Couldn't setup parent cgroup (cgroupv2)",
             "Couldn't initialize cgroup 2 user namespace for pid=123",
+            "Couldn't initialize user namespace for pid=123",
         ],
     )
     def test_nsjail_cgroup_setup_failure_is_sandbox_unavailable(

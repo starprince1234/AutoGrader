@@ -37,7 +37,9 @@ ReadWritePaths=/var/lib/autograder /sys/fs/cgroup
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-NoNewPrivileges=true
+# newuidmap/newgidmap need their narrowly scoped file capabilities; nsjail
+# sets no_new_privs for the confined program itself.
+NoNewPrivileges=false
 MemoryMax=256M
 CPUQuota=75%
 TasksMax=256

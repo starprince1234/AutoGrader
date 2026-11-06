@@ -106,6 +106,7 @@ SANDBOX_LOG_MAX_BYTES = 256 * 1024
 CGROUP_INITIALIZATION_FAILURES = (
     "couldn't setup parent cgroup (cgroupv2)",
     "couldn't initialize cgroup 2 user namespace for pid=",
+    "couldn't initialize user namespace for pid=",
 )
 
 #: 沙箱日志 → 资源限制项的标记。**只允许**用于 `RunFacts.sandbox_log_text`（见 `_scan_sandbox_log`）。

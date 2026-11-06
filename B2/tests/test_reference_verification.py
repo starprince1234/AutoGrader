@@ -920,8 +920,11 @@ def test_cgroup_launch_failure_reaches_reference_api_without_attestation(
     from types import SimpleNamespace
 
     from autograder_b2.integration import adapters
+    from autograder_b2.runner import policy as runner_policy
     from autograder_b2.runner.run_case import run_case
     from tests.test_runner_core import FakeLauncher, available_probe
+
+    monkeypatch.setattr(runner_policy, "_subordinate_id", lambda kind, caller: 231072)
 
     sandbox_log = b"[E] Couldn't setup parent cgroup (cgroupv2)"
     monkeypatch.setattr(

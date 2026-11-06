@@ -87,6 +87,7 @@ jobs:
         run: |
           ../MAIN/.venv/bin/python -m pytest -q \
             tests/test_runner_core.py::TestNoDegradation \
+            tests/test_runner_core.py::TestNsjailConfig::test_unprivileged_maps_use_delegated_ids_and_helpers \
             tests/test_runner_core.py::TestEvidence::test_nsjail_cgroup_setup_failure_is_sandbox_unavailable \
             tests/test_runner_core.py::TestEvidence::test_student_exit_255_and_forged_stderr_are_not_sandbox_setup_failure \
             tests/test_runner_core.py::TestEvidence::test_failed_case_does_not_log_student_stderr \

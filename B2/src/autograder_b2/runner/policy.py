@@ -68,7 +68,7 @@ MIN_STACK_MIB = 1
 #: nsjail 内的工作区消失点（沙箱内路径），与宿主工作区一对一双向绑定。
 DEFAULT_WORKSPACE_MOUNT = "/workspace"
 
-#: ns 内的 uid/gid：宿主当前用户 ↔ ns 内 nobody(65534)。**绝不**映射 inside_id "0"（allow_root=false）。
+#: 作业以 namespace 内的 nobody 身份运行。
 NSJAIL_SANDBOX_UID = "65534"
 NSJAIL_SANDBOX_GID = "65534"
 
@@ -768,29 +768,35 @@ def seccomp_policy_lines(policy: RunnerPolicy) -> tuple[str, ...]:
     return tuple(lines)
 
 
+def _subordinate_id(kind: str, caller: int) -> int:
+    """Resolve the first ID delegated to the invoking service account."""
+    import pwd
+
+    try:
+        name = pwd.getpwuid(caller).pw_name
+        for line in Path(f"/etc/sub{kind}").read_text(encoding="utf-8").splitlines():
+            parts = line.split(":")
+            if len(parts) == 3 and parts[0] in (name, str(caller)):
+                start, count = int(parts[1]), int(parts[2])
+                if start > 0 and count > 0:
+                    return start
+    except (OSError, KeyError, ValueError) as error:
+        raise SandboxUnavailableError(f"subordinate {kind} mapping unavailable") from error
+    raise SandboxUnavailableError(f"subordinate {kind} mapping unavailable")
+
+
 def uid_maps(
     policy: RunnerPolicy, *, caller_uid: int | None = None, caller_gid: int | None = None
 ) -> tuple[tuple[str, str, str], ...]:
-    """返回 (block, inside_id, outside_id) 三元组序列。
-
-    两条的**顺序与取值都不可改**（Linux 验收逐变体实测）：
-
-    1. 第一条决定被囚进程的 uid/gid（`nsjail` 取**第一条** `uidmap` 的 `inside_id`）；它的
-       `outside_id` 必须是**外层真实存在的非 root uid**，否则就是"假非 root"（ns 内 euid 非 0、
-       全局仍是 root）。调用者非 root 时只能映射自己的 uid；调用者是 root 时可映射任意外层 uid，
-       取 `policy.sandbox_uid`（65534 / nobody）——两层都不是 root。
-    2. 第二条把**调用者的 uid/gid** 映射进来，使 nsjail 在新 user namespace 里仍是 root，
-       否则挂载失败：`Couldn't mount '/workspace'`。它不会让被囚进程变成 root（uid 由第一条决定），
-       但 nsjail 会为此打印 `Process will be UID/EUID=0 in the global user namespace` 警告——
-       那是针对本条目的，**不能**据此判断"假非 root"（判据是从 ns 外读 `/proc/<pid>/status`）。
-    """
+    """Map the jail user to delegated IDs and namespace root to the caller."""
     uid = _current_uid() if caller_uid is None else int(caller_uid)
     gid = _current_gid() if caller_gid is None else int(caller_gid)
-    jailed_outside = uid if uid != 0 else int(policy.sandbox_uid)
+    jailed_uid = int(policy.sandbox_uid) if uid == 0 else _subordinate_id("uid", uid)
+    jailed_gid = int(policy.sandbox_gid) if uid == 0 else _subordinate_id("gid", uid)
     return (
-        ("uidmap", policy.sandbox_uid, str(jailed_outside)),
+        ("uidmap", policy.sandbox_uid, str(jailed_uid)),
         ("uidmap", "0", str(uid)),
-        ("gidmap", policy.sandbox_gid, str(jailed_outside)),
+        ("gidmap", policy.sandbox_gid, str(jailed_gid)),
         ("gidmap", "0", str(gid)),
     )
 
@@ -837,14 +843,15 @@ def render_nsjail_policy_body(
     add("keep_caps: false")
     add("disable_no_new_privs: false")
     add("")
-    add("# 非 root：**两条** uidmap/gidmap，顺序不可颠倒（Linux 验收逐变体实测）")
-    add("#   第 1 条 = 被囚进程的 uid/gid（外层也是非 root）；第 2 条 = 让 nsjail 在 ns 内保持 root")
-    add("#   以完成 mount（只写第 1 条会 Couldn't mount；只写第 2 条则被囚进程 uid=0）")
+    add("# The first mapping is the jail user; namespace root maps to the service user.")
+    use_helper = (_current_uid() if caller_uid is None else int(caller_uid)) != 0
     for block, inside, outside in uid_maps(policy, caller_uid=caller_uid, caller_gid=caller_gid):
         add(f"{block} {{")
         add(f'  inside_id: "{inside}"')
         add(f'  outside_id: "{outside}"')
         add("  count: 1")
+        if use_helper:
+            add("  use_newidmap: true")
         add("}")
     add("")
     add("# 墙钟 / CPU / 内存 / 进程数 / 输出 / 文件数限制（rlimit + cgroup v2）")
