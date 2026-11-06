@@ -51,3 +51,12 @@ export function mainNavItems(
 export function isMainNavActive(pathname: string, to: MainNavItem["to"]): boolean {
   return pathname === to || pathname.startsWith(`${to}/`);
 }
+
+/**
+ * 当前路径在侧栏里的序号（0 开始）。换页动效用它判断"往上滚还是往下滚"：
+ * 目标序号比当前小 → 回到更靠上的入口 → 画面上滚；反之向下滚。
+ * 不属于任何主入口（导览页、认证页、404）时返回 -1，调用方按"默认向下"处理。
+ */
+export function mainNavIndex(items: MainNavItem[], pathname: string): number {
+  return items.findIndex((item) => isMainNavActive(pathname, item.to));
+}

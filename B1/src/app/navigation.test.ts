@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isMainNavActive, mainNavItems } from "./navigation";
+import { isMainNavActive, mainNavIndex, mainNavItems } from "./navigation";
 import type { SessionState } from "../auth/sessionStore";
 
 function session(
@@ -67,5 +67,29 @@ describe("导航激活态", () => {
     expect(isMainNavActive("/grades-export", "/grades")).toBe(false);
     expect(isMainNavActive("/questions", "/roster")).toBe(false);
     expect(isMainNavActive("/admin", "/admin/users")).toBe(false);
+  });
+});
+
+describe("换页滚动方向用的序号", () => {
+  const teacherItems = mainNavItems(session(["teacher"]));
+
+  it("按侧栏顺序给出序号，子页面跟随所属入口", () => {
+    expect(mainNavIndex(teacherItems, "/assignments")).toBe(0);
+    expect(mainNavIndex(teacherItems, "/questions/abc/edit")).toBe(1);
+    expect(mainNavIndex(teacherItems, "/grades")).toBe(2);
+    expect(mainNavIndex(teacherItems, "/roster/import")).toBe(3);
+  });
+
+  it("回到更靠上的入口时序号变小（AppShell 据此上滚），反之变大", () => {
+    const from = mainNavIndex(teacherItems, "/grades");
+    const toEarlier = mainNavIndex(teacherItems, "/questions");
+    const toLater = mainNavIndex(teacherItems, "/roster");
+    expect(toEarlier).toBeLessThan(from);
+    expect(toLater).toBeGreaterThan(from);
+  });
+
+  it("不属于任何主入口时返回 -1：调用方按默认方向处理", () => {
+    expect(mainNavIndex(teacherItems, "/")).toBe(-1);
+    expect(mainNavIndex(teacherItems, "/login")).toBe(-1);
   });
 });

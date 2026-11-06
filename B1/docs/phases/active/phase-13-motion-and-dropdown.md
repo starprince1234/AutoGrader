@@ -12,28 +12,27 @@
 
 ## 做了什么
 
-### 1. 页面切换（两级实现）
+### 1. 页面切换：按侧栏顺序上下滚动
 
-**主路径：原生 View Transitions 交叉淡化**（`src/app/viewTransitions.ts`）
+**方向由两个页面在侧栏里的先后决定**（`navigation.ts` 的 `mainNavIndex`）：
 
-- 灵感来自 GSAP 文档里的 page-transition overlay、以及 uiverse 上的交叉淡化写法，
-  **但不引库**：用浏览器自己的 `document.startViewTransition`——先给旧页面拍快照，
-  等路由把内容换完再拍新页面，两张图由合成器交叉淡化，不碰布局、不重绘。
-- 为什么要手动接：本项目锁的 `@tanstack/react-router@1.170` **既没有 `viewTransition`
-  选项、也没有内建 `startViewTransition` 调用**（只有一句类型注释提到）。所以改成在
-  捕获阶段监听站内链接点击，在路由更新**之前**开启转场。
-- 只给 `.app-content` 命名 `view-transition-name: page-content`，**侧栏与顶栏不参与**，
-  视线不会跟着整屏晃：旧内容 180ms 淡出上移 6px，新内容 260ms 淡入上移 12px 落位。
-- 三条安全边界：不支持该 API 的浏览器（含 jsdom 测试环境）直接不安装；`reduce` 偏好
-  不安装；等待路由变化最多 300ms 就放行，链接没跳转也不会卡住。
+- 回到更靠上的入口（序号变小，例如 成绩 → 题库）→ **画面上滚**，新页面从下方 44px 升起落位；
+- 去更靠下的入口（序号变大，例如 题库 → 课程）→ **画面下滚**，新页面从上方 44px 落入；
+- 首次进入、或不属于任何主入口（导览页 / 认证页 / 404）→ 不做方向动画。
 
-**兜底路径：CSS `page-enter`**
+实现：`AppShell` 在渲染期用 ref 保留"上一次渲染的路径"，算出方向写进 `data-nav-direction`；
+`.app-content` 仍用 `key={pathname}` 重挂，所以动画只在真正换页时跑一次，
+同一页改筛选/分页不会重放。320ms、`--ease-out`，只位移内容区，侧栏与顶栏不动——
+视线锚点稳定，滚动才显得顺。`prefers-reduced-motion` 下关闭。
 
-不支持的浏览器仍保留原来的内容淡入上浮；`@supports (view-transition-name: page-content)`
-命中时自动关掉它，避免两层动画叠加。
+**为什么只动新页面、不复刻旧页面**：React 在路由切换的同一帧就把旧页面卸载了，
+要让"旧页滚出去"必须留一份旧 DOM。两条路都评估过：
+① 原生 View Transitions——实现过，但实机感觉卡顿，**按要求已完全移除**（文件删除，无残留）；
+② 克隆旧 DOM 做覆盖层——成绩页有 ECharts canvas，`cloneNode` 出来的画布是空白的，
+   反而更难看。所以改成"新页面按正确方向滚入"：方向语义保住了，代价最小、没有额外图层。
 
-`AppShell` 给内容容器加 `key={location.pathname}`：换页时容器重挂一次，
-`key` 只跟 **pathname** 走，同一页改查询串（筛选、分页、tab）**不会重挂**，页面状态不丢。
+`AppShell` 的 `key` 只跟 **pathname** 走，同一页改查询串（筛选、分页、tab）**不会重挂**，
+页面状态不丢。
 
 ### 2. 下拉：圆角 + 自绘展开菜单 + 弹出动画
 

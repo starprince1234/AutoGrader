@@ -21,8 +21,7 @@ import {
 } from "../auth/portal";
 import { AccountMenu } from "./AccountMenu";
 import { AuthLayout } from "./AuthLayout";
-import { isMainNavActive, mainNavItems, type MainNavItem } from "./navigation";
-import { installViewTransitions } from "./viewTransitions";
+import { isMainNavActive, mainNavIndex, mainNavItems, type MainNavItem } from "./navigation";
 import { Drawer } from "../ui/components";
 
 /** 不需要登录的路径：导览页、注册、忘记密码，以及只做重定向的旧 `/login`。 */
@@ -68,9 +67,27 @@ export function AppShell() {
     readRedirectSearch(location.search),
   );
 
-  // 换页交叉淡化：装了原生 View Transitions 的浏览器走它（见 viewTransitions.ts），
-  // 不支持的浏览器什么都不做，`styles.css` 里的 page-enter 兜底。
-  useEffect(() => installViewTransitions(), []);
+  /**
+   * 换页的滚动方向：按两个页面在侧栏里的先后决定。
+   * 回到更靠上的入口（序号变小）→ 画面上滚；去更靠下的入口 → 画面下滚。
+   * 这里用 ref 保留"上一次渲染的路径"，在渲染期就能算出方向，
+   * 因为内容容器用 `key={pathname}` 重挂——方向必须在重挂的那一次就正确。
+   */
+  const previousPathRef = useRef<string | null>(null);
+  const previousPath = previousPathRef.current;
+  useEffect(() => {
+    previousPathRef.current = location.pathname;
+  }, [location.pathname]);
+  const navOrder = mainNavItems(session);
+  const previousIndex = previousPath === null ? -1 : mainNavIndex(navOrder, previousPath);
+  const currentIndex = mainNavIndex(navOrder, location.pathname);
+  // 首次进入不做滚动动画（没有"从哪来"），只在真正换页时给方向。
+  const navDirection: "up" | "down" | "none" =
+    previousPath === null
+      ? "none"
+      : previousIndex >= 0 && currentIndex >= 0 && currentIndex < previousIndex
+        ? "up"
+        : "down";
 
   // 退出或会话失效后清空业务缓存：共用机器上不能把上一位用户的数据留给下一位。
   useEffect(() => {
@@ -229,9 +246,15 @@ export function AppShell() {
           </nav>
         </aside>
         <main className="app-main">
-          {/* `key` 跟着路径走：换页时内容区重挂一次，让 `.app-content` 的入场动画重新跑一遍。
-              同一路径下改查询串（筛选、分页）不会重挂，页面状态不丢。 */}
-          <div className="app-content" key={location.pathname}>
+          {/* `key` 跟着路径走：换页时内容区重挂一次，让滚动入场动画重新跑一遍。
+              同一路径下改查询串（筛选、分页）不会重挂，页面状态不丢。
+              `data-nav-direction` 由两个页面在侧栏里的先后决定：回到更靠上的入口时上滚，
+              去更靠下的入口时下滚。 */}
+          <div
+            className="app-content"
+            key={location.pathname}
+            data-nav-direction={navDirection}
+          >
             {blockedPortal ? (
               <PortalMismatch
                 portal={blockedPortal}
