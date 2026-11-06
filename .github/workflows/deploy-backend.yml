@@ -661,7 +661,7 @@ jobs:
           done
           nsjail --version 2>&1 | head -n 1 || true
           echo 'Workspace roots (mode/owner/path):'
-          for candidate in /var/lib/autograder /var/lib/autograder/b2 /var/lib/autograder/b2/workspaces /opt/autograder/workspaces /srv/autograder; do
+          for candidate in /var/lib/autograder /var/lib/autograder/workspace /var/lib/autograder/b2 /var/lib/autograder/b2/workspaces /opt/autograder/workspaces /srv/autograder; do
             if [ -e "$candidate" ]; then stat -c '%A %U:%G %n' "$candidate"; fi
           done
           if [ -f /etc/autograder/runtime.env ]; then

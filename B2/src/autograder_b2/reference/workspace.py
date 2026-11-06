@@ -34,6 +34,36 @@ from pathlib import Path
 from autograder_b2.domain.envelope import is_allowed_relative_path
 
 
+def _make_traversable(path: Path) -> None:
+    """Give *other* the execute (traverse) bit on ``path`` and on its ancestors we own.
+
+    ``B2_WORKSPACE_ROOT`` lives under a systemd-created directory that is ``0750``: the
+    sandbox process runs as ``nobody`` (uid 65534), so it cannot even *enter* the path its
+    entry script sits in. The observable symptom is not a permission error but an empty
+    stdout and a non-zero exit -- i.e. every case fails as ``crash``/``output_mismatch``,
+    which blocks every publication.
+
+    Only directories **owned by this process's uid** are touched, and only the execute bit is
+    added: ``0711`` semantics, so the sandbox can traverse a path it already knows without
+    being able to list it. Anything we do not own (e.g. ``/var/lib``, ``/``) is left alone.
+    """
+    directories = [path, *path.parents]
+    for directory in directories:
+        try:
+            info = directory.stat()
+        except OSError:
+            continue
+        if info.st_uid != os.geteuid():
+            continue
+        mode = info.st_mode & 0o7777
+        if mode & 0o001:
+            continue
+        try:
+            os.chmod(directory, mode | 0o001)
+        except OSError:
+            continue
+
+
 class ReferenceAnswerWorkspace:
     """一次性工作区的生产者/回收者（每个用例一份，绝不复用）。"""
 
@@ -64,7 +94,7 @@ class ReferenceAnswerWorkspace:
         # therefore blocks every publication (`0/1 passed`, no attestation).
         # 0711 = traverse without listing: the sandbox can enter a directory it already knows
         # the name of, but cannot enumerate what else is in there.
-        os.chmod(self._root, 0o711)
+        _make_traversable(self._root)
         os.chmod(target.parent, 0o711)
         os.chmod(target, 0o777)
         entry = target / filename

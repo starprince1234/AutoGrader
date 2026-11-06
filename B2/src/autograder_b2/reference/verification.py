@@ -301,6 +301,29 @@ class ReferenceVerificationService:
             )
             with self._gate.hold():
                 evidence = self._runner.run_case(view.handle, submission)
+            # 诊断用：只记"跑没跑起来、输出多长、比较到哪一行"，不记 stdout/期望正文本体。
+            # 线上出现过"每条用例都判输出不一致"却看不出原因的情况，这里给出可判读的数字。
+            logger.info(
+                "reference.verification.case",
+                extra={
+                    "b2_event": {
+                        "event": "reference.verification.case",
+                        "fields": {
+                            "question_version_id": getattr(view, "question_version_id", None),
+                            "ordinal": case.ordinal,
+                            "passed": evidence.passed,
+                            "failure_category": evidence.failure_category,
+                            "exit_code": evidence.exit_code,
+                            "actual_len": len(evidence.actual_output_excerpt or ""),
+                            "expected_len": len(evidence.expected_output_excerpt or ""),
+                            "stdout_digest": (evidence.stdout_digest or "")[:8],
+                            "message": (evidence.message or "")[:200],
+                            "mismatch_line": evidence.mismatch_line,
+                            "resource_readings": evidence.resource is not None,
+                        },
+                    }
+                },
+            )
         except SandboxUnavailableError as error:
             # 无沙箱的平台（本机 Windows 即如此，ADR-0004 禁止降级为裸进程）：503 且**零存证**。
             # 报成功是伪造，报"用例失败"是把环境问题写成题目的问题——两条都不允许。
