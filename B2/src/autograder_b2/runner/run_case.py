@@ -793,6 +793,7 @@ def _diagnostic_logger() -> logging.Logger:
     """沙箱失败诊断用的 logger（避免在模块顶层多一个全局名）。"""
     return logging.getLogger("autograder_b2.runner.run_case")
 
+
 def run_case(
     package: EvaluationPackage,
     submission: SubmissionRunInput,
