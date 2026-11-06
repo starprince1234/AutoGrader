@@ -339,7 +339,15 @@ function BootScreen() {
   return (
     <div className="boot" role="status" aria-live="polite" data-testid="boot-screen">
       <span className="boot__brand">{t("app.brand")}</span>
-      <span className="boot__bar" aria-hidden="true" />
+      {/* 五根柱 + 一个弹跳球（造型取自 Uiverse 的 loader，颜色换成设计系统 token） */}
+      <span className="boot__loader" aria-hidden="true">
+        <span className="boot__bar" />
+        <span className="boot__bar" />
+        <span className="boot__bar" />
+        <span className="boot__bar" />
+        <span className="boot__bar" />
+        <span className="boot__ball" />
+      </span>
       <span className="boot__text muted">{t("boot.loading")}</span>
     </div>
   );

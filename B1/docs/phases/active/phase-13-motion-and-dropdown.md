@@ -76,6 +76,17 @@
   也不会把读数的注意力从表格上拉走；
 - `AppShell.test.tsx` 补了两条断言锁住范围：导览页有 `gemini-glow`，进到 `/assignments` 后必须为 `null`。
 
+### 6. 加载页换成"五柱 + 弹跳球"
+
+按用户提供的 Uiverse 样板（Nawsome 的 loader）替换原来的"光条横扫"骨架屏：
+
+- 结构：`.boot__loader` 里 5 根 `.boot__bar` + 1 个 `.boot__ball`；
+- 几何与关键帧原样保留（球 4 秒从左跳到右再跳回、柱子随球经过依次抬起，中间那根不动）；
+- 只换颜色：柱子 `--color-text-faint`、小球 `--color-accent` 并加一圈淡光环，
+  让它像产品的一部分而不是贴上去的第三方组件；
+- 去掉样板里的 `-webkit-` 重复关键帧（现代浏览器不需要），合并同值关键帧；
+- `prefers-reduced-motion` 下停掉跳动，只留静态的一组柱子和球。
+
 ## 改动文件
 
 | 文件 | 改动 |
