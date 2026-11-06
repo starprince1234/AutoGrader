@@ -55,9 +55,17 @@ class ReferenceAnswerWorkspace:
         target = self._root / verification / f"case-{case}"
         target.mkdir(parents=True, exist_ok=True)
         # The sandboxed process runs as `nobody` (uid 65534); this process runs under
-        # systemd's `UMask=0077`. Without these two explicit chmods the directory is
-        # 0700 and the entry script 0600, so `python3` inside nsjail cannot open its
-        # own script and every verification fails as a "crash" before producing output.
+        # systemd's `UMask=0077`, so every directory `mkdir(parents=True)` creates is 0700.
+        #
+        # Two levels matter, not one. Giving `case-<id>` 0777 is not enough: `nobody` still has
+        # to *traverse* `<root>/<verification>` and `<root>` itself. Those parents stay 0700,
+        # so the sandbox cannot even reach the entry script -- the process then exits without
+        # producing output, which reads as `crash`/`output_mismatch` for **every** case and
+        # therefore blocks every publication (`0/1 passed`, no attestation).
+        # 0711 = traverse without listing: the sandbox can enter a directory it already knows
+        # the name of, but cannot enumerate what else is in there.
+        os.chmod(self._root, 0o711)
+        os.chmod(target.parent, 0o711)
         os.chmod(target, 0o777)
         entry = target / filename
         entry.write_text(content, encoding="utf-8", newline="")
