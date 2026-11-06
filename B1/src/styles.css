@@ -44,6 +44,11 @@
   --color-bad-dot: #d92d20;
   --color-danger: var(--color-bad);
 
+  /* 内部页背景的点阵：白色底上的浅灰点，只在卡片/面板之外的空白处露出来。
+     透明度压得很低（0.09），页面标题直接压在点阵上也仍然清楚。 */
+  --color-grid-dot: rgba(16, 17, 19, 0.12);
+  --grid-size: 28px;
+
   /* 渐变：只做光与层级，不填色块 */
   --gradient-page: radial-gradient(1100px 460px at 50% -220px, rgba(94, 106, 210, 0.12), transparent 68%),
     linear-gradient(180deg, #fbfcfd 0%, #f7f8f8 30%, #f6f7f8 100%);
@@ -139,6 +144,9 @@
     --color-bad: #ff6b6b;
     --color-bad-soft: rgba(255, 107, 107, 0.11);
     --color-bad-dot: #ff6b6b;
+
+    /* 深色底上用浅色点，透明度再低一档。 */
+    --color-grid-dot: rgba(255, 255, 255, 0.09);
 
     --gradient-page: radial-gradient(1100px 460px at 50% -220px, rgba(113, 112, 255, 0.16), transparent 68%),
       linear-gradient(180deg, #0a0b0c 0%, #08090a 34%, #08090a 100%);
@@ -407,11 +415,28 @@ samp {
  * 没有欢迎语，也没有需要悬停才展开的账户菜单。业务导航在左侧栏（桌面）或抽屉（小屏）。
  * 底边不是 border 而是 1px 渐变发丝：两端透明，中间实色，滚动态也不切角。
  */
+/*
+ * 内部页面（登录之后）的底：点阵网格。
+ *
+ * 样式取自用户给的 Uiverse 片段（`radial-gradient(... 2px, transparent 0)` + `30px 30px`），
+ * 这里换成设计系统的中性色、间距略收（28px）、点再小一点，免得抢过内容。
+ *
+ * 关键约束：**文字区一律不受影响**。卡片、面板、表格、表单都是不透明表面（`--color-surface`
+ * / `--gradient-surface`），点阵只会从卡片之间的缝隙、侧栏空白和页面边距里透出来；
+ * 页面上没有被面板包住的只有页面标题，所以点的透明度压到 0.09，压在大字底下也读得清。
+ *
+ * 只加在 `.app-shell` 上：导览页（`.landing`）和认证页（`AuthLayout`）都不经过它，
+ * 因此欢迎页不受影响。
+ */
 .app-shell {
   position: relative;
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  background-color: var(--color-bg);
+  background-image: radial-gradient(var(--color-grid-dot) 1.8px, transparent 1.8px);
+  background-size: var(--grid-size) var(--grid-size);
+  background-position: -7px -7px;
 }
 
 .app-header {
