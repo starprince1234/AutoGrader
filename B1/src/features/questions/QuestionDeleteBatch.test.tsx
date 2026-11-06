@@ -17,7 +17,6 @@ import {
   sessionCreated,
   UUID_A,
   UUID_B,
-  UUID_C,
 } from "../../testing/contractFixtures";
 import { signIn } from "../../auth/sessionStore";
 import { QuestionListPage } from "./QuestionListPage";
@@ -40,15 +39,20 @@ afterEach(() => {
   stub = null;
 });
 
-const DRAFT_VERSION = "00000000-0000-4000-8000-0000000000d1";
 const PUBLISHED_VERSION = "00000000-0000-4000-8000-0000000000d2";
+
+/** 每道题一个**独立**的版本 id：共用一个 id 会让"重复 id 被 422 拒绝"这类问题看不见。 */
+function versionOf(questionId: string): string {
+  const digits = [...questionId].reduce((sum, char) => sum + char.charCodeAt(0), 0);
+  return `00000000-0000-4000-8000-${String(digits % 100000).padStart(12, "0")}`;
+}
 
 function draftQuestion(questionId: string) {
   return questionPublic({
     question_id: questionId,
     title: `草稿 ${questionId}`,
     status: "draft",
-    versions: [{ question_version_id: DRAFT_VERSION, version: 1, status: "draft" }],
+    versions: [{ question_version_id: versionOf(questionId), version: 1, status: "draft" }],
   });
 }
 
@@ -125,7 +129,7 @@ describe("题库列表：删除草稿", () => {
       ]),
       {
         method: "DELETE",
-        path: `/api/v1/question-versions/${DRAFT_VERSION}`,
+        path: `/api/v1/question-versions/${versionOf("q-draft")}`,
         respond: () => new Response(null, { status: 204 }),
       },
     ]);
@@ -143,7 +147,7 @@ describe("题库列表：删除草稿", () => {
       const deletes = stub?.requests.filter((request) => request.method === "DELETE") ?? [];
       expect(deletes).toHaveLength(1);
       expect(deletes[0]?.url.pathname).toBe(
-        `/api/v1/question-versions/${DRAFT_VERSION}`,
+        `/api/v1/question-versions/${versionOf("q-draft")}`,
       );
     });
     expect(await screen.findByText("草稿已删除。")).toBeInTheDocument();
@@ -154,7 +158,7 @@ describe("题库列表：删除草稿", () => {
       ...baseRoutes([draftQuestion("q-draft")]),
       {
         method: "DELETE",
-        path: `/api/v1/question-versions/${DRAFT_VERSION}`,
+        path: `/api/v1/question-versions/${versionOf("q-draft")}`,
         respond: () =>
           jsonResponse(
             {
@@ -185,19 +189,47 @@ describe("题库列表：删除草稿", () => {
 });
 
 describe("题库列表：批量操作", () => {
-  it("勾选后出现批量操作条；批量删除只发一次请求并带上两条草稿版本", async () => {
+  it("勾选后出现批量操作条；批量删除只发一次请求，删掉的行真的从列表消失", async () => {
+    let deleted = false;
     stub = installFetchStub([
-      ...baseRoutes([draftQuestion("q-a"), draftQuestion("q-b")]),
+      {
+        method: "POST",
+        path: "/api/v1/auth/session",
+        respond: () => jsonResponse(sessionCreated({ roles: ["teacher"] })),
+      },
+      {
+        path: "/api/v1/courses",
+        respond: () => jsonResponse({ items: [courseSummary()], next_cursor: null }),
+      },
+      {
+        // 删除之后再取列表：只剩没被删的那道题（服务端真实行为）。
+        method: "GET",
+        path: "/api/v1/questions",
+        respond: () =>
+          jsonResponse({
+            items: deleted ? [draftQuestion("q-b")] : [draftQuestion("q-a"), draftQuestion("q-b")],
+            next_cursor: null,
+          }),
+      },
+      {
+        method: "GET",
+        path: "/api/v1/questions/coverage",
+        respond: () => jsonResponse(questionTagCoverage()),
+      },
       {
         method: "POST",
         path: "/api/v1/question-versions/batch-operations",
-        respond: () =>
-          jsonResponse({
-            results: [
-              { question_version_id: DRAFT_VERSION, status: "applied", error_code: null },
-              { question_version_id: UUID_C, status: "applied", error_code: null },
-            ],
-          }),
+        respond: ({ request }) => {
+          deleted = true;
+          const ids = (request.body as { question_version_ids: string[] }).question_version_ids;
+          return jsonResponse({
+            results: ids.map((id) => ({
+              question_version_id: id,
+              status: "applied",
+              error_code: null,
+            })),
+          });
+        },
       },
     ]);
     const user = userEvent.setup();
@@ -226,10 +258,14 @@ describe("题库列表：批量操作", () => {
       expect(batches[0]?.method).toBe("POST");
       expect(batches[0]?.body).toEqual({
         operation: "delete",
-        question_version_ids: [DRAFT_VERSION, DRAFT_VERSION],
+        question_version_ids: [versionOf("q-a"), versionOf("q-b")],
       });
     });
-    expect(await screen.findByText("2 项已全部成功。")).toBeInTheDocument();
+    // 常驻结果横幅（不是 2.5 秒就消失的 toast），并把结果如实写出来。
+    expect(await screen.findByTestId("batch-result")).toHaveTextContent("2 项已全部成功。");
+    // 关键：被删的行必须从列表里消失，而不是"点了确认、行还在"。
+    await waitFor(() => expect(screen.queryByTestId("delete-q-a")).toBeNull());
+    expect(screen.getByTestId("delete-q-b")).toBeInTheDocument();
   });
 
   it("批量发布的逐项结论要说清几项未处理", async () => {
@@ -241,7 +277,7 @@ describe("题库列表：批量操作", () => {
         respond: () =>
           jsonResponse({
             results: [
-              { question_version_id: DRAFT_VERSION, status: "applied", error_code: null },
+              { question_version_id: versionOf("q-a"), status: "applied", error_code: null },
               { question_version_id: UUID_B, status: "failed", error_code: "conflict" },
             ],
           }),
@@ -262,7 +298,7 @@ describe("题库列表：批量操作", () => {
         ) ?? [];
       expect(batches[0]?.body).toEqual({
         operation: "publish",
-        question_version_ids: [DRAFT_VERSION],
+        question_version_ids: [versionOf("q-a")],
       });
     });
     expect(await screen.findByText(/1 项成功，1 项未处理。/)).toBeInTheDocument();
@@ -301,7 +337,7 @@ describe("题库列表：表头全选", () => {
     expect(screen.getByTestId("batch-bar")).toHaveTextContent("已选 2 项");
     await user.click(screen.getByTestId("select-all-0"));
     expect(screen.getByTestId("batch-selected-count")).toHaveTextContent("已选 0 项");
-    expect(UUID_A).not.toBe(DRAFT_VERSION);
+    expect(UUID_A).not.toBe(versionOf("q-a"));
   });
 });
 
@@ -381,7 +417,7 @@ describe("题目列表：单条删除后保持滚动位置（需求 3）", () =>
       ...baseRoutes([draftQuestion("q-a"), draftQuestion("q-b")]),
       {
         method: "DELETE",
-        path: `/api/v1/question-versions/${DRAFT_VERSION}`,
+        path: `/api/v1/question-versions/${versionOf("q-a")}`,
         respond: () => {
           // DELETE 发出后列表重排，浏览器把视口带回顶部。
           scrollPosition = 0;
@@ -418,5 +454,76 @@ describe("题目列表：单条删除后保持滚动位置（需求 3）", () =>
     } finally {
       scrollYSpy?.mockRestore();
     }
+  });
+});
+
+describe("题库列表：批量删除的结果必须可见", () => {
+  it("逐项失败时用常驻横幅写清原因，而不是只闪一个 toast", async () => {
+    stub = installFetchStub([
+      ...baseRoutes([draftQuestion("q-a")]),
+      {
+        method: "POST",
+        path: "/api/v1/question-versions/batch-operations",
+        respond: () =>
+          jsonResponse({
+            results: [
+              { question_version_id: versionOf("q-a"), status: "failed", error_code: "forbidden" },
+            ],
+          }),
+      },
+    ]);
+    const user = userEvent.setup();
+    await openList();
+
+    await user.click(screen.getByTestId("batch-mode-toggle"));
+    await user.click(await screen.findByTestId("select-q-a"));
+    await user.click(screen.getByTestId("batch-delete"));
+    await user.click(
+      within(await screen.findByTestId("delete-draft-modal")).getByTestId(
+        "delete-draft-confirm",
+      ),
+    );
+
+    const banner = await screen.findByTestId("batch-result");
+    expect(banner.textContent ?? "").toContain("0 项成功，1 项未处理。");
+    expect(banner.textContent ?? "").toContain("没有权限");
+    // 没删掉的行必须还在（不能因为"结果不好看"就把行摘掉）。
+    expect(screen.getByTestId("delete-q-a")).toBeInTheDocument();
+  });
+
+  it("批量删除进行中与完成后都把选择清空，但结果横幅留着", async () => {
+    stub = installFetchStub([
+      ...baseRoutes([draftQuestion("q-a")]),
+      {
+        method: "POST",
+        path: "/api/v1/question-versions/batch-operations",
+        respond: () =>
+          jsonResponse({
+            results: [
+              { question_version_id: versionOf("q-a"), status: "applied", error_code: null },
+            ],
+          }),
+      },
+    ]);
+    const user = userEvent.setup();
+    await openList();
+
+    await user.click(screen.getByTestId("batch-mode-toggle"));
+    await user.click(await screen.findByTestId("select-q-a"));
+    expect(screen.getByTestId("batch-selected-count")).toHaveTextContent("已选 1 项");
+
+    await user.click(screen.getByTestId("batch-delete"));
+    await user.click(
+      within(await screen.findByTestId("delete-draft-modal")).getByTestId(
+        "delete-draft-confirm",
+      ),
+    );
+
+    await waitFor(() =>
+      expect(screen.getByTestId("batch-selected-count")).toHaveTextContent("已选 0 项"),
+    );
+    expect(screen.getByTestId("batch-result")).toHaveTextContent("1 项已全部成功。");
+    await user.click(screen.getByTestId("batch-result-dismiss"));
+    expect(screen.queryByTestId("batch-result")).toBeNull();
   });
 });

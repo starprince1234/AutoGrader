@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { t } from "../../i18n";
 import { courseLabel as formatCourseLabel, loadedCourses, useCourses } from "../../api/directory";
@@ -21,6 +22,7 @@ import {
 import { Select } from "../../ui/Select";
 import { Toast } from "../../ui/Toast";
 import type { QuestionPublic, QuestionVersionBatchResult } from "../../api/types";
+import type { QuestionListPage as QuestionListPageData } from "./useQuestions";
 import { usePublishQuestionVersion, useVerifyReferenceAnswer } from "../authoring/useAuthoring";
 import { QuestionCoveragePanel } from "./QuestionCoveragePanel";
 import {
@@ -178,6 +180,38 @@ export function QuestionListPage() {
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   // 批量模式：未进入时列表不渲染任何复选框（需求 1）。
   const [batchMode, setBatchMode] = useState(false);
+  // 批量操作的结果（几项成功、几项为什么没成）。用常驻横幅而不是 2.5 秒消失的 toast：
+  // "点了确认却什么都没变"正是需要它一直摆在那里的场景。
+  const [batchNotice, setBatchNotice] = useState<{
+    tone: "success" | "warn";
+    message: string;
+  } | null>(null);
+  const queryClient = useQueryClient();
+
+  /**
+   * 把已删除的题目从列表缓存里摘掉。
+   *
+   * 删除是**服务端**的结论，但界面是否有变化取决于本地缓存：只等后台重取的话，
+   * 网络抖动或请求被跳过就会留下"点了确认、行还在"的观感。这里先按服务端结论把行摘掉，
+   * 随后照旧失效重取，用真值覆盖。
+   */
+  const pruneQuestions = (questionIds: string[]) => {
+    if (questionIds.length === 0) return;
+    const removed = new Set(questionIds);
+    queryClient.setQueriesData<{ pages: QuestionListPageData[] }>(
+      { queryKey: ["questions"] },
+      (data) => {
+        if (!data) return data;
+        return {
+          ...data,
+          pages: data.pages.map((page) => ({
+            ...page,
+            items: page.items.filter((item) => !removed.has(item.question_id)),
+          })),
+        };
+      },
+    );
+  };
   const [deleteTarget, setDeleteTarget] = useState<{
     questionIds: string[];
     versionIds: string[];
@@ -341,23 +375,35 @@ export function QuestionListPage() {
 
   const runDelete = async () => {
     if (deleteTarget === null) return;
-    const { versionIds, batch: isBatch } = deleteTarget;
+    const { questionIds, versionIds, batch: isBatch } = deleteTarget;
     // 只有单条删除要求保持滚动位置（需求 3）；批量删除会删掉多行，位置本身没有意义。
     const savedScrollY = isBatch ? null : window.scrollY;
     setDeleteTarget(null);
+    setBatchNotice(null);
     try {
       if (!isBatch && versionIds.length === 1) {
         await removeVersion.mutateAsync(versionIds[0]);
+        pruneQuestions(questionIds);
         notify(t("questions.deleted"));
       } else {
         const result = await batch.mutateAsync({
           operation: "delete",
           questionVersionIds: versionIds,
         });
-        notify(batchSummary(result));
+        // 结果按请求顺序返回：第 i 项 applied 就把第 i 个题目从列表里摘掉。
+        const removedQuestions = questionIds.filter(
+          (_questionId, index) => result.results[index]?.status === "applied",
+        );
+        pruneQuestions(removedQuestions);
+        setBatchNotice({
+          tone: result.results.every((item) => item.status === "applied") ? "success" : "warn",
+          message: batchSummary(result),
+        });
       }
     } catch (error) {
-      notify(deleteFailureMessage(error));
+      const message = deleteFailureMessage(error);
+      if (isBatch) setBatchNotice({ tone: "warn", message });
+      else notify(message);
     } finally {
       setSelected(new Set());
       if (savedScrollY !== null) restoreScroll(savedScrollY);
@@ -376,11 +422,17 @@ export function QuestionListPage() {
       notify(t("questions.batchNothing"));
       return;
     }
+    setBatchNotice(null);
     try {
       const result = await batch.mutateAsync({ operation: "publish", questionVersionIds: versionIds });
-      notify(batchSummary(result));
+      setBatchNotice({
+        tone: result.results.every((item) => item.status === "applied") ? "success" : "warn",
+        message: batchSummary(result),
+      });
+      // 成功发布的行状态从"草稿"变"已发布"，列表与覆盖度都要重取。
+      await queryClient.invalidateQueries({ queryKey: ["questions"] });
     } catch (error) {
-      notify(publishFailureMessage(error, false));
+      setBatchNotice({ tone: "warn", message: publishFailureMessage(error, false) });
     } finally {
       setSelected(new Set());
     }
@@ -512,6 +564,20 @@ export function QuestionListPage() {
           </div>
         }
       >
+        {batchNotice !== null ? (
+          <Banner tone={batchNotice.tone} testId="batch-result">
+            <span>{batchNotice.message}</span>{" "}
+            <button
+              type="button"
+              className="button button--ghost"
+              data-testid="batch-result-dismiss"
+              onClick={() => setBatchNotice(null)}
+            >
+              {t("common.close")}
+            </button>
+          </Banner>
+        ) : null}
+
         {batchMode ? (
           <div className="inline batch-bar" data-testid="batch-bar">
             <span className="muted">{t("questions.selectedCount", { count: selected.size })}</span>
