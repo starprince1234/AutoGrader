@@ -171,6 +171,12 @@ def _question_extras(
     One session serves both so a listing does not double-query per row. The history is
     part of the public DTO because a client otherwise has no way to obtain a
     ``question_version_id`` and therefore cannot publish (found during integration).
+
+    Which assets: a **teacher** sees the latest version's, which is the content the row
+    describes (title and stem come from the question's current state). Those include the
+    assets that are not bound to any version yet, because ``publish`` is what binds them --
+    without that, a draft with an uploaded image reported "no image" in the list. A
+    **student** keeps seeing only the published version's bound assets.
     """
     from ..infra.repositories import QuestionBankRepository
 
@@ -183,10 +189,17 @@ def _question_extras(
         is_staff = context.principal is not None and context.principal.has_role(
             "teacher", "admin"
         )
-        target = published or (versions[0] if is_staff else None)
-        assets = (
-            bank.list_assets_for_version(target.question_version_id) if target is not None else []
-        )
+        target = versions[0] if is_staff else published
+        assets: list = []
+        if target is not None:
+            assets = list(bank.list_assets_for_version(target.question_version_id))
+        if is_staff:
+            seen = {asset.asset_id for asset in assets}
+            assets.extend(
+                asset
+                for asset in bank.list_unbound_assets(question.question_id)
+                if asset.asset_id not in seen
+            )
         # Detach everything the caller will read after the session closes.
         for asset in assets:
             session.expunge(asset)

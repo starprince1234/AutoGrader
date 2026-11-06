@@ -383,6 +383,29 @@ def test_asset_upload_is_refused_once_published(client, auth_headers, question_w
     assert response.status_code == 409
 
 
+def test_a_draft_image_appears_in_the_public_dto_before_publish(
+    client, auth_headers, question_with_asset
+):
+    """草稿也要报出自己上传的图：列表的「图片」列读的就是这里。
+
+    上传发生在版本还是草稿的时候，而把图片**绑定**到版本是 `publish` 才做的事
+    （`bind_assets_to_version`），所以未发布的图 `question_version_id` 是 NULL。原来的
+    `_question_extras` 只按版本 id 查，草稿因此一律报空——老师传完图回到列表仍然看到"无"。
+    """
+    question_id, asset = question_with_asset
+
+    listed = client.get("/api/v1/questions", headers=auth_headers("teacher-a"))
+    assert listed.status_code == 200
+    row = next(
+        item for item in listed.json()["items"] if item["question_id"] == question_id
+    )
+    assert [item["asset_id"] for item in row["stem_assets"]] == [asset["asset_id"]]
+
+    detail = client.get(f"/api/v1/questions/{question_id}", headers=auth_headers("teacher-a"))
+    assert detail.status_code == 200
+    assert [item["asset_id"] for item in detail.json()["stem_assets"]] == [asset["asset_id"]]
+
+
 def test_stem_assets_appear_in_the_public_dto_after_publish(
     client, auth_headers, question_with_asset
 ):

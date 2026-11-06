@@ -278,6 +278,8 @@ export const messages = {
     "questions.historicalVersion": "你正在查看历史版本 v{version}，题干是当时发布的内容。",
     "questions.filter": "筛选",
     "questions.assets": "图片",
+"questions.assetsSome": "有",
+"questions.assetsNone": "无",
     "submit.resolvingRunId": "提交已受理，正在准备评测…",
 
 "import.title": "名单导入",

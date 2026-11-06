@@ -240,6 +240,25 @@ describe("题目列表的游标分页", () => {
     expect(within(table).getByText("统计文件行数")).toBeInTheDocument();
   });
 
+  it("图片列：有配图显示「有」，没有配图显示「无」", async () => {
+    stub = installFetchStub(
+      routes({
+        "": {
+          items: [
+            questionPublic({ question_id: "q-img" }),
+            questionPublic({ question_id: "q-none", stem_assets: [] }),
+          ],
+          next_cursor: null,
+        },
+      }),
+    );
+    await open(userEvent.setup());
+
+    // 有图的题目不再显示「无」，也不再显示张数；没有图的才是「无」。
+    expect(screen.getByTestId("assets-q-img")).toHaveTextContent("有");
+    expect(screen.getByTestId("assets-q-none")).toHaveTextContent("无");
+  });
+
   it("题干搜索框按已加载题目的题干文字过滤，并给出无命中提示", async () => {
     stub = installFetchStub(
       routes({

@@ -265,6 +265,7 @@ export function usePublishQuestionVersion() {
  * 永远不会被当成权威值。这里也不回显字节，只显示服务端返回的元数据。
  */
 export function useUploadQuestionAsset(questionId: string | null) {
+  const queryClient = useQueryClient();
   return useMutation({
     /**
      * `questionId` 可以随这次调用一起给：题干页插图时题目可能刚被自动存成草稿，
@@ -289,6 +290,15 @@ export function useUploadQuestionAsset(questionId: string | null) {
         size_bytes: asset.size_bytes,
       });
       return asset;
+    },
+    onSuccess: (_asset, input) => {
+      // 题库列表的「图片」列读的是 `stem_assets`：上传成功就必须让它重取，
+      // 否则老师传完图回到列表仍然看到"无"（本次修的 bug）。
+      const targetId = input.questionId ?? questionId;
+      void queryClient.invalidateQueries({ queryKey: ["questions"] });
+      if (targetId) {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.question(targetId) });
+      }
     },
   });
 }

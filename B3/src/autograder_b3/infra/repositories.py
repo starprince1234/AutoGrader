@@ -424,6 +424,25 @@ class QuestionBankRepository:
         )
         return list(self.session.execute(statement).scalars())
 
+    def list_unbound_assets(self, question_id: uuid.UUID) -> list[QuestionAsset]:
+        """Assets uploaded to this question that no version has claimed yet.
+
+        An upload happens while the version is still a draft, and ``publish`` is what binds
+        assets to a version (``bind_assets_to_version``). "Belongs to no version" therefore
+        means "belongs to the draft being authored" -- which is exactly what a teacher's row
+        in the question list must show. Without these the list reports "no image" for a
+        question whose stem already carries one.
+        """
+        statement = (
+            select(QuestionAsset)
+            .where(
+                QuestionAsset.question_id == question_id,
+                QuestionAsset.question_version_id.is_(None),
+            )
+            .order_by(QuestionAsset.created_at)
+        )
+        return list(self.session.execute(statement).scalars())
+
     def count_assets(self, question_id: uuid.UUID) -> int:
         return int(
             self.session.execute(

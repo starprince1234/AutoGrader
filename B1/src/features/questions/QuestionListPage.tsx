@@ -777,12 +777,16 @@ export function QuestionListPage() {
                 key: "assets",
                 header: t("questions.assets"),
                 align: "right",
+                // 「有 / 无」而不是数量：这一列回答的是"题干里有没有配图"，
+                // 具体几张在图上看得到，列表里不需要数字。
                 render: (row) =>
                   (row.stem_assets?.length ?? 0) === 0 ? (
-                    <span className="muted">{t("common.none")}</span>
+                    <span className="muted" data-testid={`assets-${row.question_id}`}>
+                      {t("questions.assetsNone")}
+                    </span>
                   ) : (
                     <span data-testid={`assets-${row.question_id}`}>
-                      {row.stem_assets?.length}
+                      {t("questions.assetsSome")}
                     </span>
                   ),
               },
