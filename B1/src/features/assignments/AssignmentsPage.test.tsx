@@ -265,7 +265,10 @@ describe("作业中心（C1：学生侧）", () => {
 
     // 作业列表已到位，但本人成绩行还在路上：进度列只能是"加载中"，不能是"未提交"。
     const table = await screen.findByTestId("my-assignments-table");
-    expect(within(table).getByTestId(`my-progress-loading-${UUID_A}`)).toHaveTextContent("加载中");
+    const loadingCell = within(table).getByTestId(`my-progress-loading-${UUID_A}`);
+    expect(loadingCell).toHaveTextContent("加载中");
+    // 这处等待不走 Spinner，所以单独确认指示器也在（不是一行孤零零的灰字）。
+    expect(loadingCell.querySelector(".inline-loader")).not.toBeNull();
     expect(screen.queryByTestId(`my-progress-${UUID_A}`)).toBeNull();
     expect(table).not.toHaveTextContent("未提交");
   });

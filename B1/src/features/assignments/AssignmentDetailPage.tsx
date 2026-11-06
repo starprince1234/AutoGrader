@@ -10,6 +10,7 @@ import {
   Banner,
   EmptyState,
   ErrorState,
+  InlineLoader,
   PageTitle,
   Panel,
   Spinner,
@@ -44,6 +45,7 @@ function MyStatusCell({ progress, grade }: { progress: MyProgress; grade: GradeR
   if (progress === "loading") {
     return (
       <span className="muted" data-testid="my-version-progress-loading">
+        <InlineLoader />
         {t("common.loading")}
       </span>
     );

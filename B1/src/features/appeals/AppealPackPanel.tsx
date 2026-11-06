@@ -2,7 +2,7 @@ import { useState } from "react";
 import { t } from "../../i18n";
 import { useSession } from "../../auth/sessionContext";
 import { appealPackView } from "../../auth/visibility";
-import { Banner, ErrorState, Panel, Spinner } from "../../ui/components";
+import { Banner, ErrorState, InlineLoader, Panel, Spinner } from "../../ui/components";
 import { formatDateTime, shortenId } from "../../ui/format";
 import { downloadAppealPack, useAppealPack } from "./useAppealPack";
 
@@ -63,7 +63,14 @@ export function AppealPackPanel({ runId }: { runId: string }) {
           disabled={view === null || appeal.isFetching}
           onClick={() => setRequested(true)}
         >
-          {appeal.isFetching ? t("common.loading") : t("appeal.open")}
+          {appeal.isFetching ? (
+            <>
+              <InlineLoader />
+              {t("common.loading")}
+            </>
+          ) : (
+            t("appeal.open")
+          )}
         </button>
       </div>
 

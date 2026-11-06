@@ -87,7 +87,14 @@ export function LoadMoreActions({
         disabled={isFetchingNextPage}
         onClick={onLoadMore}
       >
-        {isFetchingNextPage ? t("common.loading") : t("common.loadMore")}
+        {isFetchingNextPage ? (
+          <>
+            <InlineLoader />
+            {t("common.loading")}
+          </>
+        ) : (
+          t("common.loadMore")
+        )}
       </button>
     );
   }
@@ -99,9 +106,35 @@ export function LoadMoreActions({
   );
 }
 
+/**
+ * 行内加载指示：六个小方块按波浪依次闪动。
+ *
+ * 造型取自 Uiverse 上 cosnametv 的 loader（3 列网格 + scale/opacity 交替 + 错峰延时），
+ * 缩到 16px 放在"加载中…"这类文字前面——一行灰字孤零零的会显得没在做事情。
+ * 方块用 `currentColor`，所以它会跟着所在容器（通常是 `.muted`）的颜色走。
+ * 整块是 `inline-grid`，不改变所在段落的对齐、行高与折行。
+ */
+export function InlineLoader() {
+  return (
+    <span className="inline-loader" aria-hidden="true">
+      <span />
+      <span />
+      <span />
+      <span />
+      <span />
+      <span />
+    </span>
+  );
+}
+
+/**
+ * 加载提示：行内小方块 + 一句说明。全仓的"加载中…"大多走这里，
+ * 改这一处，初次进入页面/首次点击后的等待状态就都带上指示器了。
+ */
 export function Spinner({ label }: { label?: string }) {
   return (
     <p className="muted" role="status">
+      <InlineLoader />
       {label ?? t("common.loading")}
     </p>
   );

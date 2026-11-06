@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Drawer } from "../../ui/components";
+import { Drawer, InlineLoader } from "../../ui/components";
 import { t } from "../../i18n";
 import { describeApiError, isApiError } from "../../api/problem";
 import {
@@ -80,7 +80,12 @@ export function ManualGradeDrawer({
       <div className="stack">
         <section>
           <h3>{t("manualGrade.intake")}</h3>
-          {intake.isPending ? <p className="muted">{t("common.loading")}</p> : null}
+          {intake.isPending ? (
+            <p className="muted">
+              <InlineLoader />
+              {t("common.loading")}
+            </p>
+          ) : null}
           {intake.data === null ? (
             <p className="muted" data-testid="intake-none">
               {t("manualGrade.noMessage")}

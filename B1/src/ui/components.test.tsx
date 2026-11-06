@@ -4,7 +4,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ApiError } from "../api/problem";
 import { CONTRACT_VERSION } from "../app/contractVersion";
-import { ErrorState, Drawer, Field, Modal, Panel, Table } from "./components";
+import { ErrorState, Drawer, Field, LoadMoreActions, Modal, Panel, Spinner, Table } from "./components";
 
 /**
  * UI 原语的行为测试（WCAG 2.2 AA 的最小可验证集 + 诊断信息复制）。
@@ -234,6 +234,45 @@ describe("抽屉导航（小屏）的可访问性", () => {
     expect(document.body.style.overflow).toBe("hidden");
     await user.keyboard("{Escape}");
     expect(document.body.style.overflow).toBe("");
+  });
+});
+
+describe("加载指示（等待态不只是一行灰字）", () => {
+  it("Spinner 在文字前渲染六个脉冲方块，朗读的仍然只有那句提示", () => {
+    const { container } = render(<Spinner />);
+
+    const loader = container.querySelector(".inline-loader");
+    expect(loader).not.toBeNull();
+    // 方块是纯装饰：既不能被朗读成内容，也不能把六块算成六个元素
+    expect(loader).toHaveAttribute("aria-hidden", "true");
+    expect(loader?.children).toHaveLength(6);
+    expect(screen.getByRole("status")).toHaveTextContent("加载中");
+    // 顺序必须是指示器在前、文字在后
+    expect(loader?.nextSibling?.textContent).toBe("加载中…");
+  });
+
+  it("自定义 label 也带同一个指示器", () => {
+    const { container } = render(<Spinner label="正在核对引用" />);
+
+    expect(container.querySelector(".inline-loader")).not.toBeNull();
+    expect(screen.getByRole("status")).toHaveTextContent("正在核对引用");
+  });
+
+  it("「加载更多」取下一页时按钮里也有指示器，且保持禁用", () => {
+    render(
+      <LoadMoreActions
+        loadedCount={20}
+        hasNextPage
+        isFetchingNextPage
+        onLoadMore={() => {}}
+        testId="list"
+      />,
+    );
+
+    const button = screen.getByTestId("list-load-more");
+    expect(button).toBeDisabled();
+    expect(button).toHaveTextContent("加载中");
+    expect(button.querySelector(".inline-loader")).not.toBeNull();
   });
 });
 

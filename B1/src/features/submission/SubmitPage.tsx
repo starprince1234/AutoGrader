@@ -7,7 +7,7 @@ import { useSession } from "../../auth/sessionContext";
 import { useQuestion, useQuestionVersion } from "../questions/useQuestions";
 import { SafeMarkdown } from "../questions/SafeMarkdown";
 import { useQuestionAsset } from "../questions/useQuestionAsset";
-import { Banner, ErrorState, Field, Modal, PageTitle, Panel, Spinner } from "../../ui/components";
+import { Banner, ErrorState, Field, InlineLoader, Modal, PageTitle, Panel, Spinner } from "../../ui/components";
 import { formatDateTime, shortenId } from "../../ui/format";
 import { log, newRequestId } from "../../logging/logger";
 import { CodeEditor } from "./CodeEditor";
@@ -76,7 +76,12 @@ function StemAsset({
   const state = useQuestionAsset(src);
   const label = asset.alt_text && asset.alt_text !== "" ? asset.alt_text : t("questions.assetAltFallback");
   if (state.status === "loading") {
-    return <span className="muted">{t("common.loading")}</span>;
+    return (
+      <span className="muted">
+        <InlineLoader />
+        {t("common.loading")}
+      </span>
+    );
   }
   if (state.status === "forbidden") {
     return <span className="muted">{t("questions.assetForbidden")}</span>;

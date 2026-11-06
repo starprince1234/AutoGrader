@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { t } from "../../i18n";
 import { apiBaseUrl } from "../../api/client";
+import { InlineLoader } from "../../ui/components";
 import { parseMarkdown, type BlockNode, type InlineNode } from "./markdown/parse";
 import { decideUrl } from "./urlPolicy";
 import { useQuestionAsset } from "./useQuestionAsset";
@@ -23,6 +24,7 @@ function ControlledImage({ src, alt }: { src: string; alt: string }) {
   if (asset.status === "loading") {
     return (
       <span className="muted" data-testid="asset-loading">
+        <InlineLoader />
         {t("common.loading")}
       </span>
     );

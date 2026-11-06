@@ -951,6 +951,87 @@ samp {
   }
 }
 
+/* -------------------------------------------------------- 行内加载指示 */
+
+/*
+ * 六个小方块排成 3 列，按下标错峰闪动，形成一条从左下往右下走的波纹
+ * （造型取自 Uiverse 上 cosnametv 的 loader）。
+ * 单块 5px、间隙 2px，整体 19×12px——比"加载中…"的行高略小，塞在文字前面不会把行撑开；
+ * `vertical-align: -3px` 让它和汉字的视觉中线对齐，而不是浮在字上方。
+ * 右边距就是它和后面那句话之间的间距：这里用 inline 布局而不是 flex，
+ * 是为了不动原来那二十来处等待提示的对齐、行高和折行。
+ */
+.inline-loader {
+  display: inline-grid;
+  grid-template-columns: repeat(3, 5px);
+  gap: 2px;
+  margin-right: 6px;
+  vertical-align: -3px;
+  flex: none;
+}
+
+.inline-loader > span {
+  width: 5px;
+  height: 5px;
+  border-radius: 1.5px;
+  background-color: currentColor;
+  animation: inline-loader-blink 700ms infinite ease-in-out;
+  /* 只动 transform/opacity，交给合成器，不会每帧重排。 */
+  will-change: transform, opacity;
+}
+
+.inline-loader > span:nth-child(1) {
+  animation-delay: 0ms;
+}
+
+.inline-loader > span:nth-child(2) {
+  animation-delay: 100ms;
+}
+
+.inline-loader > span:nth-child(3) {
+  animation-delay: 200ms;
+}
+
+.inline-loader > span:nth-child(4) {
+  animation-delay: 300ms;
+}
+
+.inline-loader > span:nth-child(5) {
+  animation-delay: 400ms;
+}
+
+.inline-loader > span:nth-child(6) {
+  animation-delay: 500ms;
+}
+
+/* 暗到 0.35 就停：再暗就只剩 5px，方块会整块消失，看起来像少了两颗。 */
+@keyframes inline-loader-blink {
+  0%,
+  45%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.62);
+  }
+  20% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* 低动态偏好：方块停在半亮，不闪也不缩放。 */
+@media (prefers-reduced-motion: reduce) {
+  .inline-loader > span {
+    animation: none;
+    opacity: 0.7;
+    transform: none;
+  }
+}
+
+/* 按钮自己就是 inline-flex + 6px gap，方块再带右边距就会变成 12px。 */
+.button .inline-loader {
+  margin-right: 0;
+}
+
 /* ---------------------------------------------------------------- 卡片 */
 
 /* 面板：白面 + 1px 发丝 + 12px 圆角 + 极轻双层阴影；顶边 1px 渐变发丝是唯一的「光」。

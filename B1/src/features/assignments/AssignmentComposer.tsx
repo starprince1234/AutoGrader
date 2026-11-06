@@ -6,7 +6,7 @@ import { isApiError } from "../../api/problem";
 import { loadedCourses, useMergedSections } from "../../api/directory";
 import { useCourses } from "../../api/directory";
 import { useQuestionList } from "../questions/useQuestions";
-import { Banner, Field, Modal } from "../../ui/components";
+import { Banner, Field, InlineLoader, Modal } from "../../ui/components";
 import { useCreateAssignment } from "./useAssignments";
 import { Select } from "../../ui/Select";
 
@@ -216,7 +216,10 @@ export function AssignmentComposer({
               <span className="muted"> · {t("assignments.create.versionsHint")}</span>
             </legend>
             {questions.isPending ? (
-              <p className="muted">{t("common.loading")}</p>
+              <p className="muted">
+                <InlineLoader />
+                {t("common.loading")}
+              </p>
             ) : publishedVersions.length === 0 ? (
               <p className="muted">{t("assignments.create.noVersions")}</p>
             ) : (

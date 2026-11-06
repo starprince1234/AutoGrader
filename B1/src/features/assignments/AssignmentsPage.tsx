@@ -12,6 +12,7 @@ import {
   EmptyState,
   ErrorState,
   Field,
+  InlineLoader,
   PageTitle,
   Panel,
   Spinner,
@@ -161,7 +162,11 @@ function StudentAssignmentList({
             if (myProgress === "loading") {
               // 本人成绩行还没取完：此时任何"做完了没有"的判断都不可信。
               return (
-                <span className="muted" data-testid={`my-progress-loading-${row.assignment_id}`}>
+                <span
+                  className="muted"
+                  data-testid={`my-progress-loading-${row.assignment_id}`}
+                >
+                  <InlineLoader />
                   {t("common.loading")}
                 </span>
               );
