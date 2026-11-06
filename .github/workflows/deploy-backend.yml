@@ -668,6 +668,15 @@ jobs:
             echo 'Workspace-related settings:'
             grep -E '^[A-Z0-9_]*(WORKSPACE|WORK_ROOT|WORKDIR|CASE_ROOT)[A-Z0-9_]*=' /etc/autograder/runtime.env || true
           fi
+          echo 'Service cgroup subtree (nsjail needs this free of tasks):'
+          unit_cgroup=/sys/fs/cgroup/system.slice/autograder.service
+          if [ -d "$unit_cgroup" ]; then
+            echo "subtree_control=$(cat "$unit_cgroup/cgroup.subtree_control" 2>/dev/null)"
+            echo "cgroup_procs=$(cat "$unit_cgroup/cgroup.procs" 2>/dev/null | tr '\n' ' ')"
+            ls -1 "$unit_cgroup" 2>/dev/null | head -n 20
+          else
+            echo 'unit_cgroup=missing'
+          fi
           echo 'Sandbox canary (proves the sandbox can run a program at all):'
           release="$(readlink -f /opt/autograder/current 2>/dev/null || true)"
           if [ -n "$release" ] && [ -x "$release/MAIN/.venv/bin/python" ]; then
