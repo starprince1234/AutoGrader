@@ -239,10 +239,22 @@ export function QuestionListPage() {
     { enabled: author },
   );
   // 分页结果摊平成一张表：游标只用于"还有没有下一页"，页面本身不暴露游标。
-  const loadedRows = useMemo(
-    () => (questions.data?.pages ?? []).flatMap((page) => page.items),
-    [questions.data],
-  );
+  //
+  // 按 `question_id` 去重：游标分页是**两次请求**，中间若有人新建题目，页边界会滑动，
+  // 同一个题目就可能同时出现在两页里。重复行不只是难看——批量操作会把同一个版本 id 发两次，
+  // 服务端按契约的 `uniqueItems` 直接 422（"删除没有成功"）。
+  const loadedRows = useMemo(() => {
+    const seen = new Set<string>();
+    const rows: QuestionPublic[] = [];
+    for (const page of questions.data?.pages ?? []) {
+      for (const item of page.items) {
+        if (seen.has(item.question_id)) continue;
+        seen.add(item.question_id);
+        rows.push(item);
+      }
+    }
+    return rows;
+  }, [questions.data]);
 
   // 标签下拉的选项：来自已加载题目（**不受当前标签筛选影响**），再加上当前选中的那一档。
   const tagOptions = useMemo(() => {
@@ -315,6 +327,27 @@ export function QuestionListPage() {
     } finally {
       setPublishingId(null);
     }
+  };
+
+  /**
+   * 勾选行 → (题目 id, 草稿版本 id) 两组，**按版本 id 去重**。
+   *
+   * 卡在两个真实约束之间：契约要求 `question_version_ids` 唯一（重复即 422），
+   * 而逐项结果与请求顺序一一对应，所以两组必须同长、同序——去重时一起跳过。
+   */
+  const collectDrafts = (): { questionIds: string[]; versionIds: string[] } => {
+    const questionIds: string[] = [];
+    const versionIds: string[] = [];
+    const seenVersions = new Set<string>();
+    for (const row of rows) {
+      if (!selected.has(row.question_id)) continue;
+      const draft = draftVersionIdOf(row);
+      if (draft === null || seenVersions.has(draft)) continue;
+      seenVersions.add(draft);
+      questionIds.push(row.question_id);
+      versionIds.push(draft);
+    }
+    return { questionIds, versionIds };
   };
 
   const toggleRow = (questionId: string, checked: boolean) => {
@@ -420,12 +453,7 @@ export function QuestionListPage() {
 
   /** 批量发布：同样先请求平台检验的门禁由服务端执行，这里只把逐项结论讲清楚。 */
   const runBatchPublish = async () => {
-    const versionIds: string[] = [];
-    for (const row of rows) {
-      if (!selected.has(row.question_id)) continue;
-      const draft = draftVersionIdOf(row);
-      if (draft !== null) versionIds.push(draft);
-    }
+    const { versionIds } = collectDrafts();
     if (versionIds.length === 0) {
       notify(t("questions.batchNothing"));
       return;
@@ -606,15 +634,7 @@ export function QuestionListPage() {
               data-testid="batch-delete"
               disabled={batch.isPending || selected.size === 0}
               onClick={() => {
-                const questionIds: string[] = [];
-                const versionIds: string[] = [];
-                for (const row of rows) {
-                  if (!selected.has(row.question_id)) continue;
-                  const draft = draftVersionIdOf(row);
-                  if (draft === null) continue;
-                  questionIds.push(row.question_id);
-                  versionIds.push(draft);
-                }
+                const { questionIds, versionIds } = collectDrafts();
                 askDelete(questionIds, versionIds, true);
               }}
             >

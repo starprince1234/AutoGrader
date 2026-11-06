@@ -599,3 +599,78 @@ describe("题库列表：批量删除的结果必须可见", () => {
     expect(screen.queryByTestId("batch-result")).toBeNull();
   });
 });
+
+describe("题库列表：分页重叠不会重复发版本 id（契约 uniqueItems）", () => {
+  it("两页里出现同一道题时只渲染一行，批量删除的 id 也不重复", async () => {
+    // 游标分页是两次请求：中间有人新建题目时页边界会滑动，同一道题就会出现在两页里。
+    stub = installFetchStub([
+      {
+        method: "POST",
+        path: "/api/v1/auth/session",
+        respond: () => jsonResponse(sessionCreated({ roles: ["teacher"] })),
+      },
+      {
+        path: "/api/v1/courses",
+        respond: () => jsonResponse({ items: [courseSummary()], next_cursor: null }),
+      },
+      {
+        method: "GET",
+        path: "/api/v1/questions",
+        respond: ({ url }) =>
+          jsonResponse(
+            url.searchParams.get("cursor") === null
+              ? { items: [draftQuestion("q-a"), draftQuestion("q-b")], next_cursor: "cursor-2" }
+              : // 第二页把 q-b 又带了一次
+                { items: [draftQuestion("q-b"), draftQuestion("q-c")], next_cursor: null },
+          ),
+      },
+      {
+        method: "GET",
+        path: "/api/v1/questions/coverage",
+        respond: () => jsonResponse(questionTagCoverage()),
+      },
+      {
+        method: "POST",
+        path: "/api/v1/question-versions/batch-operations",
+        respond: ({ request }) => {
+          const ids = (request.body as { question_version_ids: string[] }).question_version_ids;
+          return jsonResponse({
+            results: ids.map((id) => ({
+              question_version_id: id,
+              status: "applied",
+              error_code: null,
+            })),
+          });
+        },
+      },
+    ]);
+    const user = userEvent.setup();
+    await openList();
+
+    await user.click(screen.getByTestId("batch-mode-toggle"));
+    await user.click(screen.getByTestId("questions-load-more"));
+    await waitFor(() => expect(screen.getByTestId("delete-q-c")).toBeInTheDocument());
+
+    // 同一道题只渲染一次（q-b 不会有两行）。
+    expect(screen.getAllByTestId("delete-q-b")).toHaveLength(1);
+
+    for (const box of screen.getAllByTestId(/select-all-/)) {
+      await user.click(box);
+    }
+    await user.click(screen.getByTestId("batch-delete"));
+    await user.click(
+      within(await screen.findByTestId("delete-draft-modal")).getByTestId("delete-draft-confirm"),
+    );
+
+    await waitFor(() => {
+      const batches =
+        stub?.requests.filter((request) =>
+          request.url.pathname.endsWith("/api/v1/question-versions/batch-operations"),
+        ) ?? [];
+      const ids = (batches[0]?.body as { question_version_ids: string[] }).question_version_ids;
+      // 三道题、三个版本，且**不含重复**（重复会被契约的 uniqueItems 判 422）。
+      expect(ids).toHaveLength(3);
+      expect(new Set(ids).size).toBe(3);
+    });
+  });
+});
