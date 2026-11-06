@@ -3639,12 +3639,41 @@ samp {
 
 
 
-/* 需求 1：勾选框用强调色实心选中（原生 checkbox + accent-color，保留键盘与读屏行为）。 */
-.question-select {
+/* 需求 1：勾选框。
+   必须写成 `.table .question-select`：`.table input`（0,1,1）比 `.question-select`（0,1,0）
+   更具体，会把原生勾选框拆成 `appearance: none` + 30px 高 + 右侧 padding 的输入框，
+   于是 `accent-color` 连一个可见的"选中"都画不出来。这里提高优先级并自己画勾。 */
+.table .question-select {
+  appearance: none;
+  -webkit-appearance: none;
   width: 16px;
   height: 16px;
+  min-width: 16px;
   margin: 0;
+  padding: 0;
+  border: 1.5px solid var(--color-border-strong);
+  border-radius: 4px;
+  background: var(--color-surface) center / 12px 12px no-repeat;
   accent-color: var(--color-accent);
   cursor: pointer;
   vertical-align: middle;
+  transition: background-color var(--dur-fast) var(--ease),
+    border-color var(--dur-fast) var(--ease);
+}
+
+.table .question-select:hover:not(:disabled) {
+  border-color: var(--color-accent);
+}
+
+/* 选中：蓝色实心 + 白色对勾。对勾用内联 SVG 而不是 `::after`——`input` 是替换元素，
+   伪元素不会渲染。 */
+.table .question-select:checked {
+  background-color: var(--color-accent);
+  border-color: var(--color-accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M2.2 6.3l2.4 2.4 5-5.2' fill='none' stroke='%23ffffff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+.table .question-select:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
 }
