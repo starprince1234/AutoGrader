@@ -717,6 +717,7 @@ export const messages = {
 "authoring.verify.counts": "{passed} / {total} 个用例通过",
 "authoring.verify.verifiedAt": "检验时间：{time}",
 "authoring.verify.notPassedSummary": "有 {cases} 个用例没通过。",
+"authoring.verify.mismatchHint": "如果失败类别都是「输出不一致」：参考答案跑通了，但输出和用例的期望不一样。先在第 5 步把「标准输出比较」改成「忽略行尾空白」再检验一次；还不行就说明期望输出本身要改（编辑页的测试用例）。",
 "authoring.verify.notPassedMeaning": "说明参考答案还不能让所有用例通过；改好题目后再检验一次。",
 "authoring.verify.unrecorded": "所有用例都通过了，但这次结果没有被记录，请重新检验。",
 "authoring.verify.stale": "检验之后题目又改过，需要重新检验。",

@@ -94,7 +94,11 @@ SYSTEM_PROMPT = (
     "{path, mount, content_text}). "
     "Every field is optional; provide what the objective supports and omit the rest. "
     "Do not emit base64 or binary content: a teacher uploads binary fixtures separately. "
-    "Write test cases that a reference solution in the requested language can actually pass."
+    "Write test cases that a reference solution in the requested language can actually pass. "
+        "The reference answer must be a complete program that reads its input the way the "
+        "adapter describes (stdin when kind is stdin) and prints only the expected output; "
+        "every case's expected_stdout must be exactly what that program prints for the "
+        "case's stdin, including the trailing newline."
 )
 
 

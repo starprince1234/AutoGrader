@@ -241,7 +241,9 @@ export function draftFormFrom(
  */
 export function applyProposal(form: DraftForm, proposal: QuestionDraftProposal): DraftForm {
   const suggested = proposal.adapter;
-  const comparisonStdout = suggested?.comparison?.stdout ?? "exact";
+  // 模型没声明比对方式时用"忽略行尾空白"：AI 的期望输出经常少写一个行尾换行，
+  // 用"精确匹配"会让整套用例因为一个换行全部不过（教师仍可在第 5 步改）。
+  const comparisonStdout = suggested?.comparison?.stdout ?? "ignore_trailing_whitespace";
   const comparisonStderr = suggested?.comparison?.stderr ?? form.comparisonStderr;
   const tolerance = suggested?.comparison?.numeric_tolerance;
   return {
