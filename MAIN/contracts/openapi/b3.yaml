@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AutoGrader B3 Question Bank API
-  version: 0.27.0
+  version: 0.28.0
   description: |
     Question bank: stems with graphics, reference answers, immutable question
     versions, assignments, three test-suite adapters and de-identified statistics.
@@ -701,6 +701,69 @@ paths:
         '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
         '403': {$ref: './common.yaml#/components/responses/Forbidden'}
         '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
+    delete:
+      operationId: deleteQuestionVersion
+      summary: Delete a draft version (and its question when it was the last one) (CHG-0029)
+      description: |
+        Only a **draft** can be deleted. A published or archived version is refused with
+        `409` and can only be archived: its content is what past evidence was produced
+        from, and B3 cannot ask B2 whether an evaluation referenced it.
+
+        A draft that a live assignment points at is refused with `409` as well -- removing
+        it would break what a section was already given.
+
+        Removing the last remaining version soft-deletes the question (`deleted_at` plus
+        `archived`), so it disappears from every question-bank read; questions that still
+        have other versions keep them untouched.
+      tags: [questions]
+      responses:
+        '204': {description: Draft deleted; the question too when it had no other version.}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
+
+  /api/v1/question-versions/batch-operations:
+    post:
+      operationId: runQuestionVersionBatchOperation
+      summary: Delete or publish several draft versions in one request (CHG-0029)
+      description: |
+        The question bank had no way to remove a draft at all: `archive` accepts only a
+        published version, and a teacher who created twelve drafts by mistake could only
+        leave them in the bank forever. This operation (and `deleteQuestionVersion` next to
+        it) is that missing capability.
+
+        A batch is a **client convenience, never a second implementation**: every id is
+        attempted through the same single-item operation, in its own transaction, and
+        reported on its own. Three consequences are deliberate:
+
+        * a failure does not roll back the items that already succeeded -- a teacher asked
+          for "delete these seven", not "delete all seven or none";
+        * the batch cannot bypass a gate, so publishing still requires a matching
+          reference-answer attestation on the digest B3 recomputes, and deleting still
+          refuses anything that is not a draft;
+        * the response is always `200` with per-item outcomes, because "3 of 12 refused,
+          here is why" is a result to read, not an error to guess at.
+
+        Deleting the last remaining version of a question soft-deletes the question
+        (`deleted_at`), which removes it from every public read while leaving rows that
+        events and statistics may still reference intact.
+      tags: [questions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/QuestionVersionBatchInput'}
+      responses:
+        '200':
+          description: One outcome per requested version, in request order.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/QuestionVersionBatchResult'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
 
   /api/v1/question-versions/{question_version_id}/publish:
     parameters:
@@ -1874,4 +1937,47 @@ components:
           type: object
           additionalProperties: {type: integer, minimum: 0}
         computed_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+      additionalProperties: false
+
+    QuestionVersionBatchInput:
+      type: object
+      description: |
+        Body of `runQuestionVersionBatchOperation`. Bounded to 100 ids because each item is
+        a separate transaction; duplicates are rejected (`422`) rather than deduplicated,
+        since a client that sent the same version twice could not tell which of the two
+        results it is reading.
+      required: [operation, question_version_ids]
+      properties:
+        operation: {type: string, enum: [delete, publish]}
+        question_version_ids:
+          type: array
+          minItems: 1
+          maxItems: 100
+          uniqueItems: true
+          items: {$ref: './common.yaml#/components/schemas/Uuid'}
+      additionalProperties: false
+
+    QuestionVersionBatchResult:
+      type: object
+      required: [results]
+      properties:
+        results:
+          type: array
+          items: {$ref: '#/components/schemas/QuestionVersionBatchOutcome'}
+      additionalProperties: false
+
+    QuestionVersionBatchOutcome:
+      type: object
+      description: |
+        One item's fate. `error_code` is `null` exactly when `status` is `applied`; it is a
+        stable machine code, not prose, so the client owns the wording.
+      required: [question_version_id, status, error_code]
+      properties:
+        question_version_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        status: {type: string, enum: [applied, failed]}
+        error_code:
+          anyOf:
+            - type: string
+              enum: [not_found, forbidden, conflict, unprocessable, internal]
+            - type: "null"
       additionalProperties: false

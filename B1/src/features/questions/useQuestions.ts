@@ -1,9 +1,10 @@
-import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "../../api/client";
 import type {
   QuestionPage,
   QuestionPublic,
   QuestionTagCoverage,
+  QuestionVersionBatchResult,
   QuestionVersionPublic,
 } from "../../api/types";
 import { queryKeys } from "../../app/queryClient";
@@ -110,4 +111,61 @@ export function useQuestionCoverage(courseId: string | null, publishedOnly: bool
         query: { course_id: courseId as string, published_only: publishedOnly },
       }),
   });
+}
+
+/**
+ * 删除一个**草稿**版本（`deleteQuestionVersion`）。
+ *
+ * 服务端三条门禁，客户端一条都不重复实现：已发布版本只能归档（409）、被作业引用的草稿
+ * 不能删（409）、删掉最后一条版本时整个题目随之从题库消失（软删）。
+ *
+ * 成功后让题库与覆盖度缓存失效：删掉一道草稿会同时改变列表、标签分布与课程的分组计数，
+ * 只失效列表会让覆盖度面板显示一个"刚才那道题还在"的数字。
+ */
+export function useDeleteQuestionVersion() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (questionVersionId: string): Promise<void> => {
+      await apiRequest<void>(
+        `/api/v1/question-versions/${encodeURIComponent(questionVersionId)}`,
+        { method: "DELETE" },
+      );
+    },
+    onSuccess: () => {
+      invalidateBank(queryClient);
+    },
+  });
+}
+
+/**
+ * 批量删除/发布（`runQuestionVersionBatchOperation`）。
+ *
+ * 响应是**逐项**结论：一次请求里 3 项被拒、9 项成功是正常结果，页面据此告诉老师
+ * "哪些没成、为什么"，而不是用一个 4xx 把 9 项的成功也盖掉。
+ */
+export function useBatchQuestionVersions() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      operation: "delete" | "publish";
+      questionVersionIds: string[];
+    }): Promise<QuestionVersionBatchResult> =>
+      apiRequest<QuestionVersionBatchResult>("/api/v1/question-versions/batch-operations", {
+        method: "POST",
+        body: {
+          operation: input.operation,
+          question_version_ids: input.questionVersionIds,
+        },
+      }),
+    onSuccess: () => {
+      invalidateBank(queryClient);
+    },
+  });
+}
+
+/** 题库相关的缓存都失效：列表、单题、版本、覆盖度（前缀足够宽，分组计数也一起刷新）。 */
+function invalidateBank(queryClient: ReturnType<typeof useQueryClient>): void {
+  for (const prefix of ["questions", "question", "question-version", "question-tag-coverage"]) {
+    void queryClient.invalidateQueries({ queryKey: [prefix] });
+  }
 }

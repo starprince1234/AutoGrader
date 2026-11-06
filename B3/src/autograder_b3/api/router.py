@@ -28,6 +28,7 @@ from ..domain import (
     authoring_assistance,
     create_assignment,
     create_question,
+    delete_version,
     discard_generation,
     generation_capabilities,
     get_assignment_detail,
@@ -45,6 +46,7 @@ from ..domain import (
     question_statistics,
     question_tag_coverage,
     read_generation,
+    run_batch_operation,
     record_reference_attestation,
     request_generation,
     update_question,
@@ -59,6 +61,7 @@ from ..dto.internal import (
     FixtureUploadInputModel,
     QuestionDraftGenerationRequestModel,
     QuestionDraftInputModel,
+    QuestionVersionBatchInputModel,
     ReferenceAttestationInputModel,
 )
 from ..dto.public import (
@@ -647,6 +650,70 @@ def learning_context_endpoint(request: Request, question_version_id: uuid.UUID) 
         status_code=200,
     )
     return serialize_public(learning_context_to_public(learning_context))
+
+
+@router.post("/api/v1/question-versions/batch-operations")
+def run_batch_operation_endpoint(
+    request: Request, payload: QuestionVersionBatchInputModel
+) -> Response:
+    """Delete or publish many draft versions in one request (``CHG-0029``).
+
+    Declared **before** the ``{question_version_id}`` routes so the literal segment wins
+    the match. Every item is attempted independently and reported independently; the
+    response is always ``200`` with per-item outcomes, because "3 of 12 refused" is a
+    result a teacher has to be able to read, not an error to guess at.
+    """
+    context = _context(request)
+    dependencies = _dependencies(request)
+    outcomes = run_batch_operation(
+        dependencies.database,
+        principal=context.principal,
+        operation=payload.operation,
+        question_version_ids=payload.question_version_ids,
+        now=dependencies.now,
+        correlation_id=context.correlation_id,
+    )
+    log_event(
+        get_logger("api.versions"),
+        "question.version.batch_served",
+        request_id=context.request_id,
+        operation=payload.operation,
+        total=len(outcomes),
+        applied=sum(1 for item in outcomes if item.applied),
+        status_code=200,
+    )
+    return JSONResponse(
+        status_code=200,
+        content={"results": [item.to_wire() for item in outcomes]},
+    )
+
+
+@router.delete("/api/v1/question-versions/{question_version_id}", status_code=204)
+def delete_question_version_endpoint(
+    request: Request, question_version_id: uuid.UUID
+) -> Response:
+    """Delete a draft version (and its question, when that was the last one).
+
+    The single-item counterpart of the batch below: same rules, same refusals. A version
+    that has been published is never deleted here - it is archived - because its content
+    is what past evidence was produced from.
+    """
+    context = _context(request)
+    dependencies = _dependencies(request)
+    delete_version(
+        dependencies.database,
+        principal=context.principal,
+        question_version_id=question_version_id,
+        now=dependencies.now,
+    )
+    log_event(
+        get_logger("api.versions"),
+        "question.version.draft_deleted",
+        request_id=context.request_id,
+        question_version_id=str(question_version_id),
+        status_code=204,
+    )
+    return Response(status_code=204)
 
 
 @router.post("/api/v1/question-versions/{question_version_id}/publish")

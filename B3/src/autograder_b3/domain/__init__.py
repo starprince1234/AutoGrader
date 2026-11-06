@@ -36,7 +36,13 @@ from .packages import load_evaluation_package, load_reference_answer
 from .version_content import load_editable_draft_content
 from .questions import create_question, update_question
 from .statistics import question_statistics
-from .versions import archive_version, delete_version, publish_version
+from .versions import (
+    BatchOutcome,
+    archive_version,
+    delete_version,
+    publish_version,
+    run_batch_operation,
+)
 
 __all__ = [
     "DrainReport",
@@ -50,6 +56,8 @@ __all__ = [
     "create_question",
     "delete_fixture",
     "delete_version",
+    "run_batch_operation",
+    "BatchOutcome",
     "discard_generation",
     "drain_outbox",
     "generation_capabilities",

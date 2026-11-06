@@ -663,6 +663,109 @@ def test_draft_content_returns_the_authors_own_reference_answer_and_cases(
     assert anonymous.status_code == 401
 
 
+# --- delete draft + batch operations (CHG-0029) ---------------------------
+
+
+def test_deleting_a_draft_version_removes_the_question_from_the_bank(
+    client, auth_headers
+):
+    """删除唯一草稿：204，且题目从列表里消失（软删，不是硬删行）。"""
+    created = client.post(
+        "/api/v1/questions",
+        params={"course_id": str(COURSE_A)},
+        json=draft_payload(title="delete me"),
+        headers=auth_headers("teacher-a"),
+    )
+    assert created.status_code == 201, created.text
+    question_id = created.json()["question_id"]
+    version_id = created.json()["versions"][0]["question_version_id"]
+
+    response = client.delete(
+        f"/api/v1/question-versions/{version_id}", headers=auth_headers("teacher-a")
+    )
+    assert response.status_code == 204, response.text
+
+    listed = client.get(
+        "/api/v1/questions",
+        params={"published_only": "false", "limit": 100},
+        headers=auth_headers("teacher-a"),
+    )
+    assert listed.status_code == 200, listed.text
+    assert all(item["question_id"] != question_id for item in listed.json()["items"])
+
+    # 再次删除同一个版本：404（已不存在）。
+    again = client.delete(
+        f"/api/v1/question-versions/{version_id}", headers=auth_headers("teacher-a")
+    )
+    assert again.status_code == 404
+
+
+def test_deleting_a_published_version_is_refused_with_409(client, auth_headers):
+    payload = draft_payload()
+    created = client.post(
+        "/api/v1/questions",
+        params={"course_id": str(COURSE_A)},
+        json=payload,
+        headers=auth_headers("teacher-a"),
+    )
+    version_id = created.json()["versions"][0]["question_version_id"]
+    detail = client.get(
+        f"/api/v1/question-versions/{version_id}", headers=auth_headers("teacher-a")
+    ).json()
+    client.post(
+        f"/api/v1/question-versions/{version_id}/attestations",
+        json={
+            "content_digest": detail["content_digest"],
+            "verifier": "MAIN/scripts/verify_question_bank.py",
+            "cases_total": 1,
+            "cases_passed": 1,
+        },
+        headers={"Authorization": "Bearer test-service-token"},
+    )
+    published = client.post(
+        f"/api/v1/question-versions/{version_id}/publish", headers=auth_headers("teacher-a")
+    )
+    assert published.status_code == 200, published.text
+
+    response = client.delete(
+        f"/api/v1/question-versions/{version_id}", headers=auth_headers("teacher-a")
+    )
+    assert response.status_code == 409, response.text
+
+
+def test_batch_operations_report_each_item(client, auth_headers):
+    """批量删除：一项成功、一项不存在，响应仍 200 且逐项给出结论。"""
+    created = client.post(
+        "/api/v1/questions",
+        params={"course_id": str(COURSE_A)},
+        json=draft_payload(title="batch one"),
+        headers=auth_headers("teacher-a"),
+    )
+    version_id = created.json()["versions"][0]["question_version_id"]
+    missing = str(uuid.uuid4())
+
+    response = client.post(
+        "/api/v1/question-versions/batch-operations",
+        json={"operation": "delete", "question_version_ids": [version_id, missing]},
+        headers=auth_headers("teacher-a"),
+    )
+    assert response.status_code == 200, response.text
+    results = response.json()["results"]
+    assert [item["status"] for item in results] == ["applied", "failed"]
+    assert results[0]["error_code"] is None
+    assert results[1]["error_code"] == "not_found"
+
+
+def test_batch_input_rejects_duplicates(client, auth_headers):
+    version_id = str(uuid.uuid4())
+    response = client.post(
+        "/api/v1/question-versions/batch-operations",
+        json={"operation": "delete", "question_version_ids": [version_id, version_id]},
+        headers=auth_headers("teacher-a"),
+    )
+    assert response.status_code == 422, response.text
+
+
 def test_tags_round_trip_through_create_and_update(client, auth_headers):
     payload = draft_payload()
     payload["tags"] = ["text-tools", "processes"]

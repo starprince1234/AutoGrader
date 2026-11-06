@@ -344,6 +344,18 @@ class QuestionBankRepository:
         version.updated_at = now
         self.session.flush()
 
+    def mark_question_deleted(self, question: Question, now: datetime) -> None:
+        """Soft-delete a question whose last draft version was just removed.
+
+        Soft, not hard: every public read already filters ``Question.deleted_at``
+        (``list_questions``, ``get_question`` and the rest), while events, assignments and
+        statistics may still carry the id. Hard-deleting the row would either break those
+        references or demand cascades across tables this feature has no business touching.
+        """
+        question.status = "archived"
+        question.deleted_at = now
+        question.updated_at = now
+
     def delete_draft_version(self, version: QuestionVersion) -> None:
         self.session.delete(version)
         self.session.flush()

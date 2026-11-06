@@ -1,12 +1,24 @@
-import { Link } from "@tanstack/react-router";
+import { useState } from "react";
+import { Link, useNavigate } from "@tanstack/react-router";
 import { t } from "../../i18n";
+import { isApiError } from "../../api/problem";
 import { useSession } from "../../auth/sessionContext";
 import { canAuthorQuestions, canSubmitAnswer, canViewQuestionQuality } from "../../auth/visibility";
-import { Banner, EmptyState, ErrorState, Field, PageTitle, Panel, Spinner, StatusPill } from "../../ui/components";
+import {
+  Banner,
+  EmptyState,
+  ErrorState,
+  Field,
+  Modal,
+  PageTitle,
+  Panel,
+  Spinner,
+  StatusPill,
+} from "../../ui/components";
 import { formatDateTime } from "../../ui/format";
 import { ReferenceVerificationPanel } from "../authoring/ReferenceVerificationPanel";
 import { SafeMarkdown } from "./SafeMarkdown";
-import { useQuestion, useQuestionVersion } from "./useQuestions";
+import { useDeleteQuestionVersion, useQuestion, useQuestionVersion } from "./useQuestions";
 import { Select } from "../../ui/Select";
 
 /**
@@ -36,11 +48,17 @@ export function QuestionDetailPage({
 }) {
   const question = useQuestion(questionId);
   const session = useSession();
+  const navigate = useNavigate();
+  const removeVersion = useDeleteQuestionVersion();
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const versions = question.data?.versions ?? [];
 
   // 未显式选择版本时，默认展示最新的已发布版本（没有则最新版本）。
   const preferred =
     versions.find((item) => item.status === "published") ?? versions[0] ?? null;
+  // 「删除草稿」作用在题目**当前那条草稿版本**上：已发布的版本只能归档，不能删除。
+  const draftVersion = versions.find((item) => item.status === "draft") ?? null;
   const effectiveId = versionId ?? preferred?.question_version_id ?? null;
   // 必须用 effectiveId 取数：传原始 prop 会让"未显式选择"时根本不发请求，
   // 面板因此永远空白（集成时踩到过）。
@@ -109,6 +127,20 @@ export function QuestionDetailPage({
           >
             {shown.status === "published" ? t("questions.newVersion") : t("questions.editDraft")}
           </Link>
+        ) : null}
+        {/* 「编辑草稿」后面：删除这条草稿（题目页与题库列表都能删）。 */}
+        {canAuthorQuestions(session) && draftVersion !== null ? (
+          <button
+            type="button"
+            className="button button--danger"
+            data-testid="delete-draft"
+            onClick={() => {
+              setDeleteError(null);
+              setConfirmDelete(true);
+            }}
+          >
+            {t("questions.deleteDraft")}
+          </button>
         ) : null}
         {/* 题目质量入口（P13）：打开复核工作区的 quality 标签，并带上**当前选中的版本**。
             P13 是唯一入口（旧 `/quality` 已合并），版本 id 由这里带过去，教师不必手填 UUID。 */}
@@ -230,6 +262,61 @@ export function QuestionDetailPage({
           存证的存在与否不是学生需要的信息。 */}
       {version.data && version.data.status !== "published" && canAuthorQuestions(session) ? (
         <ReferenceVerificationPanel version={version.data} questionId={questionId} />
+      ) : null}
+
+      {deleteError !== null ? (
+        <Banner tone="error" testId="delete-draft-error">
+          {deleteError}
+        </Banner>
+      ) : null}
+
+      {confirmDelete && draftVersion !== null ? (
+        <Modal
+          title={t("questions.deleteTitle")}
+          testId="delete-draft-modal"
+          initialFocus='[data-testid="delete-draft-confirm"]'
+          onClose={() => setConfirmDelete(false)}
+        >
+          <p>{t("questions.deleteBody")}</p>
+          <div className="inline">
+            <button
+              type="button"
+              className="button button--danger"
+              data-testid="delete-draft-confirm"
+              disabled={removeVersion.isPending}
+              onClick={() => {
+                const target = draftVersion.question_version_id;
+                setConfirmDelete(false);
+                removeVersion
+                  .mutateAsync(target)
+                  .then(() => {
+                    void navigate({ to: "/questions" });
+                  })
+                  .catch((error: unknown) => {
+                    setDeleteError(
+                      isApiError(error) && error.status === 409
+                        ? t("questions.deleteConflict")
+                        : isApiError(error) && error.isForbidden
+                          ? t("questions.deleteForbidden")
+                          : isApiError(error) && error.isNotFound
+                            ? t("questions.deleteNotFound")
+                            : t("questions.deleteFailed"),
+                    );
+                  });
+              }}
+            >
+              {removeVersion.isPending ? t("questions.deleting") : t("questions.deleteConfirm")}
+            </button>
+            <button
+              type="button"
+              className="button button--ghost"
+              data-testid="delete-draft-cancel"
+              onClick={() => setConfirmDelete(false)}
+            >
+              {t("common.cancel")}
+            </button>
+          </div>
+        </Modal>
       ) : null}
     </div>
   );

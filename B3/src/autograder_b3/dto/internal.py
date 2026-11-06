@@ -34,7 +34,7 @@ from typing import Any, Literal
 from collections.abc import Mapping
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 Language = Literal["python", "bash"]
 AdapterKind = Literal["stdin", "file", "callable"]
@@ -239,6 +239,32 @@ class FixtureUploadInputModel(BaseModel):
     path: str = Field(min_length=1, max_length=200)
     mount: FixtureMount = "input"
     content_base64: str
+
+
+class QuestionVersionBatchInputModel(BaseModel):
+    """The contract's ``QuestionVersionBatchInput``.
+
+    A batch is a **client convenience over the single-item operations**, never a second
+    implementation of them: every id is attempted and reported on its own, so one rejected
+    item cannot hide the fate of the rest ("delete 12 drafts" must not leave a teacher
+    guessing which 11 succeeded).
+
+    The list is bounded (``maxItems`` in the contract) because each item is a separate
+    transaction, and duplicates are rejected rather than deduplicated: a client that sends
+    the same version twice cannot see which of the two results it is reading.
+    """
+
+    model_config = _STRICT
+
+    operation: Literal["delete", "publish"]
+    question_version_ids: tuple[UUID, ...] = Field(min_length=1, max_length=100)
+
+    @field_validator("question_version_ids")
+    @classmethod
+    def _unique(cls, value: tuple[UUID, ...]) -> tuple[UUID, ...]:
+        if len(set(value)) != len(value):
+            raise ValueError("question_version_ids must not contain duplicates")
+        return value
 
 
 class QuestionDraftGenerationRequestModel(BaseModel):

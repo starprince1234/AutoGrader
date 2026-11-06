@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import re
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -23,9 +24,14 @@ from sqlalchemy.exc import DBAPIError
 
 from autograder_b3.auth import Principal
 from autograder_b3.domain.assignments import create_assignment
+from autograder_b3.domain.catalog import list_questions
 from autograder_b3.domain.revisions import REVISION_DIFF_KEYS
 from autograder_b3.domain.version_content import load_version_content
-from autograder_b3.domain.versions import archive_version, delete_version
+from autograder_b3.domain.versions import (
+    archive_version,
+    delete_version,
+    run_batch_operation,
+)
 from autograder_b3.dto.internal import PROTECTED_FIELD_NAMES, AssignmentCreateInputModel
 from autograder_b3.errors import (
     Conflict,
@@ -50,6 +56,9 @@ from .support import (
 )
 
 PUBLISH_AT = datetime(2026, 9, 15, 8, 5, tzinfo=UTC)
+
+#: 批量发布要带上 correlation_id（事件信封要求），与 PUBLISH_AT 同一时刻。
+PUBLISH_AT_CORRELATION = uuid.UUID("00000000-0000-4000-8000-0000000000c7")
 B3_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -274,7 +283,10 @@ def test_archive_published_version_and_then_delete_is_refused(database, settings
     question, version = create_published_question(database, settings, payload=draft_payload())
     with pytest.raises(Conflict):
         delete_version(
-            database, principal=teacher_principal(), question_version_id=version.question_version_id
+            database,
+            principal=teacher_principal(),
+            question_version_id=version.question_version_id,
+            now=PUBLISH_AT,
         )
     archived = archive_version(
         database,
@@ -285,7 +297,10 @@ def test_archive_published_version_and_then_delete_is_refused(database, settings
     assert archived.status == "archived"
     with pytest.raises(Conflict):
         delete_version(
-            database, principal=teacher_principal(), question_version_id=version.question_version_id
+            database,
+            principal=teacher_principal(),
+            question_version_id=version.question_version_id,
+            now=PUBLISH_AT,
         )
 
 
@@ -307,12 +322,116 @@ def test_deleting_a_draft_is_allowed(database, settings):
         database, settings, principal=teacher_principal(), payload=draft_payload()
     )
     delete_version(
-        database, principal=teacher_principal(), question_version_id=version.question_version_id
+        database,
+        principal=teacher_principal(),
+        question_version_id=version.question_version_id,
+        now=PUBLISH_AT,
     )
     with database.protected_session() as session:
         from autograder_b3.infra.repositories import QuestionBankRepository
 
         assert QuestionBankRepository(session).get_version(version.question_version_id) is None
+
+
+def test_deleting_the_last_draft_soft_deletes_the_question(database, settings):
+    """删掉唯一一条草稿版本后，题目本身也从**每一次公开读取**里消失（软删）。"""
+    question, version = create_question(
+        database, settings, principal=teacher_principal(), payload=draft_payload()
+    )
+    delete_version(
+        database,
+        principal=teacher_principal(),
+        question_version_id=version.question_version_id,
+        now=PUBLISH_AT,
+    )
+    with database.protected_session() as session:
+        from autograder_b3.infra.repositories import QuestionBankRepository
+
+        bank = QuestionBankRepository(session)
+        assert bank.get_version(version.question_version_id) is None
+        stored = bank.get_question(question.question_id)
+        assert stored is not None and stored.deleted_at is not None
+        assert stored.status == "archived"
+
+    # 公开读取看不到它了（`list_questions` 过滤 deleted_at）。
+    listed, _ = list_questions(
+        database,
+        principal=teacher_principal(),
+        course_id=None,
+        language=None,
+        published_only=False,
+        limit=50,
+    )
+    assert all(item.question_id != question.question_id for item in listed)
+
+
+def test_deleting_a_draft_keeps_the_published_version(database, settings):
+    """已发布 v1 + 草稿 v2：只删草稿，题目与已发布版本不受影响。"""
+    question, published = create_published_question(
+        database, settings, payload=draft_payload()
+    )
+    _, draft = create_question(
+        database, settings, principal=teacher_principal(), payload=draft_payload(title="second")
+    )
+    delete_version(
+        database,
+        principal=teacher_principal(),
+        question_version_id=draft.question_version_id,
+        now=PUBLISH_AT,
+    )
+    with database.protected_session() as session:
+        from autograder_b3.infra.repositories import QuestionBankRepository
+
+        bank = QuestionBankRepository(session)
+        assert bank.get_question(question.question_id) is not None
+        assert bank.get_question(question.question_id).deleted_at is None
+        assert bank.get_version(published.question_version_id) is not None
+
+
+def test_batch_delete_reports_each_outcome_independently(database, settings):
+    """批量删除：成功的项落库消失，不存在的项单独报 `not_found`，不影响其余项。"""
+    _, version = create_question(
+        database, settings, principal=teacher_principal(), payload=draft_payload()
+    )
+    missing = uuid.uuid4()
+    outcomes = run_batch_operation(
+        database,
+        principal=teacher_principal(),
+        operation="delete",
+        question_version_ids=[version.question_version_id, missing],
+        now=PUBLISH_AT,
+        correlation_id=PUBLISH_AT_CORRELATION,
+    )
+    assert [item.applied for item in outcomes] == [True, False]
+    assert outcomes[0].error_code is None
+    assert outcomes[1].error_code == "not_found"
+    with database.protected_session() as session:
+        from autograder_b3.infra.repositories import QuestionBankRepository
+
+        assert bank_version(session, version.question_version_id) is None
+
+
+def test_batch_publish_cannot_skip_the_attestation_gate(database, settings):
+    """批量发布与单条发布走同一道门禁：没有存证就是 `conflict`。"""
+    _, version = create_question(
+        database, settings, principal=teacher_principal(), payload=draft_payload()
+    )
+    outcomes = run_batch_operation(
+        database,
+        principal=teacher_principal(),
+        operation="publish",
+        question_version_ids=[version.question_version_id],
+        now=PUBLISH_AT,
+        correlation_id=PUBLISH_AT_CORRELATION,
+    )
+    assert outcomes[0].applied is False
+    assert outcomes[0].error_code == "conflict"
+
+
+def bank_version(session, question_version_id):
+    from autograder_b3.infra.repositories import QuestionBankRepository
+
+    return QuestionBankRepository(session).get_version(question_version_id)
 
 
 # --- assignments ---------------------------------------------------------

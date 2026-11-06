@@ -181,6 +181,13 @@ export type QuestionDraftGenerationCapabilities =
  */
 export type QuestionDraftGeneration = B3Schemas["QuestionDraftGeneration"];
 export type QuestionDraftProposal = NonNullable<QuestionDraftGeneration["proposal"]>;
+/** 批量删除/发布的结果（`runQuestionVersionBatchOperation`）：逐项独立结论。 */
+export type QuestionVersionBatchResult = JsonBody<
+  B3Operations["runQuestionVersionBatchOperation"],
+  200
+>;
+export type QuestionVersionBatchOutcome = QuestionVersionBatchResult["results"][number];
+
 /** 草稿自己的受保护内容（教师、仅草稿）：`getDraftContent`。 */
 export type QuestionDraftContent = JsonBody<B3Operations["getDraftContent"], 200>;
 

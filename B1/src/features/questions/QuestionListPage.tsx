@@ -11,6 +11,7 @@ import {
   ErrorState,
   Field,
   LoadMoreActions,
+  Modal,
   PageTitle,
   Panel,
   Spinner,
@@ -19,10 +20,14 @@ import {
 } from "../../ui/components";
 import { Select } from "../../ui/Select";
 import { Toast } from "../../ui/Toast";
-import type { QuestionPublic } from "../../api/types";
+import type { QuestionPublic, QuestionVersionBatchResult } from "../../api/types";
 import { usePublishQuestionVersion, useVerifyReferenceAnswer } from "../authoring/useAuthoring";
 import { QuestionCoveragePanel } from "./QuestionCoveragePanel";
-import { useQuestionList } from "./useQuestions";
+import {
+  useBatchQuestionVersions,
+  useDeleteQuestionVersion,
+  useQuestionList,
+} from "./useQuestions";
 
 /**
  * 题库列表（P06，`listQuestions` + `getQuestionTagCoverage`）。
@@ -91,6 +96,39 @@ function publishFailureMessage(error: unknown, forVerification: boolean): string
   return t("questions.publishFailed");
 }
 
+/** 红色垃圾桶标识：删除草稿。用 SVG 而不是 emoji，颜色与控制尺寸都交给 CSS。 */
+function TrashIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path
+        d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+/** 这一行的**草稿**版本 id：删除与发布都只针对草稿（已发布只能归档）。 */
+function draftVersionIdOf(row: QuestionPublic): string | null {
+  return (
+    row.versions?.find((version) => version.status === "draft")?.question_version_id ?? null
+  );
+}
+
+/** 单条删除失败时，把服务端的结论翻译成老师能读的一句话。 */
+function deleteFailureMessage(error: unknown): string {
+  if (isApiError(error)) {
+    if (error.status === 409) return t("questions.deleteConflict");
+    if (error.isForbidden) return t("questions.deleteForbidden");
+    if (error.isNotFound) return t("questions.deleteNotFound");
+  }
+  return t("questions.deleteFailed");
+}
+
 export function QuestionListPage() {
   const session = useSession();
   const author = canAuthorQuestions(session);
@@ -107,6 +145,15 @@ export function QuestionListPage() {
   const verify = useVerifyReferenceAnswer();
   const publish = usePublishQuestionVersion();
   const [publishingId, setPublishingId] = useState<string | null>(null);
+  const removeVersion = useDeleteQuestionVersion();
+  const batch = useBatchQuestionVersions();
+  // 批量选择按 question_id 记：列表是"题目"为行，操作用的却是它们的草稿版本。
+  const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  const [deleteTarget, setDeleteTarget] = useState<{
+    questionIds: string[];
+    versionIds: string[];
+    batch: boolean;
+  } | null>(null);
   const [toast, setToast] = useState<{ key: number; message: string } | null>(null);
   const notify = (message: string) => setToast({ key: Date.now(), message });
 
@@ -198,6 +245,116 @@ export function QuestionListPage() {
       setPublishingId(null);
     }
   };
+
+  const toggleRow = (questionId: string, checked: boolean) => {
+    setSelected((previous) => {
+      const next = new Set(previous);
+      if (checked) next.add(questionId);
+      else next.delete(questionId);
+      return next;
+    });
+  };
+
+  const toggleGroup = (groupRows: QuestionPublic[], checked: boolean) => {
+    setSelected((previous) => {
+      const next = new Set(previous);
+      for (const row of groupRows) {
+        if (checked) next.add(row.question_id);
+        else next.delete(row.question_id);
+      }
+      return next;
+    });
+  };
+
+  /** 打开删除确认框：单条与批量走同一个确认，文案不同。 */
+  const askDelete = (questionIds: string[], versionIds: string[], isBatch: boolean) => {
+    if (versionIds.length === 0) {
+      notify(t("questions.batchNothing"));
+      return;
+    }
+    setDeleteTarget({ questionIds, versionIds, batch: isBatch });
+  };
+
+  /** 契约的 `error_code` → 文案键。`null` 不可能出现在失败项里，兜底成"服务端错误"。 */
+  const batchErrorKey = (code: QuestionVersionBatchResult["results"][number]["error_code"]) => {
+    switch (code) {
+      case "not_found":
+        return "questions.batchError.not_found" as const;
+      case "forbidden":
+        return "questions.batchError.forbidden" as const;
+      case "conflict":
+        return "questions.batchError.conflict" as const;
+      case "unprocessable":
+        return "questions.batchError.unprocessable" as const;
+      default:
+        return "questions.batchError.internal" as const;
+    }
+  };
+
+  const batchSummary = (result: QuestionVersionBatchResult): string => {
+    const applied = result.results.filter((item) => item.status === "applied").length;
+    const failed = result.results.length - applied;
+    if (failed === 0) return t("questions.batchSummaryAllOk", { applied });
+    const codes = [
+      ...new Set(
+        result.results
+          .filter((item) => item.status === "failed")
+          .map((item) => t(batchErrorKey(item.error_code))),
+      ),
+    ];
+    return [
+      t("questions.batchSummary", { applied, failed }),
+      codes.length > 0 ? t("questions.batchErrorLabel", { codes: codes.join("、") }) : "",
+    ]
+      .filter((part) => part !== "")
+      .join(" ");
+  };
+
+  const runDelete = async () => {
+    if (deleteTarget === null) return;
+    const { versionIds, batch: isBatch } = deleteTarget;
+    setDeleteTarget(null);
+    try {
+      if (!isBatch && versionIds.length === 1) {
+        await removeVersion.mutateAsync(versionIds[0]);
+        notify(t("questions.deleted"));
+      } else {
+        const result = await batch.mutateAsync({
+          operation: "delete",
+          questionVersionIds: versionIds,
+        });
+        notify(batchSummary(result));
+      }
+    } catch (error) {
+      notify(deleteFailureMessage(error));
+    } finally {
+      setSelected(new Set());
+    }
+  };
+
+  /** 批量发布：同样先请求平台检验的门禁由服务端执行，这里只把逐项结论讲清楚。 */
+  const runBatchPublish = async () => {
+    const versionIds: string[] = [];
+    for (const row of rows) {
+      if (!selected.has(row.question_id)) continue;
+      const draft = draftVersionIdOf(row);
+      if (draft !== null) versionIds.push(draft);
+    }
+    if (versionIds.length === 0) {
+      notify(t("questions.batchNothing"));
+      return;
+    }
+    try {
+      const result = await batch.mutateAsync({ operation: "publish", questionVersionIds: versionIds });
+      notify(batchSummary(result));
+    } catch (error) {
+      notify(publishFailureMessage(error, false));
+    } finally {
+      setSelected(new Set());
+    }
+  };
+
+
 
   if (!author) {
     return (
@@ -304,6 +461,51 @@ export function QuestionListPage() {
           />
         }
       >
+        {selected.size > 0 ? (
+          <div className="inline batch-bar" data-testid="batch-bar">
+            <span className="muted">{t("questions.selectedCount", { count: selected.size })}</span>
+            <button
+              type="button"
+              className="button button--ghost"
+              data-testid="batch-publish"
+              disabled={batch.isPending}
+              onClick={() => {
+                void runBatchPublish();
+              }}
+            >
+              {batch.isPending ? t("questions.batchRunning") : t("questions.batchPublish")}
+            </button>
+            <button
+              type="button"
+              className="button button--danger"
+              data-testid="batch-delete"
+              disabled={batch.isPending}
+              onClick={() => {
+                const questionIds: string[] = [];
+                const versionIds: string[] = [];
+                for (const row of rows) {
+                  if (!selected.has(row.question_id)) continue;
+                  const draft = draftVersionIdOf(row);
+                  if (draft === null) continue;
+                  questionIds.push(row.question_id);
+                  versionIds.push(draft);
+                }
+                askDelete(questionIds, versionIds, true);
+              }}
+            >
+              {t("questions.batchDelete")}
+            </button>
+            <button
+              type="button"
+              className="button button--ghost"
+              data-testid="batch-clear"
+              onClick={() => setSelected(new Set())}
+            >
+              {t("questions.clearSelection")}
+            </button>
+          </div>
+        ) : null}
+
         {questions.isPending ? (
           <Spinner />
         ) : questions.isError ? (
@@ -351,6 +553,30 @@ export function QuestionListPage() {
             rows={group.rows}
             getRowKey={(row) => row.question_id}
             columns={[
+              {
+                key: "select",
+                header: (
+                  <input
+                    type="checkbox"
+                    aria-label={t("questions.selectAll")}
+                    data-testid={`select-all-${index}`}
+                    checked={
+                      group.rows.length > 0 &&
+                      group.rows.every((row) => selected.has(row.question_id))
+                    }
+                    onChange={(event) => toggleGroup(group.rows, event.target.checked)}
+                  />
+                ),
+                render: (row) => (
+                  <input
+                    type="checkbox"
+                    aria-label={t("questions.selectRow")}
+                    data-testid={`select-${row.question_id}`}
+                    checked={selected.has(row.question_id)}
+                    onChange={(event) => toggleRow(row.question_id, event.target.checked)}
+                  />
+                ),
+              },
               {
                 key: "title",
                 header: t("questions.title"),
@@ -416,6 +642,7 @@ export function QuestionListPage() {
                       ?.question_version_id ?? null;
                   const publishing = publishingId === row.question_id;
                   const canPublish = row.status === "draft" && draftVersionId !== null;
+                  const canDelete = row.status === "draft" && draftVersionId !== null;
                   return (
                     <span className="inline">
                       <Link
@@ -451,6 +678,23 @@ export function QuestionListPage() {
                       >
                         {publishing ? t("questions.publishing") : t("questions.publish")}
                       </button>
+                      {/* 红色垃圾桶：删除草稿（只在草稿行可用；已发布只能归档）。 */}
+                      <button
+                        type="button"
+                        className="button button--danger button--icon"
+                        data-testid={`delete-${row.question_id}`}
+                        aria-label={t("questions.deleteDraft")}
+                        title={
+                          canDelete ? t("questions.deleteDraft") : t("questions.deleteDraftBlocked")
+                        }
+                        disabled={!canDelete || removeVersion.isPending}
+                        onClick={() => {
+                          if (draftVersionId === null) return;
+                          askDelete([row.question_id], [draftVersionId], false);
+                        }}
+                      >
+                        <TrashIcon />
+                      </button>
                     </span>
                   );
                 },
@@ -476,6 +720,39 @@ export function QuestionListPage() {
         publishedOnly={publishedState === "published"}
         onSelectTag={(tag) => setTagValue(tag)}
       />
+
+      {deleteTarget !== null ? (
+        <Modal
+          title={t("questions.deleteTitle")}
+          testId="delete-draft-modal"
+          initialFocus='[data-testid="delete-draft-confirm"]'
+          onClose={() => setDeleteTarget(null)}
+        >
+          <p>
+            {deleteTarget.batch ? t("questions.deleteBodyBatch") : t("questions.deleteBody")}
+          </p>
+          <div className="inline">
+            <button
+              type="button"
+              className="button button--danger"
+              data-testid="delete-draft-confirm"
+              onClick={() => {
+                void runDelete();
+              }}
+            >
+              {t("questions.deleteConfirm")}
+            </button>
+            <button
+              type="button"
+              className="button button--ghost"
+              data-testid="delete-draft-cancel"
+              onClick={() => setDeleteTarget(null)}
+            >
+              {t("common.cancel")}
+            </button>
+          </div>
+        </Modal>
+      ) : null}
     </div>
   );
 }

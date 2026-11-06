@@ -3606,3 +3606,22 @@ samp {
   }
 }
 
+/* 批量操作条（题库列表）：勾选后出现在表格上方，与表格同一块面板里。 */
+.batch-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+}
+
+/* 纯图标按钮（红色垃圾桶）：只放图标时不要把它撑成文字按钮的宽度。 */
+.button--icon {
+  padding: 0;
+  width: 30px;
+  min-width: 30px;
+}

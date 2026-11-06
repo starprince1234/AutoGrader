@@ -25,12 +25,15 @@ the same function; two digest implementations would be two truths.
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime
 
 from ..auth import Principal, require_course_write
 from ..compile.compiler import compile_evaluation_package
 from ..dto.internal import PublishedVersionSnapshot
 from ..errors import (
+    B3Error,
     Conflict,
     InvalidStateTransition,
     NotFound,
@@ -220,17 +223,24 @@ def delete_version(
     *,
     principal: Principal | None,
     question_version_id: uuid.UUID,
+    now: datetime,
 ) -> None:
-    """Delete a draft version, or refuse for anything that has been published.
+    """Delete a draft version; refuse anything that has been published.
 
-    The requirement is "a published version referenced by historical evaluations
-    cannot be deleted (409), only archived". B3 keeps that guarantee unconditionally
-    for published/archived versions: their content is the basis of past evidence,
-    and B3 has no way to know whether an evaluation referenced it (evaluations
-    belong to B2 and reading ``b2`` is forbidden). Refusing is therefore the only
-    safe reading, and the ``question_versions`` trigger enforces it in the database
-    as well. There is no HTTP DELETE operation in the frozen contract; this
-    function is the domain-level entry point used by tests and by future routes.
+    Three refusals, each with its own reason:
+
+    * **non-draft version** (``409``): its content is the basis of past evidence, and B3
+      cannot know whether an evaluation referenced it (evaluations belong to B2 and reading
+      ``b2`` is forbidden), so a published or archived version can only be archived. The
+      ``question_versions`` trigger enforces the same rule in the database.
+    * **draft referenced by an assignment** (``409``): the assignment is live, so removing
+      the version would silently break what a section was given.
+    * **already deleted question** (``404``): it is gone from every read already.
+
+    When the removed version was the question's last one, the question itself is
+    soft-deleted: ``deleted_at`` is set and the status becomes ``archived``, which is what
+    every public read already filters on. A question that still has other versions (a
+    published v1 plus a draft v2, say) keeps those versions untouched.
     """
     with database.protected_session() as session:
         bank = QuestionBankRepository(session)
@@ -238,16 +248,127 @@ def delete_version(
         if version is None:
             raise NotFound("question version not found")
         question = bank.get_question(version.question_id)
-        if question is None:  # pragma: no cover
+        if question is None or question.deleted_at is not None:  # pragma: no cover
             raise NotFound("question not found")
         require_course_write(principal, question.course_id)
         if version.status != "draft":
             raise Conflict(
                 "a published version cannot be deleted; archive it instead"
             )
+        if bank.version_referenced_by_assignment(version.question_version_id):
+            raise Conflict(
+                "the draft is referenced by an assignment; remove it from the assignment first"
+            )
+        remaining = [
+            item
+            for item in bank.list_versions(version.question_id)
+            if item.question_version_id != version.question_version_id
+        ]
         bank.delete_draft_version(version)
+        question_deleted = not remaining
+        if question_deleted:
+            bank.mark_question_deleted(question, now)
         log_event(
             get_logger("domain.versions"),
             "question.version.draft_deleted",
             question_version_id=str(question_version_id),
+            question_id=str(version.question_id),
+            question_deleted=question_deleted,
         )
+        session.flush()
+
+
+#: Batch operations a client may request. They are **the same two** single-item
+#: operations above/below - the batch only changes how many ids are attempted.
+BATCH_OPERATION_DELETE = "delete"
+BATCH_OPERATION_PUBLISH = "publish"
+
+#: ``B3Error.slug`` -> the contract's ``QuestionVersionBatchOutcome.error_code``.
+_BATCH_ERROR_CODES: dict[str, str] = {
+    "not-found": "not_found",
+    "forbidden": "forbidden",
+    "unauthorized": "forbidden",
+    "conflict": "conflict",
+    "invalid-state-transition": "conflict",
+    "unprocessable-entity": "unprocessable",
+    "protected-content-missing": "unprocessable",
+    "payload-too-large": "unprocessable",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class BatchOutcome:
+    """One item's fate inside a batch. ``error_code`` is ``None`` exactly when applied."""
+
+    question_version_id: uuid.UUID
+    applied: bool
+    error_code: str | None = None
+
+    def to_wire(self) -> dict[str, object]:
+        return {
+            "question_version_id": str(self.question_version_id),
+            "status": "applied" if self.applied else "failed",
+            "error_code": self.error_code,
+        }
+
+
+def run_batch_operation(
+    database: Database,
+    *,
+    principal: Principal | None,
+    operation: str,
+    question_version_ids: Sequence[uuid.UUID],
+    now: datetime,
+    correlation_id: uuid.UUID,
+) -> list[BatchOutcome]:
+    """Run one operation over many versions, reporting every outcome independently.
+
+    Each id runs in its own transaction, through the same single-item functions the UI
+    calls one at a time. Two consequences matter:
+
+    * a failure never rolls back the items that already succeeded (the teacher asked for
+      "delete these seven", not "delete all seven or none");
+    * the batch cannot bypass a gate. Publishing still requires a matching attestation on
+      the recomputed digest, deleting still refuses non-draft versions - a batch is a loop,
+      not a privilege.
+    """
+    outcomes: list[BatchOutcome] = []
+    for question_version_id in question_version_ids:
+        try:
+            if operation == BATCH_OPERATION_DELETE:
+                delete_version(
+                    database,
+                    principal=principal,
+                    question_version_id=question_version_id,
+                    now=now,
+                )
+            elif operation == BATCH_OPERATION_PUBLISH:
+                publish_version(
+                    database,
+                    principal=principal,
+                    question_version_id=question_version_id,
+                    now=now,
+                    correlation_id=correlation_id,
+                )
+            else:  # pragma: no cover - the request model rejects anything else
+                raise Conflict(f"unknown batch operation: {operation}")
+        except B3Error as error:
+            outcomes.append(
+                BatchOutcome(
+                    question_version_id=question_version_id,
+                    applied=False,
+                    error_code=_BATCH_ERROR_CODES.get(error.slug, "internal"),
+                )
+            )
+        else:
+            outcomes.append(
+                BatchOutcome(question_version_id=question_version_id, applied=True)
+            )
+    log_event(
+        get_logger("domain.versions"),
+        "question.version.batch_completed",
+        operation=operation,
+        total=len(outcomes),
+        applied=sum(1 for item in outcomes if item.applied),
+    )
+    return outcomes
