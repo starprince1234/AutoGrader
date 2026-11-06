@@ -172,6 +172,35 @@ export function Banner({
   );
 }
 
+/**
+ * 悬浮提示（ⓘ）：平时只占一个图标的位置，鼠标悬浮或键盘聚焦时才展开说明。
+ *
+ * 为什么不用 `title` 属性：`title` 的样式与延迟由浏览器决定，且无法被键盘用户可靠触发。
+ * 这里把气泡放在绝对定位里（不占布局空间），用 `opacity` 而不是 `display/visibility` 隐藏，
+ * 这样读屏软件仍能读到说明——"看不见"和"读不到"是两件事。
+ */
+export function HintTooltip({
+  label,
+  children,
+  testId,
+}: {
+  /** 提示的可访问名称（读屏先读它，再读内容）。 */
+  label: string;
+  children: ReactNode;
+  testId?: string;
+}) {
+  return (
+    <span className="hint-tip" data-testid={testId} tabIndex={0} aria-label={label}>
+      <span className="hint-tip__icon" aria-hidden="true">
+        ⓘ
+      </span>
+      <span className="hint-tip__bubble" role="tooltip">
+        {children}
+      </span>
+    </span>
+  );
+}
+
 export function Panel({
   title,
   actions,

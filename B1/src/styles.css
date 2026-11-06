@@ -3677,3 +3677,97 @@ samp {
   outline: none;
   box-shadow: var(--shadow-focus);
 }
+
+/* ⓘ 悬浮提示：平时只占一个图标的位置，气泡绝对定位（不占布局空间），
+   悬浮或键盘聚焦时才显示。用 opacity 而不是 display/visibility 隐藏，
+   读屏软件仍能读到说明。 */
+.hint-tip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  color: var(--color-text-faint);
+  cursor: help;
+  flex: none;
+}
+
+.hint-tip:hover,
+.hint-tip:focus-visible {
+  color: var(--color-text-muted);
+}
+
+.hint-tip:focus-visible {
+  outline: none;
+  border-radius: 50%;
+  box-shadow: var(--shadow-focus);
+}
+
+.hint-tip__icon {
+  font-size: 13px;
+  line-height: 1;
+}
+
+.hint-tip__bubble {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  width: max-content;
+  max-width: 300px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: 12px;
+  line-height: 1.55;
+  text-align: left;
+  white-space: normal;
+  box-shadow: 0 10px 24px -14px rgba(16, 17, 19, 0.45);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--dur-fast) var(--ease);
+}
+
+.hint-tip:hover .hint-tip__bubble,
+.hint-tip:focus-within .hint-tip__bubble,
+.hint-tip:focus .hint-tip__bubble {
+  opacity: 1;
+}
+
+/* AI 草稿标题 + 一行浅灰备注（替代原来重复的「学生看不到」胶囊）。 */
+.generation-preview__head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.generation-preview__head h3 {
+  margin: 0;
+}
+
+.generation-preview__note {
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* 元信息：去掉项目符号，按 · 分隔成紧凑一行。 */
+.generation-facts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px var(--space-3);
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.generation-facts > span + span::before {
+  content: "·";
+  margin-right: var(--space-3);
+  color: var(--color-text-faint);
+}

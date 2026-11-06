@@ -1411,7 +1411,7 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
   }
 
   it("还没选课程时状态标签说「待选择课程」，而不是宣称 AI 不可用", async () => {
-    stub = installFetchStub(baseRoutes(generationRoutes()));
+    stub = installFetchStub(baseRoutes(aiDraftRoutes()));
     const user = userEvent.setup();
     await signIn("teacher1", "pw");
     renderAuthoring(null);
@@ -1423,7 +1423,7 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
   });
 
   it("课程下拉就在 AI 面板里：选完立刻可用，不用滚到下面的基本信息", async () => {
-    stub = installFetchStub(baseRoutes(generationRoutes()));
+    stub = installFetchStub(baseRoutes(aiDraftRoutes()));
     const user = userEvent.setup();
     await signIn("teacher1", "pw");
     renderAuthoring(null);
@@ -1443,7 +1443,7 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
   });
 
   it("AI 入口就在标题栏：还没选课程也能看到，点开后有按钮并说明先选课程", async () => {
-    stub = installFetchStub(baseRoutes(generationRoutes()));
+    stub = installFetchStub(baseRoutes(aiDraftRoutes()));
     const user = userEvent.setup();
     await signIn("teacher1", "pw");
     renderAuthoring(null);
@@ -1510,7 +1510,7 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
   });
 
   it("难度是四档下拉（简单/中等/较难/困难），默认中等", async () => {
-    stub = installFetchStub(baseRoutes(generationRoutes()));
+    stub = installFetchStub(baseRoutes(aiDraftRoutes()));
     const user = userEvent.setup();
     await signIn("teacher1", "pw");
     renderAuthoring(null);
@@ -1532,7 +1532,7 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
   });
 
   it("显式点击才请求模型：目标为空时按钮禁用，请求体只带公开约束", async () => {
-    stub = installFetchStub(baseRoutes(generationRoutes()));
+    stub = installFetchStub(baseRoutes(aiDraftRoutes()));
     const user = userEvent.setup();
     await signIn("teacher1", "pw");
     renderAuthoring(null);
@@ -1579,8 +1579,8 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
     }
   });
 
-  it("候选会填入编辑器，字段问题、来源与免责声明同时显示（候选不是成品）", async () => {
-    stub = installFetchStub(baseRoutes(generationRoutes()));
+  it("候选会填入编辑器，字段问题与唯一全局提示同时显示（候选不是成品）", async () => {
+    stub = installFetchStub(baseRoutes(aiDraftRoutes()));
     const user = userEvent.setup();
     await signIn("teacher1", "pw");
     renderAuthoring(null);
@@ -1595,14 +1595,21 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
     // 字段问题指出具体控件（不是一句泛泛的说明）。
     const warnings = screen.getByTestId("generation-warnings");
     expect(warnings).toHaveTextContent("第 2 个用例的分值");
-    expect(screen.getByTestId("generation-provenance")).toHaveTextContent("example-model-v1");
     expect(screen.getByTestId("generation-expiry")).toBeInTheDocument();
-    expect(screen.getByTestId("generation-disclaimers")).toHaveTextContent(
-      "模型生成的是候选草稿",
+
+    // 页面只有一个常驻全局提示；"生成信息"面板与免责清单都已移除，改为悬浮提示。
+    expect(screen.getByTestId("generation-global-notice")).toHaveTextContent(
+      "草稿仅供参考，请核对所有字段后再保存。",
+    );
+    expect(screen.queryByTestId("generation-provenance")).toBeNull();
+    expect(screen.queryByTestId("generation-disclaimers")).toBeNull();
+
+    // 标题旁的浅灰备注说明"谁能看到"。
+    expect(screen.getByTestId("generation-preview-note")).toHaveTextContent(
+      "内容仅教师可见，学生无法查看草稿和测试用例。",
     );
 
     // 候选被填进同一张表单：标题、题干、参考答案、用例都到位，权重为 null 的那个留空。
-    expect(screen.getByText("学生看不到")).toBeInTheDocument();
     expect(screen.getByTestId("generation-protected")).toHaveTextContent("参考答案");
     await user.click(screen.getByTestId("ai-back"));
     await screen.findByTestId("wizard-nav");
@@ -1618,7 +1625,7 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
   });
 
   it("刷新后用 generation_id 恢复服务端原始候选", async () => {
-    stub = installFetchStub(baseRoutes(generationRoutes()));
+    stub = installFetchStub(baseRoutes(aiDraftRoutes()));
     await signIn("teacher1", "pw");
     renderAuthoring(null, GENERATION_ID);
     await selectCourse(userEvent.setup());
@@ -1642,7 +1649,7 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
   });
 
   it("丢弃候选需要确认，确认后调用 DELETE", async () => {
-    stub = installFetchStub(baseRoutes(generationRoutes()));
+    stub = installFetchStub(baseRoutes(aiDraftRoutes()));
     const user = userEvent.setup();
     await signIn("teacher1", "pw");
     renderAuthoring(null, GENERATION_ID);
@@ -1731,5 +1738,93 @@ describe("出题页的可见性前提", () => {  it("编辑页会取最新版本
       item.url.pathname.startsWith("/api/v1/question-versions/"),
     );
     expect(versionRequest?.url.pathname).toBe(`/api/v1/question-versions/${DRAFT_VERSION}`);
+  });
+});
+
+/** 生成相关端点（能力 / 创建 / 读取 / 丢弃）：这个 describe 之外也需要一份。 */
+function aiDraftRoutes(): StubbedRoute[] {
+  const generation = questionDraftGeneration({ generation_id: UUID_A });
+  return [
+    {
+      path: "/api/v1/question-draft-generations/capabilities",
+      respond: () => jsonResponse(generationCapabilities()),
+    },
+    {
+      method: "POST",
+      path: "/api/v1/question-draft-generations",
+      respond: () => jsonResponse(generation),
+    },
+    {
+      method: "GET",
+      path: `/api/v1/question-draft-generations/${UUID_A}`,
+      respond: () => jsonResponse(generation),
+    },
+    {
+      method: "DELETE",
+      path: `/api/v1/question-draft-generations/${UUID_A}`,
+      respond: () => jsonResponse({}),
+    },
+  ];
+}
+
+describe("AI 草稿页的信息密度（文案、唯一提示、悬浮提示）", () => {
+  it("两个按钮旁都有 ⓘ 悬浮提示，内容一致，且不新增弹窗", async () => {
+    stub = installFetchStub(baseRoutes(aiDraftRoutes()));
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+    await openAi(user);
+    await selectCourseInAiPanel(user);
+
+    await user.type(screen.getByLabelText("教学目标"), "统计行数");
+    await user.click(screen.getByTestId("generation-generate"));
+
+    const generateHint = await screen.findByTestId("generation-hint-generate");
+    const applyHint = await screen.findByTestId("generation-hint-apply");
+    const expected =
+      "AI 草稿仅为初稿，非标准内容，请逐项核对；草稿不会自动入库，需要手动保存；发布前请用参考答案验证测试用例。";
+    expect(generateHint).toHaveTextContent(expected);
+    expect(applyHint).toHaveTextContent(expected);
+    // 提示是悬浮气泡（role=tooltip），不是新的弹窗。
+    expect(within(generateHint).getByRole("tooltip")).toHaveTextContent(expected);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("元信息去掉项目符号（不再是列表），仍逐项可读", async () => {
+    stub = installFetchStub(baseRoutes(aiDraftRoutes()));
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+    await openAi(user);
+    await selectCourseInAiPanel(user);
+
+    await user.type(screen.getByLabelText("教学目标"), "统计行数");
+    await user.click(screen.getByTestId("generation-generate"));
+
+    const facts = await screen.findByTestId("generation-proposal-facts");
+    expect(facts.tagName).toBe("DIV");
+    expect(facts.querySelector("ul")).toBeNull();
+    expect(facts).toHaveTextContent("题目标题");
+    expect(facts).toHaveTextContent("语言");
+    expect(facts).toHaveTextContent("运行方式");
+    expect(facts).toHaveTextContent("标签");
+    // 用例条数仍在明面上。
+    expect(screen.getByTestId("generation-proposal-case-count")).toHaveTextContent("测试用例");
+  });
+
+  it("「确认载入草稿」是原「重新载入 AI 草稿」的文案", async () => {
+    stub = installFetchStub(baseRoutes(aiDraftRoutes()));
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+    await openAi(user);
+    await selectCourseInAiPanel(user);
+
+    await user.type(screen.getByLabelText("教学目标"), "统计行数");
+    await user.click(screen.getByTestId("generation-generate"));
+
+    const apply = await screen.findByTestId("generation-apply");
+    expect(apply).toHaveTextContent("确认载入草稿");
+    expect(apply).not.toHaveTextContent("重新载入");
   });
 });

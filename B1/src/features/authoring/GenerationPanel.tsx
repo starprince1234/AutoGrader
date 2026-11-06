@@ -3,7 +3,14 @@ import { t } from "../../i18n";
 import { isApiError } from "../../api/problem";
 import type { QuestionDraftGeneration, QuestionDraftProposal } from "../../api/types";
 import { formatDateTime } from "../../ui/format";
-import { Banner, Field, Modal, Panel, StatusPill } from "../../ui/components";
+import {
+  Banner,
+  Field,
+  HintTooltip,
+  Modal,
+  Panel,
+  StatusPill,
+} from "../../ui/components";
 import { SafeMarkdown } from "../questions/SafeMarkdown";
 import { fieldLabel, parseArgv, parseTags, type DraftForm } from "./draft";
 import { courseLabel as formatCourseLabel } from "../../api/directory";
@@ -50,9 +57,12 @@ function ProposalPreview({
   const fixtures = proposal.fixtures ?? [];
   return (
     <div className="stack" data-testid="generation-proposal">
-      <div className="inline">
+      <div className="generation-preview__head">
         <h3>{t("authoring.generation.previewTitle")}</h3>
-        <StatusPill tone="warn">{t("authoring.generation.protectedNotice")}</StatusPill>
+        {/* 浅灰小字：说清"谁能看到"，替代原来与它重复的「学生看不到」胶囊。 */}
+        <span className="muted generation-preview__note" data-testid="generation-preview-note">
+          {t("authoring.generation.previewNote")}
+        </span>
       </div>
 
       {proposal.stem_markdown.trim() === "" ? (
@@ -61,31 +71,32 @@ function ProposalPreview({
         <SafeMarkdown source={proposal.stem_markdown} testId="generation-preview-stem" />
       )}
 
-      <ul className="stack" data-testid="generation-proposal-facts">
-        <li>
+      {/* 元信息：去掉项目符号，一行里按 · 分隔，降低视觉噪音。 */}
+      <div className="generation-facts" data-testid="generation-proposal-facts">
+        <span>
           {t("authoring.title")}：{proposal.title.trim() === "" ? "—" : proposal.title}
-        </li>
-        <li>
+        </span>
+        <span>
           {t("authoring.language")}：{t(`questions.language.${proposal.language}`)}
-        </li>
-        <li>
+        </span>
+        <span>
           {t("authoring.adapterKind")}：{t(`questions.adapter.${proposal.adapter_kind}`)}
-        </li>
-        <li>
+        </span>
+        <span>
           {t("authoring.tags")}：
           {(proposal.tags ?? []).length === 0 ? "—" : (proposal.tags ?? []).join("、")}
-        </li>
+        </span>
         {/* 用例条数直接露在明面上：生成时就带上了测试用例，不用展开受保护内容才知道。 */}
-        <li data-testid="generation-proposal-case-count">
+        <span data-testid="generation-proposal-case-count">
           {t("authoring.generation.cases", { count: cases.length })}
-        </li>
+        </span>
         {proposal.adapter?.args?.length ? (
-          <li>
+          <span>
             {t("authoring.adapterArgs")}：
             <span className="mono-id">{parseArgv(proposal.adapter.args.join(" ")).join(" ")}</span>
-          </li>
+          </span>
         ) : null}
-      </ul>
+      </div>
 
       <details data-testid="generation-protected">
         <summary>{t("authoring.generation.protectedSummary")}</summary>
@@ -153,6 +164,13 @@ function ProposalPreview({
         <button type="button" className="button" data-testid="generation-apply" onClick={onApply}>
           {applied ? t("authoring.generation.reapply") : t("authoring.generation.apply")}
         </button>
+        {/* 常驻说明改成悬浮提示：不点不看，页面上不多一行字。 */}
+        <HintTooltip
+          label={t("authoring.generation.hintLabel")}
+          testId="generation-hint-apply"
+        >
+          {t("authoring.generation.hintBody")}
+        </HintTooltip>
       </div>
     </div>
   );
@@ -410,6 +428,12 @@ export function GenerationPanel({
         >
           {create.isPending ? t("authoring.generation.generating") : t("authoring.generation.generate")}
         </button>
+        <HintTooltip
+          label={t("authoring.generation.hintLabel")}
+          testId="generation-hint-generate"
+        >
+          {t("authoring.generation.hintBody")}
+        </HintTooltip>
         {missing === null ? null : (
           <span className="muted" data-testid="generation-reason">
             {missing}
@@ -443,10 +467,18 @@ export function GenerationPanel({
 
       {generation ? (
         <div className="stack" data-testid="generation-result">
+          {/* 页面唯一的常驻全局提示；其余长提示要么变成 ⓘ，要么直接删掉。 */}
+          <Banner tone="success" testId="generation-global-notice">
+            {t("authoring.generation.globalNotice")}
+          </Banner>
+
           <div className="inline">
-            <StatusPill tone={STATUS_TONE[generation.status]} testId="generation-status">
-              {statusText(generation)}
-            </StatusPill>
+            {/* ready 的说明已经由上面那条横幅承担，这里只在"需要你补"或"没生成出来"时再给状态。 */}
+            {generation.status === "ready" ? null : (
+              <StatusPill tone={STATUS_TONE[generation.status]} testId="generation-status">
+                {statusText(generation)}
+              </StatusPill>
+            )}
             {generation.created_at ? (
               <span className="muted">
                 {t("authoring.generation.createdAt", {
@@ -495,21 +527,6 @@ export function GenerationPanel({
               applied={appliedId === generation.generation_id}
             />
           ) : null}
-
-          {generation.provenance ? (
-            <details data-testid="generation-provenance">
-              <summary>{t("authoring.generation.provenanceLabel")}</summary>
-              <ul className="muted">
-                <li>{t("authoring.generation.provenanceModel", { model: generation.provenance.model })}</li>
-              </ul>
-            </details>
-          ) : null}
-
-          <ul className="muted" data-testid="generation-disclaimers">
-            {generation.disclaimers.map((line, index) => (
-              <li key={index}>{line}</li>
-            ))}
-          </ul>
 
           <div className="inline">
             <button
