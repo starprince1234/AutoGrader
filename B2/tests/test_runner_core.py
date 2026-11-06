@@ -1324,6 +1324,18 @@ class TestPackageValidation:
 # =============================================================================================
 
 
+def _healthy_probe_read(path: str) -> str:
+    if path.endswith("cgroup.controllers"):
+        return "cpuset cpu io memory pids"
+    if path.endswith(("cgroup.subtree_control", "cgroup.procs")):
+        return ""
+    if path == "/proc/self/mountinfo":
+        return "590 582 0:26 / /sys/fs/cgroup rw - cgroup2 cgroup2 rw"
+    if path.endswith("apparmor_restrict_unprivileged_userns"):
+        return "0"
+    return "1"
+
+
 class TestNoDegradation:
     def test_declared_nsjail_path_wins_when_executable(self) -> None:
         """解析顺序：策略声明的路径优先（部署事实优先于兜底搜索）。"""
@@ -1353,10 +1365,9 @@ class TestNoDegradation:
                 "/proc/self/ns/user",
                 "/proc/sys/kernel/unprivileged_userns_clone",
             },
-            read_text=lambda path: (
-                "cpuset cpu io memory pids" if path.endswith("cgroup.controllers") else "1"
-            ),
+            read_text=_healthy_probe_read,
             is_executable=lambda path: path == source_install,
+            is_writable=lambda path: True,
         )
         assert availability.available is True, availability.reason
 
@@ -1368,10 +1379,9 @@ class TestNoDegradation:
             platform_name="linux",
             machine="x86_64",
             path_exists=lambda path: True,
-            read_text=lambda path: (
-                "cpuset cpu io memory pids" if path.endswith("cgroup.controllers") else "1"
-            ),
+            read_text=_healthy_probe_read,
             is_executable=lambda path: False,
+            is_writable=lambda path: True,
         )
         assert availability.available is False
         nsjail_check = next(check for check in availability.checks if check.name == "nsjail")
@@ -1399,10 +1409,9 @@ class TestNoDegradation:
                 "/proc/self/ns/user",
                 "/proc/sys/kernel/unprivileged_userns_clone",
             },
-            read_text=lambda path: (
-                "cpuset cpu io memory pids" if path.endswith("cgroup.controllers") else "1"
-            ),
+            read_text=_healthy_probe_read,
             is_executable=lambda path: path == NSJAIL,
+            is_writable=lambda path: True,
         )
         assert availability.available is True
         assert availability.reason is None
@@ -1420,6 +1429,9 @@ class TestNoDegradation:
         }
         contents = {
             controllers: "cpuset cpu memory pids",
+            "/sys/fs/cgroup/cgroup.subtree_control": "",
+            "/sys/fs/cgroup/cgroup.procs": "",
+            "/proc/self/mountinfo": "590 582 0:26 / /sys/fs/cgroup rw - cgroup2 cgroup2 rw",
             "/proc/sys/kernel/unprivileged_userns_clone": "1",
             "/proc/sys/kernel/apparmor_restrict_unprivileged_userns": "0",
         }
@@ -1448,6 +1460,7 @@ class TestNoDegradation:
             path_exists=exists,
             read_text=read,
             is_executable=executable,
+            is_writable=lambda path: True,
         )
         assert availability.available is False
         assert availability.reason
@@ -1459,7 +1472,55 @@ class TestNoDegradation:
                 path_exists=exists,
                 read_text=read,
                 is_executable=executable,
+                is_writable=lambda path: True,
             )
+
+    @pytest.mark.parametrize(
+        ("controllers", "processes", "mountinfo", "unwritable", "expected"),
+        [
+            ("cpu memory pids", "", "", "", True),
+            ("cpu memory", "", "", "", False),
+            ("cpu memory pids", "", "", "/sys/fs/cgroup/cgroup.subtree_control", False),
+            (
+                "cpu memory pids",
+                "1234",
+                "590 582 0:26 / /sys/fs/cgroup rw - cgroup2 cgroup2 rw\n"
+                "624 590 0:26 /system.slice/autograder.service /sys/fs/cgroup rw - cgroup2 cgroup2 rw",
+                "",
+                False,
+            ),
+            (
+                "cpu memory pids",
+                "1",
+                "590 582 0:26 / /sys/fs/cgroup rw - cgroup2 cgroup2 rw",
+                "",
+                True,
+            ),
+            ("cpu memory pids", "1234", "invalid mountinfo", "", False),
+        ],
+    )
+    def test_cgroup_probe_checks_controllers_delegation_and_parent_processes(
+        self, controllers: str, processes: str, mountinfo: str, unwritable: str, expected: bool
+    ) -> None:
+        files = {
+            "/sys/fs/cgroup/cgroup.controllers": controllers,
+            "/sys/fs/cgroup/cgroup.subtree_control": "",
+            "/sys/fs/cgroup/cgroup.procs": processes,
+            "/proc/self/mountinfo": mountinfo or "590 582 0:26 / /sys/fs/cgroup rw - cgroup2 cgroup2 rw",
+            "/proc/sys/kernel/unprivileged_userns_clone": "1",
+        }
+        paths = set(files) | {NSJAIL, "/proc/self/ns/user"}
+        availability = probe_sandbox(
+            RunnerPolicy(),
+            platform_name="linux",
+            machine="x86_64",
+            path_exists=lambda path: path in paths,
+            read_text=files.__getitem__,
+            is_executable=lambda path: path == NSJAIL,
+            is_writable=lambda path: path != unwritable,
+        )
+        check = next(check for check in availability.checks if check.name == "cgroup_v2")
+        assert check.ok is expected, check.detail
 
     @requires_unavailable_host
     def test_this_host_reports_sandbox_unavailable(self) -> None:
@@ -2041,6 +2102,46 @@ class TestEvidence:
         )
         assert from_student.failure_category == "crash"
         assert from_student.resource_limit_hit is None
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "Couldn't setup parent cgroup (cgroupv2)",
+            "Couldn't initialize cgroup 2 user namespace for pid=123",
+        ],
+    )
+    def test_nsjail_cgroup_setup_failure_is_sandbox_unavailable(
+        self, tmp_path: Path, message: str
+    ) -> None:
+        workspace = prepare_workspace(tmp_path / "case")
+        launcher = FakeLauncher(exit_code=255, stdout=b"", sandbox_log=message.encode("utf-8"))
+        with pytest.raises(SandboxUnavailableError, match="cgroup v2"):
+            run(load_package(), workspace, launcher=launcher)
+        assert not (workspace.parent / f"{workspace.name}.nsjail.log").exists()
+
+    def test_student_exit_255_and_forged_stderr_are_not_sandbox_setup_failure(
+        self, tmp_path: Path
+    ) -> None:
+        forged = b"Couldn't setup parent cgroup (cgroupv2)"
+        evidence, _ = run(
+            load_package(),
+            prepare_workspace(tmp_path / "case"),
+            launcher=FakeLauncher(exit_code=255, stdout=b"", stderr=forged),
+        )
+        assert not evidence.passed
+        assert evidence.failure_category in {"output_mismatch", "crash"}
+
+    def test_failed_case_does_not_log_student_stderr(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        private_text = "student-private-traceback-marker"
+        with caplog.at_level("INFO", logger="autograder_b2.runner.run_case"):
+            run(
+                load_package(),
+                prepare_workspace(tmp_path / "case"),
+                launcher=FakeLauncher(exit_code=1, stdout=b"", stderr=private_text.encode("utf-8")),
+            )
+        assert private_text not in caplog.text
 
     def test_sandbox_log_is_a_per_run_artifact(self, tmp_path: Path) -> None:
         """调用侧不变量 + 产物卫生：日志与配置/标准流同放**工作区之外**，且读后即删（含宿主绝对路径，

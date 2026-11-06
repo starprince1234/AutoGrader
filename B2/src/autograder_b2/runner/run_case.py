@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import contextlib
 import json
-import logging
 import os
 import subprocess
 import time
@@ -102,6 +101,12 @@ MESSAGE_LIMIT = 1000
 #: 日志为 **0 字节**；只有 nsjail 自身报错（如 execve/mount 失败）才会留下 `[E]`/`[F]` 行——因此这份
 #: 日志既不会把参数转储里的 `rlimit_*` 字样误当命中，也确实承载沙箱侧的错误事实。
 SANDBOX_LOG_MAX_BYTES = 256 * 1024
+
+# These are nsjail 3.4's own fatal cgroup setup messages, not student output.
+CGROUP_INITIALIZATION_FAILURES = (
+    "couldn't setup parent cgroup (cgroupv2)",
+    "couldn't initialize cgroup 2 user namespace for pid=",
+)
 
 #: 沙箱日志 → 资源限制项的标记。**只允许**用于 `RunFacts.sandbox_log_text`（见 `_scan_sandbox_log`）。
 LIMIT_MARKERS: tuple[tuple[str, tuple[str, ...]], ...] = (
@@ -788,11 +793,6 @@ def elapsed_ms(started: float) -> int:
 # --- run_case -------------------------------------------------------------------------------
 
 
-def _diagnostic_logger() -> logging.Logger:
-    """沙箱失败诊断用的 logger（避免在模块顶层多一个全局名）。"""
-    return logging.getLogger("autograder_b2.runner.run_case")
-
-
 def run_case(
     package: EvaluationPackage,
     submission: SubmissionRunInput,
@@ -984,40 +984,10 @@ def _execute_case(
     stderr_text = stderr_bytes.decode("utf-8", errors="replace")
     sandbox_log_text = log_bytes.decode("utf-8", errors="replace")
     run_duration_ms = max(0, int((time.monotonic() - run_started) * 1000))
-    # 诊断：沙箱以非零码退出且**没有任何标准输出**时，把执行现场记进服务日志：
-    # nsjail 命令行、入口脚本是否存在/多大、以及 nsjail 自己那份日志的尾部。
-    # nsjail 日志只含它自己的诊断（挂载、seccomp、cgroup、exec 失败），不含学生或参考解正文；
-    # 没有这一条时，"空输出 + 退出码 255" 只能靠猜。
-    if exit_code not in (0, None) and not stdout_text:
-        entry_path = Path(workspace) / plan.entry_name
-        try:
-            entry_exists = entry_path.exists()
-            entry_size = entry_path.stat().st_size if entry_exists else -1
-        except OSError:
-            entry_exists, entry_size = False, -1
-        _diagnostic_logger().info(
-            "runner.case.sandbox_log",
-            extra={
-                "b2_event": {
-                    "event": "runner.case.sandbox_log",
-                    "fields": {
-                        "exit_code": exit_code,
-                        "timed_out": timed_out,
-                        "stdout_bytes": len(stdout_bytes),
-                        "stderr_bytes": len(stderr_bytes),
-                        "stderr_excerpt": stderr_text[:300],
-                        "workspace": str(workspace),
-                        "workspace_mode": oct(Path(workspace).stat().st_mode & 0o7777),
-                        "entry_name": plan.entry_name,
-                        "entry_exists": entry_exists,
-                        "entry_size": entry_size,
-                        "argv": list(argv),
-                        "sandbox_log_len": len(sandbox_log_text),
-                        "sandbox_log": sandbox_log_text[:800],
-                    },
-                }
-            },
-        )
+    if exit_code == 255 and any(
+        marker in sandbox_log_text.lower() for marker in CGROUP_INITIALIZATION_FAILURES
+    ):
+        raise SandboxUnavailableError("nsjail failed to initialize the delegated cgroup v2")
 
     after = snapshot_workspace(workspace)
     created = created_files(before, after)

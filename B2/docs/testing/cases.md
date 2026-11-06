@@ -337,6 +337,8 @@ T-CMT-007（断言 `prompt_version` 等于 `b2-commentary/2` 且 prompt 含 JSON
 | T-CANARY-003 | ADR-0010.2 自证 | 单元 | — | 检查六项金丝雀程序自身 | 六项 id 齐全、源码可被 `ast.parse`、两个标记都在 | **存在**（`test_canary_sources_are_syntactically_valid_and_carry_both_markers`） |
 | T-CANARY-004 | ADR-0010.2 自证 | 安全 | **仅 Linux/容器** | 真内核上跑一次 `python -m autograder_b2.canary` | 六项都 `not_found`（都被挡住）、退出码 `0` | **不存在**（本机无法执行 nsjail；`ADR-0010` 遗留风险节已写明金丝雀只能在 Linux 上给出结论。**未验收，不写成通过**） |
 
+SSH 会话中的独立 canary 不能代表 API 服务的 mount namespace、UID 和 cgroup；部署 workflow 不再把该结果当作服务沙箱验证。可信 nsjail 日志中的 cgroup 初始化失败应报告沙箱不可用，canary 对此标为 `not_checked`，参考答案接口返回 503 且不写成功 attestation。
+
 ## 隔离区复核与质量出口（`CHG-0014` / `CHG-0015`，2026-09-20 新增）
 
 用例文件：[../../tests/test_intake_api.py](../../tests/test_intake_api.py)（两条 intake 端点：真实路由 + 真实

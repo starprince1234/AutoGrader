@@ -17,19 +17,7 @@ Environment=http_proxy=http://127.0.0.1:7893
 Environment=https_proxy=http://127.0.0.1:7893
 Environment=NO_PROXY=localhost,127.0.0.1,::1
 Environment=no_proxy=localhost,127.0.0.1,::1
-# nsjail 需要在自己看到的 /sys/fs/cgroup（= 本单元的委派子树）上把 memory/cpu/pids 写进
-# `cgroup.subtree_control`。内核的 "no internal process" 规则禁止对**自身持有进程**的 cgroup
-# 这样做，线上表现就是：
-#   write '/sys/fs/cgroup/cgroup.subtree_control': Device or resource busy
-#   Couldn't setup parent cgroup (cgroupv2)
-# 沙箱里每个程序随后都以 255 退出、没有任何输出（参考解验证永远 0/1）。
-#
-# 解法：把 API 主进程放进子 cgroup `payload`，让单元 cgroup 保持"没有任务"。子目录由
-# root 建好并 chown 给服务用户（`+` 前缀表示以完整权限执行、绕过 User=；`-` 表示失败不致命）。
-ExecStartPre=-+/bin/mkdir -p /sys/fs/cgroup/payload
-ExecStartPre=-+/bin/chown -R autograder:autograder /sys/fs/cgroup/payload
-# 移动成功就用移动后的进程 exec；任何一步失败都照常启动（fail-open，不影响 API 起来）。
-ExecStart=/bin/sh -c 'if echo $$ > /sys/fs/cgroup/payload/cgroup.procs 2>/dev/null; then exec /opt/autograder/current/MAIN/.venv/bin/uvicorn autograder_host.main:app --host 127.0.0.1 --port 18000 --workers 1; fi; exec /opt/autograder/current/MAIN/.venv/bin/uvicorn autograder_host.main:app --host 127.0.0.1 --port 18000 --workers 1'
+ExecStart=/opt/autograder/current/MAIN/.venv/bin/uvicorn autograder_host.main:app --host 127.0.0.1 --port 18000 --workers 1
 Restart=on-failure
 RestartSec=5s
 TimeoutStartSec=300s
@@ -39,6 +27,8 @@ UMask=0077
 
 # Give the unprivileged host process a writable cgroup v2 subtree for nsjail.
 Delegate=cpu memory pids
+# Keep the delegated parent free of processes so nsjail can enable controllers.
+DelegateSubgroup=payload
 BindPaths=/sys/fs/cgroup/system.slice/autograder.service:/sys/fs/cgroup
 ReadWritePaths=/var/lib/autograder /sys/fs/cgroup
 

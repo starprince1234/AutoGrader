@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import json
 import os
+import posixpath
 import re
 import sys
 import tempfile
@@ -983,6 +984,67 @@ def _default_is_executable(path: str) -> bool:
     return Path(path).exists() and os.access(path, os.X_OK)
 
 
+def _default_is_writable(path: str) -> bool:
+    return os.access(path, os.W_OK)
+
+
+def _unescape_mountinfo_path(value: str) -> str:
+    return (
+        value.replace(r"\040", " ")
+        .replace(r"\011", "\t")
+        .replace(r"\012", "\n")
+        .replace(r"\134", "\\")
+    )
+
+
+def _cgroup_is_hierarchy_root(mount: str, mountinfo: str) -> bool:
+    """Distinguish the kernel root cgroup from a bind-mounted delegated subtree."""
+    target = posixpath.normpath(mount)
+    if not posixpath.isabs(target):
+        raise ValueError("cgroup mount must be absolute")
+    selected: tuple[str, str] | None = None
+    for line in mountinfo.splitlines():
+        left, separator, right = line.partition(" - ")
+        fields = left.split()
+        filesystem = right.split()
+        if not separator or len(fields) < 5 or not filesystem or filesystem[0] != "cgroup2":
+            continue
+        root = _unescape_mountinfo_path(fields[3])
+        point = posixpath.normpath(_unescape_mountinfo_path(fields[4]))
+        if target == point or target.startswith(point.rstrip("/") + "/"):
+            if selected is None or len(point) >= len(selected[0]):
+                selected = (point, root)
+    if selected is None:
+        raise ValueError("cgroup v2 mount is absent from mountinfo")
+    point, root = selected
+    relative = posixpath.relpath(target, point)
+    return posixpath.normpath(posixpath.join(root, relative)) == "/"
+
+
+def _probe_cgroup_v2(
+    mount: str, reader: Callable[[str], str], writable: Callable[[str], bool]
+) -> tuple[bool, str]:
+    controllers_path = posixpath.join(mount, "cgroup.controllers")
+    subtree_path = posixpath.join(mount, "cgroup.subtree_control")
+    procs_path = posixpath.join(mount, "cgroup.procs")
+    try:
+        controllers = set(reader(controllers_path).split())
+        enabled = set(reader(subtree_path).split())
+        processes = reader(procs_path).split()
+        required = {"cpu", "memory", "pids"}
+        missing = required - controllers
+        if missing:
+            return False, "cgroup v2 controllers unavailable: " + ", ".join(sorted(missing))
+        if not all(writable(path) for path in (mount, subtree_path, procs_path)):
+            return False, "cgroup v2 delegation is not writable by the service user"
+        hierarchy_root = _cgroup_is_hierarchy_root(mount, reader("/proc/self/mountinfo"))
+        if processes and required - enabled and not hierarchy_root:
+            return False, "delegated cgroup contains processes while required controllers are disabled"
+    except (OSError, ValueError) as error:
+        return False, f"cgroup v2 inspection failed: {type(error).__name__}"
+    return True, "cgroup v2 controllers and delegation are available"
+
+
 def probe_sandbox(
     policy: RunnerPolicy,
     *,
@@ -991,6 +1053,7 @@ def probe_sandbox(
     path_exists: Callable[[str], bool] | None = None,
     read_text: Callable[[str], str] | None = None,
     is_executable: Callable[[str], bool] | None = None,
+    is_writable: Callable[[str], bool] | None = None,
 ) -> SandboxAvailability:
     """探测沙箱可执行性：平台 / CPU 架构 / nsjail 可执行文件 / cgroup v2 / 非特权用户命名空间。
 
@@ -1006,6 +1069,7 @@ def probe_sandbox(
     exists = path_exists if path_exists is not None else _default_path_exists
     reader = read_text if read_text is not None else _default_read_text
     executable = is_executable if is_executable is not None else _default_is_executable
+    writable = is_writable if is_writable is not None else _default_is_writable
 
     checks: list[SandboxCheck] = []
     linux = platform_value.startswith("linux")
@@ -1037,17 +1101,10 @@ def probe_sandbox(
         )
     )
     checks.append(SandboxCheck("nsjail", nsjail_ok, nsjail_detail))
-    controllers_path = f"{policy.cgroup_v2_mount.rstrip('/')}/cgroup.controllers"
-    cgroup_ok = False
-    cgroup_detail = f"{controllers_path} unreadable"
+    controllers_path = posixpath.join(policy.cgroup_v2_mount, "cgroup.controllers")
+    cgroup_ok, cgroup_detail = False, f"{controllers_path} unreadable"
     if linux and exists(controllers_path):
-        try:
-            controllers = reader(controllers_path)
-        except OSError as error:  # pragma: no cover - 依赖宿主权限，注入式测试已覆盖判定分支
-            cgroup_detail = f"{controllers_path} read failed: {type(error).__name__}"
-        else:
-            cgroup_ok = bool(controllers)
-            cgroup_detail = f"{controllers_path} controllers={controllers!r}"
+        cgroup_ok, cgroup_detail = _probe_cgroup_v2(policy.cgroup_v2_mount, reader, writable)
     checks.append(SandboxCheck("cgroup_v2", cgroup_ok, cgroup_detail))
     userns_ok, userns_detail = _probe_user_namespace(linux, exists, reader)
     checks.append(SandboxCheck("user_namespace", userns_ok, userns_detail))

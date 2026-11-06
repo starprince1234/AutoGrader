@@ -913,6 +913,46 @@ def test_sandbox_unavailable_is_503_with_no_attestation(
     assert runtime.failure_count == 0, "已文档化的平台条件不得算作未预期依赖失败"
 
 
+def test_cgroup_launch_failure_reaches_reference_api_without_attestation(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The real runner's trusted nsjail log must reach the HTTP 503 boundary."""
+    from types import SimpleNamespace
+
+    from autograder_b2.integration import adapters
+    from autograder_b2.runner.run_case import run_case
+    from tests.test_runner_core import FakeLauncher, available_probe
+
+    sandbox_log = b"[E] Couldn't setup parent cgroup (cgroupv2)"
+    monkeypatch.setattr(
+        adapters,
+        "run_case",
+        lambda package, submission: run_case(
+            package,
+            submission,
+            probe=available_probe,
+            launcher=FakeLauncher(exit_code=255, stdout=b"", sandbox_log=sandbox_log),
+        ),
+    )
+    transport = _Transport()
+    service = _service(
+        transport=transport,
+        runner=adapters.RunnerCaseRunner(),  # type: ignore[arg-type]
+        workspace_root=tmp_path / "workspaces",
+    )
+    principal = Principal(user_id=str(uuid.uuid4()), roles=("admin",), scopes=(), token_id="test")
+    runtime = SimpleNamespace(
+        references=service,
+        references_unavailable=lambda: None,
+        intake=SimpleNamespace(authenticator=SimpleNamespace(authenticate=lambda _header: principal)),
+    )
+    with _client(runtime) as client:  # type: ignore[arg-type]
+        response = _post(client, "test")
+    assert response.status_code == 503
+    assert "sandbox" in response.json()["detail"]
+    assert transport.posts == []
+
+
 @pytest.mark.parametrize(
     ("answer", "expected"),
     [

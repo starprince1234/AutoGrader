@@ -331,7 +331,7 @@ class ReferenceVerificationService:
                 logger, dependency="sandbox", error=error, stage="reference_verification"
             )
             raise ReferenceSandboxUnavailable(
-                "the sandbox is unavailable on this platform, so the reference answer was not "
+                "the sandbox is unavailable or failed to initialize, so the reference answer was not "
                 "executed (no attestation was recorded)"
             ) from error
         except PackageUnavailableError as error:

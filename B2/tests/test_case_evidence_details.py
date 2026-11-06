@@ -434,6 +434,26 @@ def test_canary_verdicts_map_to_the_three_state_semantics() -> None:
     assert "无法归因" in unattributable.detail
 
 
+def test_canary_does_not_report_cgroup_initialization_failure_as_blocked(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.test_runner_core import FakeLauncher
+
+    available = SandboxAvailability(available=True, checks=(), reason=None)
+    monkeypatch.setattr("autograder_b2.canary.probe_sandbox", lambda _policy: available)
+    report = run_canary(
+        RunnerPolicy(),
+        launcher=FakeLauncher(
+            exit_code=255,
+            stdout=b"",
+            sandbox_log=b"[E] Couldn't setup parent cgroup (cgroupv2)",
+        ),
+        work_root=tmp_path / "canary",
+    )
+    assert {item.status for item in report.items} == {"not_checked"}
+    assert report.exit_code == EXIT_NOT_CHECKED
+
+
 def test_canary_exit_codes_never_render_not_checked_as_success() -> None:
     from autograder_b2.canary import CanaryItem
 

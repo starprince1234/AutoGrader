@@ -79,6 +79,19 @@ jobs:
         run: uv run --project MAIN --locked ruff check MAIN/host MAIN/sdk MAIN/deploy/check-readiness.py B2/src B3/src B4/src B5/src
       - name: Check host and deployment health contract
         run: uv run --project MAIN --locked pytest MAIN/host/tests -q
+      - name: Check cgroup failure handling
+        working-directory: B2
+        env:
+          DATABASE_URL: ""
+          B2_TEST_DATABASE_URL: ""
+        run: |
+          ../MAIN/.venv/bin/python -m pytest -q \
+            tests/test_runner_core.py::TestNoDegradation \
+            tests/test_runner_core.py::TestEvidence::test_nsjail_cgroup_setup_failure_is_sandbox_unavailable \
+            tests/test_runner_core.py::TestEvidence::test_student_exit_255_and_forged_stderr_are_not_sandbox_setup_failure \
+            tests/test_runner_core.py::TestEvidence::test_failed_case_does_not_log_student_stderr \
+            tests/test_reference_verification.py::test_cgroup_launch_failure_reaches_reference_api_without_attestation \
+            tests/test_case_evidence_details.py::test_canary_does_not_report_cgroup_initialization_failure_as_blocked
       - name: Check deployment shell syntax
         run: |
           for script in MAIN/deploy/*.sh MAIN/deploy/autograder-deployctl MAIN/scripts/production-*.sh .github/scripts/deploy-ssh.sh; do
@@ -623,13 +636,12 @@ jobs:
           else
             printf '%s\n' 'local_readiness=unreachable'
           fi
-          printf '%s\n' 'Recent service error traces (credentials redacted):'
+          printf '%s\n' 'Recent service error counts (last 30 min):'
           for unit in autograder.service cloudflared.service; do
-            journalctl -u "$unit" --since '-30 min' --no-pager -o cat 2>/dev/null \
-              | grep -Ei 'Traceback|  File |Error:|Exception:|Permission denied|Address already in use|ERROR:|failed|critical' \
-              | tail -n 120 \
-              | sed -E 's#(postgres(ql)?(\+psycopg)?://)[^[:space:]@]+@#\1<redacted>@#g; s/Bearer[[:space:]]+[^[:space:]]+/Bearer <redacted>/g; s/[A-Fa-f0-9]{64}/<redacted-hex>/g; s#-----BEGIN [A-Z ]*PRIVATE KEY-----.*#<redacted-private-key>#g' \
-              || true
+            count="$(journalctl -u "$unit" --since '-30 min' --no-pager -o json \
+              --grep 'Traceback|Error:|Exception:|Permission denied|Address already in use|ERROR:|failed|critical' \
+              | python3 -c 'import json,sys; print(sum(1 for line in sys.stdin if json.loads(line)))')"
+            printf '%s: %s\n' "$unit" "$count"
           done
           postgres_container="$(docker ps --filter label=com.docker.compose.project=autograder --filter label=com.docker.compose.service=postgres --format '{{.Names}}' | head -n 1)"
           if [[ -z "$postgres_container" ]]; then
@@ -650,47 +662,34 @@ jobs:
         run: |
           set -euo pipefail
           bash .github/scripts/deploy-ssh.sh ssh "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" bash -s <<'REMOTE'
-          set -uo pipefail
+          set -euo pipefail
           echo 'Sandbox identities:'
-          id || true
-          getent passwd nobody || true
-          getent passwd autograder || true
+          id
+          getent passwd nobody
+          getent passwd autograder
           echo 'Sandbox binaries:'
           for binary in nsjail python3 bash; do
-            printf '%s=' "$binary"; command -v "$binary" || echo missing
+            printf '%s=' "$binary"
+            if ! command -v "$binary"; then echo missing; fi
           done
-          nsjail --version 2>&1 | head -n 1 || true
           echo 'Workspace roots (mode/owner/path):'
           for candidate in /var/lib/autograder /var/lib/autograder/workspace /var/lib/autograder/b2 /var/lib/autograder/b2/workspaces /opt/autograder/workspaces /srv/autograder; do
             if [ -e "$candidate" ]; then stat -c '%A %U:%G %n' "$candidate"; fi
           done
-          if [ -f /etc/autograder/runtime.env ]; then
-            echo 'Workspace-related settings:'
-            grep -E '^[A-Z0-9_]*(WORKSPACE|WORK_ROOT|WORKDIR|CASE_ROOT)[A-Z0-9_]*=' /etc/autograder/runtime.env || true
-          fi
           echo 'Service cgroup subtree (nsjail needs this free of tasks):'
           unit_cgroup=/sys/fs/cgroup/system.slice/autograder.service
           if [ -d "$unit_cgroup" ]; then
-            echo "subtree_control=$(cat "$unit_cgroup/cgroup.subtree_control" 2>/dev/null)"
-            echo "cgroup_procs=$(cat "$unit_cgroup/cgroup.procs" 2>/dev/null | tr '\n' ' ')"
-            ls -1 "$unit_cgroup" 2>/dev/null | head -n 20
+            printf 'subtree_control='; tr '\n' ' ' < "$unit_cgroup/cgroup.subtree_control"; printf '\n'
+            printf 'cgroup_procs='; tr '\n' ' ' < "$unit_cgroup/cgroup.procs"; printf '\n'
+            ls -1 "$unit_cgroup" | awk 'NR <= 20 { print }'
           else
             echo 'unit_cgroup=missing'
+            exit 1
           fi
-          echo 'Sandbox canary (proves the sandbox can run a program at all):'
-          release="$(readlink -f /opt/autograder/current 2>/dev/null || true)"
-          if [ -n "$release" ] && [ -x "$release/MAIN/.venv/bin/python" ]; then
-            set -a; . /etc/autograder/runtime.env 2>/dev/null || true; set +a
-            "$release/MAIN/.venv/bin/python" -m autograder_b2.canary 2>&1 | tail -n 80 || true
-          else
-            echo 'canary=skipped (release or venv missing)'
-          fi
-          echo 'Reference verification / sandbox journal (last 20 min, redacted):'
-          journalctl -u autograder.service --since '-20 min' --no-pager -o cat 2>/dev/null \
-            | grep -Ei 'reference|verification|sandbox|nsjail|case-|workspace|perm|denied|exec|entry_name|python3|bash' \
-            | tail -n 200 \
-            | sed -E 's#(postgres(ql)?(\+psycopg)?://)[^[:space:]@]+@#\1<redacted>@#g; s/Bearer[[:space:]]+[^[:space:]]+/Bearer <redacted>/g; s/[A-Fa-f0-9]{64}/<redacted-hex>/g' \
-            || true
+          echo 'Recent cgroup setup errors (last 20 min):'
+          journalctl -u autograder.service --since '-20 min' --no-pager -o json \
+            --grep 'Device or resource busy|Couldn.t setup parent cgroup|sandbox_unavailable' \
+            | python3 -c 'import json,sys; print("matching_entries=" + str(sum(1 for line in sys.stdin if json.loads(line))))'
           REMOTE
 
       - name: Deploy this revision with server-side fetch and build
@@ -707,25 +706,8 @@ jobs:
           bash .github/scripts/deploy-ssh.sh ssh "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" \
             /usr/local/sbin/autograder-deployctl deploy "$GITHUB_SHA" "$DEPLOY_RELEASE_ID"
 
-      - name: Run the sandbox canary on the host
+      - name: Report sandbox verification scope
         if: always() && (github.event_name == 'push' || inputs.operation == 'diagnose')
-        env:
-          DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
-          DEPLOY_SSH_USER: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
-          DEPLOY_SSH_PASSWORD: ${{ steps.doppler.outputs.DEPLOY_SSH_PASSWORD }}
-          DEPLOY_SSH_PORT: ${{ steps.doppler.outputs.DEPLOY_SSH_PORT }}
         run: |
-          set -euo pipefail
-          bash .github/scripts/deploy-ssh.sh ssh "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" bash -s <<'REMOTE'
-          set -uo pipefail
-          release="$(readlink -f /opt/autograder/current 2>/dev/null || true)"
-          echo "current_release=$release"
-          if [ -z "$release" ] || [ ! -x "$release/MAIN/.venv/bin/python" ]; then
-            echo 'canary=skipped (release or venv missing)'
-            exit 0
-          fi
-          set -a
-          . /etc/autograder/runtime.env 2>/dev/null || true
-          set +a
-          "$release/MAIN/.venv/bin/python" -m autograder_b2.canary 2>&1 | tail -n 80 || true
-          REMOTE
+          echo 'sandbox_execution=not_checked: SSH host canary does not run in the API service context.'
+          echo 'Validate reference verification and resource limits in the service context separately.'
