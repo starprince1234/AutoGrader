@@ -984,10 +984,17 @@ def _execute_case(
     stderr_text = stderr_bytes.decode("utf-8", errors="replace")
     sandbox_log_text = log_bytes.decode("utf-8", errors="replace")
     run_duration_ms = max(0, int((time.monotonic() - run_started) * 1000))
-    # 诊断：沙箱以非零码退出且**没有任何标准输出**时，把 nsjail 自己的日志尾部记进服务日志。
+    # 诊断：沙箱以非零码退出且**没有任何标准输出**时，把执行现场记进服务日志：
+    # nsjail 命令行、入口脚本是否存在/多大、以及 nsjail 自己那份日志的尾部。
     # nsjail 日志只含它自己的诊断（挂载、seccomp、cgroup、exec 失败），不含学生或参考解正文；
     # 没有这一条时，"空输出 + 退出码 255" 只能靠猜。
-    if exit_code not in (0, None) and not stdout_text and sandbox_log_text:
+    if exit_code not in (0, None) and not stdout_text:
+        entry_path = Path(workspace) / plan.entry_name
+        try:
+            entry_exists = entry_path.exists()
+            entry_size = entry_path.stat().st_size if entry_exists else -1
+        except OSError:
+            entry_exists, entry_size = False, -1
         _diagnostic_logger().info(
             "runner.case.sandbox_log",
             extra={
@@ -995,9 +1002,17 @@ def _execute_case(
                     "event": "runner.case.sandbox_log",
                     "fields": {
                         "exit_code": exit_code,
+                        "timed_out": timed_out,
                         "stdout_bytes": len(stdout_bytes),
                         "stderr_bytes": len(stderr_bytes),
+                        "stderr_excerpt": stderr_text[:300],
                         "workspace": str(workspace),
+                        "workspace_mode": oct(Path(workspace).stat().st_mode & 0o7777),
+                        "entry_name": plan.entry_name,
+                        "entry_exists": entry_exists,
+                        "entry_size": entry_size,
+                        "argv": list(argv),
+                        "sandbox_log_len": len(sandbox_log_text),
                         "sandbox_log": sandbox_log_text[:800],
                     },
                 }
