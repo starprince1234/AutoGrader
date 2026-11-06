@@ -1011,9 +1011,10 @@ def _cgroup_is_hierarchy_root(mount: str, mountinfo: str) -> bool:
             continue
         root = _unescape_mountinfo_path(fields[3])
         point = posixpath.normpath(_unescape_mountinfo_path(fields[4]))
-        if target == point or target.startswith(point.rstrip("/") + "/"):
-            if selected is None or len(point) >= len(selected[0]):
-                selected = (point, root)
+        if (target == point or target.startswith(point.rstrip("/") + "/")) and (
+            selected is None or len(point) >= len(selected[0])
+        ):
+            selected = (point, root)
     if selected is None:
         raise ValueError("cgroup v2 mount is absent from mountinfo")
     point, root = selected
