@@ -1,0 +1,851 @@
+[
+  {
+    "title": "求一组整数的平均值",
+    "stem_markdown": "## 题目\n\n读入一组整数，输出它们的平均值，保留两位小数。\n\n### 输入\n\n一行，若干个用空白分隔的整数（至少一个）。\n\n### 输出\n\n一行，一个保留两位小数的实数：平均值。\n\n### 示例\n\n输入：\n\n```\n1 2 3 4\n```\n\n输出：\n\n```\n2.50\n```\n",
+    "language": "python",
+    "difficulty": "中等",
+    "publish": true,
+    "image_placeholder": false,
+    "reference_answer": "import sys\nnums = [int(x) for x in sys.stdin.read().split()]\nprint(f\"{sum(nums) / len(nums):.2f}\")\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "样例（可见）",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "1 2 3 4",
+        "args": [],
+        "expected_stdout": "2.50\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "10",
+        "args": [],
+        "expected_stdout": "10.00\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "0 0 0",
+        "args": [],
+        "expected_stdout": "0.00\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "-1 1",
+        "args": [],
+        "expected_stdout": "0.00\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2 4 6",
+        "args": [],
+        "expected_stdout": "4.00\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "python",
+      "difficulty-medium",
+      "numbers",
+      "lists"
+    ]
+  },
+  {
+    "title": "大小写字母互相转换",
+    "stem_markdown": "## 题目\n\n读入一行文本，把其中的大写字母改为小写、小写字母改为大写，其它字符原样输出。\n\n### 输入\n\n一行文本。\n\n### 输出\n\n一行，转换后的文本。\n\n### 示例\n\n输入：\n\n```\nHello\n```\n\n输出：\n\n```\nhELLO\n```\n",
+    "language": "python",
+    "difficulty": "中等",
+    "publish": true,
+    "image_placeholder": false,
+    "reference_answer": "import sys\nline = sys.stdin.readline()\nif line.endswith(\"\\n\"):\n    line = line[:-1]\nprint(line.swapcase())\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "样例（可见）",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "Hello",
+        "args": [],
+        "expected_stdout": "hELLO\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "ABC def",
+        "args": [],
+        "expected_stdout": "abc DEF\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "123",
+        "args": [],
+        "expected_stdout": "123\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "Python",
+        "args": [],
+        "expected_stdout": "pYTHON\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "MiXeD 2026",
+        "args": [],
+        "expected_stdout": "mIxEd 2026\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "python",
+      "difficulty-medium",
+      "strings"
+    ]
+  },
+  {
+    "title": "统计数字字符的个数",
+    "stem_markdown": "## 题目\n\n读入一行文本，统计其中数字字符（0–9）的个数。\n\n### 输入\n\n一行文本。\n\n### 输出\n\n一行，一个整数：数字字符个数。\n\n### 示例\n\n输入：\n\n```\nabc123\n```\n\n输出：\n\n```\n3\n```\n",
+    "language": "python",
+    "difficulty": "中等",
+    "publish": true,
+    "image_placeholder": false,
+    "reference_answer": "import sys\nprint(sum(1 for ch in sys.stdin.read() if ch.isdigit()))\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "样例（可见）",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "abc123",
+        "args": [],
+        "expected_stdout": "3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "0000",
+        "args": [],
+        "expected_stdout": "4\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a1b2c3",
+        "args": [],
+        "expected_stdout": "3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2026-11-07",
+        "args": [],
+        "expected_stdout": "8\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "no-digits",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "python",
+      "difficulty-medium",
+      "strings",
+      "loop"
+    ]
+  },
+  {
+    "title": "求一组整数的和",
+    "stem_markdown": "## 题目\n\n读入一组整数，输出它们的和。\n\n### 输入\n\n一行，若干个用空白分隔的整数；没有整数时按 0 处理。\n\n### 输出\n\n一行，一个整数：所有数之和。\n\n### 示例\n\n输入：\n\n```\n1 2 3\n```\n\n输出：\n\n```\n6\n```\n",
+    "language": "python",
+    "difficulty": "中等",
+    "publish": true,
+    "image_placeholder": false,
+    "reference_answer": "import sys\nprint(sum(int(x) for x in sys.stdin.read().split()))\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "样例（可见）",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "1 2 3",
+        "args": [],
+        "expected_stdout": "6\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "-5 5",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "100",
+        "args": [],
+        "expected_stdout": "100\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1 1 1 1 1",
+        "args": [],
+        "expected_stdout": "5\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "-1 -2 -3",
+        "args": [],
+        "expected_stdout": "-6\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "python",
+      "difficulty-medium",
+      "lists",
+      "numbers"
+    ]
+  },
+  {
+    "title": "输出 1 到 n 之间的全部奇数",
+    "stem_markdown": "## 题目\n\n读入一个正整数 n，按从小到大的顺序输出 1 到 n 之间的所有奇数，用一个空格分隔。\n\n### 输入\n\n一行，一个正整数 n。\n\n### 输出\n\n一行，奇数序列（空格分隔）。\n\n### 示例\n\n输入：\n\n```\n10\n```\n\n输出：\n\n```\n1 3 5 7 9\n```\n",
+    "language": "python",
+    "difficulty": "中等",
+    "publish": true,
+    "image_placeholder": false,
+    "reference_answer": "n = int(input())\nprint(\" \".join(str(v) for v in range(1, n + 1) if v % 2 == 1))\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "样例（可见）",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "10",
+        "args": [],
+        "expected_stdout": "1 3 5 7 9\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1",
+        "args": [],
+        "expected_stdout": "1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "3",
+        "args": [],
+        "expected_stdout": "1 3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "7",
+        "args": [],
+        "expected_stdout": "1 3 5 7\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "20",
+        "args": [],
+        "expected_stdout": "1 3 5 7 9 11 13 15 17 19\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "python",
+      "difficulty-medium",
+      "loop",
+      "numbers"
+    ]
+  },
+  {
+    "title": "求各位数字之积",
+    "stem_markdown": "## 题目\n\n读入一个非负整数，输出它各位数字的乘积。\n\n### 输入\n\n一行，一个非负整数。\n\n### 输出\n\n一行，一个整数：各位数字之积。\n\n### 示例\n\n输入：\n\n```\n1234\n```\n\n输出：\n\n```\n24\n```\n",
+    "language": "python",
+    "difficulty": "中等",
+    "publish": true,
+    "image_placeholder": false,
+    "reference_answer": "s = input().strip()\nproduct = 1\nfor ch in s:\n    product *= int(ch)\nprint(product)\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "样例（可见）",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "1234",
+        "args": [],
+        "expected_stdout": "24\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "0",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "9",
+        "args": [],
+        "expected_stdout": "9\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "101",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "5555",
+        "args": [],
+        "expected_stdout": "625\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "python",
+      "difficulty-medium",
+      "numbers",
+      "loop"
+    ]
+  },
+  {
+    "title": "判断字符串是否全部由小写字母组成",
+    "stem_markdown": "## 题目\n\n读入一行文本，若它非空且每个字符都是小写英文字母（a–z），输出 YES，否则输出 NO。\n\n### 输入\n\n一行文本。\n\n### 输出\n\n一行：YES 或 NO。\n\n### 示例\n\n输入：\n\n```\nabc\n```\n\n输出：\n\n```\nYES\n```\n",
+    "language": "python",
+    "difficulty": "中等",
+    "publish": true,
+    "image_placeholder": false,
+    "reference_answer": "import sys\ns = sys.stdin.readline().strip()\nprint(\"YES\" if s != \"\" and all(\"a\" <= ch <= \"z\" for ch in s) else \"NO\")\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "样例（可见）",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "abc",
+        "args": [],
+        "expected_stdout": "YES\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "abC",
+        "args": [],
+        "expected_stdout": "NO\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "abc123",
+        "args": [],
+        "expected_stdout": "NO\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "abc def",
+        "args": [],
+        "expected_stdout": "NO\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "xyz",
+        "args": [],
+        "expected_stdout": "YES\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "python",
+      "difficulty-medium",
+      "strings",
+      "branch"
+    ]
+  },
+  {
+    "title": "公交票价计算",
+    "stem_markdown": "## 题目\n\n某市公交按里程分段计价：里程不超过 5 公里 2 元；超过 5 公里且不超过 10 公里 3 元；超过 10 公里且不超过 20 公里 4 元；超过 20 公里 5 元。读入里程（整数），输出票价。\n\n### 输入\n\n一行，一个正整数：里程（公里）。\n\n### 输出\n\n一行，一个整数：票价（元）。\n\n### 示例\n\n输入：\n\n```\n8\n```\n\n输出：\n\n```\n3\n```\n",
+    "language": "python",
+    "difficulty": "中等",
+    "publish": true,
+    "image_placeholder": false,
+    "reference_answer": "km = int(input())\nif km <= 5:\n    fare = 2\nelif km <= 10:\n    fare = 3\nelif km <= 20:\n    fare = 4\nelse:\n    fare = 5\nprint(fare)\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "样例（可见）",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "3",
+        "args": [],
+        "expected_stdout": "2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "5",
+        "args": [],
+        "expected_stdout": "2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "8",
+        "args": [],
+        "expected_stdout": "3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "15",
+        "args": [],
+        "expected_stdout": "4\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "30",
+        "args": [],
+        "expected_stdout": "5\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "python",
+      "difficulty-medium",
+      "branch",
+      "numbers"
+    ]
+  },
+  {
+    "title": "统计每个字符出现的次数",
+    "stem_markdown": "## 题目\n\n读入一行文本，按字符首次出现的顺序，逐行输出「字符:次数」（不统计空白字符）。\n\n### 输入\n\n一行文本。\n\n### 输出\n\n每行一个「字符:次数」，顺序为字符首次出现的顺序。\n\n### 示例\n\n输入：\n\n```\naab\n```\n\n输出：\n\n```\na:2\nb:1\n```\n",
+    "language": "python",
+    "difficulty": "中等",
+    "publish": true,
+    "image_placeholder": false,
+    "reference_answer": "import sys\ntext = sys.stdin.readline().rstrip(\"\\n\")\ncounts = {}\norder = []\nfor ch in text:\n    if ch.isspace():\n        continue\n    if ch not in counts:\n        counts[ch] = 0\n        order.append(ch)\n    counts[ch] += 1\nfor ch in order:\n    print(f\"{ch}:{counts[ch]}\")\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "样例（可见）",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "aab",
+        "args": [],
+        "expected_stdout": "a:2\nb:1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "abc",
+        "args": [],
+        "expected_stdout": "a:1\nb:1\nc:1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "aaaa",
+        "args": [],
+        "expected_stdout": "a:4\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a b a",
+        "args": [],
+        "expected_stdout": "a:2\nb:1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "xyzxyz",
+        "args": [],
+        "expected_stdout": "x:2\ny:2\nz:2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "python",
+      "difficulty-medium",
+      "strings",
+      "lists"
+    ]
+  },
+  {
+    "title": "求两个正整数的最大公约数与最小公倍数",
+    "stem_markdown": "## 题目\n\n读入两个正整数，输出它们的最大公约数与最小公倍数，中间用一个空格分隔。\n\n### 输入\n\n一行，两个用空白分隔的正整数。\n\n### 输出\n\n一行，两个整数：最大公约数 最小公倍数。\n\n### 示例\n\n输入：\n\n```\n4 6\n```\n\n输出：\n\n```\n2 12\n```\n",
+    "language": "python",
+    "difficulty": "中等",
+    "publish": true,
+    "image_placeholder": false,
+    "reference_answer": "import math, sys\na, b = (int(x) for x in sys.stdin.read().split()[:2])\ng = math.gcd(a, b)\nprint(g, a * b // g)\n",
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "cases": [
+      {
+        "name": "样例（可见）",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "4 6",
+        "args": [],
+        "expected_stdout": "2 12\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "7 5",
+        "args": [],
+        "expected_stdout": "1 35\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "12 18",
+        "args": [],
+        "expected_stdout": "6 36\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1 1",
+        "args": [],
+        "expected_stdout": "1 1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "21 6",
+        "args": [],
+        "expected_stdout": "3 42\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ],
+    "max_files": 20,
+    "max_total_bytes": 1048576,
+    "tags": [
+      "python",
+      "difficulty-medium",
+      "numbers",
+      "loop"
+    ]
+  }
+]
