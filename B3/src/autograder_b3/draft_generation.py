@@ -98,7 +98,9 @@ SYSTEM_PROMPT = (
         "The reference answer must be a complete program that reads its input the way the "
         "adapter describes (stdin when kind is stdin) and prints only the expected output; "
         "every case's expected_stdout must be exactly what that program prints for the "
-        "case's stdin, including the trailing newline."
+        "case's stdin, including the trailing newline. Put real newline characters in the "
+        "JSON strings (a single \\n escape); never emit the two characters backslash-n as the "
+        "value of stdin or expected_stdout."
 )
 
 
@@ -683,6 +685,21 @@ def _normalise_tags(value: Any, warnings: _Warnings) -> tuple[str, ...]:
     return tuple(accepted)
 
 
+
+#: 模型经常把 JSON 里的换行写成**双重转义**（JSON 串里出现反斜杠 + n 两个字符），落库后就成了
+#: 字面量 "46\\n"，而参考解打印的是真正的换行，于是每条用例都判"输出不一致"。这些字段是
+#: 纯文本输入/期望输出，把它们还原成真正的控制字符永远是对的。
+_LITERAL_ESCAPES = (("\\r\\n", "\r\n"), ("\\n", "\n"), ("\\t", "\t"), ("\\r", "\r"))
+
+
+def _unescape_literal_controls(text: str | None) -> str | None:
+    if not text:
+        return text
+    for literal, real in _LITERAL_ESCAPES:
+        text = text.replace(literal, real)
+    return text
+
+
 def _normalise_cases(
     value: Any, *, warnings: _Warnings, limits: Settings
 ) -> tuple[DraftCaseProposal, ...]:
@@ -711,7 +728,9 @@ def _normalise_cases(
                 f"cases[{index}].expected_exit_code",
                 f"退出码要是 {_MIN_EXIT_CODE} 到 {_MAX_EXIT_CODE} 之间的整数，已留空。",
             )
-        stdin = _text(entry.get("stdin"), limit=limits.draft_generation_max_text_chars)
+        stdin = _unescape_literal_controls(
+            _text(entry.get("stdin"), limit=limits.draft_generation_max_text_chars)
+        )
         cases.append(
             DraftCaseProposal(
                 name=name,
@@ -720,11 +739,11 @@ def _normalise_cases(
                 visible_to_student=entry.get("visible_to_student") is True,
                 stdin=stdin,
                 args=_string_list(entry.get("args")),
-                expected_stdout=_text(
-                    entry.get("expected_stdout"), limit=limits.draft_generation_max_text_chars
+                expected_stdout=_unescape_literal_controls(
+                    _text(entry.get("expected_stdout"), limit=limits.draft_generation_max_text_chars)
                 ),
-                expected_stderr=_text(
-                    entry.get("expected_stderr"), limit=limits.draft_generation_max_text_chars
+                expected_stderr=_unescape_literal_controls(
+                    _text(entry.get("expected_stderr"), limit=limits.draft_generation_max_text_chars)
                 ),
                 expected_exit_code=expected_exit_code,
             )
