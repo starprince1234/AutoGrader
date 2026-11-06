@@ -1033,6 +1033,8 @@ export interface components {
          */
         EvaluationQualitySummary: {
             question_version_id: components["schemas"]["Uuid"];
+            /** @description Distinct students with at least one evaluation run in scope. An aggregate count only: no identifier is exposed, but a teacher needs to distinguish '20 attempts from 2 students' from '20 attempts from 20 students'. */
+            answerer_count: number;
             /** @description Evaluation runs in scope. A question with very few attempts has no signal yet -- say so rather than drawing conclusions from noise. */
             attempt_count: number;
             /** @description Per-case failure categories with counts. 'infrastructure_error' is the system's fault and is listed separately so it does not read as difficulty. */

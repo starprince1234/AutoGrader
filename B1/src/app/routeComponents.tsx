@@ -94,13 +94,15 @@ export function AuthoringNewRoute() {
 
 export function AuthoringEditRoute() {
   const { questionId } = useParams({ from: "/questions/$questionId/edit" });
+  // 来源决定右上角按钮：从详情页进来的回详情页，其余回题库列表（3.0 第 1 条）。
+  const { from } = useSearch({ from: "/questions/$questionId/edit" });
   return (
     <RequireAuth>
       <RequirePermission
         allow={canAuthorQuestions}
         allowedRoles={["teacher", "admin"]}
       >
-        <AuthoringPage questionId={questionId} />
+        <AuthoringPage questionId={questionId} backTo={from === "detail" ? "detail" : "questions"} />
       </RequirePermission>
     </RequireAuth>
   );

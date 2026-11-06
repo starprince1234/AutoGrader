@@ -1,4 +1,7 @@
-"""写入几条演示用的隔离记录（只用于演示/联调，**不是**产品功能）。
+"""写入两条演示用的待处理隔离记录（只用于演示/联调，**不是**产品功能）。
+
+一条是"无法确定属于谁"的邮件（带课程/课序，老师可人工匹配用户），另一条是"没有附件"
+（无法作为提交、只对管理员可见，只能暂存或标记作废）。
 
 为什么需要显式确认：这些行会出现在老师的待处理列表里，写入生产库会被当成真实邮件。
 脚本因此要求 `--confirm-demo-write`，并在输出里打印数据库主机与库名（不打印密码），
@@ -68,43 +71,22 @@ def main(argv: list[str] | None = None) -> int:
     rows = [
         {
             "reason_code": "not_uniquely_matched",
-            "detail": "同一学号在名单中出现两次，匹配器无法确定是哪一位学生。",
-            "subject": "演示：第一次作业提交",
+            "detail": "发件邮箱对应名单中的两个学生，匹配器无法确定这封邮件属于谁。",
+            "subject": "演示：无法确定是谁的作业",
             "resolved": False,
             "held": False,
             "resolution": None,
+            "scoped": True,
         },
         {
-            "reason_code": "ambiguous_match",
-            "detail": "两个班的同名文件指向不同学生，需要老师人工确认。",
-            "subject": "演示：作业二（补交）",
+            "reason_code": "no_attachments",
+            "detail": "邮件正文只有一句话，没有可提交的附件；管理员可核对后标记作废。",
+            "subject": "演示：没有附件的邮件",
             "resolved": False,
             "held": False,
             "resolution": None,
-        },
-        {
-            "reason_code": "executable_attachment",
-            "detail": "附件 run.sh 是可执行文件，按安全策略拒绝；可标记作废或人工核对后匹配用户。",
-            "subject": "演示：误发的脚本",
-            "resolved": False,
-            "held": False,
-            "resolution": None,
-        },
-        {
-            "reason_code": "not_uniquely_matched",
-            "detail": "老师已看过，先暂存，稍后再处理。",
-            "subject": "演示：暂存记录",
-            "resolved": False,
-            "held": True,
-            "resolution": None,
-        },
-        {
-            "reason_code": "ambiguous_match",
-            "detail": "垃圾邮件，已标记作废。",
-            "subject": "演示：作废记录",
-            "resolved": True,
-            "held": False,
-            "resolution": "dismissed",
+            # 无法证明属于哪个班：只让管理员看到，符合行级 scope 的口径。
+            "scoped": False,
         },
     ]
     inserted: list[str] = []
@@ -125,8 +107,8 @@ def main(argv: list[str] | None = None) -> int:
                 "resolved": row["resolved"],
                 "resolved_student_id": None,
                 "resolution_note": None,
-                "scope_course_id": course_id,
-                "scope_section_id": section_id,
+                "scope_course_id": course_id if row["scoped"] else None,
+                "scope_section_id": section_id if row["scoped"] else None,
                 "subject": row["subject"],
                 "resolution": row["resolution"],
                 "resolved_at": now if row["resolved"] else None,

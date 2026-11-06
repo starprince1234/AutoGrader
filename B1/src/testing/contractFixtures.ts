@@ -766,6 +766,7 @@ export function evaluationQualitySummary(
 ): EvaluationQualitySummary {
   return {
     question_version_id: UUID_C,
+    answerer_count: 18,
     attempt_count: 42,
     failure_categories: [
       { category: "output_mismatch", count: 11 },

@@ -2359,6 +2359,7 @@ def test_quality_summary_returns_counts_only(
     body = response.json()
     assert set(body) == {
         "question_version_id",
+        "answerer_count",
         "attempt_count",
         "failure_categories",
         "static_rule_hits",
@@ -2429,6 +2430,7 @@ def test_quality_summary_aggregates_per_case_and_per_rule(
     ).json()
 
     assert body["attempt_count"] == 2
+    assert body["answerer_count"] == 2
     # 真实编排 + 替身 runner：隐藏用例（ordinal 1）失败、可见用例（ordinal 0）通过。
     assert body["case_failure_rates"] == [
         {"ordinal": 0, "attempts": 1, "failures": 0},

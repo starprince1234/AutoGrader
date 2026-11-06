@@ -7,6 +7,7 @@ import type {
   ComparisonDiagnostics,
   FixtureUploadInput,
   FixtureUploadResult,
+  QuestionDraftContent,
   QuestionDraftInput,
   QuestionPublic,
   QuestionVersionPublic,
@@ -207,6 +208,21 @@ export function useVerifyReferenceAnswer() {
  * 客户端**不**判断自己是否有资格发布：门禁是 B3 交叉核对摘要后给出的结论。本页只在
  * "验证通过 + 存证已记录 + 摘要未变"时**提供入口**，而 422 之类的拒绝一律原样展示服务端 detail。
  */
+/**
+ * 读回**草稿自己**的参考答案与测试用例（教师、仅草稿）。
+ *
+ * 为什么需要它：`CHG-0017` 让受保护字段在写入时可以省略，于是编辑页拿不到已存的用例，
+ * 老师改错时只能"重新声明一遍"、不能改原来那条。这个查询让编辑页把作者自己的内容读回来，
+ * 从而可以就地修改。服务端只对"本课程可写 + 版本仍是草稿"放行。
+ */
+export function useDraftContent(versionId: string | null) {
+  return useQuery({
+    queryKey: [...queryKeys.questionVersion(versionId ?? ""), "draft-content"],
+    enabled: Boolean(versionId),
+    queryFn: () => apiRequest<QuestionDraftContent>(`/api/v1/question-versions/${encodeURIComponent(versionId as string)}/draft-content`),
+  });
+}
+
 export function usePublishQuestionVersion() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -250,16 +266,24 @@ export function usePublishQuestionVersion() {
  */
 export function useUploadQuestionAsset(questionId: string | null) {
   return useMutation({
-    mutationFn: async (input: AssetUploadInput): Promise<StemAssetUploadResult> => {
+    /**
+     * `questionId` 可以随这次调用一起给：题干页插图时题目可能刚被自动存成草稿，
+     * 那一刻组件拿到的 props 还是旧值，用调用参数传入才能落到正确的那道题上。
+     */
+    mutationFn: async (
+      input: AssetUploadInput & { questionId?: string },
+    ): Promise<StemAssetUploadResult> => {
+      const targetId = input.questionId ?? questionId;
       const requestId = newRequestId();
+      const { questionId: _override, ...body } = input;
       const asset = await apiRequest<StemAssetUploadResult>(
-        `/api/v1/questions/${encodeURIComponent(questionId as string)}/assets`,
-        { method: "POST", body: input, requestId },
+        `/api/v1/questions/${encodeURIComponent(targetId as string)}/assets`,
+        { method: "POST", body, requestId },
       );
       log({
         event: "question_asset_uploaded",
         request_id: requestId,
-        question_id: questionId,
+        question_id: targetId,
         asset_id: asset.asset_id,
         content_type: asset.content_type,
         size_bytes: asset.size_bytes,

@@ -184,9 +184,9 @@ describe("题目详情与版本机制（RQ-B-1-40）", () => {
     renderQuestionDetail();
 
     await screen.findByTestId("version-panel");
-    // 只有题目主体那一份 stem；版本面板给出"内容一致"的说明而不是第二份副本。
+    // 只有题目主体那一份 stem；3.0 之后连"内容一致"那行说明也删掉了。
     expect(screen.queryByTestId("version-stem-body")).toBeNull();
-    expect(screen.getByTestId("version-stem-same")).toBeInTheDocument();
+    expect(screen.queryByTestId("version-stem-same")).toBeNull();
   });
 
   it("公开 DTO 若混入受保护字段，页面拒绝渲染并报错（UI 层双重校验）", async () => {
@@ -238,17 +238,13 @@ describe("题目详情与版本机制（RQ-B-1-40）", () => {
 
     renderQuestionDetail();
 
-    const summary = await screen.findByTestId("revision-summary");
-    expect(within(summary).getByTestId("revision-note")).toHaveTextContent(
+    // 3.0：版本框只留「选择版本 / 题型 / 状态 / 相关信息」。
+    const related = await screen.findByTestId("version-related");
+    expect(within(related).getByTestId("version-related-note")).toHaveTextContent(
       "例题里的截止时间写错了",
     );
-    expect(summary).toHaveTextContent("2 → 3");
-    expect(summary).toHaveTextContent("有变化");
-    // `null` 的条目表示"没这一项"：渲染成空，而不是"无变化"。
-    const fixturesRow = within(summary).getByText("文件有改动").closest(".facts__row") as HTMLElement;
-    expect(fixturesRow.querySelector("dd")?.textContent).toBe("");
-    // 只有摘要（digest），没有参考答案本身。
-    expect(summary).not.toHaveTextContent("print(");
+    // 「这一版改了什么 / 与上一版相比」两套板块已删除。
+    expect(screen.queryByTestId("revision-summary")).toBeNull();
   });
 
   it("首个版本的 revision_diff 为 null 时说明「没有可比较的上一版」，不是「缺数据」", async () => {
@@ -273,8 +269,60 @@ describe("题目详情与版本机制（RQ-B-1-40）", () => {
 
     renderQuestionDetail();
 
-    const summary = await screen.findByTestId("revision-summary");
-    expect(summary).toHaveTextContent("这是第一个版本");
+    // 没写改动说明时固定显示「无」。
+    const related = await screen.findByTestId("version-related");
+    expect(within(related).getByTestId("version-related-note")).toHaveTextContent("无");
+  });
+
+  it("版本框里不再有「作答入口对学生开放…」这句提示；返回题库列表在右上角", async () => {
+    stub = installFetchStub([
+      {
+        method: "POST",
+        path: "/api/v1/auth/session",
+        respond: () => jsonResponse(sessionCreated({ roles: ["teacher"] })),
+      },
+      {
+        path: `/api/v1/questions/${QUESTION_ID}`,
+        respond: () => jsonResponse(questionPublic()),
+      },
+      {
+        path: `/api/v1/question-versions/${VERSION_A}`,
+        respond: () => jsonResponse(questionVersionPublic({ question_version_id: VERSION_A })),
+      },
+    ]);
+    await signIn("teacher1", "pw");
+    renderQuestionDetail();
+
+    await screen.findByTestId("version-panel");
+    expect(screen.queryByTestId("submit-student-only")).toBeNull();
+    expect(screen.queryByText(/作答入口对学生开放/)).toBeNull();
+    // 返回按钮在标题同一行的右上角。
+    const back = screen.getByTestId("back-to-list");
+    expect(back.closest(".page-head")).not.toBeNull();
+    expect(back.className).toContain("page-head__end");
+  });
+
+  it("编辑入口带上来源：from=detail（3.0：编辑页要显示「返回题目」）", async () => {
+    stub = installFetchStub([
+      {
+        method: "POST",
+        path: "/api/v1/auth/session",
+        respond: () => jsonResponse(sessionCreated({ roles: ["teacher"] })),
+      },
+      {
+        path: `/api/v1/questions/${QUESTION_ID}`,
+        respond: () => jsonResponse(questionPublic({ status: "draft" })),
+      },
+      {
+        path: `/api/v1/question-versions/${VERSION_A}`,
+        respond: () => jsonResponse(questionVersionPublic({ question_version_id: VERSION_A })),
+      },
+    ]);
+    await signIn("teacher1", "pw");
+    renderQuestionDetail();
+
+    const link = await screen.findByTestId("edit-question");
+    expect(link.getAttribute("href") ?? "").toContain("from=detail");
   });
 
   it("出题角色看到编辑入口；学生看不到，出题入口不会指向死路", async () => {
@@ -330,12 +378,13 @@ describe("题目详情与版本机制（RQ-B-1-40）", () => {
 
     const panel = await screen.findByTestId("reference-verification");
     expect(within(panel).getByTestId("reference-verify")).toBeInTheDocument();
-    // 门禁的语义写在这里：可发布 = 全通过 ∧ 存证已记录 ∧ 摘要未变。
-    expect(within(panel).getByTestId("reference-gate")).toHaveTextContent("这次检验有记录");
+    // 2.0：门禁的说明文字已删，语义仍在服务端与按钮行为里（见 ReferenceVerificationPanel 测试）。
+    expect(within(panel).queryByTestId("reference-gate")).toBeNull();
     // 未验证 → 没有发布动作。
     expect(within(panel).queryByTestId("reference-publish")).toBeNull();
     // 编辑入口在位：写路径不再是"看得到改不了"。
     expect(screen.getByTestId("edit-question")).toBeInTheDocument();
-    expect(screen.getByTestId("version-not-published")).toBeInTheDocument();
+    // 3.0：「这个版本尚未发布……」那条说明已删。
+    expect(screen.queryByTestId("version-not-published")).toBeNull();
   });
 });

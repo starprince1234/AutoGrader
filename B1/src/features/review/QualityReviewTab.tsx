@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { Link } from "@tanstack/react-router";
 import { t } from "../../i18n";
 import { isApiError } from "../../api/problem";
 import type { EvaluationQualitySummary } from "../../api/types";
@@ -7,20 +6,16 @@ import { courseLabel as formatCourseLabel, loadedCourses, useCourses } from "../
 import { useSession } from "../../auth/sessionContext";
 import {
   Banner,
-  EmptyState,
   ErrorState,
   Field,
   LoadMoreActions,
   Panel,
   Spinner,
-  StatusPill,
   Table,
 } from "../../ui/components";
 import { isUuid } from "../../ui/format";
 import { useVersionContext, useVersionOptions } from "./useQualityVersions";
 import {
-  SMALL_SAMPLE_THRESHOLD,
-  isSmallSample,
   toContractTimestamp,
   toLocalInputValue,
   useQualitySummary,
@@ -44,190 +39,191 @@ import { Select } from "../../ui/Select";
  *   （同一数字画两遍会被读成两个指标）。
  */
 
+/** 契约分类是机器词；老师看到的是"为什么错"，不是英文枚举。 */
+const CATEGORY_LABELS: Record<string, string> = {
+  timeout: "运行超时",
+  crash: "程序崩溃",
+  output_mismatch: "输出结果不一致",
+  resource_limit: "超出资源限制",
+  missing_output: "没有产生预期文件",
+  import_error: "依赖或导入错误",
+  security_blocked: "触发安全检查",
+  infrastructure_error: "系统/运行环境问题",
+  internal_error: "系统内部错误",
+};
+
+function categoryLabel(category: string): string {
+  return CATEGORY_LABELS[category] ?? "其他失败";
+}
+
+function systemFailureCount(summary: EvaluationQualitySummary): number {
+  const infrastructure =
+    summary.failure_categories.find((item) => item.category === "infrastructure_error")?.count ??
+    0;
+  return infrastructure + summary.unmeasured_runs;
+}
+
+/** 后端与前端滚动发布时旧响应可能还没有该字段：退回提交总次数，避免卡片空白。 */
+function answererCount(summary: EvaluationQualitySummary): number {
+  return summary.answerer_count ?? summary.attempt_count;
+}
+
 function CountCard({
   label,
   value,
+  foot,
   testId,
-  tone = "idle",
+  tone = "default",
+  marked = false,
 }: {
   label: string;
   value: number;
+  foot: string;
   testId: string;
-  tone?: "ok" | "warn" | "bad" | "idle";
+  tone?: "default" | "warn" | "bad";
+  marked?: boolean;
 }) {
+  const background =
+    tone === "bad"
+      ? "var(--color-bad-soft)"
+      : tone === "warn" || marked
+        ? "var(--color-warn-soft)"
+        : "var(--color-surface-2)";
+  const border =
+    tone === "bad"
+      ? "var(--color-bad)"
+      : tone === "warn" || marked
+        ? "var(--color-warn)"
+        : "var(--color-border)";
   return (
-    <div className="count-card" data-testid={testId}>
-      <StatusPill tone={tone}>{label}</StatusPill>
+    <div
+      className="count-card"
+      data-testid={testId}
+      style={{ background, borderColor: border }}
+    >
+      <span className="muted">{label}</span>
       <p className="count-card__value" data-testid={`${testId}-value`}>
         {value}
       </p>
+      <span className="muted">{foot}</span>
     </div>
   );
 }
 
 function CaseTable({ summary }: { summary: EvaluationQualitySummary }) {
+  const rows = summary.case_failure_rates
+    .filter((row) => row.attempts > 0)
+    .sort((left, right) => {
+      const byRate = right.failures / right.attempts - left.failures / left.attempts;
+      return byRate !== 0 ? byRate : left.ordinal - right.ordinal;
+    });
+  if (rows.length === 0) {
+    return (
+      <p className="muted" data-testid="review-quality-no-case-failures">
+        {t("review.quality.noCaseRecords")}
+      </p>
+    );
+  }
   return (
     <div data-testid="review-quality-cases">
       <h3>{t("review.quality.caseRates")}</h3>
-      {summary.case_failure_rates.length === 0 ? (
-        <EmptyState>{t("review.quality.noCases")}</EmptyState>
-      ) : (
-        <Table
-          testId="review-quality-cases-table"
-          label={t("review.quality.caseRates")}
-          rows={summary.case_failure_rates}
-          getRowKey={(row) => String(row.ordinal)}
-          columns={[
-            { key: "ordinal", header: t("review.quality.caseOrdinal"), render: (row) => row.ordinal },
-            { key: "attempts", header: t("review.quality.attempts"), render: (row) => row.attempts },
-            { key: "failures", header: t("review.quality.failures"), render: (row) => row.failures },
-            {
-              key: "rate",
-              header: t("review.quality.failureRate"),
-              render: (row) =>
-                row.attempts === 0
-                  ? t("review.quality.noAttempts")
-                  : `${Math.round((row.failures / row.attempts) * 100)}%（${row.failures}/${row.attempts}）`,
-            },
-          ]}
-        />
-      )}
+      <Table
+        testId="review-quality-cases-table"
+        label={t("review.quality.caseRates")}
+        rows={rows}
+        getRowKey={(row) => String(row.ordinal)}
+        columns={[
+          {
+            key: "name",
+            header: t("review.quality.caseName"),
+            render: (row) => t("review.quality.caseNameValue", { ordinal: row.ordinal + 1 }),
+          },
+          {
+            key: "rate",
+            header: t("review.quality.failureRate"),
+            render: (row) => `${Math.round((row.failures / row.attempts) * 100)}%`,
+          },
+          {
+            key: "passFail",
+            header: t("review.quality.passFailHeader"),
+            render: (row) => `${row.attempts - row.failures} / ${row.failures}`,
+          },
+        ]}
+      />
     </div>
   );
 }
 
-function CategoryTables({ summary }: { summary: EvaluationQualitySummary }) {
-  const system = summary.failure_categories.filter(
-    (item) => item.category === "infrastructure_error",
-  );
-  const others = summary.failure_categories.filter(
-    (item) => item.category !== "infrastructure_error",
-  );
-  const systemCount = system.reduce((total, item) => total + item.count, 0);
+function AbnormalSummary({ summary }: { summary: EvaluationQualitySummary }) {
+  const parts = summary.failure_categories
+    .filter((item) => item.count > 0)
+    .map((item) => `${categoryLabel(item.category)}：${item.count}次`);
+  if (summary.security_found > 0) {
+    parts.push(`安全告警：${summary.security_found}次`);
+  }
+  if (summary.unmeasured_runs > 0) {
+    parts.push(`资源丢失：${summary.unmeasured_runs}次`);
+  }
   return (
-    <div data-testid="review-quality-categories">
-      <h3>{t("review.quality.categories")}</h3>
-      <p className="inline" data-testid="review-quality-category-system">
-        <StatusPill tone="warn">{t("review.quality.categorySystem")}</StatusPill>
-        <span className="muted">
-          <span data-testid="review-quality-category-system-value">{systemCount}</span>{" "}
-          {t("review.quality.hits")}
-        </span>
-        <span className="muted">{t("review.quality.categorySystemHint")}</span>
-      </p>
-      {others.length === 0 ? (
-        <EmptyState>{t("review.quality.noOtherCategories")}</EmptyState>
+    <div data-testid="review-quality-abnormal">
+      <h3>{t("review.quality.abnormal")}</h3>
+      {parts.length > 0 ? (
+        <p data-testid="review-quality-abnormal-text">{parts.join(" ｜ ")}</p>
       ) : (
-        <Table
-          testId="review-quality-category-table"
-          label={t("review.quality.categories")}
-          rows={others}
-          getRowKey={(row) => row.category}
-          columns={[
-            { key: "category", header: t("review.quality.category"), render: (row) => row.category },
-            { key: "count", header: t("review.quality.hits"), render: (row) => row.count },
-          ]}
-        />
+        <p className="muted" data-testid="review-quality-abnormal-none">
+          {t("review.quality.abnormalNone")}
+        </p>
       )}
     </div>
   );
 }
 
 function QualityBody({ summary }: { summary: EvaluationQualitySummary }) {
+  const systemFailures = systemFailureCount(summary);
   return (
     <div className="stack" data-testid="review-quality-summary">
       <div
         className="count-grid"
         data-testid="review-quality-counts"
-        // 五个汇总数字在桌面端排成一行（共享 `.count-grid` 的 200px 下限会把第 5 个挤到
-        // 第二行，视觉上像漏了一格）；窄屏仍按可用宽度自动换行。
-        style={{ gridTemplateColumns: "repeat(auto-fit, minmax(165px, 1fr))" }}
+        style={{ gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))" }}
       >
         <CountCard
-          label={t("review.quality.sampleSize")}
+          label={t("review.quality.answerers")}
+          value={answererCount(summary)}
+          foot={t("review.quality.answerersFoot")}
+          testId="review-quality-answerers"
+          marked={answererCount(summary) < 5}
+        />
+        <CountCard
+          label={t("review.quality.attemptsTotal")}
           value={summary.attempt_count}
+          foot={t("review.quality.attemptsFoot")}
           testId="review-quality-attempts"
         />
         <CountCard
-          label={t("review.quality.unmeasured")}
-          value={summary.unmeasured_runs}
-          testId="review-quality-unmeasured"
-          tone="warn"
+          label={t("review.quality.systemFailures")}
+          value={systemFailures}
+          foot={t("review.quality.systemFailuresFoot")}
+          testId="review-quality-system"
+          tone={systemFailures > 0 ? "warn" : "default"}
         />
         <CountCard
-          label={t("review.quality.securityFound")}
+          label={t("review.quality.securityRisk")}
           value={summary.security_found}
-          testId="review-quality-security-found"
-          tone={summary.security_found > 0 ? "bad" : "idle"}
+          foot={t("review.quality.securityRiskFoot")}
+          testId="review-quality-security"
+          tone={summary.security_found > 0 ? "bad" : "default"}
         />
         <CountCard
-          label={t("review.quality.securityNotFound")}
-          value={summary.security_not_found}
-          testId="review-quality-security-not-found"
-          tone="ok"
-        />
-        <CountCard
-          label={t("review.quality.securityNotChecked")}
+          label={t("review.quality.unchecked")}
           value={summary.security_not_checked}
-          testId="review-quality-security-not-checked"
-          tone="warn"
+          foot={t("review.quality.uncheckedFoot")}
+          testId="review-quality-unchecked"
         />
       </div>
-      <p className="muted">{t("review.quality.attemptScope")}</p>
-      <p className="muted" data-testid="review-quality-counts-only">
-        {t("review.quality.countsOnly")}
-      </p>
-
-      {/* 0 次运行已经有"没有评测记录"的说明：再叠一句"样本较少"会把两件事混成一件。 */}
-      {summary.attempt_count > 0 && isSmallSample(summary.attempt_count) ? (
-        <Banner tone="warn" testId="review-quality-small-sample">
-          {t("review.quality.smallSample")}
-          {t("review.quality.smallSampleAid", { threshold: SMALL_SAMPLE_THRESHOLD })}
-        </Banner>
-      ) : null}
 
       <CaseTable summary={summary} />
-
-      <div data-testid="review-quality-security">
-        <h3>{t("review.quality.security")}</h3>
-        {/* 口径说明用列表而不是三列：三段文字长短不一时，三列会出现高低不齐的"台阶"。 */}
-        <ul className="muted">
-          <li>{t("review.quality.securityFoundMeaning")}</li>
-          <li>{t("review.quality.securityNotFoundMeaning")}</li>
-          <li>{t("review.quality.securityNotCheckedMeaning")}</li>
-        </ul>
-      </div>
-
-      <div data-testid="review-quality-resources">
-        <h3>{t("review.quality.resources")}</h3>
-        <p className="muted">{t("review.quality.resourceMeaning")}</p>
-      </div>
-
-      <CategoryTables summary={summary} />
-
-      <div data-testid="review-quality-rules">
-        <h3>{t("review.quality.rules")}</h3>
-        <p className="muted">{t("review.quality.rulesNote")}</p>
-        {summary.static_rule_hits.length === 0 ? (
-          <EmptyState>{t("review.quality.noRules")}</EmptyState>
-        ) : (
-          <Table
-            testId="review-quality-rules-table"
-            label={t("review.quality.rules")}
-            rows={summary.static_rule_hits}
-            getRowKey={(row) => row.rule_id}
-            columns={[
-              { key: "rule_id", header: t("review.quality.ruleId"), render: (row) => row.rule_id },
-              {
-                key: "severity",
-                header: t("review.quality.severity"),
-                render: (row) => row.severity,
-              },
-              { key: "count", header: t("review.quality.hits"), render: (row) => row.count },
-            ]}
-          />
-        )}
-      </div>
+      <AbnormalSummary summary={summary} />
     </div>
   );
 }
@@ -242,7 +238,6 @@ export function QualityReviewTab({
   const session = useSession();
   const identity = session.subject ?? session.username ?? "anonymous";
   const filter = readQualityFilter(search);
-  const [courseId, setCourseId] = useState("");
   const [fromDraft, setFromDraft] = useState(toLocalInputValue(filter.from));
   const [toDraft, setToDraft] = useState(toLocalInputValue(filter.to));
   // 时间校验的错误位置：结束时间早于开始时间要指到结束时间字段。
@@ -262,7 +257,7 @@ export function QualityReviewTab({
   const courseOptions = loadedCourses(courses.data?.pages).filter(
     (course) => isAdmin || scopeCourseIds.has(course.course_id),
   );
-  const versionOptions = useVersionOptions(courseId === "" ? null : courseId);
+  const versionOptions = useVersionOptions(filter.courseId);
 
   const invalidVersion = filter.questionVersionId !== null && !isUuid(filter.questionVersionId);
   const context = useVersionContext(
@@ -299,6 +294,7 @@ export function QualityReviewTab({
     setIssue(null);
     onChange(
       withQualityFilter(search, {
+        courseId: filter.courseId,
         questionVersionId: filter.questionVersionId,
         from: fromValue,
         to: toValue,
@@ -312,6 +308,7 @@ export function QualityReviewTab({
     setToDraft("");
     onChange(
       withQualityFilter(search, {
+        courseId: filter.courseId,
         questionVersionId: filter.questionVersionId,
         from: null,
         to: null,
@@ -335,8 +332,19 @@ export function QualityReviewTab({
               <Select
                 id="review-quality-course"
                 data-testid="review-quality-course"
-                value={courseId}
-                onChange={(event) => setCourseId(event.target.value)}
+                value={filter.courseId ?? ""}
+                onChange={(event) => {
+                  const nextCourse = event.target.value === "" ? null : event.target.value;
+                  onChange(
+                    withQualityFilter(search, {
+                      courseId: nextCourse,
+                      // 换课程后旧版本必然不属于新课程；清空而不是留下一个会 403 的版本。
+                      questionVersionId: null,
+                      from: filter.from,
+                      to: filter.to,
+                    }),
+                  );
+                }}
               >
                 <option value="">{t("common.selectPrompt")}</option>
                 {courseOptions.map((course) => (
@@ -352,11 +360,12 @@ export function QualityReviewTab({
                 id="review-quality-version"
                 data-testid="review-quality-version"
                 value={filter.questionVersionId ?? ""}
-                disabled={courseId === ""}
+                disabled={filter.courseId === null}
                 onChange={(event) => {
                   const next = event.target.value === "" ? null : event.target.value;
                   onChange(
                     withQualityFilter(search, {
+                      courseId: filter.courseId,
                       questionVersionId: next,
                       from: filter.from,
                       to: filter.to,
@@ -487,21 +496,21 @@ export function QualityReviewTab({
             <Banner tone="info" testId="review-quality-empty">
               {t("review.quality.empty")}
             </Banner>
-          ) : null}
-          <QualityBody summary={summary.data} />
-          {context.questionId ? (
-            <div className="row-actions">
-              <Link
-                className="button button--ghost"
-                to="/questions/$questionId"
-                params={{ questionId: context.questionId }}
-                search={{ version: filter.questionVersionId ?? undefined }}
-                data-testid="review-quality-back"
-              >
-                {t("review.quality.back")}
-              </Link>
-            </div>
-          ) : null}
+          ) : (
+            <>
+              {systemFailureCount(summary.data) > 0 || summary.data.security_found > 0 ? (
+                <Banner tone="warn" testId="review-quality-hint">
+                  {t("review.quality.anomalyHint")}
+                </Banner>
+              ) : summary.data.answerer_count !== undefined &&
+                answererCount(summary.data) < 5 ? (
+                <Banner tone="warn" testId="review-quality-hint">
+                  {t("review.quality.smallSampleHint")}
+                </Banner>
+              ) : null}
+              <QualityBody summary={summary.data} />
+            </>
+          )}
         </Panel>
       ) : null}
     </div>

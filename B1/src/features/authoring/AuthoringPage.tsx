@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate } from "@tanstack/react-router";
 import { t } from "../../i18n";
 import { courseLabel as formatCourseLabel, loadedCourses, useCourses } from "../../api/directory";
 import type { QuestionDraftProposal } from "../../api/types";
@@ -13,6 +13,7 @@ import {
   Panel,
   Spinner,
 } from "../../ui/components";
+import { Toast } from "../../ui/Toast";
 import { SafeMarkdown } from "../questions/SafeMarkdown";
 import { useQuestion, useQuestionVersion } from "../questions/useQuestions";
 import { AuthoringAssistancePanel, ComparisonDiagnosticsPanel } from "./AuthoringSignals";
@@ -31,6 +32,8 @@ import {
   TITLE_MAX_LENGTH,
   applyProposal,
   buildDraftInput,
+  buildDraftSkeleton,
+  deriveTags,
   draftFormFrom,
   emptyDraftForm,
   insertIntoStem,
@@ -39,7 +42,7 @@ import {
   type DraftForm,
   type DraftIssue,
 } from "./draft";
-import { useCreateQuestion, useUpdateQuestionDraft } from "./useAuthoring";
+import { useCreateQuestion, useDraftContent, useUpdateQuestionDraft } from "./useAuthoring";
 import { Select } from "../../ui/Select";
 
 /**
@@ -59,12 +62,22 @@ import { Select } from "../../ui/Select";
  * 3. **未保存的编辑不会自己保住**：AI 候选与手工编辑都只存在当前页面。离开或刷新前若表单已改动，
  *    本页会明确提示"这些编辑不会保留"。
  */
+/**
+ * 把校验清单拼成**一条**提示：每条自带的句号去掉，用「；」连起来，最后补一个「。」
+ * （否则会出现"请选择输出比较方式。；第 1 个用例的分值要大于 0。"这种两个标点连在一起的样子）。
+ */
+function issueMessage(issues: DraftIssue[]): string {
+  const parts = issues.map((issue) => t(issue.key, issue.params).replace(/[。；;\s]+$/, ""));
+  return `${parts.join("；")}。`;
+}
+
 export function AuthoringPage({
   questionId,
   generationId = null,
   onGenerationId = () => {},
   aiView = false,
   onAiViewChange = () => {},
+  backTo = "questions",
 }: {
   questionId: string | null;
   /** AI 候选 id（来自 URL）。刷新后用它取回**服务端原始候选**。 */
@@ -73,6 +86,11 @@ export function AuthoringPage({
   /** 「AI 出题」视图（来自 URL）。新建题目之外不提供该视图。 */
   aiView?: boolean;
   onAiViewChange?: (next: boolean) => void;
+  /**
+   * 进入本页的来源：`detail` = 从题目详情页点「编辑草稿 / 另存为新版本」进来的，
+   * 右上角按钮显示「返回题目」并回到那道题；`questions` = 从题库列表进来的。
+   */
+  backTo?: "questions" | "detail";
 }) {
   const courses = useCourses();
   const courseOptions = loadedCourses(courses.data?.pages);
@@ -89,10 +107,15 @@ export function AuthoringPage({
   const [courseId, setCourseId] = useState("");
   const [form, setForm] = useState<DraftForm>(() => emptyDraftForm());
   const [baseline, setBaseline] = useState<DraftForm>(() => emptyDraftForm());
-  const [issues, setIssues] = useState<DraftIssue[]>([]);
   const [savedVersionId, setSavedVersionId] = useState<string | null>(null);
   const [leaveConfirm, setLeaveConfirm] = useState(false);
   const [step, setStep] = useState<StepId>("basic");
+  // 一条红色提示（2.0：原本常驻在顶部白框里的提示改成屏幕中间一闪而过）。`key` 让同一句话
+  // 再次触发时重新计时，而不是"看起来没反应"。
+  const [toast, setToast] = useState<{ key: number; message: string } | null>(null);
+  const showToast = useCallback((message: string) => {
+    setToast({ key: Date.now(), message });
+  }, []);
 
   // 预填只发生一次：数据到齐后填入公开 DTO 里**真的存在**的字段，之后不再覆盖用户的编辑。
   const [seeded, setSeeded] = useState(false);
@@ -104,6 +127,47 @@ export function AuthoringPage({
     setCourseId(question.data.course_id);
     setSeeded(true);
   }, [newestVersion.data, question.data, questionId, seeded]);
+
+  /**
+   * 编辑页把**草稿自己的**参考答案与用例读回来（教师、仅草稿）。
+   *
+   * 没有它，编辑页只能"重新声明"用例：验证没通过时老师想改原来那条也改不了，只能再加一条。
+   * 服务端只对本课程可写的人、且版本仍是草稿时放行。
+   */
+  const newestVersionStatus = question.data?.versions?.[0]?.status ?? null;
+  const draftContent = useDraftContent(
+    questionId !== null && newestVersionStatus === "draft" ? newestVersionId : null,
+  );
+  const [protectedSeeded, setProtectedSeeded] = useState(false);
+
+  useEffect(() => {
+    if (protectedSeeded || !draftContent.data) return;
+    const content = draftContent.data;
+    setForm((previous) => {
+      const next: DraftForm = {
+        ...previous,
+        referenceAnswer: content.reference_answer ?? "",
+        cases: content.cases.map((item) => ({
+          name: item.name,
+          weight: String(item.weight),
+          visibleToStudent: item.visible_to_student,
+          stdin: item.stdin ?? "",
+          args: (item.args ?? []).join(" "),
+          expectedStdout: item.expected_stdout ?? "",
+          expectedStderr: item.expected_stderr ?? "",
+          expectedExitCode:
+            item.expected_exit_code === null || item.expected_exit_code === undefined
+              ? ""
+              : String(item.expected_exit_code),
+        })),
+        // 现在拿到的是**真实的那份集合**，替换确认不再有意义。
+        confirmCaseReplacement: true,
+      };
+      setBaseline(next);
+      return next;
+    });
+    setProtectedSeeded(true);
+  }, [draftContent.data, protectedSeeded]);
 
   // 保存/创建后用来渲染发布状态与信号面板的版本（由**服务端返回的 id** 取回，不拼对象）。
   const createdVersionId = createQuestion.data?.versions?.[0]?.question_version_id ?? null;
@@ -133,6 +197,22 @@ export function AuthoringPage({
     return () => window.removeEventListener("beforeunload", handler);
   }, [dirty]);
 
+  // 「请先选择课程」：新建且还没选课进入页面时提示一次（原来常驻在顶部白框里）。
+  useEffect(() => {
+    if (questionId === null && courseId === "" && !aiView) {
+      showToast(t("authoring.courseRequired"));
+    }
+    // 只在进入页面那一刻提示一次：之后由老师自己切换课程。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 「有还没保存的修改」：由"干净"变为"脏"时提示一次，不做常驻横幅。
+  const wasDirty = useRef(false);
+  useEffect(() => {
+    if (dirty && !wasDirty.current) showToast(t("authoring.unsaved"));
+    wasDirty.current = dirty;
+  }, [dirty, showToast]);
+
   // 应用候选：先算出结果，再分别 set 两个 state。
   //
   // 刻意**不**在 `setForm` 的 updater 里调用 `setBaseline`：updater 必须是纯函数，
@@ -150,41 +230,108 @@ export function AuthoringPage({
   );
 
   const submit = () => {
-    const build = buildDraftInput(form, {
+    // 一个标签都没填时，按题目的结构化特征（语言 + 运行方式）补一组标签（2.0 第 4 条）。
+    // 填了就原样提交；补出来的标签会写回输入框，教师能看到也能改。
+    const derived = form.tags.trim() === "" ? deriveTags(form.language, form.adapterKind) : [];
+    const effectiveForm =
+      derived.length === 0 ? form : { ...form, tags: derived.join(", ") };
+    if (effectiveForm !== form) setForm(effectiveForm);
+    const build = buildDraftInput(effectiveForm, {
       newVersion: questionId !== null && asNewVersion,
       editing: questionId !== null,
     });
     if (!build.ok) {
-      setIssues(build.issues);
+      // 校验失败不再占据一整块版面：把原因一次说清，几秒后自动消失。
+      showToast(issueMessage(build.issues));
       return;
     }
-    setIssues([]);
-    if (questionId === null) {
+    if (targetQuestionId === null) {
       if (courseId === "") {
-        setIssues([{ key: "authoring.courseRequired" }]);
+        showToast(t("authoring.courseRequired"));
         return;
       }
       createQuestion.mutate(
         { courseId, input: build.input, generationId },
         {
-          onSuccess: () => {
-            setBaseline(form);
+          onSuccess: (created) => {
+            setBaseline(effectiveForm);
+            // 3.0：最后一步保存草稿之后直接去"查看题目"，不再停在编辑页。
+            void navigate({
+              to: "/questions/$questionId",
+              params: { questionId: created.question_id },
+              search: { version: created.versions?.[0]?.question_version_id },
+            });
           },
         },
       );
       return;
     }
+    // 已经有草稿（无论是从编辑页进来的，还是这一页刚建的）：继续保存就是 PATCH，不会再建第二道题。
     updateQuestion.mutate(
-      { questionId, input: build.input, asNewVersion },
+      { questionId: targetQuestionId, input: build.input, asNewVersion },
       {
         // PATCH 返回 `QuestionPublic`（CHG-0016）：新版本标识取自 `versions[0]`，再用它把
         // 版本 DTO 取回来渲染发布门禁（摘要只在版本 DTO 上）。
         onSuccess: (result) => {
-          setSavedVersionId(result.versions?.[0]?.question_version_id ?? null);
-          setBaseline(form);
+          const versionId = result.versions?.[0]?.question_version_id ?? null;
+          setSavedVersionId(versionId);
+          setBaseline(effectiveForm);
+          // 同上：保存成功后跳到这道题的详情页。
+          void navigate({
+            to: "/questions/$questionId",
+            params: { questionId: result.question_id },
+            search: { version: versionId ?? undefined },
+          });
         },
       },
     );
+  };
+
+  /**
+   * 插图时向本页要一个题目 id：还没有题目就先在后台存一份"够上传"的最小草稿。
+   *
+   * 教师不需要先手动保存（2.0：插图不再要求先存草稿）。这里刻意**不跑完整保存校验**：
+   * 图床挂在题目上，只要有 id 就能上传；而"标准输出比较""用例分值"是最后一步的东西，
+   * 拿它们拦住插图只会让老师看到一串与插图无关的报错。真正必需的是课程、标题、题干。
+   */
+  const ensureQuestionIdForUpload = async (): Promise<string | null> => {
+    if (targetQuestionId !== null) return targetQuestionId;
+    if (courseId === "") {
+      showToast(t("authoring.courseRequired"));
+      return null;
+    }
+    const build = buildDraftSkeleton(form);
+    if (!build.ok) {
+      showToast(issueMessage(build.issues));
+      return null;
+    }
+    try {
+      const created = await createQuestion.mutateAsync({
+        courseId,
+        input: build.input,
+        generationId,
+      });
+      setBaseline(form);
+      return created.question_id;
+    } catch {
+      // 失败的细节由下方 `mutation.isError` 的横幅呈现，这里只需要"没拿到 id"。
+      return null;
+    }
+  };
+
+  /** 右上角按钮指向哪里：从详情页进来的回那道题，其余回题库列表（3.0 第 1 条）。 */
+  const leaveTo = () => {
+    if (backTo === "detail" && targetQuestionId !== null) {
+      void navigate({
+        to: "/questions/$questionId",
+        params: { questionId: targetQuestionId },
+        search: {
+          version: savedVersion.data?.question_version_id ?? newestVersionId ?? undefined,
+        },
+      });
+      return;
+    }
+    void navigate({ to: "/questions" });
   };
 
   const requestLeave = () => {
@@ -192,28 +339,18 @@ export function AuthoringPage({
       setLeaveConfirm(true);
       return;
     }
-    void navigate({ to: "/questions" });
+    leaveTo();
   };
 
-  // 新建路径保存成功后必须停手：这一页仍是 P08（questionId 为 null），再点一次「保存草稿」
-  // 会**创建第二道题**。要继续编辑（尤其是上传夹具后补 manifest）就走「继续编辑」进 P09，
-  // 那里是 PATCH，不会再产生新题目。
-  const alreadyCreated = questionId === null && createQuestion.data !== undefined;
-
   /**
-   * 保存草稿的禁用原因。契约 `QuestionDraftInput` 要求 `title` 与 `stem_markdown` 非空，
-   * 因此没填题干时哪一步都存不下来——这里把"缺什么"直接说在按钮旁边，而不是让服务端回 422。
+   * 保存草稿是否可点。契约 `QuestionDraftInput` 要求 `title` 与 `stem_markdown` 非空，
+   * 所以缺这两项时按钮灰着；原因由红色提示在点选图/校验失败时说明，不再占一行常驻文案。
    */
-  const saveBlocker = alreadyCreated
-    ? t("authoring.save.alreadyCreated")
-    : courseId === ""
-      ? t("authoring.save.needCourse")
-      : form.title.trim() === ""
-        ? t("authoring.save.needTitle")
-        : form.stemMarkdown.trim() === ""
-          ? t("authoring.save.needStem")
-          : null;
-  const saveDisabled = mutation.isPending || saveBlocker !== null;
+  const saveDisabled =
+    mutation.isPending ||
+    courseId === "" ||
+    form.title.trim() === "" ||
+    form.stemMarkdown.trim() === "";
 
   const completed = useMemo(
     () =>
@@ -259,7 +396,7 @@ export function AuthoringPage({
     >
       {mutation.isPending
         ? t("authoring.saving")
-        : questionId === null
+        : targetQuestionId === null
           ? t("authoring.save.create")
           : asNewVersion
             ? t("authoring.save.newVersion")
@@ -274,104 +411,57 @@ export function AuthoringPage({
   );
 
   const stepDefinition = STEPS.find((definition) => definition.id === step) ?? STEPS[0];
+  // 前四步只有「下一步」：保存动作统一放在最后一步（与检验并发布同屏）。
+  const nextIndex = STEPS.findIndex((definition) => definition.id === step) + 1;
+  const nextStep = STEPS[nextIndex];
+  const nextRow = nextStep ? (
+    <div className="inline wizard__save" data-testid="step-next-row">
+      <button
+        type="button"
+        className="button"
+        data-testid="step-next"
+        onClick={() => setStep(nextStep.id)}
+      >
+        {t("authoring.next")}
+      </button>
+    </div>
+  ) : null;
 
   return (
     <div className="stack">
-      <PageTitle>
-        {questionId === null ? t("authoring.titleNew") : t("authoring.titleEdit")}
-      </PageTitle>
-
-      {/*
-        顶部操作栏：变矮变紧凑——「未保存」提示与「取消」放在同一行、垂直居中，整块留白减到最小。
-        保存按钮在每一步的底部；这里只有取消与状态横幅。
-      */}
-      <Panel className="panel--compact">
-        {issues.length > 0 ? (
-          <Banner tone="error" testId="authoring-issues">
-            <strong>{t("authoring.issues")}</strong>
-            <ul>
-              {issues.map((issue, index) => (
-                <li key={`${issue.key}-${index}`}>{t(issue.key, issue.params)}</li>
-              ))}
-            </ul>
-          </Banner>
-        ) : null}
-        {questionId === null && courseId === "" ? (
-          // 只是一句提示语：按 2.0 的意见缩成一行小字，不再占一条横幅的高度。
-          <p className="muted" data-testid="authoring-course-required">
-            {t("authoring.courseRequired")}
-          </p>
-        ) : null}
-        {/* 未保存提示与取消按钮同一行、垂直居中；没有改动时只留按钮。 */}
-        <div className="wizard-topbar">
-          {dirty ? (
-            <span className="muted" data-testid="authoring-dirty">
-              {t("authoring.unsaved")}
-            </span>
-          ) : (
-            <span />
-          )}
+      <div className="inline page-head">
+        <PageTitle>
+          {questionId === null ? t("authoring.titleNew") : t("authoring.titleEdit")}
+        </PageTitle>
+        {/* AI 出题就在标题旁边：一进页面就能选，不必先走到某一步。 */}
+        {questionId === null ? (
           <button
             type="button"
-            className="button button--ghost"
-            data-testid="authoring-cancel"
-            onClick={requestLeave}
+            className="button"
+            data-testid="authoring-ai"
+            onClick={() => onAiViewChange(true)}
           >
-            {t("common.cancel")}
+            {t("authoring.ai.open")}
           </button>
-        </div>
-        {mutation.isError ? <ErrorState error={mutation.error} /> : null}
-        {savedVersion.data ? (
-          <Banner tone="success" testId="authoring-saved">
-            {t("authoring.updated", {
-              version: savedVersion.data.version,
-              status: t(`questions.status.${savedVersion.data.status}`),
-            })}
-            {" · "}
-            <Link
-              className="button button--ghost"
-              to="/questions/$questionId"
-              params={{ questionId: targetQuestionId ?? "" }}
-              search={{ version: savedVersion.data.question_version_id }}
-            >
-              {t("authoring.openDetail")}
-            </Link>
-            <Link
-              className="button button--ghost"
-              to="/questions/$questionId/edit"
-              params={{ questionId: targetQuestionId ?? "" }}
-            >
-              {t("authoring.keepEditing")}
-            </Link>
-          </Banner>
         ) : null}
-        {createQuestion.data ? (
-          <Banner tone="success" testId="authoring-created">
-            <p>{t("authoring.created")}</p>
-            <p className="muted">{t("authoring.createdDraftHint")}</p>
-            <p className="muted" data-testid="authoring-created-next">
-              {t("authoring.createdNext")}
-            </p>
-            <div className="inline">
-              <Link
-                className="button button--ghost"
-                to="/questions/$questionId"
-                params={{ questionId: createQuestion.data.question_id }}
-                search={{ version: undefined }}
-              >
-                {t("authoring.openDetail")}
-              </Link>
-              <Link
-                className="button button--ghost"
-                to="/questions/$questionId/edit"
-                params={{ questionId: createQuestion.data.question_id }}
-              >
-                {t("questions.editDraft")}
-              </Link>
-            </div>
-          </Banner>
-        ) : null}
-      </Panel>
+        <button
+          type="button"
+          className="button button--ghost page-head__end"
+          data-testid="authoring-back"
+          onClick={requestLeave}
+        >
+          {backTo === "detail" ? t("authoring.backToDetail") : t("authoring.backToList")}
+        </button>
+      </div>
+
+      {/* 提示与校验原因：屏幕中间一闪而过，不再占据顶部版面。 */}
+      <Toast
+        key={toast?.key ?? 0}
+        message={toast?.message ?? null}
+        onClose={() => setToast(null)}
+      />
+
+      {mutation.isError ? <ErrorState error={mutation.error} /> : null}
 
       <div className="wizard">
         <StepNav current={step} completed={completed} onSelect={setStep} />
@@ -466,30 +556,12 @@ export function AuthoringPage({
                     : t("authoring.draftVersionNotice")}
                 </Banner>
               ) : null}
-              {saveRow}
+              {nextRow}
             </Panel>
           ) : null}
 
           {step === "stem" ? (
-            <Panel
-              title={
-                // AI 出题放在「题干」右边并做成蓝色主按钮：教师进这一步就能一眼看到。
-                <span className="inline">
-                  <span>{stepDefinition.label()}</span>
-                  {questionId === null ? (
-                    <button
-                      type="button"
-                      className="button"
-                      data-testid="authoring-ai"
-                      onClick={() => onAiViewChange(true)}
-                    >
-                      {t("authoring.ai.open")}
-                    </button>
-                  ) : null}
-                </span>
-              }
-              testId="step-stem"
-            >
+            <Panel title={stepDefinition.label()} testId="step-stem">
               <div className="grid-2">
                 <div>
                   <Field label={t("authoring.stem")} htmlFor="authoring-stem">
@@ -511,33 +583,21 @@ export function AuthoringPage({
                 </div>
               </div>
 
-              {/* 保存草稿放在题干图片**之前**：先存草稿，再插入图片（图片地址要靠草稿的 id）。 */}
-              {saveRow}
-
               <div className="inline">
                 <h3>{t("authoring.image.title")}</h3>
-                <span className="hint-chip" data-testid="image-need-draft">
-                  {t("authoring.image.needDraft")}
-                </span>
               </div>
               <ImageUploader
                 questionId={targetQuestionId}
-                // 新建并已保存之后不再允许上传：本页的「插入题干」不会写库，而保存按钮已停用，
-                // 插入的地址会随着离开而丢失。要插图请进 P09（那里是 PATCH，插入能保存）。
-                disabled={targetQuestionId === null || asNewVersion || alreadyCreated}
-                disabledReason={
-                  // "保存草稿后再插入图片"已经在「题干图片」右侧用浅蓝标签说了，这里不再重复一条横幅；
-                  // 已发布 / 已创建这类原因仍然照实显示。
-                  targetQuestionId === null
-                    ? undefined
-                    : asNewVersion
-                      ? t("authoring.image.publishedFrozen")
-                      : t("authoring.image.createdHint")
-                }
+                // 已发布版本的内容冻结（服务端 409）；其余情况只要草稿存在就能上传。
+                frozen={asNewVersion && targetQuestionId !== null}
+                ensureQuestionId={ensureQuestionIdForUpload}
                 onInsert={(snippet) =>
                   setForm({ ...form, stemMarkdown: insertIntoStem(form.stemMarkdown, snippet) })
                 }
               />
+
+              {/* 「下一步」放在这一屏的最下面：老师填完题干与图片再继续。 */}
+              {nextRow}
             </Panel>
           ) : null}
 
@@ -551,7 +611,7 @@ export function AuthoringPage({
                   onChange={(event) => setForm({ ...form, referenceAnswer: event.target.value })}
                 />
               </Field>
-              {saveRow}
+              {nextRow}
             </Panel>
           ) : null}
 
@@ -564,7 +624,7 @@ export function AuthoringPage({
                 }}
               />
               {/* 编辑时提交用例 = 整体替换一份本页读不到的集合。必须由人显式确认一次。 */}
-              {questionId !== null && form.cases.length > 0 ? (
+              {questionId !== null && form.cases.length > 0 && !protectedSeeded ? (
                 <div className="field" data-testid="authoring-cases-replace">
                   <label className="inline" htmlFor="authoring-confirm-cases">
                     <input
@@ -580,7 +640,7 @@ export function AuthoringPage({
                   <span className="muted">{t("authoring.casesReplaceHint")}</span>
                 </div>
               ) : null}
-              {saveRow}
+              {nextRow}
             </Panel>
           ) : null}
 
@@ -779,19 +839,16 @@ export function AuthoringPage({
                         questionId={targetQuestionId}
                         fixtures={form.fixtures}
                         onChange={(fixtures) => setForm({ ...form, fixtures })}
-                        // 已保存过的新建页同样停用：夹具声明是 manifest 的一部分，而本页保存已停用，
-                        // 上传后无法写进题目——要保住这次声明请进 P09 上传并保存。
+                        // 夹具声明是 manifest 的一部分，必须有版本才能真正挂上去；已发布版本则冻结。
+                        // 保存不再"成功后停手"，所以新建页保存过一次之后同样可以继续上传并保存。
                         disabled={
                           (newestVersionId ?? savedVersionId ?? createdVersionId) === null ||
-                          asNewVersion ||
-                          alreadyCreated
+                          asNewVersion
                         }
                         disabledReason={
                           asNewVersion
                             ? t("authoring.fixture.publishedFrozen")
-                            : alreadyCreated
-                              ? t("authoring.fixture.createdHint")
-                              : t("authoring.fixture.needVersion")
+                            : t("authoring.fixture.needVersion")
                         }
                         onlyInputMounts
                       />
@@ -820,6 +877,14 @@ export function AuthoringPage({
               ) : null}
 
               {saveRow}
+
+              {/* 2.0：保存草稿放到最下面，和「检验并发布」同屏——存完就能直接检验发布。 */}
+              {publishVersion ? (
+                <ReferenceVerificationPanel
+                  version={publishVersion}
+                  questionId={targetQuestionId}
+                />
+              ) : null}
             </Panel>
           ) : null}
         </div>
@@ -833,10 +898,6 @@ export function AuthoringPage({
         </>
       ) : null}
 
-      {/* 检验并发布：只有已保存的草稿才谈得上检验。 */}
-      {publishVersion ? (
-        <ReferenceVerificationPanel version={publishVersion} questionId={targetQuestionId} />
-      ) : null}
 
       {leaveConfirm ? (
         <Modal title={t("authoring.leaveTitle")} onClose={() => setLeaveConfirm(false)}>
@@ -848,7 +909,7 @@ export function AuthoringPage({
               data-testid="authoring-leave-confirm"
               onClick={() => {
                 setLeaveConfirm(false);
-                void navigate({ to: "/questions" });
+                leaveTo();
               }}
             >
               {t("authoring.leaveAction")}

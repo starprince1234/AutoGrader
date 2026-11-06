@@ -181,6 +181,9 @@ export type QuestionDraftGenerationCapabilities =
  */
 export type QuestionDraftGeneration = B3Schemas["QuestionDraftGeneration"];
 export type QuestionDraftProposal = NonNullable<QuestionDraftGeneration["proposal"]>;
+/** 草稿自己的受保护内容（教师、仅草稿）：`getDraftContent`。 */
+export type QuestionDraftContent = JsonBody<B3Operations["getDraftContent"], 200>;
+
 export type QuestionDraftProposalCase = NonNullable<QuestionDraftProposal["cases"]>[number];
 export type QuestionDraftProposalFixture = NonNullable<QuestionDraftProposal["fixtures"]>[number];
 export type DraftGenerationWarning = QuestionDraftGeneration["warnings"][number];

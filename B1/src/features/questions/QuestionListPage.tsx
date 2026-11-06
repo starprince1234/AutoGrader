@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { t } from "../../i18n";
 import { courseLabel as formatCourseLabel, loadedCourses, useCourses } from "../../api/directory";
+import { isApiError } from "../../api/problem";
 import { useSession } from "../../auth/sessionContext";
 import { canAuthorQuestions } from "../../auth/visibility";
 import {
@@ -16,11 +17,12 @@ import {
   StatusPill,
   Table,
 } from "../../ui/components";
+import { Select } from "../../ui/Select";
+import { Toast } from "../../ui/Toast";
 import type { QuestionPublic } from "../../api/types";
-import { parseTags } from "../authoring/draft";
+import { usePublishQuestionVersion, useVerifyReferenceAnswer } from "../authoring/useAuthoring";
 import { QuestionCoveragePanel } from "./QuestionCoveragePanel";
 import { useQuestionList } from "./useQuestions";
-import { Select } from "../../ui/Select";
 
 /**
  * 题库列表（P06，`listQuestions` + `getQuestionTagCoverage`）。
@@ -28,17 +30,19 @@ import { Select } from "../../ui/Select";
  * 版面顺序是产品定义的一部分：筛选 → **题目列表** → 知识点覆盖。教师进这一页的第一件事是
  * 看"题库里有哪些题"，所以列表必须在分析面板之前。
  *
- * 三条与角色相关的规则，都由服务端再次判定、这里只决定"要不要显示和请求"：
+ * 与角色相关的规则，都由服务端再次判定、这里只决定"要不要显示和请求"：
  *
  * 1. **学生不浏览全量题库**：这一页只对教师/助教/管理员开放；学生从作业详情进入 P07 看被布置的
  *    那一个已发布版本。对非出题角色，本页不请求课程列表、不请求题目列表、也不请求覆盖度。
  * 2. **标签覆盖度是教师分析**：面板与请求都只对出题角色存在。
- * 3. **草稿一并显示**：原来的「包含草稿」开关已移除，列表固定取 `published_only=false`，
- *    否则刚建的草稿会从列表里消失，教师再也进不去它的编辑页。
+ * 3. **发布状态是筛选项**（2.0）：契约 `listQuestions` 只有 `published_only` 这个布尔量——`true`
+ *    表示"只要已发布"，`false` 表示"连草稿一起"。因此「草稿」这一档是 `published_only=false`
+ *    + **在已加载的题目里筛 `status === "draft"`**：契约没有"只要草稿"的参数，这里也不假装有。
+ * 4. **标签改成下拉**（2.0）：选项来自已加载题目里出现过的标签（在应用标签过滤**之前**取并集，
+ *    否则选中一个标签后其他标签会一起消失）。契约 `tags` 是 all-of，单选一档天然等价。
  *
- * 题干搜索在**已加载的题目**里做：契约 `listQuestions` 没有文本参数（只有 `course_id` /
- * `language` / `published_only` / `tags` / 游标），所以这里不声称"搜遍全库"；继续加载更多页后
- * 搜索范围随之扩大。
+ * 题干搜索在**已加载的题目**里做：契约 `listQuestions` 没有文本参数，所以这里不声称"搜遍全库"；
+ * 继续加载更多页后搜索范围随之扩大。
  */
 
 type QuestionGroup = { key: string; label: string; rows: QuestionPublic[] };
@@ -72,6 +76,21 @@ function statusTone(status: QuestionPublic["status"]): "ok" | "warn" | "idle" {
   return "idle";
 }
 
+/** 列表里「发布」失败时，把服务端的结论翻译成老师能读的一句话。 */
+function publishFailureMessage(error: unknown, forVerification: boolean): string {
+  if (isApiError(error)) {
+    if (error.status === 503) return t("authoring.verify.environment");
+    if (error.isForbidden) return t("authoring.verify.forbidden");
+    if (error.isNotFound) return t("authoring.verify.notFound");
+    if (error.status === 422) {
+      return forVerification
+        ? t("authoring.verify.digestUnknown")
+        : t("authoring.verify.publishFailed");
+    }
+  }
+  return t("questions.publishFailed");
+}
+
 export function QuestionListPage() {
   const session = useSession();
   const author = canAuthorQuestions(session);
@@ -80,22 +99,26 @@ export function QuestionListPage() {
   const [courseId, setCourseId] = useState("");
   // 折叠状态按课程名称保存：切换筛选后同一门课保持老师上次的展开/收起选择。
   const [collapsedCourses, setCollapsedCourses] = useState<ReadonlySet<string>>(new Set());
-  const [tagFilter, setTagFilter] = useState("");
+  const [tagValue, setTagValue] = useState("");
   const [stemQuery, setStemQuery] = useState("");
+  // 2.0/3.1：发布状态筛选。默认「全部状态」：题库首页要能一次看到自己所有的题（含草稿）。
+  const [publishedState, setPublishedState] = useState<"all" | "published" | "draft">("all");
 
-  const parsedTags = useMemo(() => parseTags(tagFilter), [tagFilter]);
-  // 标签输入非法时不发请求：契约里 tags 有形态约束，发一个畸形值只会换来一个看起来像
-  // "没有符合条件的题目"的空结果。
-  const tagsValid = parsedTags.invalid.length === 0;
+  const verify = useVerifyReferenceAnswer();
+  const publish = usePublishQuestionVersion();
+  const [publishingId, setPublishingId] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ key: number; message: string } | null>(null);
+  const notify = (message: string) => setToast({ key: Date.now(), message });
+
   const questions = useQuestionList(
     author ? (courseId === "" ? null : courseId) : null,
     {
-      // 开关已移除：草稿必须一起列出来，否则教师无法再进入自己的草稿。
-      publishedOnly: false,
-      tags: parsedTags.tags,
+      // 契约只有 published_only 布尔量：只有"已发布"这一档能在请求上表达。
+      publishedOnly: publishedState === "published",
+      tags: tagValue === "" ? [] : [tagValue],
     },
     // 非出题角色连请求都不发（不是"发了再藏起来"）。
-    { enabled: author && tagsValid },
+    { enabled: author },
   );
   // 分页结果摊平成一张表：游标只用于"还有没有下一页"，页面本身不暴露游标。
   const loadedRows = useMemo(
@@ -103,19 +126,77 @@ export function QuestionListPage() {
     [questions.data],
   );
 
+  // 标签下拉的选项：来自已加载题目（**不受当前标签筛选影响**），再加上当前选中的那一档。
+  const tagOptions = useMemo(() => {
+    const seen = new Set<string>();
+    for (const row of loadedRows) for (const tag of row.tags ?? []) seen.add(tag);
+    if (tagValue !== "") seen.add(tagValue);
+    return [...seen].sort((left, right) => left.localeCompare(right, "zh"));
+  }, [loadedRows, tagValue]);
+
+  const statusRows = useMemo(() => {
+    // 「草稿」这一档在客户端筛（契约没有"只要草稿"的参数）；「全部状态」不过滤。
+    if (publishedState === "draft") return loadedRows.filter((row) => row.status === "draft");
+    return loadedRows;
+  }, [loadedRows, publishedState]);
+
   const query = stemQuery.trim().toLowerCase();
   const rows = useMemo(
     () =>
       query === ""
-        ? loadedRows
-        : loadedRows.filter((row) => row.stem_markdown.toLowerCase().includes(query)),
-    [loadedRows, query],
+        ? statusRows
+        : statusRows.filter((row) => row.stem_markdown.toLowerCase().includes(query)),
+    [statusRows, query],
   );
 
   // 课程显示"代码 · 名称"；查不到就留白，绝不把内部编号贴到界面上。
   const courseLabel = (id: string): string => {
     const match = courseOptions.find((course) => course.course_id === id);
     return match ? `${match.course_code} · ${match.title}` : "—";
+  };
+
+  /**
+   * 列表里直接发布（2.0 第 10 条）。
+   *
+   * 发布门禁在服务端：必须有与该版本 `content_digest` 绑定的参考解存证。列表页拿不到"当前是否
+   * 已存证"，所以点击先**请求一次平台检验**（真的跑一遍参考解），三项满足再发布；任何一步失败都
+   * 只说真实原因，不把"跑不起来"伪装成"题目不合格"。
+   */
+  const publishRow = async (row: QuestionPublic) => {
+    const draftVersionId =
+      row.versions?.find((version) => version.status === "draft")?.question_version_id ?? null;
+    if (draftVersionId === null) {
+      notify(t("questions.publishFailed"));
+      return;
+    }
+    setPublishingId(row.question_id);
+    try {
+      let verification;
+      try {
+        verification = await verify.mutateAsync({ question_version_id: draftVersionId });
+      } catch (error) {
+        notify(publishFailureMessage(error, true));
+        return;
+      }
+      if (
+        verification.cases_passed !== verification.cases_total ||
+        verification.attestation_id === null
+      ) {
+        notify(t("questions.publishBlockedReason"));
+        return;
+      }
+      try {
+        await publish.mutateAsync({
+          questionId: row.question_id,
+          questionVersionId: draftVersionId,
+        });
+        notify(t("questions.published"));
+      } catch (error) {
+        notify(publishFailureMessage(error, false));
+      }
+    } finally {
+      setPublishingId(null);
+    }
   };
 
   if (!author) {
@@ -138,6 +219,12 @@ export function QuestionListPage() {
         </Link>
       </div>
 
+      <Toast
+        key={toast?.key ?? 0}
+        message={toast?.message ?? null}
+        onClose={() => setToast(null)}
+      />
+
       <Panel title={t("questions.filter")}>
         <div className="form-grid">
           <Field label={t("import.course")} htmlFor="question-course">
@@ -154,13 +241,33 @@ export function QuestionListPage() {
               ))}
             </Select>
           </Field>
-          <Field label={t("questions.tagFilter")} htmlFor="question-tags">
-            <input
-              id="question-tags"
-              value={tagFilter}
-              placeholder={t("questions.tagPlaceholder")}
-              onChange={(event) => setTagFilter(event.target.value)}
-            />
+          <Field label={t("questions.publishedState")} htmlFor="question-published-state">
+            <Select
+              id="question-published-state"
+              value={publishedState}
+              onChange={(event) => {
+                const next = event.target.value;
+                setPublishedState(next === "published" || next === "draft" ? next : "all");
+              }}
+            >
+              <option value="all">{t("questions.stateAll")}</option>
+              <option value="published">{t("questions.statePublished")}</option>
+              <option value="draft">{t("questions.stateDraft")}</option>
+            </Select>
+          </Field>
+          <Field label={t("questions.tagFilter")} htmlFor="question-tag-filter">
+            <Select
+              id="question-tag-filter"
+              value={tagValue}
+              onChange={(event) => setTagValue(event.target.value)}
+            >
+              <option value="">{t("questions.tagAll")}</option>
+              {tagOptions.map((tag) => (
+                <option key={tag} value={tag}>
+                  {tag}
+                </option>
+              ))}
+            </Select>
           </Field>
           <Field label={t("questions.searchStem")} htmlFor="question-stem-search">
             <input
@@ -171,11 +278,6 @@ export function QuestionListPage() {
             />
           </Field>
         </div>
-        {parsedTags.invalid.length > 0 ? (
-          <Banner tone="warn" testId="question-tags-invalid">
-            {t("questions.tagFilterInvalid", { tags: parsedTags.invalid.join(", ") })}
-          </Banner>
-        ) : null}
         <LoadMoreActions
           loadedCount={courseOptions.length}
           hasNextPage={courses.hasNextPage}
@@ -202,11 +304,7 @@ export function QuestionListPage() {
           />
         }
       >
-        {!tagsValid ? (
-          <Banner tone="warn" testId="question-list-tag-invalid">
-            {t("questions.tagFilterInvalid", { tags: parsedTags.invalid.join(", ") })}
-          </Banner>
-        ) : questions.isPending ? (
+        {questions.isPending ? (
           <Spinner />
         ) : questions.isError ? (
           <Banner tone="error" testId="question-list-error">
@@ -216,7 +314,7 @@ export function QuestionListPage() {
           <EmptyState>
             {query !== ""
               ? t("questions.noStemMatch")
-              : parsedTags.tags.length > 0
+              : tagValue !== "" || publishedState !== "all"
                 ? t("questions.noMatches")
                 : t("questions.emptyBank")}
           </EmptyState>
@@ -312,26 +410,50 @@ export function QuestionListPage() {
               {
                 key: "actions",
                 header: t("questions.actions"),
-                render: (row) =>
-                  row.status === "draft" ? (
-                    <Link
-                      className="button button--ghost"
-                      to="/questions/$questionId/edit"
-                      params={{ questionId: row.question_id }}
-                      data-testid={`edit-${row.question_id}`}
-                    >
-                      {t("questions.continueEditing")}
-                    </Link>
-                  ) : (
-                    <Link
-                      className="button button--ghost"
-                      to="/questions/$questionId/edit"
-                      params={{ questionId: row.question_id }}
-                      data-testid={`edit-${row.question_id}`}
-                    >
-                      {t("questions.newVersion")}
-                    </Link>
-                  ),
+                render: (row) => {
+                  const draftVersionId =
+                    row.versions?.find((version) => version.status === "draft")
+                      ?.question_version_id ?? null;
+                  const publishing = publishingId === row.question_id;
+                  const canPublish = row.status === "draft" && draftVersionId !== null;
+                  return (
+                    <span className="inline">
+                      <Link
+                        className="button button--ghost"
+                        to="/questions/$questionId/edit"
+                        params={{ questionId: row.question_id }}
+                        data-testid={`edit-${row.question_id}`}
+                      >
+                        {row.status === "draft"
+                          ? t("questions.continueEditing")
+                          : t("questions.newVersion")}
+                      </Link>
+                      {/*
+                        草稿可以直接在列表发布（2.0 第 10 条）；已发布题目的这个按钮置灰。
+                        点击会先请求一次平台检验——发布门禁要求"检验通过 + 存证已记录"。
+                      */}
+                      <button
+                        type="button"
+                        className="button button--ghost"
+                        data-testid={`publish-${row.question_id}`}
+                        disabled={!canPublish || publishing}
+                        // 已发布的题目说明"已发布"；草稿但找不到草稿版本时才说真实原因。
+                        title={
+                          canPublish || publishing
+                            ? undefined
+                            : row.status === "draft"
+                              ? t("questions.publishFailed")
+                              : t("questions.published")
+                        }
+                        onClick={() => {
+                          void publishRow(row);
+                        }}
+                      >
+                        {publishing ? t("questions.publishing") : t("questions.publish")}
+                      </button>
+                    </span>
+                  );
+                },
               },
             ]}
           />
@@ -351,8 +473,8 @@ export function QuestionListPage() {
       */}
       <QuestionCoveragePanel
         courseId={courseId === "" ? null : courseId}
-        publishedOnly={false}
-        onSelectTag={(tag) => setTagFilter(tag)}
+        publishedOnly={publishedState === "published"}
+        onSelectTag={(tag) => setTagValue(tag)}
       />
     </div>
   );

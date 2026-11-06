@@ -3,6 +3,7 @@ import { useState } from "react";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
+  Outlet,
   RouterProvider,
   createMemoryHistory,
   createRootRoute,
@@ -29,6 +30,7 @@ import {
   questionPublic,
   questionVersionPublic,
   sessionCreated,
+  UUID_C,
 } from "../../testing/contractFixtures";
 import { signIn } from "../../auth/sessionStore";
 import { setLogSink } from "../../logging/logger";
@@ -104,9 +106,11 @@ function baseRoutes(extra: StubbedRoute[] = []): StubbedRoute[] {
 function Harness({
   questionId,
   generationId = null,
+  backTo = "questions",
 }: {
   questionId: string | null;
   generationId?: string | null;
+  backTo?: "questions" | "detail";
 }) {
   const [aiView, setAiView] = useState(false);
   return (
@@ -115,13 +119,24 @@ function Harness({
       generationId={generationId}
       aiView={aiView}
       onAiViewChange={setAiView}
+      backTo={backTo}
     />
   );
 }
 
-function renderAuthoring(questionId: string | null, generationId: string | null = null) {
+function renderAuthoring(
+  questionId: string | null,
+  generationId: string | null = null,
+  backTo: "questions" | "detail" = "questions",
+) {
   const rootRoute = createRootRoute({
-    component: () => <Harness questionId={questionId} generationId={generationId} />,
+    // 保存成功后页面会跳到详情路由，因此根组件必须给出 Outlet，否则子路由渲染不出来。
+    component: () => (
+      <>
+        <Harness questionId={questionId} generationId={generationId} backTo={backTo} />
+        <Outlet />
+      </>
+    ),
   });
   const detailRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -241,6 +256,69 @@ describe("分步向导", () => {
     expect(screen.getByTestId("wizard-dot-stem")).toHaveAttribute("data-done", "false");
   });
 
+  it("从题目详情页进来时，右上角是「返回题目」并回到那道题", async () => {
+    stub = installFetchStub(
+      baseRoutes([
+        { path: `/api/v1/questions/${QUESTION_ID}`, method: "GET", respond: () => jsonResponse(draftQuestion()) },
+        {
+          path: `/api/v1/question-versions/${DRAFT_VERSION}`,
+          respond: () =>
+            jsonResponse(
+              questionVersionPublic({
+                question_version_id: DRAFT_VERSION,
+                version: 1,
+                status: "draft",
+                content_digest: SHA_A,
+              }),
+            ),
+        },
+      ]),
+    );
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(QUESTION_ID, null, "detail");
+
+    const back = await screen.findByTestId("authoring-back");
+    expect(back).toHaveTextContent("返回题目");
+    await user.click(back);
+    // 回到的是那道题的详情页（测试路由渲染 detail target）。
+    expect(await screen.findByText("detail target")).toBeInTheDocument();
+  });
+
+  it("前四步点「下一步」不弹任何确认框，直接进入下一步", async () => {
+    stub = installFetchStub(baseRoutes());
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+
+    await selectCourse(user);
+    await user.type(screen.getByLabelText("题目标题"), "统计行数");
+    await user.click(screen.getByTestId("step-next"));
+
+    expect(await screen.findByTestId("step-stem")).toBeInTheDocument();
+    // 没有确认弹窗，也没有"题目已保存"这类提示框（3.0：下一步不该带出保存提示）。
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(screen.queryByTestId("authoring-saved")).toBeNull();
+    expect(screen.queryByTestId("authoring-created")).toBeNull();
+  });
+
+  it("题干页的「下一步」在框体最下面（图片区之后、右下角）", async () => {
+    stub = installFetchStub(baseRoutes());
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+
+    await goToStep(user, "stem");
+    const uploader = await screen.findByTestId("image-uploader");
+    const next = screen.getByTestId("step-next");
+    // 图片区在前、下一步在后：老师填完题干与图片再继续。
+    expect(
+      uploader.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // 右下角对齐（`.wizard__save` 负责 flex-end）。
+    expect(next.parentElement?.className).toContain("wizard__save");
+  });
+
   it("切换步骤不丢已经填的内容", async () => {
     stub = installFetchStub(baseRoutes());
     const user = userEvent.setup();
@@ -258,63 +336,72 @@ describe("分步向导", () => {
     expect(screen.getByLabelText("题干")).toHaveValue("# 统计");
   });
 
-  it("每一步底部都有「保存草稿」；缺课程/标题/题干时只是禁用，不再写提示", async () => {
+  it("前四步底部只有「下一步」，保存草稿只在最后一步", async () => {
     stub = installFetchStub(baseRoutes());
     const user = userEvent.setup();
     await signIn("teacher1", "pw");
     renderAuthoring(null);
 
-    // 第 1 步：没选课程。
-    expect(await screen.findByTestId("authoring-save")).toBeDisabled();
-    // 2.0 的意见：保存按钮旁边不再挂"请先选择课程 / 请先填写题干"这类提示文字。
-    expect(screen.queryByTestId("save-blocker")).toBeNull();
+    // 第 1 步：没有保存按钮，只有"下一步"。
+    expect(await screen.findByTestId("step-next")).toBeInTheDocument();
+    expect(screen.queryByTestId("authoring-save")).toBeNull();
 
-    await selectCourse(user);
-    expect(screen.getByTestId("authoring-save")).toBeDisabled();
-    await user.type(screen.getByLabelText("题目标题"), "统计行数");
-    expect(screen.getByTestId("authoring-save")).toBeDisabled();
-
-    await goToStep(user, "stem");
-    expect(screen.getByTestId("authoring-save")).toBeDisabled();
-    await user.type(screen.getByLabelText("题干"), "# 统计");
-    expect(screen.getByTestId("authoring-save")).toBeEnabled();
-
-    // 其他步骤同样带一个保存按钮。
-    for (const step of ["reference", "cases", "comparison"] as const) {
-      await goToStep(user, step);
-      expect(screen.getByTestId("authoring-save")).toBeEnabled();
+    // 一路点「下一步」：每一步都不出现保存草稿，进到最后一步才出现。
+    for (const expected of ["stem", "reference", "cases"] as const) {
+      await user.click(screen.getByTestId("step-next"));
+      expect(await screen.findByTestId(`step-${expected}`)).toBeInTheDocument();
+      expect(screen.getByTestId("step-next")).toBeInTheDocument();
+      expect(screen.queryByTestId("authoring-save")).toBeNull();
     }
+    await user.click(screen.getByTestId("step-next"));
+    expect(await screen.findByTestId("step-comparison")).toBeInTheDocument();
+    // 最后一步：保存草稿在，下一步不在；没填题干时保存是灰的。
+    expect(screen.queryByTestId("step-next")).toBeNull();
+    expect(screen.getByTestId("authoring-save")).toBeDisabled();
+
+    // 补齐必填项（课程 + 标题 + 题干）后可以保存。
+    await goToStep(user, "basic");
+    await selectCourse(user);
+    await user.type(screen.getByLabelText("题目标题"), "统计行数");
+    await goToStep(user, "stem");
+    await user.type(screen.getByLabelText("题干"), "# 统计");
+    await goToStep(user, "comparison");
+    expect(screen.getByTestId("authoring-save")).toBeEnabled();
   });
 
-  it("顶部条更紧凑：未保存提示与「取消」同一行、垂直居中", async () => {
+  it("顶部不再有常驻白框：未保存提示改成屏幕中间一闪而过的红色提示", async () => {
     stub = installFetchStub(baseRoutes());
     const user = userEvent.setup();
     await signIn("teacher1", "pw");
     renderAuthoring(null);
 
+    expect(await screen.findByTestId("step-basic")).toBeInTheDocument();
+    // 白框与「取消」都没了。
+    expect(screen.queryByTestId("authoring-dirty")).toBeNull();
+    expect(screen.queryByTestId("authoring-cancel")).toBeNull();
+
     await selectCourse(user);
     await user.type(screen.getByLabelText("题目标题"), "统计行数");
 
-    const dirty = await screen.findByTestId("authoring-dirty");
-    const cancel = screen.getByTestId("authoring-cancel");
-    // 两者是同一个 .wizard-topbar 的直接子元素：同一行、由 flex 垂直居中。
-    const row = dirty.parentElement;
-    expect(row?.className).toContain("wizard-topbar");
-    expect(row).toBe(cancel.parentElement);
-    // 整块顶部条用的是紧凑内边距（不再是 20px 上下留白）。
-    expect(row?.closest(".panel--compact")).not.toBeNull();
+    // 改动之后出现一条红色提示（不是常驻横幅）。
+    const toast = await screen.findByTestId("toast");
+    expect(toast).toHaveTextContent("有还没保存的修改");
+    expect(toast.className).toBe("toast");
   });
 
-  it("顶部只留一行小字提示「请先选择课程」，不再占一条横幅", async () => {
+  it("「返回题库列表」在右上角；没填课程时用一条短提示说明", async () => {
     stub = installFetchStub(baseRoutes());
     await signIn("teacher1", "pw");
     renderAuthoring(null);
 
-    const hint = await screen.findByTestId("authoring-course-required");
-    // 提示还在（教师要知道缺什么），但它只是一小段文字，不是整行横幅。
-    expect(hint.tagName).toBe("P");
-    expect(hint).toHaveTextContent("请先选择课程");
-    expect(screen.getByTestId("authoring-cancel")).toBeInTheDocument();
+    const back = await screen.findByTestId("authoring-back");
+    expect(back).toHaveTextContent("返回题库列表");
+    // 它和标题在同一行，并被推到最右。
+    expect(back.closest(".page-head")).not.toBeNull();
+    expect(back.className).toContain("page-head__end");
+    // 「请先选择课程」以短提示出现，不再是顶部常驻文案。
+    expect(await screen.findByTestId("toast")).toHaveTextContent("请先选择课程");
+    expect(screen.queryByTestId("authoring-course-required")).toBeNull();
   });
 
   it("测试用例没填内容时第 4 步仍是空心圆，填了才算完成；步骤之间有连接线", async () => {
@@ -355,19 +442,22 @@ describe("分步向导", () => {
     expect(screen.queryByTestId("authoring-courses-load-more")).toBeNull();
   });
 
-  it("「AI 出题」是蓝色主按钮，紧挨着「题干」标题", async () => {
+  it("「AI 出题」在页面顶端标题旁边，一进页面就能点", async () => {
     stub = installFetchStub(baseRoutes());
     const user = userEvent.setup();
     await signIn("teacher1", "pw");
     renderAuthoring(null);
 
-    await goToStep(user, "stem");
     const ai = await screen.findByTestId("authoring-ai");
     expect(ai).toHaveTextContent("AI 出题");
+    // 蓝色主按钮，和标题在同一行。
     expect(ai.className).toContain("button");
     expect(ai.className).not.toContain("button--ghost");
-    // 和标题在同一个标题元素里，所以视觉上紧挨着「题干」两个字。
-    expect(ai.closest(".panel__title")).not.toBeNull();
+    expect(ai.closest(".page-head")).not.toBeNull();
+
+    // 题干步里不再有第二个 AI 入口。
+    await goToStep(user, "stem");
+    expect(screen.getAllByTestId("authoring-ai")).toHaveLength(1);
   });
 
   it("运行配置默认收起，展开后才是运行方式与文件上限", async () => {
@@ -445,9 +535,9 @@ describe("新建题目（POST /api/v1/questions）", () => {
     await signIn("teacher1", "pw");
     renderAuthoring(null);
 
-    // 未选课程时不能提交：course_id 是契约要求的查询参数。
-    const save = await screen.findByTestId("authoring-save");
-    expect(save).toBeDisabled();
+    // 第 1 步只有"下一步"；保存按钮只在最后一步出现。
+    expect(await screen.findByTestId("step-next")).toBeInTheDocument();
+    expect(screen.queryByTestId("authoring-save")).toBeNull();
     await fillCreateForm(user);
     await user.click(screen.getByTestId("authoring-save"));
 
@@ -473,8 +563,149 @@ describe("新建题目（POST /api/v1/questions）", () => {
     expect(cases[0].visible_to_student).toBe(false);
     expect((body.adapter as Record<string, unknown>).comparison).toEqual({ stdout: "exact" });
 
-    expect(await screen.findByTestId("authoring-created")).toBeInTheDocument();
-    expect(screen.getByText(/保存的是草稿/)).toBeInTheDocument();
+    // 3.0：保存成功后直接去"查看题目"，不再停在编辑页。
+    expect(await screen.findByText("detail target")).toBeInTheDocument();
+  });
+
+  it("选完图片才在后台存一份最小草稿并上传：教师不用先手动保存", async () => {
+    stub = installFetchStub(
+      baseRoutes([
+        {
+          method: "POST",
+          path: "/api/v1/questions",
+          respond: () => jsonResponse(questionPublic({ status: "draft" })),
+        },
+        {
+          // 草稿建好之后页面会取回它的版本 DTO（用于渲染发布门禁）。
+          path: `/api/v1/question-versions/${UUID_A}`,
+          respond: () =>
+            jsonResponse(
+              questionVersionPublic({
+                question_version_id: UUID_A,
+                version: 1,
+                status: "draft",
+                content_digest: SHA_A,
+              }),
+            ),
+        },
+        {
+          method: "POST",
+          path: `/api/v1/questions/${UUID_A}/assets`,
+          respond: () =>
+            jsonResponse({
+              asset_id: UUID_C,
+              content_type: "image/png",
+              size_bytes: 12,
+            }),
+        },
+      ]),
+    );
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+
+    await selectCourse(user);
+    await user.type(screen.getByLabelText("题目标题"), "统计行数");
+    await goToStep(user, "stem");
+    await user.type(screen.getByLabelText("题干"), "# 统计");
+
+    // 「选择文件」不是假按钮：直接就能选图（不需要先保存草稿）。
+    const picker = screen.getByTestId("image-pick");
+    expect(picker).toBeEnabled();
+    expect(screen.queryByTestId("image-need-draft")).toBeNull();
+
+    const file = new File([new Uint8Array([1, 2, 3])], "shot.png", { type: "image/png" });
+    await user.upload(screen.getByTestId("image-file") as HTMLInputElement, file);
+
+    // 先建"够上传"的最小草稿：只发契约必需的四项，不含最后一步才填的内容。
+    const createRequest = await waitFor(() => {
+      const found = stub?.requests.find(
+        (item) => item.method === "POST" && item.url.pathname === "/api/v1/questions",
+      );
+      if (!found) throw new Error("尚未发出最小草稿请求");
+      return found;
+    });
+    const body = createRequest.body as Record<string, unknown>;
+    expect(body.title).toBe("统计行数");
+    expect(body.stem_markdown).toBe("# 统计");
+    expect(body.language).toBe("python");
+    expect((body.adapter as Record<string, unknown>).kind).toBe("stdin");
+    expect(body.reference_answer).toBeUndefined();
+    expect(body.cases).toBeUndefined();
+    expect((body.adapter as Record<string, unknown>).comparison).toBeUndefined();
+
+    // 再上传到那道草稿上，并把图片写进题干。
+    await waitFor(() => {
+      const uploadRequest = stub?.requests.find(
+        (item) => item.method === "POST" && item.url.pathname === `/api/v1/questions/${UUID_A}/assets`,
+      );
+      expect(uploadRequest).toBeDefined();
+      expect((uploadRequest?.body as Record<string, unknown>).content_type).toBe("image/png");
+    });
+    await waitFor(() => {
+      const stem = screen.getByLabelText("题干") as HTMLTextAreaElement;
+      expect(stem.value).toContain(`/api/v1/questions/${UUID_A}/assets/${UUID_C}`);
+    });
+  });
+
+  it("校验失败的原因拼成一句话，不会出现「。；」连在一起", async () => {
+    stub = installFetchStub(baseRoutes());
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+
+    await selectCourse(user);
+    await user.type(screen.getByLabelText("题目标题"), "统计行数");
+    await goToStep(user, "stem");
+    await user.type(screen.getByLabelText("题干"), "# 统计");
+    await goToStep(user, "comparison");
+    // 比对方式没选、用例分值为空 → 两条原因同时出现。
+    await user.click(screen.getByTestId("authoring-save"));
+
+    const toast = await screen.findByTestId("toast");
+    const text = toast.textContent ?? "";
+    expect(text).toContain("；");
+    expect(text).not.toContain("。；");
+    expect(text.endsWith("。")).toBe(true);
+  });
+
+  it("标签留空时按语言与运行方式自动补上（2.0 第 4 条）", async () => {
+    stub = installFetchStub(
+      baseRoutes([
+        {
+          method: "POST",
+          path: "/api/v1/questions",
+          respond: () => jsonResponse(questionPublic({ status: "draft" })),
+        },
+      ]),
+    );
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+
+    await selectCourse(user);
+    await user.type(screen.getByLabelText("题目标题"), "统计行数");
+    // 标签一个字都不填。
+    await goToStep(user, "stem");
+    await user.type(screen.getByLabelText("题干"), "# 统计");
+    await goToStep(user, "cases");
+    await user.type(screen.getByLabelText("分值"), "1");
+    await goToStep(user, "comparison");
+    await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
+    await user.click(screen.getByTestId("authoring-save"));
+
+    const request = await waitFor(() => {
+      const found = stub?.requests.find(
+        (item) => item.method === "POST" && item.url.pathname === "/api/v1/questions",
+      );
+      if (!found) throw new Error("尚未发出创建请求");
+      return found;
+    });
+    // 默认语言是 Python、运行方式是命令行输入（stdin）。
+    expect((request.body as Record<string, unknown>).tags).toEqual(["python", "stdin"]);
+    // 补出来的标签写回输入框，教师能看到。
+    await goToStep(user, "basic");
+    expect(screen.getByLabelText("标签")).toHaveValue("python, stdin");
   });
 
   it("受保护字段留空时不发这两个键（CHG-0017：省略 = 服务端保留已存值）", async () => {
@@ -527,6 +758,8 @@ describe("新建题目（POST /api/v1/questions）", () => {
     await goToStep(user, "cases");
     await user.click(screen.getByTestId("case-remove-0"));
     await user.click(await screen.findByTestId("case-delete-confirm-action"));
+    // 保存按钮在最后一步（2.0：前四步只有"下一步"）。
+    await goToStep(user, "comparison");
     await user.click(screen.getByTestId("authoring-save"));
 
     const request = await waitFor(() => {
@@ -546,7 +779,7 @@ describe("新建题目（POST /api/v1/questions）", () => {
     expect(body.stem_markdown).toBe("题干");
     expect(body.language).toBe("python");
     expect(body.adapter).toBeDefined();
-    expect(await screen.findByTestId("authoring-created")).toBeInTheDocument();
+    expect(await screen.findByText("detail target")).toBeInTheDocument();
   });
 
   it("保存成功后不再允许重复创建（第二次点保存不会产生第二道题）", async () => {
@@ -590,15 +823,9 @@ describe("新建题目（POST /api/v1/questions）", () => {
 
     await fillCreateForm(user);
     await user.click(screen.getByTestId("authoring-save"));
-    await screen.findByTestId("authoring-created");
 
-    // 这一页仍是 P08（questionId 为 null）：再点一次就会 POST 出第二道题，因此按钮停用，
-    // 并明确告诉教师下一步该走「继续编辑」。
-    expect(screen.getByTestId("authoring-save")).toBeDisabled();
-    expect(screen.getByTestId("authoring-created-next")).toHaveTextContent("继续编辑");
-    // 图片与夹具上传同样停用：本页的插入/声明不会被保存，去 P09 才能写进题目。
-    await goToStep(user, "stem");
-    expect(screen.getByTestId("image-disabled")).toHaveTextContent("继续编辑");
+    // 3.0：保存成功后直接跳到"查看题目"，这一页已经离开，因此不可能再 POST 出第二道题。
+    expect(await screen.findByText("detail target")).toBeInTheDocument();
     const posts = stub.requests.filter(
       (item) => item.method === "POST" && item.url.pathname === "/api/v1/questions",
     );
@@ -628,14 +855,13 @@ describe("新建题目（POST /api/v1/questions）", () => {
     await user.type(screen.getByLabelText("参考答案"), "print(2)");
     await goToStep(user, "cases");
     await user.type(screen.getByLabelText(/用例名/), "用例一");
+    await user.type(screen.getByLabelText("分值"), "1");
     await goToStep(user, "comparison");
     await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
     await user.click(screen.getByTestId("authoring-save"));
 
-    // 没有输入夹具的 file 题编译不出 package，所以在本地就先拒绝，不发请求。
-    expect(await screen.findByTestId("authoring-issues")).toHaveTextContent(
-      "请至少上传一个输入文件",
-    );
+    // 没有输入夹具的 file 题编译不出 package，所以在本地就先拒绝，不发请求（原因用红色提示说）。
+    expect(await screen.findByTestId("toast")).toHaveTextContent("请至少上传一个输入文件");
     expect(stub.requests.filter((item) => item.url.pathname === "/api/v1/questions")).toHaveLength(
       0,
     );
@@ -708,7 +934,8 @@ describe("修改草稿（PATCH /api/v1/questions/{question_id}）", () => {
     const body = request.body as Record<string, unknown>;
     expect(body.revision_note).toBeUndefined();
     expect(body.reference_answer).toBe("print(2)");
-    expect(await screen.findByTestId("authoring-saved")).toBeInTheDocument();
+    // 保存成功后跳到这道题的详情页。
+    expect(await screen.findByText("detail target")).toBeInTheDocument();
   });
 
   it("最新版本已发布：保存为新版本，带 as_new_version=true 与 revision_note", async () => {
@@ -782,9 +1009,8 @@ describe("修改草稿（PATCH /api/v1/questions/{question_id}）", () => {
     expect((request.body as Record<string, unknown>).revision_note).toBe(
       "例题的截止时间写错了",
     );
-    // 保存结果展示的是**服务端返回的**新版本标识：先由 PATCH 的 `versions[0]` 得到，
-    // 再取回版本 DTO 渲染"待验证后才能发布"。断言它等于 versions[0]，而不是"调用成功"。
-    expect(await screen.findByTestId("authoring-saved")).toHaveTextContent("版本 3");
+    // 保存成功后带着**服务端返回的**新版本标识跳到详情页（再取回版本 DTO 渲染发布入口）。
+    expect(await screen.findByText("detail target")).toBeInTheDocument();
     const versionRequest = stub.requests.find(
       (item) => item.url.pathname === `/api/v1/question-versions/${NEW_VERSION}`,
     );
@@ -847,7 +1073,11 @@ describe("修改草稿（PATCH /api/v1/questions/{question_id}）", () => {
       await fillAdapterExitCode(user);
       await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
       await user.click(screen.getByTestId("authoring-save"));
-      await screen.findByTestId("authoring-saved");
+      await waitFor(() => {
+        expect(
+          lines.filter((line) => line.event === "question_draft_updated").length,
+        ).toBeGreaterThan(0);
+      });
 
       const updateLog = lines.filter((line) => line.event === "question_draft_updated").at(-1);
       expect(updateLog).toBeDefined();
@@ -859,6 +1089,86 @@ describe("修改草稿（PATCH /api/v1/questions/{question_id}）", () => {
     } finally {
       setLogSink(null);
     }
+  });
+});
+
+describe("编辑页读回草稿的用例（3.0 之后的修改诉求）", () => {
+  it("已存的参考答案与用例会被读回来，可以就地修改并保存", async () => {
+    stub = installFetchStub(
+      baseRoutes([
+        {
+          path: `/api/v1/questions/${QUESTION_ID}`,
+          method: "GET",
+          respond: () => jsonResponse(draftQuestion()),
+        },
+        {
+          path: `/api/v1/question-versions/${DRAFT_VERSION}`,
+          respond: () =>
+            jsonResponse(
+              questionVersionPublic({
+                question_version_id: DRAFT_VERSION,
+                version: 1,
+                status: "draft",
+                content_digest: SHA_A,
+              }),
+            ),
+        },
+        {
+          path: `/api/v1/question-versions/${DRAFT_VERSION}/draft-content`,
+          respond: () =>
+            jsonResponse({
+              reference_answer: "print(2)",
+              cases: [
+                {
+                  name: "基本用例",
+                  ordinal: 0,
+                  weight: 1,
+                  visible_to_student: false,
+                  stdin: "a\n",
+                  args: [],
+                  expected_stdout: "2\n",
+                  expected_stderr: null,
+                  expected_exit_code: 0,
+                },
+              ],
+            }),
+        },
+        {
+          method: "PATCH",
+          path: `/api/v1/questions/${QUESTION_ID}`,
+          respond: () => jsonResponse(draftQuestion()),
+        },
+      ]),
+    );
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(QUESTION_ID);
+
+    // 参考答案被读回来。
+    await goToStep(user, "reference");
+    await waitFor(() => expect(screen.getByLabelText("参考答案")).toHaveValue("print(2)"));
+
+    // 用例也被读回来：原来那条能看见、能改，不需要"重新声明一遍"。
+    await goToStep(user, "cases");
+    expect(await screen.findByTestId("case-0")).toBeInTheDocument();
+    expect(screen.getByTestId("case-0")).toHaveTextContent("基本用例");
+    expect(screen.getByLabelText(/用例名/)).toHaveValue("基本用例");
+    // 现在拿到的是真实集合，替换确认框不再出现。
+    expect(screen.queryByTestId("authoring-cases-replace")).toBeNull();
+
+    await user.type(screen.getByLabelText("标准输入"), "改过的输入");
+    await goToStep(user, "comparison");
+    await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
+    await user.click(screen.getByTestId("authoring-save"));
+
+    const request = await waitFor(() => {
+      const found = stub?.requests.find((item) => item.method === "PATCH");
+      if (!found) throw new Error("尚未发出修改请求");
+      return found;
+    });
+    const cases = (request.body as Record<string, unknown>).cases as Record<string, unknown>[];
+    expect(cases[0].stdin).toBe("a\n改过的输入");
+    expect(cases[0].name).toBe("基本用例");
   });
 });
 
@@ -885,14 +1195,17 @@ describe("验证并发布入口（CHG-0019 / ADR-0015）", () => {
         },
       ]),
     );
+    const user = userEvent.setup();
     await signIn("teacher1", "pw");
     renderAuthoring(QUESTION_ID);
 
+    // 检验并发布在第 5 步里（2.0：保存草稿与它同屏）。
+    await goToStep(user, "comparison");
     const panel = await screen.findByTestId("reference-verification");
     // 入口在：这是 ADR-0015 解掉的死结（此前这一版只能找运维跑脚本）。
     expect(within(panel).getByTestId("reference-verify")).toBeInTheDocument();
-    // 发布条件必须可见，且只说人话。
-    expect(within(panel).getByTestId("reference-gate")).toHaveTextContent("检验有记录");
+    // 2.0：常驻的灰色说明文字已删，只留标题与按钮。
+    expect(within(panel).queryByTestId("reference-gate")).toBeNull();
 
     // 未验证 → 没有可点的发布动作，且没有任何验证结论。
     expect(within(panel).queryByTestId("reference-publish")).toBeNull();
@@ -1017,7 +1330,7 @@ describe("两类信号（确定性规则 vs 模型建议）", () => {
     const disclaimers = screen.getByTestId("assistance-disclaimers");
     expect(disclaimers).toHaveTextContent("由模型生成，非确定性结论。");
     expect(disclaimers).toHaveTextContent("不参与判分，不作为申诉依据。");
-    expect(screen.getByTestId("authoring-assistance")).toHaveTextContent("AI 给的是参考意见");
+    expect(screen.getByTestId("authoring-assistance")).toHaveTextContent("AI意见仅供参考");
 
     const request = stub.requests.find(
       (item) => item.url.pathname === `/api/v1/questions/${QUESTION_ID}/authoring-assistance`,
@@ -1231,6 +1544,13 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
 
     await user.type(screen.getByLabelText("教学目标"), "让学生学会读标准输入");
     await user.click(screen.getByTestId("generation-generate"));
+    // 3.0：生成时就要求模型带上测试用例，并在预览里直接显示条数。
+    expect(await screen.findByTestId("generation-proposal-case-count")).toHaveTextContent("2");
+    const generationRequest = stub?.requests.find(
+      (item) => item.method === "POST" && item.url.pathname === "/api/v1/question-draft-generations",
+    );
+    expect((generationRequest?.body as Record<string, unknown>).desired_case_count).toBe(2);
+
 
     const request = await waitFor(() => {
       const found = stub?.requests.find(

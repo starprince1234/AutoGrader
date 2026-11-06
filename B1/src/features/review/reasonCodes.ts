@@ -56,6 +56,33 @@ export function reasonLabel(reasonCode: string): string {
   return label ?? t("review.mail.reasonUnknown");
 }
 
+/** 给老师看的"为什么失败"，一句话说清后果；不显示内部字段名或原始错误文本。 */
+const REASON_HINTS: Record<ReasonCode, string> = {
+  not_uniquely_matched: "发件邮箱对应不止一个学生，系统无法判断该算谁的。",
+  ambiguous_match: "有多个学生匹配到这封邮件，需要人工确认。",
+  malformed_message: "邮件格式损坏，无法读取附件。",
+  missing_message_id: "邮件缺少唯一标识，无法安全地避免重复提交。",
+  no_attachments: "邮件里没有可提交的附件。",
+  too_many_attachments: "附件数量超过上限。",
+  message_too_large: "邮件体积超过上限。",
+  attachment_name_not_allowed: "附件名包含不允许的字符。",
+  duplicate_attachment_name: "有多个同名附件，无法区分。",
+  unsupported_attachment_encoding: "附件编码格式不支持。",
+  malformed_attachment: "附件损坏，无法读取。",
+  attachment_too_large: "单个附件超过大小上限。",
+  attachment_total_too_large: "附件总大小超过上限。",
+  unsupported_attachment_type: "附件类型不在允许范围内。",
+  nested_message_attachment: "附件是另一封邮件，不能直接作为作业。",
+  executable_attachment: "附件包含可执行文件，安全策略拒绝。",
+  archive_bomb: "压缩包解压后体积异常，安全策略拒绝。",
+  archive_attachment: "压缩包不能作为提交。",
+  not_plain_text: "附件不是纯文本，无法安全读取。",
+};
+
+export function reasonHint(reasonCode: string): string {
+  return (REASON_HINTS as Record<string, string | undefined>)[reasonCode] ?? "附件未通过安全检查。";
+}
+
 /**
  * 是否可人工归属。**fail-closed**：不认识的原因码返回 `false`，这样"服务端新增了一个原因码"
  * 不会变成"教师点了一个必然 422 的按钮"。

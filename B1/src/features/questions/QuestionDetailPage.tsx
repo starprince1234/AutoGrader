@@ -5,7 +5,6 @@ import { canAuthorQuestions, canSubmitAnswer, canViewQuestionQuality } from "../
 import { Banner, EmptyState, ErrorState, Field, PageTitle, Panel, Spinner, StatusPill } from "../../ui/components";
 import { formatDateTime } from "../../ui/format";
 import { ReferenceVerificationPanel } from "../authoring/ReferenceVerificationPanel";
-import { RevisionSummary } from "./RevisionSummary";
 import { SafeMarkdown } from "./SafeMarkdown";
 import { useQuestion, useQuestionVersion } from "./useQuestions";
 import { Select } from "../../ui/Select";
@@ -62,13 +61,17 @@ export function QuestionDetailPage({
 
   return (
     <div className="stack">
-      <div className="inline">
-        <Link className="button button--ghost" to="/questions" data-testid="back-to-list">
+      {/* 返回按钮统一放页面右上角（3.0 第 3 条）。 */}
+      <div className="inline page-head">
+        <PageTitle>{shown.title}</PageTitle>
+        <Link
+          className="button button--ghost page-head__end"
+          to="/questions"
+          data-testid="back-to-list"
+        >
           {t("questions.backToList")}
         </Link>
       </div>
-
-      <PageTitle>{shown.title}</PageTitle>
 
       <div className="inline" data-testid="question-facts">
         <span className="muted">
@@ -100,6 +103,8 @@ export function QuestionDetailPage({
             className="button button--ghost"
             to="/questions/$questionId/edit"
             params={{ questionId: shown.question_id }}
+            // 从详情页进去：编辑页的右上角是「返回题目」（3.0 第 1 条）。
+            search={{ from: "detail" }}
             data-testid="edit-question"
           >
             {shown.status === "published" ? t("questions.newVersion") : t("questions.editDraft")}
@@ -111,7 +116,12 @@ export function QuestionDetailPage({
           <Link
             className="button button--ghost"
             to="/review"
-            search={{ tab: "quality", question_version_id: effectiveId }}
+            search={{
+              tab: "quality",
+              origin: "question",
+              course_id: shown.course_id,
+              question_version_id: effectiveId,
+            }}
             data-testid="question-quality-link"
           >
             {t("questions.qualityLink")}
@@ -186,23 +196,9 @@ export function QuestionDetailPage({
                 <h3 data-testid="version-stem-label">{t("questions.versionStemLabel")}</h3>
                 <SafeMarkdown source={version.data.stem_markdown} testId="version-stem-body" />
               </>
-            ) : (
-              <p className="muted" data-testid="version-stem-same">
-                {t("questions.versionStemSame")}
-              </p>
-            )}
+            ) : null}
 
-            {version.data.status !== "published" ? (
-              canSubmitAnswer(session) ? (
-                <Banner tone="warn" testId="version-not-published">
-                  {t("questions.notPublished")}
-                </Banner>
-              ) : (
-                <Banner tone="info" testId="version-not-published">
-                  {t("questions.notPublishedStaff")}
-                </Banner>
-              )
-            ) : canSubmitAnswer(session) ? (
+            {version.data.status === "published" && canSubmitAnswer(session) ? (
               <div className="inline">
                 <Link
                   className="button"
@@ -213,18 +209,18 @@ export function QuestionDetailPage({
                   {t("questions.submit")}
                 </Link>
               </div>
-            ) : (
-              // 教师/助教看得到题干，但作答入口只对学生开放（服务端同样只接受学生提交）。
-              <p className="muted" data-testid="submit-student-only">
-                {t("questions.submitStudentOnly")}
-              </p>
-            )}
+            ) : null}
 
-            <RevisionSummary
-              revisionNote={version.data.revision_note}
-              revisionDiff={version.data.revision_diff}
-              isFirstVersion={version.data.version === 1}
-            />
+            {/* 3.0：版本框只留「选择版本 / 题型 / 状态 / 相关信息」。
+                有改动说明就原样展示，没有就固定写「无」。 */}
+            <div className="stack" data-testid="version-related">
+              <h3>{t("questions.versionRelated")}</h3>
+              <p data-testid="version-related-note">
+                {version.data.revision_note && version.data.revision_note.trim() !== ""
+                  ? version.data.revision_note
+                  : t("common.none")}
+              </p>
+            </div>
           </div>
         ) : null}
       </Panel>

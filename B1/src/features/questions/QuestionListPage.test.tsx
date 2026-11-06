@@ -10,7 +10,16 @@ import {
 } from "@tanstack/react-router";
 import { renderWithProviders } from "../../testing/renderWithProviders";
 import { installFetchStub, jsonResponse, type StubbedRoute, type FetchStub } from "../../testing/httpBoundary";
-import { courseSummary, questionPublic, questionTagCoverage, sessionCreated, UUID_A } from "../../testing/contractFixtures";
+import {
+  courseSummary,
+  questionPublic,
+  questionTagCoverage,
+  questionVersionPublic,
+  referenceVerification,
+  sessionCreated,
+  UUID_A,
+  UUID_B,
+} from "../../testing/contractFixtures";
 import { signIn } from "../../auth/sessionStore";
 import { QuestionListPage } from "./QuestionListPage";
 import { QUESTION_PAGE_SIZE } from "./useQuestions";
@@ -171,15 +180,63 @@ describe("题目列表的游标分页", () => {
     });
   });
 
-  it("「包含草稿」开关已移除：列表固定连草稿一起取，否则教师进不去自己的草稿", async () => {
-    stub = installFetchStub(routes({ "": pageOf(["q-1"], null) }));
-    await open(userEvent.setup());
-
-    expect(screen.queryByLabelText("包含草稿")).toBeNull();
-    const first = stub.requests.find((request) =>
-      request.url.pathname.endsWith("/api/v1/questions"),
+  it("发布状态下拉：默认「已发布」，切到「草稿」只留下草稿", async () => {
+    stub = installFetchStub(
+      routes({
+        "": {
+          items: [
+            questionPublic({ question_id: "q-published", status: "published" }),
+            questionPublic({
+              question_id: "q-draft",
+              status: "draft",
+              versions: [{ question_version_id: UUID_B, version: 1, status: "draft" }],
+            }),
+          ],
+          next_cursor: null,
+        },
+      }),
     );
-    expect(first?.url.searchParams.get("published_only")).toBe("false");
+    const user = await open(userEvent.setup());
+
+    const state = screen.getByLabelText("发布状态") as HTMLSelectElement;
+    expect(state.tagName).toBe("SELECT");
+    // 3.1：新增「全部状态」并作为默认。
+    expect([...state.options].map((option) => option.value)).toEqual([
+      "all",
+      "published",
+      "draft",
+    ]);
+    expect(state.value).toBe("all");
+    // 默认「全部状态」= 契约的 published_only=false（连草稿一起），且客户端不过滤。
+    await waitFor(() => {
+      const first = stub?.requests.find((request) =>
+        request.url.pathname.endsWith("/api/v1/questions"),
+      );
+      expect(first?.url.searchParams.get("published_only")).toBe("false");
+    });
+    const initialTable = screen.getByTestId("question-table");
+    await waitFor(() => expect(within(initialTable).getAllByRole("row")).toHaveLength(3)); // 表头 + 2 行
+
+    // 切到「已发布」：请求改成 published_only=true。
+    await user.selectOptions(state, "published");
+    await waitFor(() => {
+      const last = stub?.requests
+        .filter((request) => request.url.pathname.endsWith("/api/v1/questions"))
+        .at(-1);
+      expect(last?.url.searchParams.get("published_only")).toBe("true");
+    });
+
+    // 契约没有"只要草稿"的参数：这一档是 published_only=false + 客户端按状态过滤。
+    await user.selectOptions(state, "draft");
+    await waitFor(() => {
+      const last = stub?.requests
+        .filter((request) => request.url.pathname.endsWith("/api/v1/questions"))
+        .at(-1);
+      expect(last?.url.searchParams.get("published_only")).toBe("false");
+    });
+    const table = screen.getByTestId("question-table");
+    await waitFor(() => expect(within(table).getAllByRole("row")).toHaveLength(2)); // 表头 + 1 行草稿
+    expect(within(table).getByText("统计文件行数")).toBeInTheDocument();
   });
 
   it("题干搜索框按已加载题目的题干文字过滤，并给出无命中提示", async () => {
@@ -221,17 +278,36 @@ describe("题目列表的游标分页", () => {
     expect(link.closest("div.inline")?.textContent).toContain("题库");
   });
 
-  it("标签筛选按契约的重复参数发送（explode=true），非法标签不入参", async () => {
-    stub = installFetchStub(routes({ "": pageOf(["q-1"], null) }));
+  it("标签改成下拉：选项来自题库里已有的标签，选中后按 tags 单选发送", async () => {
+    stub = installFetchStub(
+      routes({
+        "": {
+          items: [
+            questionPublic({ question_id: "q-1", status: "published", tags: ["unix"] }),
+            questionPublic({ question_id: "q-2", status: "published", tags: ["scheduling"] }),
+          ],
+          next_cursor: null,
+        },
+      }),
+    );
     const user = await open(userEvent.setup());
 
-    await user.type(screen.getByLabelText("标签"), "Process Scheduling, unix");
+    const tags = screen.getByLabelText("标签") as HTMLSelectElement;
+    expect(tags.tagName).toBe("SELECT");
+    // 「全部标签」+ 已加载题目里出现过的标签（去重、排序）。
+    expect([...tags.options].map((option) => option.value)).toEqual([
+      "",
+      "scheduling",
+      "unix",
+    ]);
+    expect(tags.value).toBe("");
 
+    await user.selectOptions(tags, "unix");
     await waitFor(() => {
       const last = stub?.requests
         .filter((request) => request.url.pathname.endsWith("/api/v1/questions"))
         .at(-1);
-      expect(last?.url.searchParams.getAll("tags")).toEqual(["process-scheduling", "unix"]);
+      expect(last?.url.searchParams.getAll("tags")).toEqual(["unix"]);
     });
   });
 
@@ -244,6 +320,93 @@ describe("题目列表的游标分页", () => {
     const table = await screen.findByTestId("question-table");
     expect(within(table).getByText("unix")).toBeInTheDocument();
     expect(within(table).getByText("scheduling")).toBeInTheDocument();
+  });
+
+  it("草稿行可以直接在列表发布：先请求检验，通过后立即发布", async () => {
+    stub = installFetchStub([
+      ...routes({
+        "": {
+          items: [
+            questionPublic({
+              question_id: "q-draft",
+              status: "draft",
+              versions: [{ question_version_id: UUID_B, version: 1, status: "draft" }],
+            }),
+          ],
+          next_cursor: null,
+        },
+      }),
+      {
+        method: "POST",
+        path: "/api/v1/reference-verifications",
+        respond: () => jsonResponse(referenceVerification()),
+      },
+      {
+        method: "POST",
+        path: `/api/v1/question-versions/${UUID_B}/publish`,
+        respond: () => jsonResponse(questionVersionPublic({ status: "published" })),
+      },
+    ]);
+    const user = await open(userEvent.setup());
+
+    const publish = await screen.findByTestId("publish-q-draft");
+    expect(publish).toBeEnabled();
+    await user.click(publish);
+
+    // 顺序是"先检验、再发布"：发布门禁要求存证已记录。
+    await waitFor(() => {
+      const verifyRequest = stub?.requests.find((request) =>
+        request.url.pathname.endsWith("/api/v1/reference-verifications"),
+      );
+      expect(verifyRequest?.body).toEqual({ question_version_id: UUID_B });
+    });
+    await waitFor(() => {
+      const publishRequest = stub?.requests.find(
+        (request) => request.url.pathname === `/api/v1/question-versions/${UUID_B}/publish`,
+      );
+      expect(publishRequest?.method).toBe("POST");
+    });
+    expect(await screen.findByTestId("toast")).toHaveTextContent("已发布");
+  });
+
+  it("检验没通过时不发布，只说明原因", async () => {
+    stub = installFetchStub([
+      ...routes({
+        "": {
+          items: [
+            questionPublic({
+              question_id: "q-draft",
+              status: "draft",
+              versions: [{ question_version_id: UUID_B, version: 1, status: "draft" }],
+            }),
+          ],
+          next_cursor: null,
+        },
+      }),
+      {
+        method: "POST",
+        path: "/api/v1/reference-verifications",
+        respond: () =>
+          jsonResponse(
+            referenceVerification({ cases_passed: 1, cases_total: 2, attestation_id: null }),
+          ),
+      },
+    ]);
+    const user = await open(userEvent.setup());
+
+    await user.click(await screen.findByTestId("publish-q-draft"));
+    expect(await screen.findByTestId("toast")).toHaveTextContent("还没通过检验");
+    expect(
+      stub.requests.filter((request) => request.url.pathname.endsWith("/publish")),
+    ).toHaveLength(0);
+  });
+
+  it("已发布题目的「发布」按钮置灰", async () => {
+    stub = installFetchStub(routes({ "": pageOf(["q-1"], null) }));
+    await open(userEvent.setup());
+
+    // 夹具里的 q-1 是已发布状态。
+    expect(await screen.findByTestId("publish-q-1")).toBeDisabled();
   });
 
   it("出题角色看到「新建题目」与逐行编辑入口", async () => {
@@ -308,7 +471,7 @@ describe("题目列表上的标签覆盖度（CHG-0020）", () => {
       request.url.pathname.endsWith("/coverage"),
     );
     expect(firstCoverage?.url.searchParams.get("course_id")).toBe(UUID_A);
-    // 两个数字必须来自同一个作用域：列表已经固定连草稿一起取，覆盖度也必须是同一个值。
+    // 两个数字必须来自同一个作用域：默认「全部状态」时两边都是 published_only=false。
     expect(firstCoverage?.url.searchParams.get("published_only")).toBe("false");
     const lastQuestions = stub.requests
       .filter((request) => request.url.pathname.endsWith("/api/v1/questions"))
@@ -323,8 +486,8 @@ describe("题目列表上的标签覆盖度（CHG-0020）", () => {
     await user.selectOptions(await screen.findByLabelText("课程"), UUID_A);
     await user.click(await screen.findByTestId("coverage-tag-unix"));
 
-    // 填进的是既有的标签筛选输入框，请求走既有的 `tags` 重复参数（explode=true）。
-    expect(screen.getByLabelText("标签")).toHaveValue("unix");
+    // 填进的是既有的标签下拉，请求走既有的 `tags` 重复参数（explode=true）。
+    expect((screen.getByLabelText("标签") as HTMLSelectElement).value).toBe("unix");
     await waitFor(() => {
       const last = stub?.requests
         .filter((request) => request.url.pathname.endsWith("/api/v1/questions"))

@@ -57,6 +57,7 @@ from autograder_b2.db.schema import (
     evaluation_results,
     evaluation_runs,
     static_findings,
+    submissions,
 )
 from autograder_b2.static.rules import RULES
 
@@ -126,6 +127,7 @@ class QualitySummary:
     """
 
     question_version_id: str
+    answerer_count: int
     attempt_count: int
     failure_categories: tuple[FailureCategoryCount, ...] = field(default_factory=tuple)
     static_rule_hits: tuple[StaticRuleHit, ...] = field(default_factory=tuple)
@@ -139,6 +141,7 @@ class QualitySummary:
         """契约 JSON 形状（字段集合固定，`additionalProperties: false`）。"""
         return {
             "question_version_id": self.question_version_id,
+            "answerer_count": self.answerer_count,
             "attempt_count": self.attempt_count,
             "failure_categories": [
                 {"category": item.category, "count": item.count}
@@ -221,6 +224,16 @@ class EvaluationQualityService:
             attempt_count = int(
                 connection.execute(sa.select(sa.func.count()).select_from(scope)).scalar_one()
             )
+            answerer_count = int(
+                connection.execute(
+                    sa.select(sa.func.count(sa.distinct(submissions.c.student_id)))
+                    .select_from(_joined(scope, evaluation_runs))
+                    .join(
+                        submissions,
+                        submissions.c.submission_id == evaluation_runs.c.submission_id,
+                    )
+                ).scalar_one()
+            )
             status_counts = {
                 row[0]: int(row[1])
                 for row in connection.execute(
@@ -275,6 +288,7 @@ class EvaluationQualityService:
             )
         return QualitySummary(
             question_version_id=question_version_id,
+            answerer_count=answerer_count,
             attempt_count=attempt_count,
             failure_categories=tuple(
                 FailureCategoryCount(category=str(row[0]), count=int(row[1])) for row in categories

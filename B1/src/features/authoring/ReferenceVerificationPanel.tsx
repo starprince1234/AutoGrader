@@ -142,12 +142,6 @@ function VerificationBody({
       testId="reference-verification"
       className="panel--gated"
     >
-      <p className="muted">{t("authoring.verify.intro")}</p>
-
-      <p className="muted" data-testid="reference-gate">
-        {t("authoring.verify.gate")}
-      </p>
-
       <div className="inline">
         <button
           type="button"
@@ -179,8 +173,6 @@ function VerificationBody({
           </button>
         ) : null}
       </div>
-      <p className="muted">{t("authoring.verify.requestHint")}</p>
-
       {verification.isPending ? <Spinner label={t("authoring.verify.verifying")} /> : null}
 
       {verificationError !== null && verificationError !== undefined ? (
@@ -263,9 +255,6 @@ function VerificationBody({
             <>
               <h3>{t("authoring.verify.cases")}</h3>
               <CaseTable cases={data.cases} />
-              <p className="muted" data-testid="reference-cases-meaning">
-                {t("authoring.verify.casesHint")}
-              </p>
             </>
           ) : (
             <Banner tone="info" testId="reference-cases-empty">
@@ -291,7 +280,6 @@ function VerificationBody({
               >
                 {publish.isPending ? t("authoring.verify.publishing") : t("authoring.verify.publish")}
               </button>
-              <span className="muted">{t("authoring.verify.publishHint")}</span>
             </div>
           ) : (
             <p className="muted" data-testid="reference-publish-blocked">
@@ -311,10 +299,6 @@ function VerificationBody({
           {t("authoring.verify.publishDone", { version: publish.data.version })}
         </Banner>
       ) : null}
-
-      <p className="muted" data-testid="reference-no-auto">
-        {t("authoring.verify.noAuto")}
-      </p>
     </Panel>
   );
 }

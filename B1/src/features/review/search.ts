@@ -22,6 +22,8 @@ export type ReviewTab = "mail" | "quality";
 /** 路由查询串（扁平结构：TanStack Router 的 `validateSearch` 与 `navigate` 共用）。 */
 export type ReviewSearch = {
   tab?: ReviewTab;
+  /** 从题目详情进入 quality 标签：返回按钮应回题库列表，而不是作业列表。 */
+  origin?: "question";
   course_id?: string;
   section_id?: string;
   resolved?: "true" | "false" | "all";
@@ -31,6 +33,17 @@ export type ReviewSearch = {
   question_version_id?: string;
   from?: string;
   to?: string;
+  /** 非当前标签的查询条件：切换标签时暂存，切回来原样恢复。 */
+  mail_course_id?: string;
+  mail_section_id?: string;
+  mail_resolved?: "true" | "false" | "all";
+  mail_held?: "true" | "false";
+  mail_reason_code?: string;
+  mail_cursor?: string;
+  quality_course_id?: string;
+  quality_question_version_id?: string;
+  quality_from?: string;
+  quality_to?: string;
 };
 
 /** 邮件标签的**已解析**筛选。`resolved: null` 表示"全部状态"。 */
@@ -47,6 +60,7 @@ export type MailFilter = {
 
 /** 题目质量标签的已解析筛选（三项一起进查询键）。 */
 export type QualityFilter = {
+  courseId: string | null;
   questionVersionId: string | null;
   from: string | null;
   to: string | null;
@@ -78,6 +92,7 @@ export function parseReviewSearch(search: Record<string, unknown>): ReviewSearch
   const parsed: ReviewSearch = {};
   const tab = normalizeReviewTab(search.tab);
   if (tab === "quality") parsed.tab = "quality";
+  if (search.origin === "question") parsed.origin = "question";
   const course = token(search.course_id);
   if (course) parsed.course_id = course;
   const section = token(search.section_id);
@@ -100,72 +115,140 @@ export function parseReviewSearch(search: Record<string, unknown>): ReviewSearch
   if (from) parsed.from = from;
   const to = token(search.to);
   if (to) parsed.to = to;
+
+  const mailCourse = token(search.mail_course_id);
+  if (mailCourse) parsed.mail_course_id = mailCourse;
+  const mailSection = token(search.mail_section_id);
+  if (mailSection) parsed.mail_section_id = mailSection;
+  if (
+    search.mail_resolved === "true" ||
+    search.mail_resolved === "false" ||
+    search.mail_resolved === "all"
+  ) {
+    parsed.mail_resolved = search.mail_resolved;
+  }
+  if (search.mail_held === "true" || search.mail_held === "false") {
+    parsed.mail_held = search.mail_held;
+  }
+  const mailReason = token(search.mail_reason_code);
+  if (mailReason && (REASON_CODES as readonly string[]).includes(mailReason)) {
+    parsed.mail_reason_code = mailReason as ReasonCode;
+  }
+  const mailCursor = token(search.mail_cursor);
+  if (mailCursor) parsed.mail_cursor = mailCursor;
+
+  const qualityCourse = token(search.quality_course_id);
+  if (qualityCourse) parsed.quality_course_id = qualityCourse;
+  const qualityVersion = token(search.quality_question_version_id);
+  if (qualityVersion) parsed.quality_question_version_id = qualityVersion;
+  const qualityFrom = token(search.quality_from);
+  if (qualityFrom) parsed.quality_from = qualityFrom;
+  const qualityTo = token(search.quality_to);
+  if (qualityTo) parsed.quality_to = qualityTo;
   return parsed;
 }
 
 /** 已解析的邮件筛选。URL 省略 `resolved` 时按默认「未处理」（显式 false）处理。 */
 export function readMailFilter(search: ReviewSearch): MailFilter {
+  const active = normalizeReviewTab(search.tab) === "mail";
+  const rawResolved = active ? search.resolved : search.mail_resolved;
   const resolved =
-    search.resolved === "true" ? true : search.resolved === "all" ? null : false;
+    rawResolved === "true" ? true : rawResolved === "all" ? null : false;
+  const rawHeld = active ? search.held : search.mail_held;
   return {
-    courseId: search.course_id ?? null,
-    sectionId: search.section_id ?? null,
+    courseId: (active ? search.course_id : search.mail_course_id) ?? null,
+    sectionId: (active ? search.section_id : search.mail_section_id) ?? null,
     resolved,
     // 默认视图是"待处理"：既不含暂存，也不含已处理。
     held:
-      search.held === "true" ? true : search.held === "false" ? false : resolved === false ? false : null,
-    reasonCode: search.reason_code ?? null,
-    cursor: search.cursor ?? null,
+      rawHeld === "true" ? true : rawHeld === "false" ? false : resolved === false ? false : null,
+    reasonCode: (active ? search.reason_code : search.mail_reason_code) ?? null,
+    cursor: (active ? search.cursor : search.mail_cursor) ?? null,
   };
 }
 
 /** 已解析的质量筛选。 */
 export function readQualityFilter(search: ReviewSearch): QualityFilter {
+  const active = normalizeReviewTab(search.tab) === "quality";
   return {
-    questionVersionId: search.question_version_id ?? null,
-    from: search.from ?? null,
-    to: search.to ?? null,
+    courseId: (active ? search.course_id : search.quality_course_id) ?? null,
+    questionVersionId:
+      (active ? search.question_version_id : search.quality_question_version_id) ?? null,
+    from: (active ? search.from : search.quality_from) ?? null,
+    to: (active ? search.to : search.quality_to) ?? null,
   };
 }
 
+function resolvedValue(value: boolean | null): "true" | "false" | "all" {
+  return value === null ? "all" : value ? "true" : "false";
+}
+
+function heldValue(value: boolean | null): "true" | "false" | undefined {
+  return value === null ? undefined : value ? "true" : "false";
+}
+
 /**
- * 写回邮件筛选：**丢弃质量专属参数**，并把 `resolved` 写成显式三态。
- * 改变筛选（课程/课序/状态/原因）必然重置游标——旧游标属于另一份可见集合。
+ * 写回邮件筛选：当前标签用短参数；**另一标签的条件移到 `quality_*` 暂存**，
+ * 这样切到质量再切回来时邮件筛选还在。改变筛选必然重置游标。
  */
 export function withMailFilter(
-  _search: ReviewSearch,
+  search: ReviewSearch,
   filter: Omit<MailFilter, "cursor">,
 ): ReviewSearch {
+  const quality = readQualityFilter(search);
   return compact({
     tab: "mail",
+    origin: search.origin,
     course_id: filter.courseId ?? undefined,
     section_id: filter.sectionId ?? undefined,
-    resolved: filter.resolved === null ? "all" : filter.resolved ? "true" : "false",
-    held: filter.held === null ? undefined : filter.held ? "true" : "false",
+    resolved: resolvedValue(filter.resolved),
+    held: heldValue(filter.held),
     reason_code: filter.reasonCode ?? undefined,
+    quality_course_id: quality.courseId ?? undefined,
+    quality_question_version_id: quality.questionVersionId ?? undefined,
+    quality_from: quality.from ?? undefined,
+    quality_to: quality.to ?? undefined,
   });
 }
 
 /** 只更新游标（"加载更多"之后 URL 保留起始位置；追加不改变筛选）。 */
 export function withMailCursor(search: ReviewSearch, cursor: string | null): ReviewSearch {
-  return compact({ ...readMailSearch(search), cursor: cursor ?? undefined });
-}
-
-/** 写回质量筛选：丢弃邮件专属参数。 */
-export function withQualityFilter(
-  _search: ReviewSearch,
-  filter: QualityFilter,
-): ReviewSearch {
   return compact({
-    tab: "quality",
-    question_version_id: filter.questionVersionId ?? undefined,
-    from: filter.from ?? undefined,
-    to: filter.to ?? undefined,
+    ...search,
+    tab: "mail",
+    cursor: cursor ?? undefined,
+    mail_cursor: undefined,
   });
 }
 
-/** 切换标签：保留目标标签的筛选，**移除另一标签的专属参数**。 */
+/** 写回质量筛选：当前标签用短参数；邮件条件移到 `mail_*` 暂存。 */
+export function withQualityFilter(
+  search: ReviewSearch,
+  filter: QualityFilter,
+): ReviewSearch {
+  const mail = readMailFilter(search);
+  return compact({
+    tab: "quality",
+    origin: search.origin,
+    course_id: filter.courseId ?? undefined,
+    question_version_id: filter.questionVersionId ?? undefined,
+    from: filter.from ?? undefined,
+    to: filter.to ?? undefined,
+    mail_course_id: mail.courseId ?? undefined,
+    mail_section_id: mail.sectionId ?? undefined,
+    mail_resolved: resolvedValue(mail.resolved),
+    mail_held: heldValue(mail.held),
+    mail_reason_code: mail.reasonCode ?? undefined,
+    mail_cursor: mail.cursor ?? undefined,
+  });
+}
+
+/**
+ * 切换标签：目标标签恢复自己的条件，当前标签的条件暂存到 `<tab>_*`。
+ * 两个标签因此互不干扰，也不会把邮件的「待处理」筛选带进题目质量。
+ */
 export function withTab(search: ReviewSearch, tab: ReviewTab): ReviewSearch {
+  if (normalizeReviewTab(search.tab) === tab) return search;
   if (tab === "quality") {
     return withQualityFilter(search, readQualityFilter(search));
   }
@@ -179,17 +262,4 @@ function compact(search: ReviewSearch): ReviewSearch {
     if (value !== undefined) (next as Record<string, unknown>)[key] = value;
   }
   return next;
-}
-
-/** 当前搜索串的邮件维度（`withMailCursor` 用；保留 `resolved` 的 URL 三态）。 */
-function readMailSearch(search: ReviewSearch): ReviewSearch {
-  return compact({
-    tab: "mail",
-    course_id: search.course_id,
-    section_id: search.section_id,
-    resolved: search.resolved,
-    held: search.held,
-    reason_code: search.reason_code,
-    cursor: search.cursor,
-  });
 }

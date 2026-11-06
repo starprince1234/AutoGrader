@@ -445,6 +445,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/question-versions/{question_version_id}/draft-content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                question_version_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        /**
+         * A draft version's protected content, for the authoring edit page
+         * @description `CHG-0017` made every protected field optional on write so that an edit never has to
+         *     carry the hidden cases out of the bank and back. That left the edit page unable to show
+         *     the author's **own existing** cases: a teacher whose verification failed could only add
+         *     new cases and never correct an existing one.
+         *
+         *     This endpoint closes that gap for the authoring path only, and the three restrictions
+         *     are the whole reason it is safe to have:
+         *
+         *     - **scope**: the caller must hold write scope on the version's course (teacher or
+         *       administrator) - the same rule the PATCH path uses. A student can never reach it.
+         *     - **state**: only a **draft** version is readable. Published content is frozen;
+         *       editing it starts a new draft, and `409` says so.
+         *     - **content**: exactly the reference answer and the test cases, i.e. what a teacher has
+         *       to be able to correct. Fixture bytes and other protected material keep travelling on
+         *       their own endpoints.
+         *
+         *     Deliberately **not** a field on `QuestionVersionPublic`: that DTO is served to every
+         *     reader of the bank, and this content must never leave the course.
+         */
+        get: operations["getDraftContent"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/question-versions/{question_version_id}/reference-answer": {
         parameters: {
             query?: never;
@@ -1374,6 +1413,15 @@ export interface components {
                 arguments_json?: string | null;
             };
         };
+        /**
+         * @description PROTECTED. A draft version's own reference answer and test cases, for the authoring
+         *     edit page. Readable only by a teacher with write scope on the course, and only while the
+         *     version is a draft (`getDraftContent`).
+         */
+        QuestionDraftContent: {
+            reference_answer: string | null;
+            cases: components["schemas"]["TestCaseInput"][];
+        };
         /** @description PROTECTED. A hidden test case; never present in a public DTO or an event. */
         TestCaseInput: {
             name: string;
@@ -2190,6 +2238,32 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    getDraftContent: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                question_version_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The draft's own reference answer and cases. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["QuestionDraftContent"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
         };
     };
     getReferenceAnswer: {

@@ -28,13 +28,20 @@ export function ReviewPage({
   onChange: (next: ReviewSearch) => void;
 }) {
   const tab: ReviewTab = normalizeReviewTab(search.tab);
+  const fromQuestion = tab === "quality" && search.origin === "question";
   return (
     <div className="stack">
       <div className="panel__head">
         <PageTitle>{t("review.title")}</PageTitle>
-        <Link className="button button--ghost" to="/assignments" data-testid="review-back">
-          {t("review.backToAssignments")}
-        </Link>
+        {fromQuestion ? (
+          <Link className="button button--ghost" to="/questions" data-testid="review-back">
+            {t("review.backToQuestions")}
+          </Link>
+        ) : (
+          <Link className="button button--ghost" to="/assignments" data-testid="review-back">
+            {t("review.backToAssignments")}
+          </Link>
+        )}
       </div>
       <Tabs
         label={t("review.title")}

@@ -153,9 +153,20 @@ const questionNewRoute = createRoute({
   component: AuthoringNewRoute,
 });
 
+/**
+ * `/questions/{id}/edit` 的查询串：`from=detail` 表示这一页是从**题目详情页**点
+ * 「编辑草稿 / 另存为新版本」进来的，返回按钮要回到那道题，而不是题库列表（3.0）。
+ */
+type AuthoringEditSearch = { from?: "detail" };
+
+function validateAuthoringEditSearch(search: Record<string, unknown>): AuthoringEditSearch {
+  return search.from === "detail" ? { from: "detail" } : {};
+}
+
 const questionEditRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/questions/$questionId/edit",
+  validateSearch: validateAuthoringEditSearch,
   component: AuthoringEditRoute,
 });
 

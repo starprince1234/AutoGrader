@@ -2592,17 +2592,33 @@ samp {
 /* ---------------------------------------------------------------------------
    出题向导：左侧步骤导航 + 右侧一步内容。
 --------------------------------------------------------------------------- */
-/* 顶部操作栏：留白更小、「未保存」提示与「取消」同一行垂直居中。 */
-.panel--compact {
-  padding: 10px var(--space-5);
-  gap: 6px;
+/* 出题页标题行：标题 + AI 出题（紧挨标题），返回题库列表推到最右。 */
+.page-head {
+  align-items: center;
 }
 
-.wizard-topbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
+.page-head__end {
+  margin-left: auto;
+}
+
+/* 屏幕中间一闪而过的红色提示（2.0：替代顶部白框里的常驻提示）。 */
+.toast {
+  position: fixed;
+  top: 22%;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 60;
+  max-width: min(90vw, 560px);
+  padding: 10px 18px;
+  border-radius: 10px;
+  background: var(--color-danger);
+  color: #fff;
+  font-size: 14px;
+  line-height: 1.4;
+  text-align: center;
+  box-shadow: 0 8px 24px rgba(15, 23, 42, 0.18);
+  /* 只做提示，不挡点击。 */
+  pointer-events: none;
 }
 
 /* 一行说明的浅底小标签（例如「题干图片」右侧的「保存草稿后再插入图片」）。 */

@@ -55,5 +55,5 @@
 
 ## 演示数据
 
-`B2/scripts/seed_demo_quarantines.py` 可写入 5 条演示记录（3 条待处理、1 条暂存、1 条作废）。
+`B2/scripts/seed_demo_quarantines.py` 可写入 2 条演示待处理记录（身份无法确定 / 没有附件）。
 它要求 `--confirm-demo-write`，只插 `intake_quarantines`，不建提交；**匹配用户仍要求原邮件在邮箱里**。

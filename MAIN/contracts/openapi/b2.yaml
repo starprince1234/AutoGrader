@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AutoGrader B2 Evaluation API
-  version: 0.25.0
+  version: 0.27.0
   description: |
     Submission intake (API and email), content-addressed storage, static legality,
     security confirmation, sandboxed dynamic execution, explainable and replayable
@@ -1325,9 +1325,10 @@ components:
         Aggregate quality signal for one question version (CHG-0015). Every field is a count;
         there is deliberately no field that could carry an identifier, because the value of an
         aggregate is lost the moment it can be walked back to a person.
-      required: [question_version_id, attempt_count, failure_categories, static_rule_hits, case_failure_rates, unmeasured_runs, security_found, security_not_found, security_not_checked]
+      required: [question_version_id, answerer_count, attempt_count, failure_categories, static_rule_hits, case_failure_rates, unmeasured_runs, security_found, security_not_found, security_not_checked]
       properties:
         question_version_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        answerer_count: {type: integer, minimum: 0, description: "Distinct students with at least one evaluation run in scope. An aggregate count only: no identifier is exposed, but a teacher needs to distinguish '20 attempts from 2 students' from '20 attempts from 20 students'."}
         attempt_count: {type: integer, minimum: 0, description: "Evaluation runs in scope. A question with very few attempts has no signal yet -- say so rather than drawing conclusions from noise."}
         failure_categories:
           type: array

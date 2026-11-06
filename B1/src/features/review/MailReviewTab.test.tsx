@@ -245,7 +245,7 @@ describe("P13-A 邮件提交标签", () => {
     expect(screen.getByText(/无法确认课程的邮件只有管理员能看到/)).toBeInTheDocument();
   });
 
-  it("详情只展示契约字段，不额外发请求", async () => {
+  it("详情只显示老师需要的信息，不堆 Message-ID/UID 等接口字段", async () => {
     const user = userEvent.setup();
     const row = intakeQuarantineView({ intake_quarantine_id: UUID_C });
     stub = installFetchStub(routesFor({ rows: [row] }));
@@ -255,13 +255,15 @@ describe("P13-A 邮件提交标签", () => {
     await user.click(await screen.findByTestId(`review-mail-detail-${UUID_C}`));
     const drawer = await screen.findByTestId("review-mail-detail-drawer");
     expect(within(drawer).getByText(/submissions@example\.edu/)).toBeInTheDocument();
-    expect(within(drawer).getByText(/Message-ID/)).toBeInTheDocument();
+    expect(within(drawer).getByText(/发件邮箱对应不止一个学生/)).toBeInTheDocument();
+    expect(within(drawer).queryByText(/Message-ID/)).toBeNull();
+    expect(within(drawer).queryByText(/UID/)).toBeNull();
     const before = stub!.requests.length;
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(stub!.requests.length).toBe(before);
   });
 
-  it("非身份类原因码也能匹配用户或标记作废", async () => {
+  it("非身份类原因码只提供暂存/作废，不提供匹配用户", async () => {
     const row = intakeQuarantineView({
       intake_quarantine_id: UUID_C,
       reason_code: "archive_bomb",
@@ -271,10 +273,11 @@ describe("P13-A 邮件提交标签", () => {
     renderWithProviders(<Harness initial={MAIL_PATH} />);
 
     await screen.findByTestId("review-mail-table");
-    // 匹配用户是"人工补救"：只要原邮件仍能通过附件闸门，就不在列表层按原因码拦死。
-    expect(screen.getByTestId(`review-mail-resolve-${UUID_C}`)).toBeInTheDocument();
+    // 压缩炸弹在服务端会被同一条附件闸门再次拒绝；给按钮只会让老师点出一个 422。
+    expect(screen.queryByTestId(`review-mail-resolve-${UUID_C}`)).toBeNull();
     expect(screen.getByTestId(`review-mail-dismiss-${UUID_C}`)).toBeInTheDocument();
-    expect(screen.getByTestId(`review-mail-detail-${UUID_C}`)).toBeInTheDocument();
+    expect(screen.getByTestId(`review-mail-hold-${UUID_C}`)).toBeInTheDocument();
+    expect(screen.getByText("压缩包解压后体积异常，安全策略拒绝。")).toBeInTheDocument();
   });
 
   it("匹配用户：确认前不 POST，确认后提交课程/作业/版本/学生", async () => {
