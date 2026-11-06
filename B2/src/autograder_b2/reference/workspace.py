@@ -35,21 +35,6 @@ from pathlib import Path
 from autograder_b2.domain.envelope import is_allowed_relative_path
 
 
-def _others_can_traverse(path: Path) -> bool:
-    """True when ``path`` and every ancestor up to ``/`` grant *other* the execute bit."""
-    current = path
-    while True:
-        try:
-            mode = current.stat().st_mode
-        except OSError:
-            return False
-        if not mode & 0o001:
-            return False
-        if current == current.parent:
-            return True
-        current = current.parent
-
-
 class ReferenceAnswerWorkspace:
     """一次性工作区的生产者/回收者（每个用例一份，绝不复用）。"""
 
@@ -89,23 +74,22 @@ class ReferenceAnswerWorkspace:
         return target
 
     def _select_base(self) -> Path:
-        """Pick a base directory the **sandbox user** can traverse.
+        """Always build the one-shot workspace under the system temp dir.
 
-        The sandbox maps the jailed process to uid/gid 65534, and with unprivileged user
-        namespaces it also needs to *reach* the mount source. The configured root lives under
-        a systemd-created directory that is ``0750`` (``/var/lib/<service>``), so `nobody`
-        cannot enter it: nsjail then fails to bring the entry script into the jail and the run
-        ends with an empty stdout and a non-zero exit -- which reads as "every case failed".
+        Why not ``B2_WORKSPACE_ROOT``: that root lives under a systemd-created directory
+        (``/var/lib/<service>``, mode ``0750``) and the jailed process is mapped to uid 65534.
+        In production this configuration produced ``exit_code=255`` with **empty stdout** for
+        every case -- the sandbox never got to execute the entry script -- while the sandbox
+        canary, whose workspace sits under ``/tmp`` (``1777``), runs the very same interpreter
+        successfully.
 
-        The canary proves the sandbox itself works when its workspace sits under a
-        world-traversable directory. So: use the configured root only when every ancestor
-        already grants *other* the execute bit; otherwise fall back to a fresh directory under
-        the system temp dir, whose own mode is ``0700`` but whose parent (``/tmp``) is ``1777``.
+        The canary is the reference implementation of "a workspace the sandbox can use", so the
+        reference-answer workspace follows it: a fresh ``0700`` directory (chmod ``0711`` so the
+        jailed user can traverse it), whose parent ``/tmp`` is world-traversable. Each case gets
+        its own directory and it is deleted as soon as the case finishes -- the protected answer
+        never outlives the verification that needed it.
         """
-        if _others_can_traverse(self._root):
-            return self._root
         fallback = Path(tempfile.mkdtemp(prefix="b2-reference-"))
-        # mkdtemp 是 0700：沙箱用户同样要能进入这个基目录。
         os.chmod(fallback, 0o711)
         return fallback
 
