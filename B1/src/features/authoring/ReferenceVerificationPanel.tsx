@@ -30,6 +30,17 @@ import { usePublishQuestionVersion, useVerifyReferenceAnswer } from "./useAuthor
  *    响应里没有期望输出、隐藏用例输入与参考解源码，本面板也不提供任何"看详情"的入口。
  */
 
+/**
+ * 所有用例都没通过且失败类别全是"输出不一致" → 参考答案跑通了，但输出与期望不同。
+ * 这不是环境问题，通常是一个换行/空格的差异，或期望输出本身写错了。
+ */
+function isOutputMismatchOnly(verification: ReferenceVerification): boolean {
+  const failed = verification.cases.filter((row) => !row.passed);
+  if (failed.length === 0) return false;
+  if (verification.cases_passed === verification.cases_total) return false;
+  return failed.every((row) => row.failure_category === "output_mismatch");
+}
+
 /** 所有用例都没通过且失败类别全是基础设施错误 → 这是**环境**结论，不是题目结论。 */
 function isEnvironmentOnly(verification: ReferenceVerification): boolean {
   const failed = verification.cases.filter((row) => !row.passed);
@@ -230,6 +241,12 @@ function VerificationBody({
             <Banner tone="warn" testId="reference-verify-not-passed">
               <p>{t("authoring.verify.notPassedSummary", { cases: data.cases_total - data.cases_passed })}</p>
               <p className="muted">{t("authoring.verify.notPassedMeaning")}</p>
+            </Banner>
+          ) : null}
+
+          {isOutputMismatchOnly(data) ? (
+            <Banner tone="info" testId="reference-verify-mismatch-hint">
+              {t("authoring.verify.mismatchHint")}
             </Banner>
           ) : null}
 

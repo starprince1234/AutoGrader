@@ -187,6 +187,29 @@ describe("结论的三种状态", () => {
     active.restore();
   });
 
+  it("全部是「输出不一致」时给出一条可执行的排查提示", async () => {
+    const mismatched: ReferenceVerification = referenceVerification({
+      cases_passed: 0,
+      cases_total: 1,
+      attestation_id: null,
+      cases: [
+        {
+          ordinal: 0,
+          passed: false,
+          failure_category: "output_mismatch",
+          exit_code: 0,
+        } as ReferenceVerification["cases"][number],
+      ],
+    });
+    const active = await open({ verify: () => jsonResponse(mismatched) });
+    await verify(userEvent.setup());
+    await screen.findByTestId("reference-verification-result");
+    expect(await screen.findByTestId("reference-verify-mismatch-hint")).toHaveTextContent(
+      "忽略行尾空白",
+    );
+    active.restore();
+  });
+
   it("有用例没过 → 逐个用例给出结论，不给期望输出", async () => {
     const failed: ReferenceVerification = referenceVerification({
       cases_passed: 1,
