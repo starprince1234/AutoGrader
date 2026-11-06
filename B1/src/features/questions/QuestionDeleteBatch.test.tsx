@@ -457,6 +457,78 @@ describe("题目列表：单条删除后保持滚动位置（需求 3）", () =>
   });
 });
 
+describe("题库列表：批量删除失败要说明真实原因", () => {
+  it("422 时横幅带上服务端 detail，而不是笼统的\"请稍后重试\"", async () => {
+    stub = installFetchStub([
+      ...baseRoutes([draftQuestion("q-a")]),
+      {
+        method: "POST",
+        path: "/api/v1/question-versions/batch-operations",
+        respond: () =>
+          jsonResponse(
+            {
+              type: "https://autograder.local/problems/unprocessable-entity",
+              title: "Unprocessable Entity",
+              status: 422,
+              detail: "question_version_ids must not contain duplicates",
+              instance: "/api/v1/question-versions/batch-operations",
+            },
+            422,
+          ),
+      },
+    ]);
+    const user = userEvent.setup();
+    await openList();
+
+    await user.click(screen.getByTestId("batch-mode-toggle"));
+    await user.click(await screen.findByTestId("select-q-a"));
+    await user.click(screen.getByTestId("batch-delete"));
+    await user.click(
+      within(await screen.findByTestId("delete-draft-modal")).getByTestId(
+        "delete-draft-confirm",
+      ),
+    );
+
+    const banner = await screen.findByTestId("batch-result");
+    expect(banner.textContent ?? "").toContain("must not contain duplicates");
+    expect(banner.textContent ?? "").not.toContain("请稍后重试");
+  });
+
+  it("401 时提示登录过期（而不是让人一直重试）", async () => {
+    stub = installFetchStub([
+      ...baseRoutes([draftQuestion("q-a")]),
+      {
+        method: "POST",
+        path: "/api/v1/question-versions/batch-operations",
+        respond: () =>
+          jsonResponse(
+            {
+              type: "https://autograder.local/problems/unauthorized",
+              title: "Unauthorized",
+              status: 401,
+              detail: "a bearer token is required",
+              instance: "/api/v1/question-versions/batch-operations",
+            },
+            401,
+          ),
+      },
+    ]);
+    const user = userEvent.setup();
+    await openList();
+
+    await user.click(screen.getByTestId("batch-mode-toggle"));
+    await user.click(await screen.findByTestId("select-q-a"));
+    await user.click(screen.getByTestId("batch-delete"));
+    await user.click(
+      within(await screen.findByTestId("delete-draft-modal")).getByTestId(
+        "delete-draft-confirm",
+      ),
+    );
+
+    expect(await screen.findByTestId("batch-result")).toHaveTextContent("登录已过期");
+  });
+});
+
 describe("题库列表：批量删除的结果必须可见", () => {
   it("逐项失败时用常驻横幅写清原因，而不是只闪一个 toast", async () => {
     stub = installFetchStub([

@@ -544,6 +544,8 @@ export const messages = {
 "questions.deleteConfirm": "确认删除",
 "questions.deleting": "删除中…",
 "questions.deleted": "草稿已删除。",
+"questions.sessionExpired": "登录已过期，请重新登录后再试。",
+"questions.deleteFailedDetail": "删除没有成功：{reason}",
 "questions.deleteFailed": "删除没有成功，请稍后重试。",
 "questions.deleteConflict": "这个版本不能删除：它已经发布，或者被作业引用。",
 "questions.deleteForbidden": "没有权限删除这道草稿。",

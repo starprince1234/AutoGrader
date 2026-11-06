@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { t } from "../../i18n";
 import { courseLabel as formatCourseLabel, loadedCourses, useCourses } from "../../api/directory";
-import { isApiError } from "../../api/problem";
+import { describeApiError, isApiError } from "../../api/problem";
 import { useSession } from "../../auth/sessionContext";
 import { canAuthorQuestions } from "../../auth/visibility";
 import {
@@ -148,14 +148,22 @@ function draftVersionIdOf(row: QuestionPublic): string | null {
   );
 }
 
-/** 单条删除失败时，把服务端的结论翻译成老师能读的一句话。 */
+/**
+ * 删除失败时，把服务端的结论翻译成老师能读的一句话。
+ *
+ * 兜底不能只说"请稍后重试"：那会把 401（登录过期）、422（请求被拒）和网络失败讲成同一件事，
+ * 老师既不知道找谁、我也无法据此定位。所以其余情况走 `describeApiError`——优先服务端
+ * `detail`，没有就至少给出 `HTTP <状态码>`；连 `ApiError` 都不是时说明请求没到服务端
+ * （CORS/断网），那一句 `Failed to fetch` 反而是最准确的信息。
+ */
 function deleteFailureMessage(error: unknown): string {
   if (isApiError(error)) {
+    if (error.isUnauthorized) return t("questions.sessionExpired");
     if (error.status === 409) return t("questions.deleteConflict");
     if (error.isForbidden) return t("questions.deleteForbidden");
     if (error.isNotFound) return t("questions.deleteNotFound");
   }
-  return t("questions.deleteFailed");
+  return t("questions.deleteFailedDetail", { reason: describeApiError(error) });
 }
 
 export function QuestionListPage() {
