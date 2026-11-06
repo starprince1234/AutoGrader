@@ -563,6 +563,7 @@ export function QuestionListPage() {
             void courses.fetchNextPage();
           }}
           testId="courses"
+          hideEndHint
         />
         {courses.isError ? <ErrorState error={courses.error} /> : null}
       </Panel>
@@ -596,6 +597,7 @@ export function QuestionListPage() {
                 void questions.fetchNextPage();
               }}
               testId="questions"
+              hideEndHint
             />
           </div>
         }

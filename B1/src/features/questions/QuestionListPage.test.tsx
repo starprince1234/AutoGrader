@@ -130,7 +130,7 @@ describe("题目列表的游标分页", () => {
     expect(first?.url.searchParams.get("cursor")).toBeNull();
   });
 
-  it("「加载更多」追加下一页，到末页后入口消失并显示已到末页", async () => {
+  it("「加载更多」追加下一页，到末页后入口与「已到末页」都不出现", async () => {
     stub = installFetchStub(
       routes({
         "": pageOf(["q-1", "q-2"], "cursor-2"),
@@ -145,7 +145,8 @@ describe("题目列表的游标分页", () => {
     await waitFor(() => expect(within(table).getAllByRole("row")).toHaveLength(4)); // 表头 + 3 行
     expect(screen.getByText(/已加载 3 道/)).toBeInTheDocument();
     expect(screen.queryByTestId("questions-load-more")).toBeNull();
-    expect(screen.getByTestId("questions-end")).toBeInTheDocument();
+    // 题库首页不再显示「已到末页」这句灰字（加载更多消失已经说明没有下一页）。
+    expect(screen.queryByTestId("questions-end")).toBeNull();
 
     const second = stub.requests.filter((request) =>
       request.url.pathname.endsWith("/api/v1/questions"),
@@ -153,12 +154,12 @@ describe("题目列表的游标分页", () => {
     expect(second.at(-1)?.url.searchParams.get("cursor")).toBe("cursor-2");
   });
 
-  it("单页就到底时不显示「加载更多」，只显示已到末页", async () => {
+  it("单页就到底时不显示「加载更多」，也不显示「已到末页」", async () => {
     stub = installFetchStub(routes({ "": pageOf(["q-1"], null) }));
     await open(userEvent.setup());
 
     expect(screen.queryByTestId("questions-load-more")).toBeNull();
-    expect(screen.getByTestId("questions-end")).toBeInTheDocument();
+    expect(screen.queryByTestId("questions-end")).toBeNull();
     expect(screen.getByText(/已加载 1 道/)).toBeInTheDocument();
   });
 

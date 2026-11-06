@@ -70,6 +70,7 @@ export function LoadMoreActions({
   isFetchingNextPage,
   onLoadMore,
   testId,
+  hideEndHint = false,
 }: {
   loadedCount: number;
   hasNextPage: boolean;
@@ -77,6 +78,13 @@ export function LoadMoreActions({
   onLoadMore: () => void;
   /** 测试标识前缀：渲染为 `<testId>-load-more` / `<testId>-end`。 */
   testId: string;
+  /**
+   * 到底时不渲染「已到末页」这句话。
+   *
+   * 「加载更多」消失本身已经说明没有下一页了；这句话在题库首页只是筛选框下面一行灰字，
+   * 属于纯噪音，所以由调用方决定不要它。默认 `false`：其他页面保持原样。
+   */
+  hideEndHint?: boolean;
 }) {
   if (hasNextPage) {
     return (
@@ -92,6 +100,7 @@ export function LoadMoreActions({
     );
   }
   if (loadedCount === 0) return null;
+  if (hideEndHint) return null;
   return (
     <span className="muted" data-testid={`${testId}-end`}>
       {t("common.endOfList")}
