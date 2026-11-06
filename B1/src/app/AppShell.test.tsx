@@ -180,6 +180,8 @@ describe("P01 根入口与会话恢复", () => {
 
     expect(await screen.findByText("导览页")).toBeInTheDocument();
     expect(router.state.location.pathname).toBe("/");
+    // 动态光晕只属于导览页：这是它唯一的挂载点。
+    expect(screen.getByTestId("gemini-glow")).toBeInTheDocument();
   });
 
   it("已登录打开根路径：仍先显示导览，可直接点入口", async () => {
@@ -223,6 +225,8 @@ describe("角色导航与右上角账户区", () => {
     expect(screen.queryByText(/欢迎/)).toBeNull();
     expect(screen.queryByText(UUID_A)).toBeNull();
     expect(screen.getByTestId("session-identity")).toHaveTextContent("student1");
+    // 内部页面不再挂动态光晕（只在导览页出现）。
+    expect(screen.queryByTestId("gemini-glow")).toBeNull();
   });
 
   it("教师侧栏为作业、题库、成绩、课程", async () => {

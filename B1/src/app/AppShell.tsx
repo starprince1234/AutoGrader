@@ -23,6 +23,7 @@ import { AccountMenu } from "./AccountMenu";
 import { AuthLayout } from "./AuthLayout";
 import { isMainNavActive, mainNavIndex, mainNavItems, type MainNavItem } from "./navigation";
 import { Drawer } from "../ui/components";
+import { GeminiGlow } from "../ui/GeminiGlow";
 
 /** 不需要登录的路径：导览页、注册、忘记密码，以及只做重定向的旧 `/login`。 */
 const PUBLIC_PATHS = new Set(["/", "/login", "/register", "/forgot-password"]);
@@ -178,7 +179,15 @@ export function AppShell() {
 
   if (isPublic) {
     // 导览页自带两栏布局与页头；认证页使用独立认证布局。
-    if (isLanding) return <Outlet />;
+    // 动态光晕**只挂在导览页**：内部页面与认证页用 body 的静态渐变做底色，不带动画背景。
+    if (isLanding) {
+      return (
+        <>
+          <GeminiGlow />
+          <Outlet />
+        </>
+      );
+    }
     // 已登录用户在跳走的那一帧仍能看到产品标识与「返回作业」出口，而不是第二套登录表单。
     if (authenticated) {
       return (
