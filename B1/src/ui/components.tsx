@@ -87,14 +87,7 @@ export function LoadMoreActions({
         disabled={isFetchingNextPage}
         onClick={onLoadMore}
       >
-        {isFetchingNextPage ? (
-          <>
-            <InlineLoader />
-            {t("common.loading")}
-          </>
-        ) : (
-          t("common.loadMore")
-        )}
+        {isFetchingNextPage ? <InlineLoader /> : t("common.loadMore")}
       </button>
     );
   }
@@ -107,35 +100,58 @@ export function LoadMoreActions({
 }
 
 /**
- * 行内加载指示：六个小方块按波浪依次闪动。
+ * 行内加载指示：三种动效并排，**不显示任何文字**。
  *
- * 造型取自 Uiverse 上 cosnametv 的 loader（3 列网格 + scale/opacity 交替 + 错峰延时），
- * 缩到 16px 放在"加载中…"这类文字前面——一行灰字孤零零的会显得没在做事情。
- * 方块用 `currentColor`，所以它会跟着所在容器（通常是 `.muted`）的颜色走。
- * 整块是 `inline-grid`，不改变所在段落的对齐、行高与折行。
+ * 三个动效都取自 Uiverse：
+ * ① cosnametv 的六方块脉冲；② alexruix 的三块翻折（长方体 → 方块 → 竖条）；
+ * ③ Donewenfu 的三根按键条（中间那根先起，左右各差 160ms）。
+ * 原版分别按 112px 与 54×44px 设计，这里用 `transform: scale()` 等比缩进 20px 的格子里，
+ * 关键帧一行没改——放大看仍然是原版的节奏，缩小后正好排成一条 80×20 的指示带。
+ * 颜色统一用 `currentColor`：跟在 `.muted` 后面是灰的，落在按钮里就是按钮的字色。
+ *
+ * 文字只留给读屏（`.sr-only`）：视觉上不显示"加载中"，但 `role="status"` 仍然会把这句话读出来。
  */
-export function InlineLoader() {
+export function InlineLoader({ label }: { label?: string }) {
   return (
-    <span className="inline-loader" aria-hidden="true">
-      <span />
-      <span />
-      <span />
-      <span />
-      <span />
-      <span />
+    <span className="inline-loader" role="status">
+      <span className="sr-only">{label ?? t("common.loading")}</span>
+      {/* ① 六方块脉冲 */}
+      <span className="inline-loader__cell" aria-hidden="true">
+        <span className="loader-pulse">
+          <span />
+          <span />
+          <span />
+          <span />
+          <span />
+          <span />
+        </span>
+      </span>
+      {/* ② 三块翻折 */}
+      <span className="inline-loader__cell" aria-hidden="true">
+        <span className="loader-boxes">
+          <span className="loader-boxes__box" />
+          <span className="loader-boxes__box" />
+          <span className="loader-boxes__box" />
+        </span>
+      </span>
+      {/* ③ 三根按键条 */}
+      <span className="inline-loader__cell" aria-hidden="true">
+        <span className="loader-keys">
+          <span className="loader-keys__bar" />
+        </span>
+      </span>
     </span>
   );
 }
 
 /**
- * 加载提示：行内小方块 + 一句说明。全仓的"加载中…"大多走这里，
- * 改这一处，初次进入页面/首次点击后的等待状态就都带上指示器了。
+ * 加载提示：一块指示带，没有文字。全仓的等待状态大多走这里，
+ * 改这一处，初次进入页面/首次点击后的等待状态就都一致了。
  */
 export function Spinner({ label }: { label?: string }) {
   return (
-    <p className="muted" role="status">
-      <InlineLoader />
-      {label ?? t("common.loading")}
+    <p className="muted">
+      <InlineLoader label={label} />
     </p>
   );
 }

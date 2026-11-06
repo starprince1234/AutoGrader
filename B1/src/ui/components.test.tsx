@@ -237,28 +237,38 @@ describe("抽屉导航（小屏）的可访问性", () => {
   });
 });
 
-describe("加载指示（等待态不只是一行灰字）", () => {
-  it("Spinner 在文字前渲染六个脉冲方块，朗读的仍然只有那句提示", () => {
+describe("加载指示（三种动效并排，不显示文字）", () => {
+  it("Spinner 渲染三种动效，视觉上没有文字，但读屏仍能听到「加载中」", () => {
     const { container } = render(<Spinner />);
 
     const loader = container.querySelector(".inline-loader");
     expect(loader).not.toBeNull();
-    // 方块是纯装饰：既不能被朗读成内容，也不能把六块算成六个元素
-    expect(loader).toHaveAttribute("aria-hidden", "true");
-    expect(loader?.children).toHaveLength(6);
-    expect(screen.getByRole("status")).toHaveTextContent("加载中");
-    // 顺序必须是指示器在前、文字在后
-    expect(loader?.nextSibling?.textContent).toBe("加载中…");
+    // 三种动效各占一格，格子是纯装饰
+    const cells = loader?.querySelectorAll(".inline-loader__cell") ?? [];
+    expect(cells).toHaveLength(3);
+    cells.forEach((cell) => expect(cell).toHaveAttribute("aria-hidden", "true"));
+    expect(loader?.querySelectorAll(".loader-pulse > span")).toHaveLength(6);
+    expect(loader?.querySelectorAll(".loader-boxes__box")).toHaveLength(3);
+    expect(loader?.querySelectorAll(".loader-keys__bar")).toHaveLength(1);
+
+    // 页面上不再有可见文字：那句话只存在于给读屏用的 .sr-only 里
+    expect(loader).toHaveAttribute("role", "status");
+    expect(loader?.querySelector(".sr-only")).toHaveTextContent("加载中…");
+    const strayText = Array.from(loader?.childNodes ?? []).filter(
+      (node) => node.nodeType === Node.TEXT_NODE && (node.textContent ?? "").trim() !== "",
+    );
+    expect(strayText).toHaveLength(0);
   });
 
-  it("自定义 label 也带同一个指示器", () => {
+  it("自定义 label 只换那句给读屏的文字", () => {
     const { container } = render(<Spinner label="正在核对引用" />);
 
-    expect(container.querySelector(".inline-loader")).not.toBeNull();
-    expect(screen.getByRole("status")).toHaveTextContent("正在核对引用");
+    const loader = container.querySelector(".inline-loader");
+    expect(loader?.querySelector(".sr-only")).toHaveTextContent("正在核对引用");
+    expect(loader?.querySelectorAll(".inline-loader__cell")).toHaveLength(3);
   });
 
-  it("「加载更多」取下一页时按钮里也有指示器，且保持禁用", () => {
+  it("「加载更多」取下一页时按钮里是动效而不是文字，且保持禁用", () => {
     render(
       <LoadMoreActions
         loadedCount={20}
@@ -271,8 +281,10 @@ describe("加载指示（等待态不只是一行灰字）", () => {
 
     const button = screen.getByTestId("list-load-more");
     expect(button).toBeDisabled();
-    expect(button).toHaveTextContent("加载中");
     expect(button.querySelector(".inline-loader")).not.toBeNull();
+    // 按钮的可读名称只来自 .sr-only，界面上没有"加载中"三个字
+    expect(button.querySelector(".sr-only")).toHaveTextContent("加载中…");
+    expect(button.textContent).toBe("加载中…");
   });
 });
 

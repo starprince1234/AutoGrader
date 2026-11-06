@@ -83,7 +83,6 @@ export function ManualGradeDrawer({
           {intake.isPending ? (
             <p className="muted">
               <InlineLoader />
-              {t("common.loading")}
             </p>
           ) : null}
           {intake.data === null ? (

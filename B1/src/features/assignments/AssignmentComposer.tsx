@@ -218,7 +218,6 @@ export function AssignmentComposer({
             {questions.isPending ? (
               <p className="muted">
                 <InlineLoader />
-                {t("common.loading")}
               </p>
             ) : publishedVersions.length === 0 ? (
               <p className="muted">{t("assignments.create.noVersions")}</p>

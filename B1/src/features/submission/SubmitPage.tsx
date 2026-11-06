@@ -79,7 +79,6 @@ function StemAsset({
     return (
       <span className="muted">
         <InlineLoader />
-        {t("common.loading")}
       </span>
     );
   }
@@ -263,7 +262,8 @@ export function SubmitPage({
             })}
           </>
         ) : (
-          t("common.loading")
+          // 版本还没到：这里不给"加载中"三个字，用同一条指示带（下面还有一处 Spinner）。
+          <InlineLoader />
         )}
       </p>
 

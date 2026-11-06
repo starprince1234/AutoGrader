@@ -25,7 +25,6 @@ function ControlledImage({ src, alt }: { src: string; alt: string }) {
     return (
       <span className="muted" data-testid="asset-loading">
         <InlineLoader />
-        {t("common.loading")}
       </span>
     );
   }

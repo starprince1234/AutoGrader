@@ -167,7 +167,6 @@ function StudentAssignmentList({
                   data-testid={`my-progress-loading-${row.assignment_id}`}
                 >
                   <InlineLoader />
-                  {t("common.loading")}
                 </span>
               );
             }

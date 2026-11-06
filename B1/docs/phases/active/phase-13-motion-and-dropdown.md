@@ -98,35 +98,41 @@
   大字底下依然清楚；
 - 顶栏是半透明 + `backdrop-filter`，点会隐约透过去，观感上是磨砂条而不是纯色条。
 
-### 8. 所有「加载中…」前面加一块脉冲指示
+### 8. 加载态：去掉「加载中…」，改成三种动效并排
 
-用户的原话是"**所有初次进入页面或初次点击某个按钮会出现「加载中」三个字**，希望在前面加入这个样式，
-使其看起来不单调"。所以做的不是某一个页面，而是把**等待提示这个原语**本身补上一块指示器。
+第一版是"六个方块 + 一句「加载中…」"。用户随后要求"**不要「加载中」三个字**，
+并排多放入几个动态效果"，并给了两段 Uiverse 样式。所以现在**等待态没有任何文字**，
+只有一条 80×20 的指示带，里面并排三种动效：
 
-造型取自 Uiverse 上 cosnametv 的 loader：3 列网格、六个方块按下标错峰闪动（`scale` + `opacity`）。
+| 动效 | 来源 | 原版画布 | 这里 |
+|---|---|---|---|
+| ① 六方块脉冲 | Uiverse / cosnametv | 16px | 5px 方块 + 2px 间隙 = 19×12 |
+| ② 三块翻折（长条 → 方块 → 竖条） | Uiverse / alexruix | 112×112 | `scale(0.1786)` → 20×20 |
+| ③ 三根按键条（中间先起，左右各晚 160ms） | Uiverse / Donewenfu | 54×44 | `scale(0.36)` → 19.4×15.8 |
 
-- `InlineLoader`（`src/ui/components.tsx`）：六个空 `<span>`，`aria-hidden` —— 装饰性的方块对读屏完全隐形，
-  朗读出来的仍然只有那句提示；颜色用 `currentColor`，跟着 `.muted` 或按钮文字走，深浅主题都不用另写规则；
-- **`Spinner` 改这一处，覆盖约 20 处等待提示**（作业、题目、成绩、名单、复核、用户管理……）；
-- 另外 6 处不走 `Spinner` 的纯文字等待也一并接上：作业列表与作业详情的"本人进度"单元格、
-  题目正文里的图片占位（`SafeMarkdown`、`SubmitPage`）、人工评分抽屉的收件箱、新建作业里的版本列表；
-- 按钮里出现"加载中…"的两处（列表的"加载更多"、申诉的"读取申诉包"）同样加在文字前，按钮高度仍是 36px。
-
-**尺寸与排版**：单块 5px、间隙 2px，整体 19×12px，`vertical-align: -3px` 与汉字视觉中线对齐。
-外层是 `inline-grid` 而不是 flex——原来那二十来处 `<p>` 的对齐方式、行高、段落间距、单元格折行一律不变；
-只有 `.button .inline-loader` 去掉右边距（按钮本身已经是 `inline-flex` + 6px `gap`，否则会变成 12px）。
-波形最暗只到 0.35：5px 的方块再暗就整块看不见，看起来像少了两颗而不是在呼吸。
-`prefers-reduced-motion` 下停在半亮的静态六块。
+- **关键帧一行没改**：②③ 靠 `transform: scale()` 把整块画布等比缩小，节奏与形状都是原版的；
+  ① 本来就是小图，直接把方块排进格子。整条带子是 80×20，三格之间 10px。
+- 每格是 20×20 的固定画布 + `overflow: hidden`，并加了 **`contain: strict`**：
+  ②③ 动的是 `width/height/margin/height`，把布局和绘制关在格子里，表格里一次出现十几条
+  指示带时不会每帧重排整张表；
+- 颜色统一 `currentColor`：原版 ② 的 `#f5f5f5` 与 ③ 的 `#076fe5` 换成跟随容器，
+  所以在 `.muted` 里是灰的、在按钮里是按钮的字色、深浅主题都不用另写规则；
+- **文字只留给读屏**：`.sr-only` 一句"加载中…"，外层 `role="status"`，视觉上一个字都没有；
+- `Spinner` 改这一处就覆盖约 20 处等待提示；另有 6 处不走 `Spinner` 的等待
+  （作业列表与作业详情的"本人进度"单元格、题目与提交页的图片占位、人工评分抽屉、新建作业）
+  以及两处按钮内等待（"加载更多""读取申诉包"）接入同一个组件，按钮高度仍是 36px；
+- `prefers-reduced-motion` 下三种动效都停在可辨认的静态形状上（② 的 0% 是"L"形，
+  ③ 是三根等高竖条，① 是半亮六块）。
 
 ## 改动文件
 
 | 文件 | 改动 |
 |---|---|
 | `src/app/AppShell.tsx` | `.app-content` 加 `key={location.pathname}`（换页重挂以触发入场动画） |
-| `src/ui/components.tsx` | 新增 `InlineLoader`；`Spinner` 与 `LoadMoreActions` 的等待态带上指示器（文字与行为不变） |
-| `src/styles.css` | `page-enter` / `reveal-in` 关键帧与挂载点；select 圆角与自绘箭头；索引页间距/字号/色带；`.inline-loader` 与 `inline-loader-blink`；`prefers-reduced-motion` 下关闭相关动画 |
-| `src/features/**` | 6 处纯文字等待（作业列表/详情、`SafeMarkdown`、`SubmitPage`、人工评分抽屉、新建作业、申诉面板）接入同一个指示器 |
-| `src/ui/components.test.tsx` | 三条断言：指示器在文字前、`aria-hidden`、"加载更多"取页时带动画且保持禁用 |
+| `src/ui/components.tsx` | 新增 `InlineLoader`（三种动效 + `.sr-only` 文案）；`Spinner` 与 `LoadMoreActions` 的等待态改用它 |
+| `src/styles.css` | `page-enter` / `reveal-in` 关键帧与挂载点；select 圆角与自绘箭头；索引页间距/字号/色带；`.inline-loader` 与三种动效的关键帧、`.sr-only`；`prefers-reduced-motion` 下关闭相关动画 |
+| `src/features/**` | 6 处纯文字等待（作业列表/详情、`SafeMarkdown`、`SubmitPage`、人工评分抽屉、新建作业、申诉面板）去掉文字、改挂指示带 |
+| `src/ui/components.test.tsx` | 三条断言：三种动效各就位且对读屏隐藏、可见文字为空而 `.sr-only` 保留文案、"加载更多"取页时按钮内是动效且保持禁用 |
 | `docs/phases/active/phase-13-motion-and-dropdown.md` | 本文档 |
 
 ## 真实执行
@@ -135,7 +141,8 @@
 |---|---|
 | `tsc -b --pretty false` | 通过（exit 0） |
 | `eslint . --max-warnings 0` | 通过（exit 0） |
-| `vitest run --pool=threads --maxWorkers=2`（全量） | **56 个文件 / 500 个用例通过** |
+| `vitest run --pool=threads --maxWorkers=2`（全量） | **56 个文件 / 504 个用例通过** |
+| 直接受影响的 7 个测试文件 | 52 个用例通过（exit 0） |
 | 样式表结构 | 大括号平衡，`prefers-color-scheme` 两处媒体查询完好 |
 | 截图核对 | 等待行 / 表格单元格 / 正文内联 / 禁用按钮 / 深色主题 / 五个动画相位（`_work/ui-probe/inline-loader-4.png`） |
 
@@ -152,6 +159,10 @@
   改动没有单独截图复核。
 - 原生 select 的展开列表动效受限于操作系统绘制，未实现（见上）。
 - `prefers-reduced-motion` 下动画被关闭，但没有在真实设备上开"减少动态效果"验证。
+- 三种动效的**尺寸与节奏只在 headless 截图里核过**（`_work/ui-probe/loader3-*.png`，
+  含 1/2/4 倍与冻结相位）。真实浏览器里 ② 的 4 秒节奏、③ 的 0.8 秒起伏是否"太满"，
+  要人眼在页面上看；嫌快就改 `loader-boxes-*` 的 `4s`、嫌慢改 `loader-keys-app` 的 `0.8s`，
+  嫌大就改 ②③ 的 `scale()` 与格子尺寸（20px），三处数字都不会影响其它样式。
 
 ## 回滚
 

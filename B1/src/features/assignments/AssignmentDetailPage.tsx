@@ -46,7 +46,6 @@ function MyStatusCell({ progress, grade }: { progress: MyProgress; grade: GradeR
     return (
       <span className="muted" data-testid="my-version-progress-loading">
         <InlineLoader />
-        {t("common.loading")}
       </span>
     );
   }
@@ -98,9 +97,10 @@ function VersionRow({
   }
 
   const version = versionQuery.data;
+  // 题目还在读：标题位留一个破折号（"加载中"三个字按要求不再出现在界面上）。
   const title =
     questionQuery.isPending && questionId !== null
-      ? t("common.loading")
+      ? "—"
       : questionQuery.isError
         ? t("questions.titleUnavailable")
         : (questionQuery.data?.title ?? t("questions.titleUnavailable"));

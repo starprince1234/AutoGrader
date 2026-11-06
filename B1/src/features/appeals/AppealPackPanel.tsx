@@ -63,14 +63,7 @@ export function AppealPackPanel({ runId }: { runId: string }) {
           disabled={view === null || appeal.isFetching}
           onClick={() => setRequested(true)}
         >
-          {appeal.isFetching ? (
-            <>
-              <InlineLoader />
-              {t("common.loading")}
-            </>
-          ) : (
-            t("appeal.open")
-          )}
+          {appeal.isFetching ? <InlineLoader /> : t("appeal.open")}
         </button>
       </div>
 
