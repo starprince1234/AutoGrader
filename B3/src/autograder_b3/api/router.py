@@ -22,7 +22,7 @@ from typing import Annotated
 from fastapi import APIRouter, Query, Request, Response
 from fastapi.responses import JSONResponse
 
-from ..auth import require_service
+from ..auth import require_authenticated, require_service
 from ..domain import (
     archive_version,
     authoring_assistance,
@@ -665,6 +665,9 @@ def run_batch_operation_endpoint(
     """
     context = _context(request)
     dependencies = _dependencies(request)
+    # 批量操作逐项吞掉业务错误（"3 项没成、9 项成功"是正常结果），所以"未认证"必须在这里
+    # 就挡住：否则匿名调用会拿到 200 + 每项 `forbidden`，把一个鉴权问题伪装成业务结论。
+    require_authenticated(context.principal)
     outcomes = run_batch_operation(
         dependencies.database,
         principal=context.principal,
