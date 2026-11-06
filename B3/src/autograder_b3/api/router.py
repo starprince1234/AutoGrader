@@ -861,12 +861,14 @@ def evaluation_package_endpoint(request: Request, question_version_id: uuid.UUID
 
 @router.get("/api/v1/question-versions/{question_version_id}/draft-content")
 def draft_content_endpoint(request: Request, question_version_id: uuid.UUID) -> dict:
-    """A draft's own reference answer and cases, for the authoring edit page.
+    """A version's own reference answer and cases, for the authoring page.
 
-    Teacher-only and draft-only (see ``load_editable_draft_content``): the author has to be
-    able to *correct* an existing case after a failed verification, which is impossible from a
-    response that never carries protected content back. Students and published versions are
-    refused before any content is read.
+    Teacher-only (see ``load_editable_draft_content``): the author has to be able to *correct*
+    an existing case after a failed verification, which is impossible from a response that never
+    carries protected content back. A **published** version is readable too, because
+    「另存为新版本」 must open on the full existing content rather than an empty case list;
+    students are still refused before any content is read, and nothing here can mutate a
+    published version.
     """
     context = _context(request)
     dependencies = _dependencies(request)

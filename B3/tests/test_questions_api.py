@@ -686,6 +686,57 @@ def test_draft_content_returns_the_authors_own_reference_answer_and_cases(
     assert anonymous.status_code == 401
 
 
+def test_a_published_version_can_be_read_back_to_start_a_new_version(
+    client, auth_headers
+):
+    """“另存为新版本”要从**已发布**版本读回完整内容。
+
+    已发布内容依旧是冻结的：这个入口只读，写路径仍然新建版本。但必须读得到——否则编辑页
+    打开时参考实现和用例都是空的，保存下来就是一个“空的新版本”（线上就是这么坏掉的）。
+    """
+    payload = draft_payload()
+    created = client.post(
+        "/api/v1/questions",
+        params={"course_id": str(COURSE_A)},
+        json=payload,
+        headers=auth_headers("teacher-a"),
+    )
+    assert created.status_code == 201, created.text
+    question_id = created.json()["question_id"]
+    version_id = created.json()["versions"][0]["question_version_id"]
+    http_publish(client, version_id)
+
+    published = client.get(
+        f"/api/v1/question-versions/{version_id}/draft-content",
+        headers=auth_headers("teacher-a"),
+    )
+    assert published.status_code == 200, published.text
+    body = published.json()
+    assert body["reference_answer"] == payload["reference_answer"]
+    assert [case["stdin"] for case in body["cases"]] == [
+        case["stdin"] for case in payload["cases"]
+    ]
+    assert [case["weight"] for case in body["cases"]] == [
+        case["weight"] for case in payload["cases"]
+    ]
+
+    # 学生仍然读不到（写权限都没有，更谈不上读受保护内容）。
+    student = client.get(
+        f"/api/v1/question-versions/{version_id}/draft-content",
+        headers=auth_headers("student-a"),
+    )
+    assert student.status_code == 403
+
+    # 旧版本不受影响：发布状态与摘要都没有变。
+    version = client.get(
+        f"/api/v1/question-versions/{version_id}", headers=auth_headers("teacher-a")
+    ).json()
+    assert version["status"] == "published"
+    assert client.get(
+        f"/api/v1/questions/{question_id}", headers=auth_headers("teacher-a")
+    ).json()["status"] == "published"
+
+
 # --- delete draft + batch operations (CHG-0029) ---------------------------
 
 

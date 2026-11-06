@@ -107,12 +107,18 @@ class EditableDraftContent:
 
 # (deploy retrigger) 
 def load_editable_draft_content(database, *, question_version_id, principal) -> EditableDraftContent:
-    """Load a **draft** version's own answer + cases for its author.
+    """Load a version's own answer + cases for its author.
+
+    Drafts **and published** versions are readable here. Published content stays frozen -- this
+    is a read, and the write path creates a new version instead of mutating it -- but it must be
+    readable, because 「另存为新版本」 starts from the full existing content: reference answer,
+    every case (sample and hidden, with weight and visibility), tags and adapter. Without the
+    published version here the editor opened on an empty case list and saving produced a new
+    version with nothing in it, which is exactly what a teacher reported.
 
     Raises ``NotFound`` when the version or its question is gone, ``Forbidden`` when the caller
-    has no write scope on the course (the same rule the PATCH path uses), and ``Conflict`` when
-    the version is no longer a draft - published content is frozen, and editing it starts a new
-    draft instead of mutating it.
+    has no write scope on the course (the same rule the PATCH path uses), and ``Conflict`` for a
+    status that is neither (an archived version is frozen *and* not a candidate for a new one).
     """
     from ..auth import require_course_write
     from ..errors import Conflict, NotFound
@@ -126,8 +132,8 @@ def load_editable_draft_content(database, *, question_version_id, principal) -> 
         if question is None or question.deleted_at is not None:
             raise NotFound("question not found")
         require_course_write(principal, question.course_id)
-        if version.status != "draft":
-            raise Conflict("only a draft version can be read back for editing")
+        if version.status not in ("draft", "published"):
+            raise Conflict("only a draft or a published version can be read back for editing")
         content = load_version_content(session, version, require_reference_answer=False)
         answers = content.snapshot.reference_answers
         return EditableDraftContent(

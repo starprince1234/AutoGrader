@@ -135,8 +135,16 @@ export function AuthoringPage({
    * 服务端只对本课程可写的人、且版本仍是草稿时放行。
    */
   const newestVersionStatus = question.data?.versions?.[0]?.status ?? null;
+  /**
+   * 已发布版本的内容也要读：点「另存为新版本」进来的，编辑页必须在**原题完整内容**上开始
+   * （参考代码 + 全部用例，含样例/隐藏、分值、输入输出与可见性）。只读草稿时，已发布题目
+   * 打开后参考代码和用例都是空的，保存下来就是一个"空的新版本"——这正是本 bug。
+   * 服务端 `draft-content` 现在对已发布版本同样只读放行（写路径仍然是新建版本，不动旧版本）。
+   */
+  const contentReadable =
+    newestVersionStatus === "draft" || newestVersionStatus === "published";
   const draftContent = useDraftContent(
-    questionId !== null && newestVersionStatus === "draft" ? newestVersionId : null,
+    questionId !== null && contentReadable ? newestVersionId : null,
   );
   const [protectedSeeded, setProtectedSeeded] = useState(false);
 

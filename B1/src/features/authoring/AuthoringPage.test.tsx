@@ -1828,3 +1828,112 @@ describe("AI 草稿页的信息密度（文案、唯一提示、悬浮提示）"
     expect(apply).not.toHaveTextContent("重新载入");
   });
 });
+
+describe("另存为新版本：从原题完整内容开始（不是一张空白表单）", () => {
+  it("打开编辑页就带出已发布版本的参考代码与全部用例，保存时原样提交并新建版本", async () => {
+    stub = installFetchStub(
+      baseRoutes([
+        {
+          path: `/api/v1/questions/${QUESTION_ID}`,
+          method: "GET",
+          respond: () => jsonResponse(publishedQuestion()),
+        },
+        {
+          path: `/api/v1/question-versions/${UUID_A}`,
+          method: "GET",
+          respond: () =>
+            jsonResponse(
+              questionVersionPublic({
+                question_version_id: UUID_A,
+                version: 2,
+                status: "published",
+                content_digest: SHA_A,
+              }),
+            ),
+        },
+        {
+          path: `/api/v1/question-versions/${UUID_A}/draft-content`,
+          method: "GET",
+          respond: () =>
+            jsonResponse({
+              reference_answer: "print(42)",
+              cases: [
+                {
+                  name: "可见样例",
+                  ordinal: 0,
+                  weight: 1,
+                  visible_to_student: true,
+                  stdin: "1\n",
+                  args: [],
+                  expected_stdout: "42\n",
+                  expected_stderr: null,
+                  expected_exit_code: 0,
+                },
+                {
+                  name: "隐藏强测",
+                  ordinal: 1,
+                  weight: 3,
+                  visible_to_student: false,
+                  stdin: "7\n",
+                  args: [],
+                  expected_stdout: "14\n",
+                  expected_stderr: null,
+                  expected_exit_code: 0,
+                },
+              ],
+            }),
+        },
+        {
+          method: "PATCH",
+          path: `/api/v1/questions/${QUESTION_ID}`,
+          respond: () => jsonResponse(publishedQuestion()),
+        },
+      ]),
+    );
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(QUESTION_ID);
+
+    // 参考代码从原题带出来，不是空的。
+    await goToStep(user, "reference");
+    await waitFor(() => expect(screen.getByLabelText("参考答案")).toHaveValue("print(42)"));
+
+    // 两个用例都在：可见样例 + 隐藏强测。
+    await goToStep(user, "cases");
+    expect(await screen.findByTestId("case-0")).toHaveTextContent("可见样例");
+    expect(screen.getByTestId("case-1")).toHaveTextContent("隐藏强测");
+    // 内容是从服务端载入的"既有集合"，不需要再点一次"替换用例"确认。
+    expect(screen.queryByTestId("authoring-cases-replace")).toBeNull();
+
+    // 对比方式与退出码不在公开版本 DTO 里（既有行为）：这是老师每次都要选的两项。
+    await fillAdapterExitCode(user);
+    await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
+
+    // 保存按钮在最后一步（对比设置）；另存为新版本必须写清"这一版改了什么"。
+    await goToStep(user, "comparison");
+    const note = screen.getByLabelText("版本说明");
+    expect(note).toHaveValue("");
+    await user.type(note, "改写输出示例，用例保持不变");
+    await user.click(screen.getByTestId("authoring-save"));
+
+    const request = await waitFor(() => {
+      const found = stub?.requests.find((item) => item.method === "PATCH");
+      if (!found) throw new Error("还没有发出保存请求");
+      return found;
+    });
+    // 保存走 as_new_version：新版本号由服务端 +1，旧版本不动。
+    expect(request.url.searchParams.get("as_new_version")).toBe("true");
+    const body = request.body as Record<string, unknown>;
+    const cases = body.cases as Record<string, unknown>[];
+    expect(cases.map((item) => item.name)).toEqual(["可见样例", "隐藏强测"]);
+    expect(cases[0].visible_to_student).toBe(true);
+    expect(cases[1].visible_to_student).toBe(false);
+    expect(cases[0].weight).toBe(1);
+    expect(cases[1].weight).toBe(3);
+    expect(cases[0].stdin).toBe("1\n");
+    expect(cases[0].expected_stdout).toBe("42\n");
+    expect(cases[1].stdin).toBe("7\n");
+    expect(cases[1].expected_stdout).toBe("14\n");
+    expect(cases[1].expected_exit_code).toBe(0);
+  });
+});
