@@ -28,10 +28,26 @@ from __future__ import annotations
 
 import os
 import shutil
+import tempfile
 import uuid
 from pathlib import Path
 
 from autograder_b2.domain.envelope import is_allowed_relative_path
+
+
+def _others_can_traverse(path: Path) -> bool:
+    """True when ``path`` and every ancestor up to ``/`` grant *other* the execute bit."""
+    current = path
+    while True:
+        try:
+            mode = current.stat().st_mode
+        except OSError:
+            return False
+        if not mode & 0o001:
+            return False
+        if current == current.parent:
+            return True
+        current = current.parent
 
 
 def _make_traversable(path: Path) -> None:
@@ -82,7 +98,8 @@ class ReferenceAnswerWorkspace:
         case = _canonical_uuid(case_id, "case_id")
         if not is_allowed_relative_path(filename):
             raise ValueError("reference answer filename is not an allowed relative path")
-        target = self._root / verification / f"case-{case}"
+        base = self._select_base()
+        target = base / verification / f"case-{case}"
         target.mkdir(parents=True, exist_ok=True)
         # The sandboxed process runs as `nobody` (uid 65534); this process runs under
         # systemd's `UMask=0077`, so every directory `mkdir(parents=True)` creates is 0700.
@@ -94,13 +111,33 @@ class ReferenceAnswerWorkspace:
         # therefore blocks every publication (`0/1 passed`, no attestation).
         # 0711 = traverse without listing: the sandbox can enter a directory it already knows
         # the name of, but cannot enumerate what else is in there.
-        _make_traversable(self._root)
         os.chmod(target.parent, 0o711)
         os.chmod(target, 0o777)
         entry = target / filename
         entry.write_text(content, encoding="utf-8", newline="")
         os.chmod(entry, 0o644)
         return target
+
+    def _select_base(self) -> Path:
+        """Pick a base directory the **sandbox user** can traverse.
+
+        The sandbox maps the jailed process to uid/gid 65534, and with unprivileged user
+        namespaces it also needs to *reach* the mount source. The configured root lives under
+        a systemd-created directory that is ``0750`` (``/var/lib/<service>``), so `nobody`
+        cannot enter it: nsjail then fails to bring the entry script into the jail and the run
+        ends with an empty stdout and a non-zero exit -- which reads as "every case failed".
+
+        The canary proves the sandbox itself works when its workspace sits under a
+        world-traversable directory. So: use the configured root only when every ancestor
+        already grants *other* the execute bit; otherwise fall back to a fresh directory under
+        the system temp dir, whose own mode is ``0700`` but whose parent (``/tmp``) is ``1777``.
+        """
+        if _others_can_traverse(self._root):
+            return self._root
+        fallback = Path(tempfile.mkdtemp(prefix="b2-reference-"))
+        # mkdtemp 是 0700：沙箱用户同样要能进入这个基目录。
+        os.chmod(fallback, 0o711)
+        return fallback
 
     def release(self, workspace: Path) -> None:
         """删除本 provider 根之下的工作区；根之外的路径一律拒绝（不删任意路径）。
@@ -109,8 +146,9 @@ class ReferenceAnswerWorkspace:
         连"这里发生过一次验证"的目录名也不留。非空时保留（那是别的用例还在用）。
         """
         resolved = Path(workspace).resolve()
-        root = self._root.resolve()
-        if resolved == root or root not in resolved.parents:
+        allowed_roots = {self._root.resolve(), Path(tempfile.gettempdir()).resolve()}
+        inside = any(root == resolved or root in resolved.parents for root in allowed_roots)
+        if not inside or any(root == resolved for root in allowed_roots):
             raise ValueError("refusing to release a path outside the workspace root")
         shutil.rmtree(resolved, ignore_errors=True)
         if resolved.parent != root:
