@@ -36,10 +36,13 @@ runuser --preserve-environment --user autograder -- \
     env HOME=/var/lib/autograder USER=autograder LOGNAME=autograder B4_MODULE_ROOT="$release" \
     "$python" -c 'from autograder_host.main import app; print("candidate application assembled:", app.title)'
 
-if systemctl cat autograder-worker.service >/dev/null 2>&1; then
-    systemctl stop autograder-worker.service
-fi
-systemctl stop autograder.service
+# A fresh host has no installed units yet; "stop the previous release" must be a no-op there
+# instead of aborting the deployment (systemctl stop fails for unknown units).
+for unit in autograder-worker.service autograder.service; do
+    if systemctl cat "$unit" >/dev/null 2>&1; then
+        systemctl stop "$unit"
+    fi
+done
 runuser --preserve-environment --user autograder -- \
     env HOME=/var/lib/autograder USER=autograder LOGNAME=autograder \
     bash "$release/MAIN/scripts/production-prepare.sh"
