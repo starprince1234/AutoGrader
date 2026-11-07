@@ -99,7 +99,9 @@
 
 - `service_ready`：练习环境内 sshd 真正启动并监听 `127.0.0.1:<port>`。
 - `auth_succeeded`：sshd 记录 `Accepted password for <username> from 127.0.0.1`。
-- `session_closed`：sshd 记录该用户的 session closed，且 SSH 客户端在时限内以成功状态退出、不是被强杀。
+- `session_closed`：sshd 记录该用户的 session 已结束（`session closed for user` /
+  `Close session: user` / `Disconnected from user`，随 OpenSSH 版本不同），且 SSH 客户端在时限内
+  以成功状态退出、不是被强杀。
 
 学生提交的脚本被解释为**交互式会话指令序列**，不是交给 shell 的任意程序：
 
@@ -211,6 +213,10 @@ nsjail 内以“用户命名空间内的 root”（宿主 uid 仍是服务账号
   → 写字节并校验摘要与 package 声明逐字节一致。摘要不符/缺失 ⇒ `infrastructure_error` 证据（技术故障，不是学生错）。
 - `adapter.kind == "stdin"` 在声明了 `files` 时也必须把 `files` 编进 package（现有遗漏；没有已发布版本依赖该遗漏，
   实现时需在远端核对线上已发布版本）。
+- **摘要一致性**：fixture 字节是 `content_digest` 的输入，因此 fixture 上传（以及删除）后 B3 必须立即
+  重算并持久化该版本的 `content_digest`。否则 `GET /reference-answer` 提供的摘要与 B3 在记录存证时
+  重算的摘要不一致，参考答案验证会被永久拒绝（attestation 409），带 fixture 的题目因此永远无法发布
+  （2026-11-07 生产实测：第 6 题）。
 
 ## 6. 执行接口与计数
 
@@ -299,6 +305,8 @@ nsjail 内以“用户命名空间内的 root”（宿主 uid 仍是服务账号
 7. **SSH 练习环境的 subuid 约束**：宿主只给服务账号分配了 1 个 subordinate UID/GID。SSH profile 只映射
    调用者 uid 与这一个 subordinate id；sshd privsep 账号在运行时生成的 NSS 文件里使用 65534（已映射），
    **禁止**映射 `subuid+1`（newuidmap 会拒绝）。
-8. **workspace_prep 的 chown 依据**：被囚进程是 userns root（宿主 uid = 服务账号），工作区文件也属于服务账号，
-   因此内核对"属主对自有文件 chown"的路径允许其使用 userns 内的 CAP_CHOWN（Linux 6.6 实测通过）；
-   学生代码随后 setuid 到 subordinate uid，不再拥有该能力。该 profile 只由显式 `file_checks` 触发。
+8. **workspace_prep 的所有权依据**：宿主工作区在宿主文件系统（初始 userns 的 inode），非 root 服务账号
+   在用户命名空间内没有该文件系统的 `CAP_CHOWN`，对宿主文件 `chown` 实测 `EPERM`（2026-11-07 生产实测，
+   见 §3.4）。因此准备程序不使用 `chown`：先以 userns root `chmod`（属主可做），降权到 subordinate uid
+   后以该身份**重建**普通文件 inode（保留字节与权限位），学生随后可 `vi`/`chmod`；`chown`/`fchown`/
+   `fchownat` 保留在准备 profile 的默认拒绝清单。该 profile 只由显式 `file_checks` 触发。

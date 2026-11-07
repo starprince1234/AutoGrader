@@ -838,14 +838,21 @@ def _seccomp_chunks(names: Sequence[str], per_line: int = 6) -> list[str]:
 
 #: `workspace_prep` profile 在基础允许清单之外新增的系统调用。
 #:
-#: 只有准备程序需要、且**学生脚本执行前**就已完成的身份切换：`setgroups/setgid/setuid` 把
-#: 准备程序降权到被囚 uid。文件所有权**不**靠 `chown` 取得（宿主文件系统属于初始 userns，
-#: 用户命名空间内 `chown` 实测 EPERM）：准备程序降权后以被囚身份重建普通文件，因此 `chown`
-#: 仍留在默认拒绝清单里。降权后 setuid 能力随 capability 清空，学生代码拿不到提权面。
+#: 1. 身份切换：`setgroups/setgid/setuid` 把准备程序降权到被囚 uid。文件所有权**不**靠
+#:    `chown` 取得（宿主文件系统属于初始 userns，用户命名空间内 `chown` 实测 EPERM）：
+#:    准备程序降权后以被囚身份重建普通文件，因此 `chown` 仍留在默认拒绝清单里。
+#: 2. xattr 读写：声明 `file_checks` 的答案常用 `vi`/`cp` 等工具写文件；Vim 写文件前会
+#:    `getxattr`/`setxattr` 复制原文件的 ACL/属性（`system.posix_acl_access`）。这两个调用
+#:    在基础清单里是 DEFAULT KILL，实测会把真实 `vi` 批处理打成 SIGSYS（"Bad system call"）。
+#:    它们只作用于工作区内文件（被囚进程唯一可写路径），不扩大宿主面。
+#:
+#: 降权后 setuid 能力随 capability 清空，学生代码拿不到提权面。
 WORKSPACE_PREP_SECCOMP_ALLOW_EXTRA: tuple[str, ...] = (
+    "getxattr",
     "setgid",
     "setgroups",
     "setuid",
+    "setxattr",
 )
 
 #: `ssh_session` profile 在基础允许清单之外新增的系统调用：
@@ -1384,7 +1391,8 @@ def create_ssh_sandbox_paths(run_dir: Path) -> SshSandboxPaths:
     关键权限事实（生产实测）：运行目录属于服务账号（autograder），在 uidmap `0 -> caller` 下
     它在用户命名空间内表现为 **root-owned**；sshd 的 `safely_chroot`/privsep 目录校验要求的
     正是"root-owned 且非 group/world 可写"。因此练习根 0755、`empty_root` 0755，而被练习账号
-    写入的目录（`home/user01`、`tmp`）显式 0777。
+    写入的目录（`home/user01`、`tmp`）显式 0777。所有目录权限**显式**设置，不依赖进程 umask
+    （服务 unit 的 `UMask=0077` 会让 `mkdir` 产出 0700，被囚会话 uid 将无法穿越而 `exec` EACCES）。
     """
     practice = Path(run_dir) / "practice"
     empty = Path(run_dir) / "empty"
@@ -1410,6 +1418,16 @@ def create_ssh_sandbox_paths(run_dir: Path) -> SshSandboxPaths:
         group_path=Path(run_dir) / "ssh_group",
         shadow_path=Path(run_dir) / "ssh_shadow",
     )
+    # 显式权限：服务 unit 的 UMask=0077 会让 mkdir 产出 0700；而被囚会话 uid（subordinate uid）
+    # 必须能穿越练习根与客户端 chroot，否则真实 ssh 客户端 `execve` 返回 EACCES（生产实测）。
+    # 挂载点目录一律 0755；被练习账号写入的目录再显式放宽到 0777。
+    practice.chmod(0o755)
+    empty.chmod(0o755)
+    (empty / "sshd").chmod(0o755)
+    for base in (practice, client):
+        for root, dirnames, _filenames in os.walk(base):
+            for dirname in dirnames:
+                (Path(root) / dirname).chmod(0o755)
     (practice / "home" / "user01").chmod(0o777)
     (practice / "tmp").chmod(0o777)
     return paths

@@ -28,6 +28,7 @@ from ..infra.storage import (
     validated_fixture_bytes,
 )
 from ..logging import get_logger, log_event
+from .version_content import refresh_content_digest
 
 
 def upload_stem_asset(
@@ -142,6 +143,10 @@ def upload_fixture(
             content_sha256=content_sha256,
             now=now,
         )
+        # fixture 字节是 content digest 的输入之一：不在这里重算，`GET /reference-answer`
+        # 就会返回过期摘要，外部验证者据此提交的 attestation 永远被 409 拒绝（publish 随之
+        # 永远失败）。这与其它内容写路径的 refresh 语义一致；内容不完整时它安全地把摘要置空。
+        refresh_content_digest(session, version)
         log_event(
             get_logger("domain.assets"),
             "question.fixture.uploaded",
@@ -181,6 +186,8 @@ def delete_fixture(
                 "fixtures of a non-draft version are immutable"
             )
         ProtectedContentRepository(session).delete_fixture(question_version_id, validated_path, mount)
+        # 与上传对称：删除 fixture 同样改变 digest 输入，必须立即重算摘要。
+        refresh_content_digest(session, version)
         log_event(
             get_logger("domain.assets"),
             "question.fixture.deleted",

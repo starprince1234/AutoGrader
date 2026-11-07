@@ -29,7 +29,7 @@ from .examples import (
     INPUT_FIXTURE_BYTES,
     INPUT_FIXTURE_SHA,
 )
-from .support import SERVICE_HEADERS, TEACHER_A_HEADERS, b64, http_publish
+from .support import SERVICE_HEADERS, TEACHER_A_HEADERS, b64, http_attestation, http_publish
 
 DELIMITER = "@@@-section-@@@"
 SSH_PASSWORD = "correct horse battery staple"
@@ -287,6 +287,38 @@ def _upload_fixture(client, version_id: str, *, path: str, mount: str, content: 
     )
     assert response.status_code == 201, response.text
     return response.json()
+
+
+def _version_digest(client, version_id: str) -> str:
+    detail = client.get(
+        f"/api/v1/question-versions/{version_id}", headers=TEACHER_A_HEADERS
+    )
+    assert detail.status_code == 200, detail.text
+    digest = detail.json()["content_digest"]
+    assert digest and len(digest) == 64
+    return digest
+
+
+def test_uploading_a_fixture_refreshes_the_content_digest(client):
+    """Fixture bytes are part of the content digest, so uploading one must rehash.
+
+    Regression: the upload persisted the fixture without refreshing the digest, so
+    ``GET /reference-answer`` kept serving the pre-fixture digest and the recorder refused
+    every attestation for a fixture question with 409 — that version could never be published.
+    """
+    version_id = _file_question(client)
+    before = _version_digest(client, version_id)
+    _upload_fixture(
+        client,
+        version_id,
+        path="week6_1.txt",
+        mount="input",
+        content=INPUT_FIXTURE_BYTES,
+    )
+    after = _version_digest(client, version_id)
+    assert after != before
+    # The digest the API serves now is the one the recorder recomputes and accepts.
+    http_attestation(client, uuid.UUID(version_id), cases=2)
 
 
 def test_fixture_contents_is_service_only(client):

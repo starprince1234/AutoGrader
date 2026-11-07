@@ -7,7 +7,8 @@ Unix 作业扩展引入的**一次执行、多条证据**路径：
   结构不合法（缺/多分隔符、空段）⇒ 全部 segment 用例 `output_mismatch`；
   运行级失败（超时）⇒ 全部用例同类别；声明 `file_checks` 的用例在运行后由 B2 直接检查文件；
 - `workspace_prep` profile：fixture 属于服务账号、被囚 uid 是 subordinate uid，普通 profile 下
-  chmod/写入会 EPERM；准备 profile 把工作区 chown 给被囚 uid 后降权执行学生脚本，因此 vi/chmod 生效；
+  chmod/写入会 EPERM；准备 profile 先 chmod、降权后以被囚 uid 重建文件 inode（不在 userns 内 chown），
+  因此 vi/chmod 生效；
 - `ssh_session`：真实 sshd + 真实 ssh 客户端（严格 argv）+ 真实远端会话；三条 ssh_check 由
   sshd 自有日志与客户端退出判定；错误口令/超时/非法首行是学生侧失败，环境起不来是基础设施故障；
 - 清理：批量运行（含超时）后不留 nsjail/sshd/学生进程，不留 `<workspace>.ssh` 临时目录。

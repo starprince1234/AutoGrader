@@ -1269,6 +1269,30 @@ class TestSshConfigRendering:
         assert (paths.practice_root / "home" / "user01").stat().st_mode & 0o777 == 0o777
         assert (paths.practice_root / "tmp").stat().st_mode & 0o777 == 0o777
 
+    @pytest.mark.skipif(os.name != "posix", reason="Windows 不提供 POSIX 权限位语义")
+    def test_mount_directories_are_traversable_under_restrictive_umask(
+        self, tmp_path: Path
+    ) -> None:
+        """挂载点目录必须是 0755，与进程 umask 无关：服务 unit 的 `UMask=0077` 会让
+        `mkdir` 产出 0700，而被囚 uid 需要穿越练习根与客户端 chroot，否则客户端
+        `execve('/usr/bin/ssh')` 返回 EACCES（生产实测）。"""
+        previous = os.umask(0o077)
+        try:
+            paths = create_ssh_sandbox_paths(tmp_path / "ssh")
+        finally:
+            os.umask(previous)
+        for directory in (
+            paths.practice_root,
+            paths.empty_root,
+            paths.empty_root / "sshd",
+            paths.client_root,
+            paths.client_root / "usr" / "bin",
+            paths.practice_root / "usr",
+            paths.practice_root / "home",
+        ):
+            assert directory.stat().st_mode & 0o777 == 0o755, directory
+        assert (paths.practice_root / "home" / "user01").stat().st_mode & 0o777 == 0o777
+
 
 # =============================================================================================
 # 9. SSH 证据解析与判定
@@ -1337,6 +1361,7 @@ class TestSshEvidence:
             "StrictHostKeyChecking=no",
             "PasswordAuthentication yes",
             "session closed for user ",
+            "Disconnected from user ",
             "Accepted password for ",
         ):
             assert needle in first
@@ -1409,8 +1434,14 @@ class TestWorkspacePrep:
         assert prep.index('inside_id: "0"') < prep.index('inside_id: "65534"')
         assert prep.count("gidmap {") == 1
         assert 'inside_id: "0"\n  inside_id: "0"' not in prep
-        # prep seccomp 只允许多出的降权调用；chown 不在允许清单（仍走默认拒绝）。
-        assert WORKSPACE_PREP_SECCOMP_ALLOW_EXTRA == ("setgid", "setgroups", "setuid")
+        # prep seccomp 只允许多出的身份切换 + Vim 写文件所需的 xattr 复制；chown 不在允许清单。
+        assert WORKSPACE_PREP_SECCOMP_ALLOW_EXTRA == (
+            "getxattr",
+            "setgid",
+            "setgroups",
+            "setuid",
+            "setxattr",
+        )
         prep_seccomp = "\n".join(workspace_prep_seccomp_policy_lines(
             replace(RunnerPolicy(), sandbox_profile=SANDBOX_PROFILE_WORKSPACE_PREP)
         ))

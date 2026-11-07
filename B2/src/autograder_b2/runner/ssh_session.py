@@ -813,7 +813,7 @@ def run_session(config: dict, login: dict, script_lines: list) -> int:
         log_text,
     )
     session_closed = re.search(
-        r"(session closed for user |Close session: user )"
+        r"(session closed for user |Close session: user |Disconnected from user )"
         + re.escape(str(config["username"])),
         log_text,
     )
