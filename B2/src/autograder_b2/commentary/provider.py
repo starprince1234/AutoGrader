@@ -57,7 +57,12 @@ class CommentaryProviderConfig:
 
     @property
     def endpoint(self) -> str:
-        return f"{self.base_url.rstrip('/')}{CHAT_COMPLETIONS_PATH}"
+        base = self.base_url.rstrip("/")
+        # A deployment may store the complete endpoint instead of a base URL;
+        # appending the path again would turn a valid URL into a 404.
+        if base.endswith(CHAT_COMPLETIONS_PATH):
+            return base
+        return f"{base}{CHAT_COMPLETIONS_PATH}"
 
 
 class CommentaryTransport(Protocol):

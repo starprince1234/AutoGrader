@@ -290,14 +290,29 @@ def load_commentary_settings(
     并且**在 reason 里说清楚哪里不对**，比发明第三种状态诚实。
     """
     source = os.environ if environ is None else environ
+    # The platform's Doppler project stores the model as LLM_*. B2 originally
+    # read only B2_COMMENTARY_*; accept both, with the B2_* names winning when
+    # both are present. Provider is provenance-only because the wire format is
+    # OpenAI-compatible, so it may be omitted when the LLM_* trio is supplied.
     required = {
-        "B2_COMMENTARY_PROVIDER": (source.get("B2_COMMENTARY_PROVIDER") or "").strip(),
-        "B2_COMMENTARY_BASE_URL": (source.get("B2_COMMENTARY_BASE_URL") or "").strip(),
-        "B2_COMMENTARY_MODEL": (source.get("B2_COMMENTARY_MODEL") or "").strip(),
-        "B2_COMMENTARY_API_KEY": _optional_secret(
-            source, "B2_COMMENTARY_API_KEY", "B2_COMMENTARY_API_KEY_FILE"
-        )
-        or "",
+        "B2_COMMENTARY_PROVIDER": (
+            (source.get("B2_COMMENTARY_PROVIDER") or "").strip()
+            or ("openai" if (source.get("LLM_BASE_URL") or "").strip() else "")
+        ),
+        "B2_COMMENTARY_BASE_URL": (
+            (source.get("B2_COMMENTARY_BASE_URL") or "").strip()
+            or (source.get("LLM_BASE_URL") or "").strip()
+        ),
+        "B2_COMMENTARY_MODEL": (
+            (source.get("B2_COMMENTARY_MODEL") or "").strip()
+            or (source.get("LLM_MODEL_NAME") or "").strip()
+        ),
+        "B2_COMMENTARY_API_KEY": (
+            _optional_secret(
+                source, "B2_COMMENTARY_API_KEY", "B2_COMMENTARY_API_KEY_FILE"
+            )
+            or (source.get("LLM_APIKEY") or "")
+        ),
     }
     missing = tuple(name for name, value in required.items() if not value)
     if missing:
