@@ -795,22 +795,23 @@ def seccomp_policy_lines(policy: RunnerPolicy) -> tuple[str, ...]:
         )
     lines = [f"#define {name} {number}" for name, number in SECCOMP_X86_64_DEFINES]
     lines.append("POLICY b2_sandbox {")
+    lines.append("  ALLOW {")
+    lines.extend(_seccomp_chunks(SECCOMP_ALLOW))
+    lines.append("  },")
     lines.append("  KILL {")
     lines.extend(_seccomp_chunks(SECCOMP_DENY))
     lines.append("  }")
     lines.append("}")
-    # **默认放行 + 危险调用显式 KILL**。
+    # **默认拒绝 + 允许清单**（fail-closed）。
     #
-    # 原来是"默认 KILL + 允许清单"，而允许清单是从 CPython 的 strace 实测集合反推的：只要某个
-    # 正常程序用到清单外的调用就被 SIGSYS 杀掉（线上表现为 `security_blocked`）。`bash`/`dash`
-    # 正是如此——`bash --version` 能跑，`bash -c ':'` 就被杀，而沙箱里 ptrace 被拒、`strace`
-    # 无法使用，凭据上也无法在宿主机侧追踪，因此**无法**把缺的那一个调用号找出来。
-    #
-    # 于是把边界改成黑名单：下面 KILL 块里的调用一律杀死（网络、提权、命名空间、挂载、模块、
-    # 内核面、ptrace、跨进程取 fd、io_uring、userfaultfd、perf、密钥、时钟/主机名修改…），
-    # 其余放行。这是**安全姿态的实质变化**，已如实记录在交付说明里：隔离边界从"穷举允许"
-    # 变成"穷举禁止"，仍然 fail-closed（未知的危险调用要在 KILL 块里逐条补，而不是默认被拦）。
-    lines.append("USE b2_sandbox DEFAULT ALLOW")
+    # 曾经把默认动作改成 `ALLOW`（只保留 KILL 黑名单）作为一次实验，因为允许清单是从 CPython 的
+    # strace 集合反推的、`bash` 一进入执行路径就被 SIGSYS 杀掉。实验结果：默认放行**确实生效**
+    # （`personality`/`getpriority`/`sched_setscheduler`/`setsid` 这类原本不在清单里的调用被放行，
+    # `socket` 仍被 KILL），但 `bash -c ':'` **依旧** `rc=-31`（SIGSYS），`bash --version` 能正常
+    # 打印。也就是说杀死 shell 的那个调用不在我们这份策略的允许集合里、也不在我们能枚举的范围之外
+    # ——沙箱内 `ptrace` 被拒（`strace` 无法使用），宿主机又不在可操作范围内，无法定位。
+    # 既然默认放行既没解决问题、又实际削弱了隔离，这里**回退**成默认拒绝；新增的允许项与拒绝项保留。
+    lines.append("USE b2_sandbox DEFAULT KILL")
     return tuple(lines)
 
 

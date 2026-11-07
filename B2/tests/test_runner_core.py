@@ -637,16 +637,16 @@ class TestNsjailConfig:
     def test_kafel_policy_uses_file_level_default_action(self) -> None:
         """kafel 语法（Linux 验收实测修正）：默认动作写在文件级 `USE … DEFAULT …`，不在 POLICY 块内。
 
-        默认动作已从 `KILL` 改为 `ALLOW`：允许清单是从 CPython 的 strace 集合反推的，`bash`/`dash`
-        会因为清单外的一个调用被 SIGSYS 杀掉（沙箱内 ptrace 被拒，无法定位是哪一个），所以边界改成
-        "默认放行 + 危险调用显式 KILL"。KILL 块（网络/提权/命名空间/挂载/内核面/ptrace/io_uring…）
-        仍是安全边界的唯一出处。
+        默认动作是 `KILL`（fail-closed）。曾经试过改成 `ALLOW` + 黑名单（因为允许清单按 CPython 的
+        strace 集合反推，`bash` 一进执行路径就被 SIGSYS 杀掉、而沙箱里 ptrace 被拒无法定位），
+        但实测默认放行**也**救不了 bash（`bash -c ':'` 仍 `rc=-31`），所以回退成默认拒绝，
+        拒绝清单里则补上了 io_uring / 新挂载 API / pidfd_getfd 等危险面。
         """
         config = render_nsjail_config(ledger_policy(), Path("/tmp/b2-workspace"))
         assert 'seccomp_string: "POLICY b2_sandbox {"' in config
         assert 'seccomp_string: "  KILL {"' in config
-        assert 'seccomp_string: "USE b2_sandbox DEFAULT ALLOW"' in config
-        assert 'seccomp_string: "  DEFAULT ALLOW"' not in config
+        assert 'seccomp_string: "USE b2_sandbox DEFAULT KILL"' in config
+        assert 'seccomp_string: "  DEFAULT KILL"' not in config
         assert 'seccomp_string: "USE b2_sandbox DEFAULT"' not in config
         # 危险的调用的确在 KILL 块里（抽查几条，防止有人把整块删掉还绿着）
         for name in ("socket", "connect", "ptrace", "mount", "io_uring_setup", "mount_setattr"):
