@@ -646,7 +646,13 @@ export function QuestionListPage() {
               type="button"
               className="button button--ghost"
               data-testid="batch-clear"
-              onClick={() => setSelected(new Set())}
+              onClick={() => {
+                // 「取消选择」= 放弃这次批量操作：清空勾选并**退出批量模式**（勾选框与这一排
+                // 操作按钮随之消失，回到正常列表）。只清勾选会让按钮看起来没反应——用户得再点
+                // 一次「批量操作」才能关掉，那正是这个 bug。
+                setSelected(new Set());
+                setBatchMode(false);
+              }}
             >
               {t("questions.clearSelection")}
             </button>

@@ -674,3 +674,55 @@ describe("题库列表：分页重叠不会重复发版本 id（契约 uniqueIte
     });
   });
 });
+
+describe("批量操作：取消选择", () => {
+  it("点「取消选择」清空勾选、计数归零、退出批量模式，一次点击回到正常列表", async () => {
+    stub = installFetchStub([
+      {
+        method: "POST",
+        path: "/api/v1/auth/session",
+        respond: () => jsonResponse(sessionCreated({ roles: ["teacher"] })),
+      },
+      {
+        path: "/api/v1/courses",
+        respond: () => jsonResponse({ items: [courseSummary()], next_cursor: null }),
+      },
+      {
+        method: "GET",
+        path: "/api/v1/questions",
+        respond: () => jsonResponse({ items: [draftQuestion("q-a"), draftQuestion("q-b")], next_cursor: null }),
+      },
+      {
+        method: "GET",
+        path: "/api/v1/questions/coverage",
+        respond: () => jsonResponse(questionTagCoverage()),
+      },
+    ]);
+    const user = userEvent.setup();
+    await openList();
+
+    const toggle = screen.getByTestId("batch-mode-toggle");
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+    await user.click(await screen.findByTestId("select-q-a"));
+    await user.click(screen.getByTestId("select-q-b"));
+    expect(screen.getByTestId("batch-bar")).toHaveTextContent("已选 2 项");
+
+    // 一次点击就要回到正常列表：不是"只清勾选、还得再点一次批量操作"。
+    await user.click(screen.getByTestId("batch-clear"));
+
+    expect(screen.queryByTestId("batch-bar")).toBeNull();
+    expect(screen.queryByTestId("batch-publish")).toBeNull();
+    expect(screen.queryByTestId("batch-delete")).toBeNull();
+    expect(screen.queryByTestId("batch-clear")).toBeNull();
+    // 勾选框随之消失（批量模式已退出），计数归零。
+    expect(screen.queryByTestId("select-q-a")).toBeNull();
+    expect(screen.getByTestId("batch-selected-count")).toHaveTextContent("已选 0 项");
+    expect(screen.getByTestId("batch-mode-toggle")).toHaveAttribute("aria-pressed", "false");
+
+    // 「批量操作」仍可再次打开，重新进入时是干净的（没有残留勾选）。
+    await user.click(screen.getByTestId("batch-mode-toggle"));
+    expect(await screen.findByTestId("batch-bar")).toHaveTextContent("已选 0 项");
+    expect(screen.getByTestId("select-q-a")).not.toBeChecked();
+  });
+});
