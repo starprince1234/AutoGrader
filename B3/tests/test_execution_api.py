@@ -229,7 +229,6 @@ def test_the_public_version_dto_exposes_only_the_execution_mode(client):
         "file_checks",
         "segment_delimiter",
         "subject_template",
-        "required_attachment_template",
         "password",
     }
     assert execution_config_names <= PROTECTED_FIELD_NAMES
@@ -306,7 +305,23 @@ def test_uploading_a_fixture_refreshes_the_content_digest(client):
     ``GET /reference-answer`` kept serving the pre-fixture digest and the recorder refused
     every attestation for a fixture question with 409 — that version could never be published.
     """
-    version_id = _file_question(client)
+    created = client.post(
+        "/api/v1/questions",
+        params={"course_id": str(COURSE_A)},
+        json=draft_payload(
+            kind="file",
+            files=[
+                {
+                    "path": "week6_1.txt",
+                    "mount": "input",
+                    "content_sha256": INPUT_FIXTURE_SHA,
+                }
+            ],
+        ),
+        headers=TEACHER_A_HEADERS,
+    )
+    assert created.status_code == 201, created.text
+    version_id = created.json()["versions"][0]["question_version_id"]
     before = _version_digest(client, version_id)
     _upload_fixture(
         client,

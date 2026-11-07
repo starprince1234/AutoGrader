@@ -26,8 +26,9 @@
 | `20261107_0006` | 生成记录的 `accepted_question_version_id` 在版本删除后被 `SET NULL` 时不再违反 CHECK（`accepted_at` 只要求 `proposal IS NULL`） | `20260915_0005` |
 | `20261107_0007` | **执行声明**：`question_versions.execution_manifest`、`test_cases.execution`（可空 jsonb，`NULL` = `per_case`/无声明），不可变触发器同步覆盖新列 | `20261107_0006` |
 | `20261107_0008` | **作业目标模型**（`CHG-0032`）：`assignments.section_id` 及 `ix_assignments_section_id` 删除；新增 `assignment_sections` / `assignment_students`（复合主键、各自 `ix_*_section_id` / `ix_*_student_id`、命名 FK），普通角色只读、内部角色可插入 | `20261107_0007` |
+| `20261108_0009` | **移除每题邮件附件模板的存量数据**（`CHG-0032`）：从 `question_versions.execution_manifest` 删除已由契约删除的 `email.required_attachment_template`；只重写声明，不重算 `content_digest`（派生摘要由部署后的一次性核对刷新，见生产手册） | `20261107_0008` |
 
-- 当前 head：`20261107_0008`，与 `module.yaml: database.migration_head` **一致**（`tests/test_migrations.py::test_module_yaml_head_matches_alembic_head` 断言；MAIN 的 `checks.py` 亦独立校验）。
+- 当前 head：`20261108_0009`，与 `module.yaml: database.migration_head` **一致**（`tests/test_migrations.py::test_module_yaml_head_matches_alembic_head` 断言；MAIN 的 `checks.py` 亦独立校验）。
   该断言此前还钉死了字面量 `"20260915_0003"`，于是下一个合法迁移必然让它失败，而它并未因此多证明任何东西；已改为只断言 `declared == head`（与 `test_contracts_lock_is_not_hand_edited` 同一处理）。
 - 一致性要求：每新增迁移后，`module.yaml` 的 `migration_head` 与 Alembic head 必须一致（`RQ-B-4-30` 验收 3）。
 - **`20260915_0004` 的两点如实说明**：
@@ -52,6 +53,14 @@
 其它目标课序与整张学生收窄名单会**被丢弃**。没有任何目标行的作业无法表达成旧形状；
 写入路径保证每个作业 1..N 行目标课序，因此这种情况只可能来自手工改库，让 `NOT NULL` 直接失败
 比编造一个课序号更诚实。迁移 docstring 同样写明了这一点。
+
+## `20261108_0009` 的回滚语义（不可逆，dev-only）
+
+`email.required_attachment_template` 是 `CHG-0032` 从契约里**删除**的声明，不是改名或换默认值。
+`downgrade` 因此是显式 no-op：值已经不在库里，把它按旧默认值（`{student_number}.txt`）写回所有
+行等于伪造一次作者决策，而且新编译器/ B2 解析器都不会读它。该迁移只重写存量声明，**不**重算
+`content_digest`——派生摘要由部署后的一次性核对按 B3 自己的 `load_version_content` 刷新（见
+[生产手册](../../../MAIN/docs/runbooks/production-deployment.md) 的旧库升级说明）。
 
 ## 生成与执行命令
 

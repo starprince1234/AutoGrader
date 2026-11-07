@@ -94,7 +94,6 @@ MAX_TIMEOUT_SECONDS = 30.0
 MIN_TIMEOUT_SECONDS = 0.1
 DEFAULT_TIMEOUT_SECONDS = 10.0
 DEFAULT_SUBJECT_TEMPLATE = "{student_number}_{attempt}"
-DEFAULT_ATTACHMENT_TEMPLATE = "{student_number}.txt"
 
 
 def _field(raw: Any, name: str, default: Any = None) -> Any:
@@ -466,15 +465,7 @@ def _validate_execution_email(raw: object) -> ExecutionEmail:
         _field(raw, "subject_template", DEFAULT_SUBJECT_TEMPLATE),
         field="execution.email.subject_template",
     )
-    attachment_template = _validate_email_template(
-        _field(raw, "required_attachment_template", DEFAULT_ATTACHMENT_TEMPLATE),
-        field="execution.email.required_attachment_template",
-    )
-    return ExecutionEmail(
-        attempt=attempt,
-        subject_template=subject_template,
-        required_attachment_template=attachment_template,
-    )
+    return ExecutionEmail(attempt=attempt, subject_template=subject_template)
 
 
 def _validate_execution_ssh(raw: object) -> ExecutionSsh:
@@ -628,7 +619,6 @@ def execution_manifest_to_storage(execution: ExecutionManifest) -> dict[str, Any
         payload["email"] = {
             "attempt": execution.email.attempt,
             "subject_template": execution.email.subject_template,
-            "required_attachment_template": execution.email.required_attachment_template,
         }
     if execution.ssh is not None:
         payload["ssh"] = {

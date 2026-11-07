@@ -486,15 +486,6 @@ REJECTED_DECLARATIONS = [
     pytest.param(
         {
             "mode": "email_delivery",
-            "email": {"attempt": 1, "required_attachment_template": "{attempt:02d}.txt"},
-        },
-        [{"execution": {"email_check": "email_received"}}],
-        {"adapter_kind": "stdin", "language": "bash"},
-        id="email-attachment-format-spec",
-    ),
-    pytest.param(
-        {
-            "mode": "email_delivery",
             "email": {"attempt": 1, "subject_template": "{attempt}_{attempt}"},
         },
         [{"execution": {"email_check": "email_received"}}],
@@ -787,7 +778,23 @@ def test_email_delivery_declaration_is_accepted_and_defaults_are_filled():
     assert execution.email is not None
     assert execution.email.attempt == 2
     assert execution.email.subject_template == "{student_number}_{attempt}"
-    assert execution.email.required_attachment_template == "{student_number}.txt"
+    # CHG-0032 removed the per-question attachment template: the answer file is named by
+    # the question's position in the assignment, not declared here.
+    assert not hasattr(execution.email, "required_attachment_template")
+
+
+def test_email_delivery_storage_never_carries_the_removed_attachment_template():
+    """The package/digest payload must not grow back the removed key.
+
+    B2's package parser is strict (``additionalProperties: false``) and refuses a package
+    with ``required_attachment_template``; emitting it again would make every
+    ``email_delivery`` question unpublishable and un-evaluable.
+    """
+    execution = validate_execution_manifest({"mode": "email_delivery", "email": {"attempt": 1}})
+    assert execution_manifest_to_storage(execution) == {
+        "mode": "email_delivery",
+        "email": {"attempt": 1, "subject_template": "{student_number}_{attempt}"},
+    }
 
 
 def test_single_run_file_question_with_file_checks_is_accepted():

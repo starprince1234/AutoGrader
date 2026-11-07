@@ -62,7 +62,6 @@ export const MAX_FILE_CHECKS_PER_CASE = 20;
 export type ExecutionEmailInput = {
   attempt: number;
   subject_template?: string;
-  required_attachment_template?: string;
 };
 
 export type ExecutionSshInput = {
@@ -161,9 +160,6 @@ function normalizeExecutionManifest(raw: unknown): ExecutionManifestInput {
     const normalizedEmail: ExecutionEmailInput = { attempt: email.attempt };
     if (typeof email.subject_template === "string") {
       normalizedEmail.subject_template = email.subject_template;
-    }
-    if (typeof email.required_attachment_template === "string") {
-      normalizedEmail.required_attachment_template = email.required_attachment_template;
     }
     manifest.email = normalizedEmail;
   }

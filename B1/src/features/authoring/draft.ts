@@ -225,11 +225,10 @@ export type DraftForm = {
   /** `email_delivery`：这是第几次尝试（1..99）。 */
   emailAttempt: string;
   /**
-   * `email_delivery` 的可选模板（契约有默认值，界面上不单独编辑）。
+   * `email_delivery` 的可选主题模板（契约有默认值，界面上不单独编辑）。
    * 读回草稿时原样保留，避免"只改标题保存"把服务端已有的模板悄悄重置成默认值。
    */
   emailSubjectTemplate: string;
-  emailAttachmentTemplate: string;
   /** `ssh_session`：练习环境口令。只在内存与本页请求体里出现，不进 URL/日志/持久化存储。 */
   sshPort: string;
   sshUsername: string;
@@ -291,7 +290,6 @@ export function emptyDraftForm(): DraftForm {
     segmentDelimiter: "",
     emailAttempt: "1",
     emailSubjectTemplate: "",
-    emailAttachmentTemplate: "",
     sshPort: "22",
     sshUsername: "",
     sshPassword: "",
@@ -901,7 +899,6 @@ export function applyExecutionMode(form: DraftForm, next: ExecutionMode): DraftF
     segmentDelimiter: next === "single_run" ? form.segmentDelimiter : "",
     emailAttempt: next === "email_delivery" ? form.emailAttempt : defaults.emailAttempt,
     emailSubjectTemplate: next === "email_delivery" ? form.emailSubjectTemplate : "",
-    emailAttachmentTemplate: next === "email_delivery" ? form.emailAttachmentTemplate : "",
     sshPort: next === "ssh_session" ? form.sshPort : defaults.sshPort,
     sshUsername: next === "ssh_session" ? form.sshUsername : "",
     sshPassword: next === "ssh_session" ? form.sshPassword : "",
@@ -953,8 +950,6 @@ export function applyExecutionDeclaration(
         : defaults.emailAttempt,
     emailSubjectTemplate:
       mode === "email_delivery" ? manifest.email?.subject_template ?? "" : "",
-    emailAttachmentTemplate:
-      mode === "email_delivery" ? manifest.email?.required_attachment_template ?? "" : "",
     sshPort:
       mode === "ssh_session" && manifest.ssh ? String(manifest.ssh.port) : defaults.sshPort,
     sshUsername: mode === "ssh_session" ? manifest.ssh?.username ?? "" : "",
@@ -1240,13 +1235,11 @@ function buildExecution(form: DraftForm): ExecutionManifestInput | null {
       mode: "email_delivery",
       email: {
         attempt,
-        // 契约里这两个模板有默认值；只有读回草稿时确实存在（非空）才原样带回，不做改写。
+        // 契约里主题模板有默认值；只有读回草稿时确实存在（非空）才原样带回，不做改写。
+        // 附件名自 CHG-0032 起由作业内题号决定，不再有每题模板。
         ...(form.emailSubjectTemplate === ""
           ? {}
           : { subject_template: form.emailSubjectTemplate }),
-        ...(form.emailAttachmentTemplate === ""
-          ? {}
-          : { required_attachment_template: form.emailAttachmentTemplate }),
       },
     };
   }

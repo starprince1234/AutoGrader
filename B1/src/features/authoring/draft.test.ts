@@ -634,14 +634,13 @@ describe("评分方式 / 执行声明（Unix 作业扩展）", () => {
     expect(JSON.stringify(perCaseInput)).not.toContain("practice-secret");
   });
 
-  it("email_delivery：attempt 与读回的模板一起按契约发送", () => {
+  it("email_delivery：attempt 与读回的主题模板一起按契约发送", () => {
     const input = payload(
       validForm({
         language: "bash",
         executionMode: "email_delivery",
         emailAttempt: "3",
         emailSubjectTemplate: "{student_number}_{attempt}",
-        emailAttachmentTemplate: "{student_number}.txt",
         cases: [
           {
             ...emptyDraftForm().cases[0],
@@ -657,7 +656,6 @@ describe("评分方式 / 执行声明（Unix 作业扩展）", () => {
       email: {
         attempt: 3,
         subject_template: "{student_number}_{attempt}",
-        required_attachment_template: "{student_number}.txt",
       },
     });
     const emailCases = input.cases as TestCaseInputWithExecution[];

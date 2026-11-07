@@ -178,6 +178,15 @@ SSH/文件评测所需的二进制（`nsjail`、`vim/vi`、`ssh`、`sshd`、`ssh
 `Couldn't mount '/workspace'` 失败（表现为 503 / infrastructure_error，而不是学生答错）。
 `deploy-release.sh` 以 root 运行 `install -d -m 0755 /workspace`；新主机不需要手工处理。
 
+**从旧库升级（`CHG-0032` 以前创建过 `email_delivery` 草稿的部署）**：B3 迁移 `20261108_0009`
+删除存量 `execution_manifest` 里已被契约删除的 `email.required_attachment_template`；B2 的严格
+解析器会拒绝仍带该键的 package。迁移只重写声明、**不**重算 `content_digest`，因此升级后还要做
+一次派生摘要核对：用 B3 自己的 `load_version_content` 对受影响草稿重算并刷新 `content_digest`
+（`refresh_content_digest`），否则参考答案端点会返回旧摘要、attestation 全部 409。旧格式的
+`email_delivery` 参考解（合成回执里的 `attachment_names`）也要改成契约 0.31.0 的
+`answer_attachment_name`（该题在作业中的答案文件名），改完重新做一次参考答案验证并记录存证。
+新库（空库从零迁移）不受影响。
+
 发布后验证（需要教师授权凭据；先读取目标版本并确认仍是草稿）：
 
 ```bash

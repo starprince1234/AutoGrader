@@ -18,7 +18,7 @@ from ..auth import Principal, require_course_write
 from ..config import Settings
 from ..compile.validation import validate_workspace_path
 from ..dto.internal import AssetUploadInputModel, FixtureInternal, FixtureUploadInputModel
-from ..errors import ImmutableVersionConflict, NotFound, PayloadTooLarge
+from ..errors import ImmutableVersionConflict, ManifestInvalid, NotFound, PayloadTooLarge
 from ..infra.db import Database
 from ..infra.models import QuestionAsset
 from ..infra.repositories import ProtectedContentRepository, QuestionBankRepository
@@ -145,8 +145,9 @@ def upload_fixture(
         )
         # fixture 字节是 content digest 的输入之一：不在这里重算，`GET /reference-answer`
         # 就会返回过期摘要，外部验证者据此提交的 attestation 永远被 409 拒绝（publish 随之
-        # 永远失败）。这与其它内容写路径的 refresh 语义一致；内容不完整时它安全地把摘要置空。
-        refresh_content_digest(session, version)
+        # 永远失败）。中间态（声明了多个 fixture、尚未全部上传）由 `_refresh_if_consistent`
+        # 保留旧摘要，最终一致性仍由 publish / attestation / package 编译的严格校验把关。
+        _refresh_if_consistent(session, version)
         log_event(
             get_logger("domain.assets"),
             "question.fixture.uploaded",
@@ -187,12 +188,27 @@ def delete_fixture(
             )
         ProtectedContentRepository(session).delete_fixture(question_version_id, validated_path, mount)
         # 与上传对称：删除 fixture 同样改变 digest 输入，必须立即重算摘要。
-        refresh_content_digest(session, version)
+        _refresh_if_consistent(session, version)
         log_event(
             get_logger("domain.assets"),
             "question.fixture.deleted",
             question_version_id=str(question_version_id),
         )
+
+
+def _refresh_if_consistent(session, version) -> None:
+    """Recompute the draft's content digest, tolerating not-yet-consistent fixture sets.
+
+    Fixtures are uploaded one at a time while the adapter manifest may already declare
+    all of them, so a strict digest recomputation would reject a legitimate intermediate
+    authoring state ("declared fixture … has no stored content"). This helper therefore
+    keeps the previous digest when the content is not (yet) consistent; the strict gate
+    stays where it belongs: publish, attestation recording and package compilation.
+    """
+    try:
+        refresh_content_digest(session, version)
+    except ManifestInvalid:
+        return
 
 
 def _detached(session, row: QuestionAsset) -> QuestionAsset:

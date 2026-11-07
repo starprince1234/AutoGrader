@@ -82,7 +82,6 @@ PROTECTED_FIELD_NAMES: frozenset[str] = frozenset(
         "file_checks",
         "segment_delimiter",
         "subject_template",
-        "required_attachment_template",
         "password",
     }
 )
@@ -161,9 +160,6 @@ class ExecutionEmailInputModel(BaseModel):
     attempt: int = Field(ge=1, le=99)
     subject_template: str = Field(
         default="{student_number}_{attempt}", min_length=1, max_length=200
-    )
-    required_attachment_template: str = Field(
-        default="{student_number}.txt", min_length=1, max_length=200
     )
 
 
@@ -459,11 +455,16 @@ class CaseExecution:
 
 @dataclass(frozen=True)
 class ExecutionEmail:
-    """``email_delivery`` requirements: attempt plus the templates the receipt must match."""
+    """``email_delivery`` requirements: attempt plus the subject template the receipt must match.
+
+    From CHG-0032 the answer attachment is not templated per question: a submission is one
+    assignment question and its answer file is named by that question's 1-based position in
+    the assignment, so the ``attachment`` check means "the received message mapped an answer
+    file to this question". Only ``attempt`` and ``subject_template`` remain.
+    """
 
     attempt: int
     subject_template: str = "{student_number}_{attempt}"
-    required_attachment_template: str = "{student_number}.txt"
 
 
 @dataclass(frozen=True)
