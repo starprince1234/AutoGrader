@@ -36,6 +36,9 @@ runuser --preserve-environment --user autograder -- \
     env HOME=/var/lib/autograder USER=autograder LOGNAME=autograder B4_MODULE_ROOT="$release" \
     "$python" -c 'from autograder_host.main import app; print("candidate application assembled:", app.title)'
 
+if systemctl cat autograder-worker.service >/dev/null 2>&1; then
+    systemctl stop autograder-worker.service
+fi
 systemctl stop autograder.service
 runuser --preserve-environment --user autograder -- \
     env HOME=/var/lib/autograder USER=autograder LOGNAME=autograder \
@@ -46,6 +49,7 @@ chown -R root:autograder "$release"
 chmod -R g+rX,o-rwx "$release"
 chmod 0755 "$release"
 install -m 0644 "$release/MAIN/deploy/autograder.service" /etc/systemd/system/autograder.service
+install -m 0644 "$release/MAIN/deploy/autograder-worker.service" /etc/systemd/system/autograder-worker.service
 install -m 0644 "$release/MAIN/deploy/cloudflared.service" /etc/systemd/system/cloudflared.service
 install -m 0644 "$release/MAIN/deploy/autograder-intake.service" /etc/systemd/system/autograder-intake.service
 install -m 0644 "$release/MAIN/deploy/autograder-intake.timer" /etc/systemd/system/autograder-intake.timer
@@ -70,6 +74,8 @@ wait_ready() {
 }
 wait_ready http://127.0.0.1:18000/health/ready 30 || \
     fail "API is not ready; candidate and service state retained for diagnosis"
+systemctl enable --now autograder-worker.service
+systemctl is-active --quiet autograder-worker.service || fail "evaluation worker did not start"
 systemctl enable cloudflared.service
 systemctl restart cloudflared.service
 wait_ready https://api.91idc.me/health/ready 12 || \

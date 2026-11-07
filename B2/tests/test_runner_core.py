@@ -28,6 +28,7 @@ import importlib
 import inspect
 import json
 import os
+import select
 import subprocess
 import sys
 from dataclasses import replace
@@ -432,6 +433,42 @@ def test_run_case_signature_is_the_frozen_two_argument_form() -> None:
     assert all(item.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD for item in parameters[:2])
     assert [item.name for item in parameters[2:]] == ["probe", "launcher"]
     assert all(item.kind is inspect.Parameter.KEYWORD_ONLY for item in parameters[2:])
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX file locking")
+def test_sandbox_gate_serializes_separate_processes(tmp_path: Path) -> None:
+    script = (
+        "import sys; from pathlib import Path; "
+        "from autograder_b2.evaluation.orchestrator import DynamicExecutionGate; "
+        "gate=DynamicExecutionGate(lock_path=Path(sys.argv[1])); "
+        "ctx=gate.hold(); ctx.__enter__(); print('locked', flush=True); "
+        "sys.stdin.readline(); ctx.__exit__(None, None, None)"
+    )
+    processes: list[subprocess.Popen] = []
+    try:
+        for _ in range(2):
+            processes.append(subprocess.Popen(
+                [sys.executable, "-c", script, str(tmp_path / "gate.lock")],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
+            ))
+            if len(processes) == 1:
+                first = processes[0]
+                assert first.stdout is not None
+                assert select.select([first.stdout], [], [], 10)[0]
+                assert first.stdout.readline().strip() == "locked"
+        second = processes[1]
+        assert second.stdout is not None
+        assert not select.select([second.stdout], [], [], 0.3)[0]
+        assert first.stdin is not None
+        first.stdin.write("release\n")
+        first.stdin.flush()
+        assert select.select([second.stdout], [], [], 10)[0]
+        assert second.stdout.readline().strip() == "locked"
+    finally:
+        for process in processes:
+            if process.poll() is None:
+                process.terminate()
+            process.wait(timeout=10)
 
 
 # =============================================================================================

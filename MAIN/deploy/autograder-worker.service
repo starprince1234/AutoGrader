@@ -1,0 +1,40 @@
+[Unit]
+Description=AutoGrader submission evaluation worker
+After=network-online.target docker.service autograder.service
+Wants=network-online.target
+Requires=docker.service autograder.service
+
+[Service]
+Type=simple
+User=autograder
+Group=autograder
+WorkingDirectory=/opt/autograder/current/MAIN
+EnvironmentFile=/etc/autograder/runtime.env
+Environment=PYTHONUNBUFFERED=1
+Environment=HTTP_PROXY=http://127.0.0.1:7893
+Environment=HTTPS_PROXY=http://127.0.0.1:7893
+Environment=http_proxy=http://127.0.0.1:7893
+Environment=https_proxy=http://127.0.0.1:7893
+Environment=NO_PROXY=localhost,127.0.0.1,::1
+Environment=no_proxy=localhost,127.0.0.1,::1
+ExecStart=/opt/autograder/current/MAIN/.venv/bin/python -m autograder_b2.worker
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=infinity
+KillMode=mixed
+LimitNOFILE=4096
+UMask=0077
+Delegate=cpu memory pids
+DelegateSubgroup=payload
+BindPaths=/sys/fs/cgroup/system.slice/autograder-worker.service:/sys/fs/cgroup
+ReadWritePaths=/var/lib/autograder /sys/fs/cgroup
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=false
+MemoryMax=256M
+CPUQuota=75%
+TasksMax=256
+
+[Install]
+WantedBy=multi-user.target

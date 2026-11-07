@@ -52,6 +52,7 @@ rejected, failed}`。允许 `queued` 直达终态，因为静态/安全阻断发
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import uuid
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -175,15 +176,17 @@ class _Blocked(Exception):
 class DynamicExecutionGate:
     """动态执行并发闸门（资源账本）：容量固定、记录峰值。
 
-    用进程内 `BoundedSemaphore` 实现"同一时刻至多 N 个沙箱作业"；`peak` 是并发上界的**可断言证据**
-    （测试在 N 次并发编排后断言 `peak <= 1`）。跨进程的全局占用需要数据库账本，属集成方的扩容工作
-    （当前部署为单进程 worker）：此处如实标注，而不是假装已经全局生效。
+    同进程用 `BoundedSemaphore`；生产运行时同时配置共享文件锁，协调 API 与独立 worker。
+    `peak` 是本进程内的峰值，不代表跨进程全局计数。
     """
 
-    def __init__(self, capacity: int = DYNAMIC_CONCURRENCY_LIMIT) -> None:
+    def __init__(self, capacity: int = DYNAMIC_CONCURRENCY_LIMIT, *, lock_path: Path | None = None) -> None:
         if capacity < 1:
             raise ValueError("并发容量必须 >= 1")
         self._capacity = capacity
+        if lock_path is not None and capacity != 1:
+            raise ValueError("cross-process sandbox lock requires capacity 1")
+        self._lock_path = lock_path
         self._semaphore = threading.BoundedSemaphore(capacity)
         self._lock = threading.Lock()
         self._current = 0
@@ -217,16 +220,42 @@ class DynamicExecutionGate:
     def hold(self) -> Iterator[None]:
         """占住一个并发额度（一个沙箱作业）；退出时必然归还。"""
         self._semaphore.acquire()
-        with self._lock:
-            self._current += 1
-            self._acquisitions += 1
-            self._peak = max(self._peak, self._current)
         try:
-            yield
+            with self._cross_process_lock():
+                with self._lock:
+                    self._current += 1
+                    self._acquisitions += 1
+                    self._peak = max(self._peak, self._current)
+                try:
+                    yield
+                finally:
+                    with self._lock:
+                        self._current -= 1
         finally:
-            with self._lock:
-                self._current -= 1
             self._semaphore.release()
+
+    @contextmanager
+    def _cross_process_lock(self) -> Iterator[None]:
+        if self._lock_path is None:
+            yield
+            return
+        if os.name != "posix":
+            raise SandboxUnavailableError("cross-process sandbox coordination requires POSIX")
+        import fcntl
+
+        try:
+            self._lock_path.parent.mkdir(parents=True, exist_ok=True)
+            descriptor = os.open(self._lock_path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        except OSError as error:
+            raise SandboxUnavailableError("sandbox coordination lock is unavailable") from error
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+        finally:
+            os.close(descriptor)
 
 
 @dataclass(frozen=True, slots=True)

@@ -576,7 +576,7 @@ def _wire_evaluation_chain(runtime: B2Runtime) -> None:
         runtime.evaluation_reason = str(error)
         runtime.references_reason = str(error)
         return
-    gate = DynamicExecutionGate()
+    gate = DynamicExecutionGate(lock_path=chain.workspace_root / ".sandbox-execution.lock")
     runtime.evaluator = EvaluationOrchestrator(
         engine=engine,
         package_source=source,

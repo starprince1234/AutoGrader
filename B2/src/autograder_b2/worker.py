@@ -40,8 +40,9 @@ from __future__ import annotations
 
 import argparse
 import os
+import signal
 import sys
-import time
+import threading
 
 import sqlalchemy as sa
 from sqlalchemy import Engine
@@ -153,20 +154,26 @@ def main(argv: list[str] | None = None) -> int:
     )
     arguments = parser.parse_args(argv)
 
-    runtime = build_b2_runtime(os.environ)
+    settings = dict(os.environ)
+    for key in ("DATABASE_URL", "NATS_URL"):
+        if "B2_" + key in settings:
+            settings[key] = settings["B2_" + key]
+    runtime = build_b2_runtime(settings)
     if runtime.evaluator is None:
         print(f"evaluation chain unavailable: {runtime.evaluation_reason}", file=sys.stderr)
         return 2
 
+    stopping = threading.Event()
+    signal.signal(signal.SIGTERM, lambda _signum, _frame: stopping.set())
     try:
-        while True:
+        while not stopping.is_set():
             evaluated = run_once(runtime)
             if arguments.once:
                 return 0
             if evaluated == 0:
                 if arguments.idle_exit:
                     return 0
-                time.sleep(arguments.idle_seconds)
+                stopping.wait(arguments.idle_seconds)
     except KeyboardInterrupt:  # pragma: no cover - interactive stop
         log_event(logger, "worker.stopped")
         return 0

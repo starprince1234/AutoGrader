@@ -28,6 +28,7 @@ B5/src
 MAIN/compose.production.yaml
 MAIN/contracts
 MAIN/deploy/autograder.service
+MAIN/deploy/autograder-worker.service
 MAIN/deploy/cloudflared.service
 MAIN/deploy/autograder-intake.service
 MAIN/deploy/autograder-intake.timer

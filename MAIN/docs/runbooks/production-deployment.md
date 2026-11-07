@@ -4,6 +4,8 @@
 
 API unit 使用 `DelegateSubgroup=payload` 将主进程放入委派子组，使 unit 父 cgroup 可供 nsjail 创建受限作业；该配置要求支持此属性的 systemd（上游从 254 起支持）。2026-11-06 对生产主机的只读检查结果为 systemd 255。部署 workflow 不在 SSH 会话中运行金丝雀：该上下文不能证明 API 服务的沙箱可执行，日志明确标记 `sandbox_execution=not_checked`。参考答案验证与 cgroup 限额必须在相同 service 上下文中另行验收；生产重启和产生 attestation 的验证需先取得授权。
 
+学生提交由 `autograder-worker.service` 消费；该服务使用独立的 systemd 委派 cgroup，以非 root 身份运行。API 的参考答案检验和 worker 的学生评测使用工作区根下同一文件锁，确保两条路径合计至多一个沙箱作业。发布时先等待 worker 完成当前提交并退出，再停止 API；worker 收到 SIGTERM 后不再领取下一份提交。`TimeoutStopSec=infinity` 避免强行中断并丢失在途评测，因此异常情况下发布可能等待较长时间，需要检查 worker 状态与日志。
+
 生产沙箱还要求 `/etc/subuid` 和 `/etc/subgid` 分别为 `autograder` 分配不与其他账号或现有分配重叠的 subordinate ID，并安装具备对应文件能力的 `/usr/bin/newuidmap`、`/usr/bin/newgidmap`。2026-11-06 已各分配一个 ID：231072。unit 的 `NoNewPrivileges=false` 允许这两个映射工具取得文件能力，也意味着服务进程不再享有 systemd 的全局 `NoNewPrivileges` 保护；nsjail 仍为被隔离程序启用 no_new_privs、seccomp、网络隔离和资源上限。迁移到新主机前须重新核查 ID 是否空闲并分配，不能盲目复制该数字。日常发布不改动这些宿主设置。
 
 前端 DNS 与 Vercel 自定义域名已按用户交接记录完成。2026-10-19 通过 SSH 实测服务器为 OpenCloudOS 9.6 x86_64、Docker Compose 5.4.0、cgroup v2。首次生产预检当时通过：4 CPU、3655 MiB RAM（当时可用 1602 MiB）、`/var/lib` 所在磁盘总量 39 GiB/可用 15 GiB，首部署项目、卷、服务及目标端口无冲突。第一次部署随后中断，服务器失败后的只读状态记录如下；当前发布流程见 §2。
