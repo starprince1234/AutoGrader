@@ -144,6 +144,13 @@ class QuestionVersion(Base):
             "jsonb_typeof(revision_diff) = 'object'",
             name="ck_question_versions_revision_diff_object",
         ),
+        #: NULL is the default `per_case` declaration; anything present must be an object (the
+        #: column doubles as the protected configuration store, so an array/string here is a
+        #: defect the database refuses rather than a value some reader has to interpret).
+        CheckConstraint(
+            "execution_manifest IS NULL OR jsonb_typeof(execution_manifest) = 'object'",
+            name="ck_question_versions_execution_manifest_object",
+        ),
         Index("ix_question_versions_question_id", "question_id"),
         Index("ix_question_versions_status", "status"),
         {"schema": SCHEMA},
@@ -174,6 +181,25 @@ class QuestionVersion(Base):
     #: ``none_as_null`` matters: without it SQLAlchemy binds Python ``None`` as the JSON
     #: value ``null``, which is *not* SQL NULL and fails the object-type check below.
     revision_diff: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
+    #: PROTECTED. How this version's cases are produced (`ExecutionManifest`): mode plus the
+    #: mode's configuration (segment marker, email attempt/templates, SSH practice account).
+    #: NULL -- the default -- means `per_case`, and a NULL declaration is deliberately *not*
+    #: part of `content_digest`, so versions published before the field existed stay
+    #: reproducible (design baseline §8). ``none_as_null`` is required here for the same reason
+    #: as on ``revision_diff``: the object-type CHECK must not receive a JSON ``null``.
+    #:
+    #: **Deliberate storage placement (reviewed).** The design baseline puts the declaration on
+    #: ``question_versions`` rather than in a new protected table, so the least-privilege app
+    #: role's ORM reads do load this column. That is accepted because: the SSH password here is
+    #: the *practice account* password already printed in the question stem (not a production
+    #: credential); no code path serializes the column -- `api.serializers.version_to_public`
+    #: projects only `execution_mode`, and draft-content/package are protected channels; and
+    #: no event or log line carries it. Residual risk: a database-level reader of
+    #: ``question_versions`` can see the declaration, so future code must keep treating this
+    #: column as protected content rather than ordinary public question data.
+    execution_manifest: Mapped[dict[str, Any] | None] = mapped_column(
         JSONB(none_as_null=True), nullable=True
     )
     created_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
@@ -274,6 +300,12 @@ class TestCase(Base):
         CheckConstraint("ordinal >= 0", name="ck_test_cases_ordinal_non_negative"),
         CheckConstraint("weight > 0", name="ck_test_cases_weight_positive"),
         CheckConstraint("length(name) BETWEEN 1 AND 200", name="ck_test_cases_name_length"),
+        #: NULL means "this case declares no execution behaviour" (the legacy shape). Anything
+        #: present is one object: `{segment?, file_checks?, ssh_check?, email_check?}`.
+        CheckConstraint(
+            "execution IS NULL OR jsonb_typeof(execution) = 'object'",
+            name="ck_test_cases_execution_object",
+        ),
         Index("ix_test_cases_test_suite_id", "test_suite_id"),
         {"schema": SCHEMA},
     )
@@ -298,6 +330,12 @@ class TestCase(Base):
     expected_stdout: Mapped[str | None] = mapped_column(Text, nullable=True)
     expected_stderr: Mapped[str | None] = mapped_column(Text, nullable=True)
     expected_exit_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    #: PROTECTED. Per-case execution declaration (`segment`/`file_checks`/`ssh_check`/
+    #: `email_check`). NULL keeps every row written before the feature exactly as it was, and
+    #: an empty declaration is stored as NULL so "declares nothing" has one representation.
+    execution: Mapped[dict[str, Any] | None] = mapped_column(
+        JSONB(none_as_null=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 

@@ -12,6 +12,55 @@
 
 ---
 
+## 0.30.0 — Unix 作业评测：显式执行声明、邮件核验、SSH 练习环境、文件与分段评分（CHG-0031）
+
+- **类型**：P2 语义扩展（新增可选字段 + 2 个学生端点 + 1 个 internal 只读端点；无字段删除、无别名、无双写）
+- **状态**：有效
+- **背景**：「示例题目」课程的 Unix 作业需要按题面真实判定，而不是靠人工核验或一个 `true` 答案：
+  第 1 题必须基于真实收到的邮件、第 2 题必须真实 SSH 登录退出、第 6 题必须直接检查 vi 修改后的文件内容与
+  权限位、第 7–9 题必须一次运行后按固定分隔行分段评分。此前：参考答案 `true`、SSH 无练习环境、
+  fixture 只有摘要没有字节交付通道、每个用例各跑一次整份参考答案。行为不能靠题目标题/标签/路径暗中切换，
+  因此把「怎么产生用例结果」提升为 package 与题目版本的显式声明。
+- **变更**：
+  - `evaluation-package.schema.json`：新增可选 `execution`（`mode ∈ {per_case, single_run, ssh_session,
+    email_delivery}`，以及 `segment_delimiter`、`email{attempt,subject_template,required_attachment_template}`、
+    `ssh{host,port,username,password,login_timeout_seconds,session_timeout_seconds}`）；`tests[]` 新增可选
+    `segment`、`file_checks[{path,content_sha256,mode}]`、`ssh_check`、`email_check`。缺省（不输出该字段）即
+    既有 `per_case` 行为，旧内容重新编译的 package 字节与摘要不变。
+  - `evaluation-report.schema.json`：`case_evidence[]` 新增可选 `segment`；`case_artifacts` 新增可选
+    `file_checks`（期望/实际摘要与权限位、是否匹配）；顶层新增 `execution{mode,invocation_count,evidence_count}`
+    （如实区分沙箱启动次数与用例证据数）；`security_conclusion.status` 增加 `not_applicable`
+    （仅 `email_delivery`：不执行代码，静态/安全检查不适用，与「未检查」区分）。
+  - `openapi/common.yaml`：新增 `ExecutionMode` 枚举；版本同步。
+  - `openapi/b3.yaml`：`QuestionVersionPublic` 新增 `execution_mode`（只暴露模式，不暴露口令等受保护配置）；
+    `QuestionDraftInput` 新增可选 `execution`（省略保持、显式 `null` 清回 `per_case`）；`QuestionDraftContent`
+    新增必填 `execution`（编辑回环）；`TestCaseInput` 新增 `segment`、`file_checks`、`ssh_check`、`email_check`；
+    新增 schema `ExecutionManifest`、`ExecutionEmail`、`ExecutionSsh`、`FileCheckInput`、
+    `FixtureContentBundle`、`FixtureContentItem`；新增 internal `getVersionFixtureContents`
+    （`GET /api/v1/question-versions/{question_version_id}/fixture-contents?mount=input`，
+    `serviceToken` only，单文件 ≤1 MiB、总量 ≤4 MiB，超限 413 不截断；`expected_output` 字节仍无读取端点）。
+  - `openapi/b2.yaml`：新增 `createEmailVerificationChallenge`
+    （`POST /api/v1/email-verification/challenges`，学生，返回一次性核验码，服务端只存摘要，30 分钟有效）与
+    `getEmailVerificationChallengeStatus`（`GET /api/v1/email-verification/challenges/{challenge_id}`，
+    `pending/received/rejected(reason_code)/expired`，区分「邮件没到」「被拒」「收件依赖不可用」）；
+    新增 schema `EmailVerificationChallengeRequest`、`EmailVerificationChallenge`、
+    `EmailVerificationChallengeStatus`。
+  - 变更文件：六个 `info.version`（b2/b3/b4/b5/common + asyncapi）、两个 JSON schema、三份 OpenAPI、
+    五份 `contracts.lock`、五份 `module.yaml`、四个 `plugin.py` 描述符；B2 新增迁移 head `20261107_0020`，
+    B3 新增迁移 head `20261107_0007`。
+- **受影响模块**：
+  - **B3**：`execution_manifest`/`test_cases.execution` 存储与迁移、写路径校验、编译输出、内容摘要兼容、
+    fixture 字节 internal 端点、公开 DTO 的 `execution_mode`。
+  - **B2**：runner 批量执行（一次运行多次评分/文件状态/SSH 会话）、fixture 物化、编排模式分支与计数、
+    参考解答验证同链、邮件核验码与 IMAP 收件绑定、投递核验。
+  - **B1**：作者界面显示与编辑执行声明（模式、分隔行、attempt、SSH 练习账号、用例 segment/file_checks）；
+    学生端可获取/查询邮件核验码。
+  - **B4/B5**：无行为改动，仅跟随版本与锁摘要。
+- **兼容性**：新字段全部可选；缺省语义使旧 package/旧版本/旧报告继续合法。新增 operation 只增不改。
+  已发布版本的 `content_digest` 与 `package_digest` 不因本次变更而改变（B3 编译只在非缺省声明时输出新字段）。
+- **验证**：由远端 CI 与隔离 Linux 环境执行（契约 schema 校验、模块接口与 Linux nsjail 集成测试）；
+  本轮本机不运行项目测试或构建。摘要见五份 `contracts.lock`（按 `MAIN/contracts` 逐文件字节计算）。
+
 ## 0.29.0 — 题库列表的题干片段检索（CHG-0030）
 
 - **类型**：P1 向后兼容（只加一个可选查询参数，无新 operation、无新 schema）

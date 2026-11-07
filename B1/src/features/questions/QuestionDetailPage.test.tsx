@@ -388,3 +388,50 @@ describe("题目详情与版本机制（RQ-B-1-40）", () => {
     expect(screen.queryByTestId("version-not-published")).toBeNull();
   });
 });
+
+describe("评分方式（Unix 作业扩展）", () => {
+  it("版本面板显示公开的评分方式枚举；受保护配置不出现在详情页", async () => {
+    stub = installFetchStub([
+      {
+        path: `/api/v1/questions/${QUESTION_ID}`,
+        respond: () => jsonResponse(questionPublic()),
+      },
+      {
+        path: `/api/v1/question-versions/${VERSION_A}`,
+        respond: () =>
+          jsonResponse({
+            ...questionVersionPublic({ question_version_id: VERSION_A, version: 3 }),
+            execution_mode: "email_delivery",
+          }),
+      },
+    ]);
+
+    renderQuestionDetail();
+
+    const mode = await screen.findByTestId("version-execution-mode");
+    expect(mode).toHaveTextContent("评分方式");
+    expect(mode).toHaveTextContent("邮件投递");
+    // 公开面只有模式本身：练习环境地址、尝试次数这些配置不会出现在这里。
+    expect(document.body.textContent ?? "").not.toContain("127.0.0.1");
+  });
+
+  it("旧版本没有 execution_mode 字段时按「每个用例单独运行」显示", async () => {
+    stub = installFetchStub([
+      {
+        path: `/api/v1/questions/${QUESTION_ID}`,
+        respond: () => jsonResponse(questionPublic()),
+      },
+      {
+        path: `/api/v1/question-versions/${VERSION_A}`,
+        respond: () =>
+          jsonResponse(questionVersionPublic({ question_version_id: VERSION_A, version: 3 })),
+      },
+    ]);
+
+    renderQuestionDetail();
+
+    expect(await screen.findByTestId("version-execution-mode")).toHaveTextContent(
+      "每个用例单独运行",
+    );
+  });
+});

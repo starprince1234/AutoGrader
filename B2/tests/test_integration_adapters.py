@@ -14,17 +14,21 @@ package 夹具复用 `tests.test_runner_core.package_payload`（不新建第二�
 
 from __future__ import annotations
 
+import base64
 import contextlib
+import hashlib
 import http.server
 import json
 import os
 import pathlib
 import socket
 import threading
+import types
 import uuid
 from collections.abc import Iterator
 
 import pytest
+from sqlalchemy.exc import SQLAlchemyError
 
 from autograder_b2.domain.envelope import EnvelopeFile
 from autograder_b2.domain.evidence import (
@@ -33,24 +37,29 @@ from autograder_b2.domain.evidence import (
     SandboxUnavailableError,
     SubmissionRunInput,
 )
+from autograder_b2.evaluation.ports import DeliveryUnavailableError, DeliveryVerificationDefect
 from autograder_b2.integration.adapters import (
     B3Endpoint,
+    B3FixtureSource,
     CasWorkspaceProvider,
+    EmailDeliveryVerifier,
     HttpPackageSource,
     RunnerCaseRunner,
     StaticSecurityDecider,
+    execution_digest_of,
 )
 from autograder_b2.integration.bindings import (
     UNSET_ENVIRONMENT_TAG,
     environment_digest,
     question_version_binding,
 )
+from autograder_b2.intake.email_rules import EmailReceipt
 from autograder_b2.runner.package import PackageRejected, parse_evaluation_package
 from autograder_b2.runner.policy import policy_digest, probe_sandbox
 from autograder_b2.security.decision import allows_dynamic_execution
 from autograder_b2.storage.cas import ContentAddressedStore
 from tests.conftest import requires_postgres
-from tests.test_runner_core import PACKAGE_DIGEST, QUESTION_ID, package_payload
+from tests.test_runner_core import PACKAGE_DIGEST, QUESTION_ID, base_case, package_payload
 
 #: 凭据只用于断言"确实进了 Authorization 头"；测试里不得把它打印出来。
 TEST_CREDENTIAL = "Bearer test-credential-not-a-real-token"
@@ -623,3 +632,381 @@ class TestWorkspaceProvider:
                     files=(bad,),
                 )
         assert not (tmp_path / "escape.py").exists()
+
+    @requires_postgres
+    def test_batch_workspace_is_created_per_execution_and_is_not_a_case_scope(
+        self, store: ContentAddressedStore, tmp_path: pathlib.Path
+    ) -> None:
+        """批量模式：一次执行一份工作区；batch 与 case 两种粒度互斥。"""
+        provider = CasWorkspaceProvider(store=store, workspace_root=tmp_path / "ws")
+        files = (self._file(store, "solution.py", b"print(1)\n"),)
+        submission = str(uuid.uuid4())
+        first_run = str(uuid.uuid4())
+        second_run = str(uuid.uuid4())
+        first = provider.prepare(
+            submission_id=submission, evaluation_run_id=first_run, files=files, batch=True
+        )
+        second = provider.prepare(
+            submission_id=submission, evaluation_run_id=second_run, files=files, batch=True
+        )
+        assert first.name == "batch" and second.name == "batch"
+        assert first != second
+        assert (first / "solution.py").read_bytes() == b"print(1)\n"
+        with pytest.raises(ValueError):
+            provider.prepare(
+                submission_id=submission,
+                evaluation_run_id=first_run,
+                files=files,
+                case_id=str(uuid.uuid4()),
+                batch=True,
+            )
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits")
+    @requires_postgres
+    def test_batch_workspace_is_reachable_without_exposing_its_parent(
+        self, store: ContentAddressedStore, tmp_path: pathlib.Path
+    ) -> None:
+        provider = CasWorkspaceProvider(store=store, workspace_root=tmp_path / "ws")
+        workspace = provider.prepare(
+            submission_id=str(uuid.uuid4()),
+            evaluation_run_id=str(uuid.uuid4()),
+            files=(self._file(store, "lib/main.py", b"print(1)\n"),),
+            batch=True,
+        )
+        assert workspace.stat().st_mode & 0o777 == 0o777
+        assert (workspace / "lib").stat().st_mode & 0o777 == 0o777
+        assert (workspace / "lib/main.py").stat().st_mode & 0o777 == 0o644
+        assert workspace.parent.stat().st_mode & 0o077 == 0
+
+
+# --------------------------------------------------------------------------------------
+# 执行声明（execution）：package → PackageView 的映射与摘要
+# --------------------------------------------------------------------------------------
+
+
+def _execution_source(base_url: str) -> HttpPackageSource:
+    return HttpPackageSource(
+        B3Endpoint(base_url=base_url, authorization=TEST_CREDENTIAL, timeout_seconds=5.0)
+    )
+
+
+class TestExecutionView:
+    def test_single_run_execution_is_mapped_with_a_canonical_digest(self) -> None:
+        declaration = {"mode": "single_run", "segment_delimiter": "---SEGMENT---"}
+        payload = package_payload(
+            execution=declaration,
+            tests=[base_case(segment=0)],
+        )
+        with package_endpoint(payload=json.dumps(payload).encode("utf-8")) as (base_url, _):
+            view = _execution_source(base_url).fetch(
+                evaluation_run_id=str(uuid.uuid4()), question_version_id=QUESTION_ID
+            )
+        assert view.execution.mode == "single_run"
+        assert view.execution.segment_delimiter == "---SEGMENT---"
+        # 摘要 = 规范化 JSON 的 SHA-256（排序键 + 紧凑分隔符）。
+        canonical = json.dumps(
+            declaration, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        )
+        assert view.execution.execution_digest == hashlib.sha256(
+            canonical.encode("utf-8")
+        ).hexdigest()
+        # 不透明句柄 = runner 解析出的声明对象（含受保护配置的位置），本层不解释。
+        assert view.execution.handle is not None
+
+    def test_default_execution_is_per_case_without_a_digest(self) -> None:
+        with package_endpoint(payload=json.dumps(package_payload()).encode("utf-8")) as (base_url, _):
+            view = _execution_source(base_url).fetch(
+                evaluation_run_id=str(uuid.uuid4()), question_version_id=QUESTION_ID
+            )
+        assert view.execution.mode == "per_case"
+        assert view.execution.execution_digest is None
+
+    def test_ssh_password_is_not_part_of_the_digest_or_any_printable_field(self) -> None:
+        """摘要绑定声明结构而非口令；口令也不得出现在任何 repr/日志可捕获的字段里。"""
+        def payload_for(password: str) -> dict:
+            return package_payload(
+                language="bash",
+                execution={
+                    "mode": "ssh_session",
+                    "ssh": {
+                        "host": "127.0.0.1",
+                        "port": 22,
+                        "username": "user01",
+                        "password": password,
+                    },
+                },
+                tests=[base_case(ssh_check="service_ready", stdin=None, expected_stdout=None)],
+            )
+
+        digests: list[str] = []
+        for password in ("first-secret", "second-secret"):
+            with package_endpoint(
+                payload=json.dumps(payload_for(password)).encode("utf-8")
+            ) as (base_url, _):
+                view = _execution_source(base_url).fetch(
+                    evaluation_run_id=str(uuid.uuid4()), question_version_id=QUESTION_ID
+                )
+            digests.append(str(view.execution.execution_digest))
+            assert password not in repr(view)
+            assert password not in repr(view.execution)
+        assert digests[0] == digests[1]
+
+    def test_execution_digest_is_none_for_an_absent_declaration(self) -> None:
+        assert execution_digest_of(None) is None
+        with pytest.raises(PackageUnavailableError):
+            execution_digest_of([])  # type: ignore[arg-type]
+
+
+# --------------------------------------------------------------------------------------
+# B3 fixture 字节通道（FixtureProvider 的生产实现）
+# --------------------------------------------------------------------------------------
+
+
+def _fixture_source(base_url: str, *, limit: int = 1 << 20) -> B3FixtureSource:
+    return B3FixtureSource(
+        B3Endpoint(
+            base_url=base_url,
+            authorization=TEST_CREDENTIAL,
+            timeout_seconds=5.0,
+            max_response_bytes=limit,
+        )
+    )
+
+
+def _bundle(items: list[dict[str, object]], *, version: str = QUESTION_ID) -> dict[str, object]:
+    return {"question_version_id": version, "items": items}
+
+
+def _item(path: str, content: bytes, *, mount: str = "input", digest: str | None = None) -> dict[str, object]:
+    return {
+        "path": path,
+        "mount": mount,
+        "content_sha256": digest or hashlib.sha256(content).hexdigest(),
+        "size_bytes": len(content),
+        "content_base64": base64.b64encode(content).decode("ascii"),
+    }
+
+
+class TestB3FixtureSource:
+    def test_reads_input_fixture_bytes_with_local_digest_verification(self) -> None:
+        first = b"week6 line one\n"
+        second = b"\x00\x01binary\xff"
+        document = _bundle([_item("week6_1.txt", first), _item("data/week6_2.dat", second)])
+        with package_endpoint(payload=json.dumps(document).encode("utf-8")) as (base_url, seen):
+            fixtures = _fixture_source(base_url).fetch_inputs(question_version_id=QUESTION_ID)
+        assert [(item.path, item.content) for item in fixtures] == [
+            ("week6_1.txt", first),
+            ("data/week6_2.dat", second),
+        ]
+        assert [item.content_sha256 for item in fixtures] == [
+            hashlib.sha256(first).hexdigest(),
+            hashlib.sha256(second).hexdigest(),
+        ]
+        # 请求只带 mount=input 与规范化 UUID，凭据只进请求头。
+        assert seen[0]["path"].endswith(
+            f"/api/v1/question-versions/{QUESTION_ID}/fixture-contents?mount=input"
+        )
+        assert seen[0]["authorization"] == TEST_CREDENTIAL
+
+    def test_rejects_a_non_input_mount(self) -> None:
+        document = _bundle([_item("expected.txt", b"x", mount="expected_output")])
+        with package_endpoint(payload=json.dumps(document).encode("utf-8")) as (base_url, _):
+            with pytest.raises(PackageUnavailableError):
+                _fixture_source(base_url).fetch_inputs(question_version_id=QUESTION_ID)
+
+    def test_rejects_a_digest_that_does_not_match_the_bytes(self) -> None:
+        bad = _item("week6_1.txt", b"actual", digest="0" * 64)
+        with package_endpoint(payload=json.dumps(_bundle([bad])).encode("utf-8")) as (base_url, _):
+            with pytest.raises(PackageUnavailableError):
+                _fixture_source(base_url).fetch_inputs(question_version_id=QUESTION_ID)
+
+    def test_rejects_invalid_base64_and_size_mismatch(self) -> None:
+        invalid = _item("week6_1.txt", b"abc")
+        invalid["content_base64"] = "not-base64!!"
+        with package_endpoint(payload=json.dumps(_bundle([invalid])).encode("utf-8")) as (base_url, _):
+            with pytest.raises(PackageUnavailableError):
+                _fixture_source(base_url).fetch_inputs(question_version_id=QUESTION_ID)
+        wrong_size = _item("week6_1.txt", b"abc")
+        wrong_size["size_bytes"] = 99
+        with package_endpoint(
+            payload=json.dumps(_bundle([wrong_size])).encode("utf-8")
+        ) as (base_url, _):
+            with pytest.raises(PackageUnavailableError):
+                _fixture_source(base_url).fetch_inputs(question_version_id=QUESTION_ID)
+
+    def test_rejects_another_question_version(self) -> None:
+        document = _bundle([_item("a.txt", b"x")], version=str(uuid.uuid4()))
+        with package_endpoint(payload=json.dumps(document).encode("utf-8")) as (base_url, _):
+            with pytest.raises(PackageUnavailableError):
+                _fixture_source(base_url).fetch_inputs(question_version_id=QUESTION_ID)
+
+    def test_rejects_paths_outside_the_workspace_whitelist(self) -> None:
+        for bad_path in ("../escape.txt", "/absolute.txt", "a/../../b.txt"):
+            document = _bundle([_item(bad_path, b"x")])
+            with package_endpoint(
+                payload=json.dumps(document).encode("utf-8")
+            ) as (base_url, _):
+                with pytest.raises(PackageUnavailableError):
+                    _fixture_source(base_url).fetch_inputs(question_version_id=QUESTION_ID)
+
+    def test_rejects_duplicate_paths_and_too_many_items_and_unknown_fields(self) -> None:
+        duplicate = _bundle([_item("a.txt", b"x"), _item("a.txt", b"y")])
+        with package_endpoint(payload=json.dumps(duplicate).encode("utf-8")) as (base_url, _):
+            with pytest.raises(PackageUnavailableError):
+                _fixture_source(base_url).fetch_inputs(question_version_id=QUESTION_ID)
+        too_many = _bundle([_item(f"f{index}.txt", b"x") for index in range(51)])
+        with package_endpoint(payload=json.dumps(too_many).encode("utf-8")) as (base_url, _):
+            with pytest.raises(PackageUnavailableError):
+                _fixture_source(base_url).fetch_inputs(question_version_id=QUESTION_ID)
+        extras = _bundle([_item("a.txt", b"x")])
+        extras["unexpected"] = True
+        with package_endpoint(payload=json.dumps(extras).encode("utf-8")) as (base_url, _):
+            with pytest.raises(PackageUnavailableError):
+                _fixture_source(base_url).fetch_inputs(question_version_id=QUESTION_ID)
+
+    def test_refuses_an_oversized_response_instead_of_truncating_it(self) -> None:
+        document = _bundle([_item("a.txt", b"x")])
+        with package_endpoint(payload=json.dumps(document).encode("utf-8")) as (base_url, _):
+            with pytest.raises(PackageUnavailableError):
+                _fixture_source(base_url, limit=8).fetch_inputs(question_version_id=QUESTION_ID)
+
+    def test_refuses_an_item_over_one_mebibyte(self) -> None:
+        blob = b"x" * (1024 * 1024 + 1)
+        document = _bundle([_item("big.bin", blob)])
+        with package_endpoint(payload=json.dumps(document).encode("utf-8")) as (base_url, _):
+            with pytest.raises(PackageUnavailableError):
+                _fixture_source(base_url, limit=1 << 23).fetch_inputs(
+                    question_version_id=QUESTION_ID
+                )
+
+    def test_maps_upstream_http_errors_to_package_unavailable(self) -> None:
+        with package_endpoint(status=413, payload=b'{"detail": "too large"}') as (base_url, _):
+            with pytest.raises(PackageUnavailableError) as caught:
+                _fixture_source(base_url).fetch_inputs(question_version_id=QUESTION_ID)
+        assert caught.value.status_code == 413
+        assert caught.value.upstream_detail == "too large"
+
+
+# --------------------------------------------------------------------------------------
+# 邮件投递核验（DeliveryVerifier 的生产实现；不执行代码）
+# --------------------------------------------------------------------------------------
+
+
+def _email_package(*checks: str) -> types.SimpleNamespace:
+    tests = tuple(
+        types.SimpleNamespace(
+            case_id=str(uuid.uuid5(uuid.NAMESPACE_URL, f"b2-email-case-{index}")),
+            ordinal=index,
+            weight=1,
+            email_check=check,
+        )
+        for index, check in enumerate(checks)
+    )
+    execution = types.SimpleNamespace(
+        mode="email_delivery",
+        email=types.SimpleNamespace(
+            attempt=1,
+            subject_template="{student_number}_{attempt}",
+            required_attachment_template="{student_number}.txt",
+        ),
+    )
+    return types.SimpleNamespace(tests=tests, execution=execution)
+
+
+class _FakeEngine:
+    """最小引擎替身：`with engine.connect() as connection:` 的唯一用途是交给 fake loader/health。"""
+
+    def __init__(self) -> None:
+        self.connection = object()
+
+    @contextlib.contextmanager
+    def connect(self) -> Iterator[object]:
+        yield self.connection
+
+
+def _receipt(**overrides: object) -> EmailReceipt:
+    document: dict[str, object] = {
+        "student_number": "2020141440777",
+        "subject": "2020141440777_1",
+        "sender": "student@example.edu",
+        "account_email": "student@example.edu",
+        "attachment_names": ("2020141440777.txt",),
+        "received": True,
+        "account_email_verified": True,
+        "sender_binding_matches": True,
+    }
+    document.update(overrides)
+    return EmailReceipt(**document)  # type: ignore[arg-type]
+
+
+def _submission() -> types.SimpleNamespace:
+    return types.SimpleNamespace(
+        submission_id=str(uuid.uuid4()),
+        student_id=str(uuid.uuid4()),
+        question_version_id=str(uuid.uuid4()),
+    )
+
+
+class TestEmailDeliveryVerifier:
+    def _verifier(self, *, receipt: EmailReceipt | None, health: str = "fresh", loader_error=None):
+        def loader(_connection: object, _submission_id: str):
+            if loader_error is not None:
+                raise loader_error
+            return receipt
+
+        def health_probe(_connection: object, *, now=None) -> str:
+            del now
+            return health
+
+        return EmailDeliveryVerifier(
+            engine=_FakeEngine(),
+            now=lambda: None,  # 心跳探测替身忽略该值
+            receipt_loader=loader,
+            health_probe=health_probe,
+        )
+
+    def test_a_received_message_is_judged_by_the_shared_rules(self) -> None:
+        verifier = self._verifier(receipt=_receipt())
+        evidences = verifier.verify(
+            _email_package("email_received", "subject", "sender", "attachment"), _submission()
+        )
+        assert len(evidences) == 4
+        assert all(item.passed for item in evidences)
+        assert [item.ordinal for item in evidences] == [0, 1, 2, 3]
+        # 不执行代码：没有资源读数、没有退出码、没有沙箱违规。
+        assert all(item.resource is None and item.exit_code is None for item in evidences)
+        assert all(item.sandbox_violations == () for item in evidences)
+
+    def test_a_missing_message_with_a_healthy_intake_is_a_student_side_missing_output(self) -> None:
+        verifier = self._verifier(receipt=None, health="fresh")
+        evidences = verifier.verify(_email_package("email_received", "subject"), _submission())
+        assert [item.failure_category for item in evidences] == ["missing_output", "missing_output"]
+        assert all(not item.passed for item in evidences)
+
+    def test_a_stale_or_unconfigured_intake_is_a_dependency_failure(self) -> None:
+        for health in ("stale", "unconfigured"):
+            verifier = self._verifier(receipt=None, health=health)
+            with pytest.raises(DeliveryUnavailableError):
+                verifier.verify(_email_package("email_received"), _submission())
+
+    def test_an_unreadable_receipt_store_is_a_dependency_failure(self) -> None:
+        verifier = self._verifier(receipt=None, loader_error=SQLAlchemyError("down"))
+        with pytest.raises(DeliveryUnavailableError):
+            verifier.verify(_email_package("email_received"), _submission())
+
+    def test_a_package_without_email_requirements_is_a_defect(self) -> None:
+        package = _email_package("email_received")
+        package.execution = types.SimpleNamespace(mode="email_delivery", email=None)
+        with pytest.raises(DeliveryVerificationDefect):
+            self._verifier(receipt=_receipt()).verify(package, _submission())
+
+    def test_an_undeclared_check_cannot_be_satisfied_silently(self) -> None:
+        package = _email_package("not_a_real_check")
+        with pytest.raises(DeliveryVerificationDefect):
+            self._verifier(receipt=_receipt()).verify(package, _submission())
+
+    def test_a_non_email_package_is_a_defect(self) -> None:
+        package = _email_package("email_received")
+        package.execution = types.SimpleNamespace(mode="per_case", email=None)
+        with pytest.raises(DeliveryVerificationDefect):
+            self._verifier(receipt=_receipt()).verify(package, _submission())

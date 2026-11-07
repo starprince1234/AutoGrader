@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AutoGrader B3 Question Bank API
-  version: 0.29.0
+  version: 0.30.0
   description: |
     Question bank: stems with graphics, reference answers, immutable question
     versions, assignments, three test-suite adapters and de-identified statistics.
@@ -841,6 +841,10 @@ paths:
         version must exist first, which is why the authoring flow saves the draft and then
         uploads -- "draft saved, attachments not finished" is a real state the client must
         report as such rather than as a successful save of the files.
+
+        Readback is internal-only: `getVersionFixtureContents` serves the `mount=input` bytes to
+        B2 on the service credential so they can be reproduced inside the sandbox. Browsers and
+        students still have no read endpoint, and `expected_output` bytes have none at all.
       tags: [questions]
       requestBody:
         required: true
@@ -853,6 +857,43 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/FixtureUploadResult'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
+        '413': {$ref: './common.yaml#/components/responses/PayloadTooLarge'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+
+  /api/v1/question-versions/{question_version_id}/fixture-contents:
+    parameters:
+      - {name: question_version_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+      - {name: mount, in: query, required: false, schema: {type: string, enum: [input]}}
+    get:
+      operationId: getVersionFixtureContents
+      summary: Internal fixture bytes for an executed version (service-to-service only)
+      description: |
+        INTERNAL. Consumed by B2 only. The evaluation package declares each fixture by
+        `{path, content_sha256, mount}` but deliberately carries no bytes; without a delivery
+        channel a file-based question's initial files cannot be reproduced inside the sandbox.
+        This operation closes that gap for `mount=input` only.
+
+        The response is bounded: at most 1 MiB per item and 4 MiB in total. An oversized bundle
+        is refused (`413`) instead of truncated, because a truncated fixture would silently
+        change what the student's code reads. `expected_output` bytes stay unreadable: their
+        comparison only needs the digest already in the package, so a second read channel would
+        widen protected content in flight for no benefit.
+
+        Authorization is the pre-shared `serviceToken`; a teacher or student token is refused
+        before any fixture is looked up.
+      tags: [internal]
+      security:
+        - serviceToken: []
+      responses:
+        '200':
+          description: Fixture bytes and their server-computed digests.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/FixtureContentBundle'}
         '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
         '403': {$ref: './common.yaml#/components/responses/Forbidden'}
         '404': {$ref: './common.yaml#/components/responses/NotFound'}
@@ -1693,6 +1734,14 @@ components:
             published yet" and "this response predates the field". Before `CHG-0024` this was
             declared non-nullable, so any version history containing a draft -- the normal state
             during authoring -- could not be read by a strict consumer of this contract.
+        execution_mode:
+          allOf: [{$ref: './common.yaml#/components/schemas/ExecutionMode'}]
+          description: |
+            How this version's cases are produced (per_case, single_run, ssh_session,
+            email_delivery). Public because a teacher must be able to see what kind of
+            question they are assigning; the **configuration** behind it (segment marker,
+            email attempt, SSH credentials) is protected and only travels on the authoring
+            and internal-package channels.
         max_files: {type: integer, minimum: 1}
         max_total_bytes: {type: integer, minimum: 1}
       additionalProperties: false
@@ -1729,6 +1778,12 @@ components:
             PROTECTED. Never leaves the question bank. Omitted or blank keeps the stored
             answer unchanged (CHG-0017); omission never removes it.
         adapter: {$ref: '#/components/schemas/AdapterManifest'}
+        execution:
+          anyOf: [{$ref: '#/components/schemas/ExecutionManifest'}, {type: "null"}]
+          description: |
+            Explicit scoring declaration. Omitted/null keeps the version's existing declaration
+            (per_case for a version that never had one). This is the only mechanism that
+            selects how cases are produced; title, tags and paths never do.
         cases:
           type: array
           minItems: 1
@@ -1843,10 +1898,11 @@ components:
         PROTECTED. A draft version's own reference answer and test cases, for the authoring
         edit page. Readable only by a teacher with write scope on the course, and only while the
         version is a draft (`getDraftContent`).
-      required: [reference_answer, cases]
+      required: [reference_answer, cases, execution]
       additionalProperties: false
       properties:
         reference_answer: {type: [string, "null"]}
+        execution: {$ref: '#/components/schemas/ExecutionManifest'}
         cases:
           type: array
           items: {$ref: '#/components/schemas/TestCaseInput'}
@@ -1867,6 +1923,23 @@ components:
         expected_stdout: {type: [string, "null"], description: "PROTECTED."}
         expected_stderr: {type: [string, "null"], description: "PROTECTED."}
         expected_exit_code: {type: [integer, "null"]}
+        segment:
+          type: [integer, "null"]
+          minimum: 0
+          description: "single_run only: which delimiter-separated stdout segment this case compares. Declared values must be exactly 0..N-1."
+        file_checks:
+          type: array
+          maxItems: 20
+          description: "Post-run assertions on final workspace files (bytes and permission bits). The evaluator never judges these from student stdout."
+          items: {$ref: '#/components/schemas/FileCheckInput'}
+        ssh_check:
+          type: [string, "null"]
+          enum: [service_ready, auth_succeeded, session_closed, null]
+          description: "ssh_session only: which real server-side fact this case judges."
+        email_check:
+          type: [string, "null"]
+          enum: [email_received, subject, sender, attachment, null]
+          description: "email_delivery only: which fact about the actually received message this case judges."
       additionalProperties: false
 
     ReferenceAttestationInput:
@@ -1993,4 +2066,94 @@ components:
             - type: string
               enum: [not_found, forbidden, conflict, unprocessable, internal]
             - type: "null"
+      additionalProperties: false
+
+    ExecutionManifest:
+      type: object
+      description: |
+        Explicit scoring declaration for a version. This is the **only** mechanism that selects
+        how a version's cases are produced; nothing is inferred from a title, tag or path.
+
+        Absence of a declaration (`null` on the write path, NULL in storage) means `per_case`,
+        which is the legacy behaviour every already-published version has.
+      required: [mode]
+      properties:
+        mode: {$ref: './common.yaml#/components/schemas/ExecutionMode'}
+        segment_delimiter:
+          type: [string, "null"]
+          minLength: 8
+          maxLength: 120
+          pattern: '^[!-~](?:[ -~]*[!-~])?$'
+          description: "single_run only: fixed marker that occupies a whole output line. Missing/extra segments fail every segment case; a segment is never reassigned."
+        email:
+          anyOf: [{$ref: '#/components/schemas/ExecutionEmail'}, {type: "null"}]
+        ssh:
+          anyOf: [{$ref: '#/components/schemas/ExecutionSsh'}, {type: "null"}]
+      additionalProperties: false
+
+    ExecutionEmail:
+      type: object
+      description: |
+        PROTECTED requirements for `email_delivery`. The receipt itself is produced by the real
+        IMAP intake; this object only says what the message must satisfy.
+      required: [attempt]
+      properties:
+        attempt: {type: integer, minimum: 1, maximum: 99}
+        subject_template: {type: string, maxLength: 200, default: "{student_number}_{attempt}"}
+        required_attachment_template: {type: string, maxLength: 200, default: "{student_number}.txt"}
+      additionalProperties: false
+
+    ExecutionSsh:
+      type: object
+      description: |
+        PROTECTED practice-service configuration for `ssh_session`. `password` is protected
+        content: it travels only on this authoring channel and the internal evaluation package,
+        never through a public DTO, event or log line.
+      required: [host, port, username, password]
+      properties:
+        host: {type: string, enum: ["127.0.0.1"], description: "The question requires logging in to localhost; any other address would leave the isolated namespace."}
+        port: {type: integer, minimum: 1, maximum: 65535}
+        username: {type: string, pattern: '^[a-z_][a-z0-9_-]{0,31}$'}
+        password: {type: string, minLength: 1, maxLength: 128, description: "PROTECTED."}
+        login_timeout_seconds: {type: number, exclusiveMinimum: 0, maximum: 30, default: 10}
+        session_timeout_seconds: {type: number, exclusiveMinimum: 0, maximum: 30, default: 10}
+      additionalProperties: false
+
+    FileCheckInput:
+      type: object
+      description: |
+        PROTECTED. A post-run assertion on a final workspace file. Content and permission bits
+        are checked by the evaluator directly, so a printed `stat` line cannot stand in for them.
+      required: [path]
+      properties:
+        path: {type: string, pattern: '^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$', maxLength: 200}
+        content_sha256: {allOf: [{$ref: './common.yaml#/components/schemas/Sha256'}], description: "PROTECTED expected final bytes; omit to skip the content assertion."}
+        mode: {type: string, pattern: '^0[0-7]{3}$', description: "Expected permission bits as canonical four-digit octal text, e.g. \"0744\"; omit to skip the permission assertion."}
+      additionalProperties: false
+
+    FixtureContentItem:
+      type: object
+      description: "PROTECTED combined bytes of one fixture plus the server-computed digest."
+      required: [path, mount, content_sha256, size_bytes, content_base64]
+      properties:
+        path: {type: string, pattern: '^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$', maxLength: 200}
+        mount: {type: string, enum: [input]}
+        content_sha256: {$ref: './common.yaml#/components/schemas/Sha256'}
+        size_bytes: {type: integer, minimum: 0}
+        content_base64: {type: string, minLength: 1}
+      additionalProperties: false
+
+    FixtureContentBundle:
+      type: object
+      description: |
+        PROTECTED. Bounded delivery of a version's `mount=input` fixture bytes. Refused with
+        `413` rather than truncated when it exceeds the size limit, because a truncated fixture
+        would silently change what the code reads.
+      required: [question_version_id, items]
+      properties:
+        question_version_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        items:
+          type: array
+          maxItems: 50
+          items: {$ref: '#/components/schemas/FixtureContentItem'}
       additionalProperties: false

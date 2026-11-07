@@ -23,8 +23,13 @@ from autograder_b2.config import (
 )
 from autograder_b2.db.engine import create_db_engine
 from autograder_b2.db.schema import EXPECTED_SCHEMA_REVISION
+from autograder_b2.intake.email_verification import EmailVerificationService
 from autograder_b2.intake.imap import EmailCheckpointStore, EmailIntakeService, QuarantineStore
-from autograder_b2.intake.matching import DirectoryEmailMatcher, MappingEmailMatcher
+from autograder_b2.intake.matching import (
+    DirectoryEmailMatcher,
+    MappingEmailMatcher,
+    SenderDirectory,
+)
 from autograder_b2.intake.quarantine import IntakeQuarantineService
 from autograder_b2.intake.query import SubmissionQueryService
 from autograder_b2.intake.service import IntakeLimits, SubmissionIntakeService
@@ -46,6 +51,9 @@ class IntakeRuntime:
     engine: Engine | None = None
     email: EmailIntakeService | None = None
     email_unavailable_reason: str | None = None
+    #: 一次性核验码服务（设计 §4）：与邮件入口同生共死——没有收件链路时，挑战端点也明确不可用。
+    #: 顶层 `B2Runtime` 通过属性把它转给路由；IMAP 路径由 `EmailIntakeService.verification` 使用。
+    email_verification: EmailVerificationService | None = None
     _failures: int = field(default=0, init=False)
 
     @property
@@ -193,6 +201,14 @@ def _wire_email_intake(
         return
 
     assert runtime.service is not None
+    # 只有实现 `SenderDirectory` 的匹配器才能证明"发件地址属于哪个账号"；配置表驱动的匹配器
+    # 给的是部署配置里的固定目标，不能作为所有权依据，因此核验路径在它之下会明确拒绝带码邮件。
+    directory = matcher if isinstance(matcher, SenderDirectory) else None
+    runtime.email_verification = EmailVerificationService(
+        engine=engine,
+        authenticator=runtime.authenticator,
+        directory=directory,
+    )
     runtime.email = EmailIntakeService(
         engine=engine,
         settings=imap,
@@ -200,4 +216,5 @@ def _wire_email_intake(
         matcher=matcher,
         checkpoints=EmailCheckpointStore(engine),
         quarantines=QuarantineStore(engine),
+        verification=runtime.email_verification,
     )

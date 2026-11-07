@@ -236,6 +236,49 @@ def test_immutability_triggers_are_installed(owner_engine):
     }
 
 
+def test_execution_columns_are_nullable_jsonb_objects(owner_engine):
+    """Migration 0007: the two execution columns exist, are nullable and are type-guarded.
+
+    ``NULL`` is load-bearing for both: it means ``per_case`` (version) / "declares nothing"
+    (case), and it is what keeps already-published content digests reproducible. The
+    object-type CHECKs are the database half of "non-null must be a legal object".
+    """
+    with owner_engine.connect() as connection:
+        columns = connection.execute(
+            text(
+                "SELECT table_name, column_name, data_type, is_nullable "
+                "FROM information_schema.columns "
+                "WHERE table_schema = 'b3' AND table_name IN "
+                "('question_versions', 'test_cases') AND column_name IN "
+                "('execution_manifest', 'execution')"
+            )
+        ).all()
+        constraints = {
+            row[0]
+            for row in connection.execute(
+                text(
+                    "SELECT conname FROM pg_constraint "
+                    "WHERE connamespace = 'b3'::regnamespace "
+                    "AND conname IN ("
+                    "'ck_question_versions_execution_manifest_object', "
+                    "'ck_test_cases_execution_object')"
+                )
+            )
+        }
+    declared = {
+        (row.table_name, row.column_name): (row.data_type, row.is_nullable)
+        for row in columns
+    }
+    assert declared == {
+        ("question_versions", "execution_manifest"): ("jsonb", "YES"),
+        ("test_cases", "execution"): ("jsonb", "YES"),
+    }
+    assert constraints == {
+        "ck_question_versions_execution_manifest_object",
+        "ck_test_cases_execution_object",
+    }
+
+
 def test_indexes_follow_the_naming_convention(owner_engine):
     """Secondary indexes use ``ix_``/``uq_``; primary keys stay PostgreSQL-named."""
     with owner_engine.connect() as connection:

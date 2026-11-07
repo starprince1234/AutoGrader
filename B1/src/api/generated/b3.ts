@@ -686,8 +686,48 @@ export interface paths {
          *     version must exist first, which is why the authoring flow saves the draft and then
          *     uploads -- "draft saved, attachments not finished" is a real state the client must
          *     report as such rather than as a successful save of the files.
+         *
+         *     Readback is internal-only: `getVersionFixtureContents` serves the `mount=input` bytes to
+         *     B2 on the service credential so they can be reproduced inside the sandbox. Browsers and
+         *     students still have no read endpoint, and `expected_output` bytes have none at all.
          */
         post: operations["uploadVersionFixture"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/question-versions/{question_version_id}/fixture-contents": {
+        parameters: {
+            query?: {
+                mount?: "input";
+            };
+            header?: never;
+            path: {
+                question_version_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Internal fixture bytes for an executed version (service-to-service only)
+         * @description INTERNAL. Consumed by B2 only. The evaluation package declares each fixture by
+         *     `{path, content_sha256, mount}` but deliberately carries no bytes; without a delivery
+         *     channel a file-based question's initial files cannot be reproduced inside the sandbox.
+         *     This operation closes that gap for `mount=input` only.
+         *
+         *     The response is bounded: at most 1 MiB per item and 4 MiB in total. An oversized bundle
+         *     is refused (`413`) instead of truncated, because a truncated fixture would silently
+         *     change what the student's code reads. `expected_output` bytes stay unreadable: their
+         *     comparison only needs the digest already in the package, so a second read channel would
+         *     widen protected content in flight for no benefit.
+         *
+         *     Authorization is the pre-shared `serviceToken`; a teacher or student token is refused
+         *     before any fixture is looked up.
+         */
+        get: operations["getVersionFixtureContents"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -1346,6 +1386,14 @@ export interface components {
              *     during authoring -- could not be read by a strict consumer of this contract.
              */
             published_at?: components["schemas"]["Timestamp"] | null;
+            /**
+             * @description How this version's cases are produced (per_case, single_run, ssh_session,
+             *     email_delivery). Public because a teacher must be able to see what kind of
+             *     question they are assigning; the **configuration** behind it (segment marker,
+             *     email attempt, SSH credentials) is protected and only travels on the authoring
+             *     and internal-package channels.
+             */
+            execution_mode?: components["schemas"]["ExecutionMode"];
             max_files?: number;
             max_total_bytes?: number;
         };
@@ -1379,6 +1427,12 @@ export interface components {
              */
             reference_answer?: string;
             adapter: components["schemas"]["AdapterManifest"];
+            /**
+             * @description Explicit scoring declaration. Omitted/null keeps the version's existing declaration
+             *     (per_case for a version that never had one). This is the only mechanism that
+             *     selects how cases are produced; title, tags and paths never do.
+             */
+            execution?: components["schemas"]["ExecutionManifest"] | null;
             /**
              * @description PROTECTED. Omitted keeps the version's existing cases unchanged; supplied
              *     replaces the whole set (CHG-0017). Never echoed back through a public DTO.
@@ -1472,6 +1526,7 @@ export interface components {
          */
         QuestionDraftContent: {
             reference_answer: string | null;
+            execution: components["schemas"]["ExecutionManifest"];
             cases: components["schemas"]["TestCaseInput"][];
         };
         /** @description PROTECTED. A hidden test case; never present in a public DTO or an event. */
@@ -1489,6 +1544,20 @@ export interface components {
             /** @description PROTECTED. */
             expected_stderr?: string | null;
             expected_exit_code?: number | null;
+            /** @description single_run only: which delimiter-separated stdout segment this case compares. Declared values must be exactly 0..N-1. */
+            segment?: number | null;
+            /** @description Post-run assertions on final workspace files (bytes and permission bits). The evaluator never judges these from student stdout. */
+            file_checks?: components["schemas"]["FileCheckInput"][];
+            /**
+             * @description ssh_session only: which real server-side fact this case judges.
+             * @enum {string|null}
+             */
+            ssh_check?: "service_ready" | "auth_succeeded" | "session_closed" | null;
+            /**
+             * @description email_delivery only: which fact about the actually received message this case judges.
+             * @enum {string|null}
+             */
+            email_check?: "email_received" | "subject" | "sender" | "attachment" | null;
         };
         /**
          * @description A verifier's claim that a version's reference answer reproduces its expected
@@ -1587,6 +1656,80 @@ export interface components {
             error_code: ("not_found" | "forbidden" | "conflict" | "unprocessable" | "internal") | null;
         };
         /**
+         * @description Explicit scoring declaration for a version. This is the **only** mechanism that selects
+         *     how a version's cases are produced; nothing is inferred from a title, tag or path.
+         *
+         *     Absence of a declaration (`null` on the write path, NULL in storage) means `per_case`,
+         *     which is the legacy behaviour every already-published version has.
+         */
+        ExecutionManifest: {
+            mode: components["schemas"]["ExecutionMode"];
+            /** @description single_run only: fixed marker that occupies a whole output line. Missing/extra segments fail every segment case; a segment is never reassigned. */
+            segment_delimiter?: string | null;
+            email?: components["schemas"]["ExecutionEmail"] | null;
+            ssh?: components["schemas"]["ExecutionSsh"] | null;
+        };
+        /**
+         * @description PROTECTED requirements for `email_delivery`. The receipt itself is produced by the real
+         *     IMAP intake; this object only says what the message must satisfy.
+         */
+        ExecutionEmail: {
+            attempt: number;
+            /** @default {student_number}_{attempt} */
+            subject_template: string;
+            /** @default {student_number}.txt */
+            required_attachment_template: string;
+        };
+        /**
+         * @description PROTECTED practice-service configuration for `ssh_session`. `password` is protected
+         *     content: it travels only on this authoring channel and the internal evaluation package,
+         *     never through a public DTO, event or log line.
+         */
+        ExecutionSsh: {
+            /**
+             * @description The question requires logging in to localhost; any other address would leave the isolated namespace.
+             * @enum {string}
+             */
+            host: "127.0.0.1";
+            port: number;
+            username: string;
+            /** @description PROTECTED. */
+            password: string;
+            /** @default 10 */
+            login_timeout_seconds: number;
+            /** @default 10 */
+            session_timeout_seconds: number;
+        };
+        /**
+         * @description PROTECTED. A post-run assertion on a final workspace file. Content and permission bits
+         *     are checked by the evaluator directly, so a printed `stat` line cannot stand in for them.
+         */
+        FileCheckInput: {
+            path: string;
+            /** @description PROTECTED expected final bytes; omit to skip the content assertion. */
+            content_sha256?: components["schemas"]["Sha256"];
+            /** @description Expected permission bits as canonical four-digit octal text, e.g. "0744"; omit to skip the permission assertion. */
+            mode?: string;
+        };
+        /** @description PROTECTED combined bytes of one fixture plus the server-computed digest. */
+        FixtureContentItem: {
+            path: string;
+            /** @enum {string} */
+            mount: "input";
+            content_sha256: components["schemas"]["Sha256"];
+            size_bytes: number;
+            content_base64: string;
+        };
+        /**
+         * @description PROTECTED. Bounded delivery of a version's `mount=input` fixture bytes. Refused with
+         *     `413` rather than truncated when it exceeds the size limit, because a truncated fixture
+         *     would silently change what the code reads.
+         */
+        FixtureContentBundle: {
+            question_version_id: components["schemas"]["Uuid"];
+            items: components["schemas"]["FixtureContentItem"][];
+        };
+        /**
          * Format: uuid
          * @description UUID v4 (RFC 9562), generated by the owning module. See MAIN/docs/api/identifiers.md.
          */
@@ -1647,6 +1790,16 @@ export interface components {
         /** @description Lowercase hex SHA-256 digest. */
         Sha256: string;
         /**
+         * @description How a question version's cases are produced, declared explicitly on the version and
+         *     carried in the evaluation package. `per_case` (the legacy default) runs one sandbox per
+         *     case; `single_run` runs once and splits one bounded stdout into per-case segments;
+         *     `ssh_session` runs a real, isolated SSH practice service once and judges real server-side
+         *     events; `email_delivery` executes nothing and judges the message the real IMAP intake
+         *     received. Behaviour is never selected by a title, tag, path or magic string.
+         * @enum {string}
+         */
+        ExecutionMode: "per_case" | "single_run" | "ssh_session" | "email_delivery";
+        /**
          * Evaluation package
          * @description Immutable, self-describing evaluation package compiled by B3 from a published question version and consumed by B2's runner core. This is the highest-risk coupling point in the system: B2 must be able to execute a package without understanding the question's semantics, and adding a question type must not require changing the runner core (RQ-B-3-40/50/60). The package carries reference answers, hidden test cases and expected outputs, so it is service-to-service only and must never be reachable from a student-facing surface.
          */
@@ -1663,6 +1816,36 @@ export interface components {
              * @enum {string}
              */
             language: "python" | "bash";
+            /** @description Explicit declaration of how this package's cases are produced from an execution. Absence means the legacy per-case mode (one sandbox execution per case), so packages compiled before this field existed stay valid and byte-identical. Behaviour is never selected by a title, tag, path or magic string: it is this field or nothing. */
+            execution?: {
+                /** @enum {string} */
+                mode: "per_case" | "single_run" | "ssh_session" | "email_delivery";
+                /** @description Required when cases are split out of one run. The marker must occupy an entire output line by itself and must not be a prefix/suffix of other output. Missing, extra or misordered segments fail every segment case; a segment is never re-assigned to another case. */
+                segment_delimiter?: string | null;
+                /** @description email_delivery only: what the received message must satisfy. The receipt itself is recorded by the real IMAP intake, not by this package. */
+                email?: {
+                    attempt: number;
+                    /** @default {student_number}_{attempt} */
+                    subject_template: string;
+                    /** @default {student_number}.txt */
+                    required_attachment_template: string;
+                };
+                /** @description ssh_session only: the real practice service started inside the isolated sandbox. The password is protected content and must never appear in a public DTO, event or log. */
+                ssh?: {
+                    /**
+                     * @description The question requires logging in to localhost; any other address would leave the isolated network namespace.
+                     * @constant
+                     */
+                    host: "127.0.0.1";
+                    port: number;
+                    username: string;
+                    password: string;
+                    /** @default 10 */
+                    login_timeout_seconds: number;
+                    /** @default 10 */
+                    session_timeout_seconds: number;
+                };
+            };
             /** @description How the submission is exercised. One shared structure for all three frameworks. */
             adapter: {
                 /**
@@ -1715,6 +1898,26 @@ export interface components {
                 expected_stdout?: string | null;
                 expected_stderr?: string | null;
                 expected_exit_code?: number | null;
+                /** @description single_run only: which delimiter-separated stdout segment this case compares. The declared segment values must be exactly 0..N-1, one per segment case; a case is only ever compared against its own segment. */
+                segment?: number;
+                /** @description Assertions the evaluator makes directly on final workspace files after the run (never on the student's stdout). Used by the vi part of a file-editing question: the edited bytes and the permission bits are both checked, so printing a fabricated `stat` line cannot pass. */
+                file_checks?: {
+                    path: string;
+                    /** @description PROTECTED. Digest of the expected final bytes; null means content is not asserted. */
+                    content_sha256?: string | null;
+                    /** @description Expected permission bits as canonical four-digit octal text, e.g. "0744". Null means permissions are not asserted; the three-digit form is refused because the evaluator formats actual bits in the same canonical form. */
+                    mode?: string | null;
+                }[];
+                /**
+                 * @description ssh_session only: which real server-side fact this case judges. Exactly one of each value may appear in a package.
+                 * @enum {string}
+                 */
+                ssh_check?: "service_ready" | "auth_succeeded" | "session_closed";
+                /**
+                 * @description email_delivery only: which fact about the actually received message this case judges. Exactly one of each value may appear in a package.
+                 * @enum {string}
+                 */
+                email_check?: "email_received" | "subject" | "sender" | "attachment";
             }[];
             /** @description Sandbox policy applied to every case in this package. The constants encode non-negotiable guarantees from ADR-0004: no network, read-only root, non-root user. Numeric limits are enforced by cgroup v2 and seccomp. */
             security_policy: {
@@ -2504,6 +2707,36 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FixtureUploadResult"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    getVersionFixtureContents: {
+        parameters: {
+            query?: {
+                mount?: "input";
+            };
+            header?: never;
+            path: {
+                question_version_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Fixture bytes and their server-computed digests. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FixtureContentBundle"];
                 };
             };
             401: components["responses"]["Unauthorized"];

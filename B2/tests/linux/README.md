@@ -6,12 +6,13 @@
 
 ## 1. 它证明什么
 
-本目录有**两套互补**的验收，都必须在 Linux（容器）里跑：
+本目录有**三套互补**的验收，都必须在 Linux（容器）里跑：
 
 | 文件 | 证明什么 | 是否导入 `src/**` |
 |---|---|---|
 | [test_nsjail_acceptance.py](test_nsjail_acceptance.py) | 隔离与限制**逐项**生效（自带最小策略）：禁网/只读根/非 root/内存/CPU/pids/输出/墙钟/进程树；并只读校验 runner 生成的配置被真 nsjail 接受 | **否**（刻意独立） |
 | [test_nsjail_runner_acceptance.py](test_nsjail_runner_acceptance.py) | **真实 runner 执行路径**：`run_case` + `PosixNsjailLauncher` 在真 nsjail 里跑学生代码；恶意/超限样本被拦并归类；超时零残留；真实编排层得到终态与分数、同摘要重放同分同摘要 | **是**（真实接线） |
+| [test_nsjail_batch_acceptance.py](test_nsjail_batch_acceptance.py) | **真实批量执行**：`single_run` 一次沙箱执行按整行分隔符切段（含多/缺分隔符、空段、超时、单次执行 marker）；`file_checks` + `workspace_prep`（真实 vi 批处理与 chmod 0744 生效、默认 profile 对照 chmod EPERM）；fixture 摘要不符判基础设施；`ssh_session` 真实 sshd/ssh 客户端（成功登录、错误口令、超时、非法首行、仅 loopback、清理无残留） | **是**（真实接线） |
 
 判定口径只有三种取值：`通过` / `失败` / `无法执行`，**全部来自真实执行的退出码 / 信号 / stdout /
 `/proc` 观测**；拿不到证据一律 fail 并写明原因——绝不把"配置里写了"当成"限制生效"。

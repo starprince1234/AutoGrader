@@ -24,12 +24,16 @@ from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
+from ..compile.manifest import (
+    case_execution_from_stored,
+    case_execution_to_storage,
+)
 from ..dto.internal import (
     FixtureInternal,
     ReferenceAnswerInternal,
     TestCaseInternal,
 )
-from ..errors import StatisticsWindowTooLarge
+from ..errors import B3Error, StatisticsWindowTooLarge
 from .models import (
     AIGenerationUsage,
     Assignment,
@@ -270,11 +274,14 @@ class QuestionBankRepository:
         now: datetime,
         revision_diff: dict[str, Any] | None = None,
         revision_note: str | None = None,
+        execution_manifest: dict[str, Any] | None = None,
     ) -> QuestionVersion:
         """Insert a version. The revision record is computed by the caller.
 
         ``revision_note`` and ``revision_diff`` are both ``None`` for a version that
         supersedes nothing; the write path decides that, this method only persists it.
+        ``execution_manifest`` follows the same rule: ``None`` means the default
+        ``per_case`` declaration, which is exactly what a stored NULL means.
         """
         row = QuestionVersion(
             question_version_id=new_id(),
@@ -290,6 +297,7 @@ class QuestionBankRepository:
             max_total_bytes=max_total_bytes,
             revision_note=revision_note,
             revision_diff=revision_diff,
+            execution_manifest=execution_manifest,
             created_by=created_by,
             created_at=now,
             updated_at=now,
@@ -330,12 +338,14 @@ class QuestionBankRepository:
         max_files: int,
         max_total_bytes: int,
         now: datetime,
+        execution_manifest: dict[str, Any] | None,
     ) -> None:
         version.language = language
         version.stem_markdown = stem_markdown
         version.adapter_manifest = adapter_manifest
         version.max_files = max_files
         version.max_total_bytes = max_total_bytes
+        version.execution_manifest = execution_manifest
         version.updated_at = now
         self.session.flush()
 
@@ -847,6 +857,10 @@ class ProtectedContentRepository:
                     expected_stdout=case.expected_stdout,
                     expected_stderr=case.expected_stderr,
                     expected_exit_code=case.expected_exit_code,
+                    # `None` for an empty declaration: "declares nothing" must have exactly one
+                    # stored representation, or a case that once declared something and was
+                    # reset would keep a stale `{}` in the content digest.
+                    execution=case_execution_to_storage(case.execution),
                     created_at=now,
                 )
             )
@@ -871,9 +885,23 @@ class ProtectedContentRepository:
                 expected_stdout=row.expected_stdout,
                 expected_stderr=row.expected_stderr,
                 expected_exit_code=row.expected_exit_code,
+                execution=case_execution_from_stored(row.execution),
             )
             for row in self.session.execute(statement).scalars()
         ]
+
+    # --- fixture bytes (internal delivery) --------------------------------
+
+    def get_blob_content(self, content_sha256: str) -> bytes:
+        """Raw bytes of one content-addressed blob. Protected reads only.
+
+        Used by the internal fixture delivery *after* the caller has applied its size bounds
+        from fixture metadata, so a refused bundle never materialises oversized bytes.
+        """
+        blob = self.session.get(Blob, content_sha256)
+        if blob is None:  # pragma: no cover - the fixtures FK guarantees the row exists
+            raise B3Error("a fixture references blob content that is not stored")
+        return blob.content
 
 
 class DraftGenerationRepository:

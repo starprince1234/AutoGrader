@@ -209,11 +209,14 @@ export function useVerifyReferenceAnswer() {
  * "验证通过 + 存证已记录 + 摘要未变"时**提供入口**，而 422 之类的拒绝一律原样展示服务端 detail。
  */
 /**
- * 读回**草稿自己**的参考答案与测试用例（教师、仅草稿）。
+ * 读回**草稿自己**的参考答案、测试用例与执行声明（教师、仅草稿）。
  *
  * 为什么需要它：`CHG-0017` 让受保护字段在写入时可以省略，于是编辑页拿不到已存的用例，
  * 老师改错时只能"重新声明一遍"、不能改原来那条。这个查询让编辑页把作者自己的内容读回来，
  * 从而可以就地修改。服务端只对"本课程可写 + 版本仍是草稿"放行。
+ *
+ * `execution`（评分方式的完整配置，含 SSH 练习口令）也在这条受保护通道里回读：它不属于公开
+ * DTO，解析与填充由 `draft.ts` 的 `applyProtectedContent` 负责（本模块不记录也不持久化它）。
  */
 export function useDraftContent(versionId: string | null) {
   return useQuery({

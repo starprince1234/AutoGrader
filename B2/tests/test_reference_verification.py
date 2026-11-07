@@ -69,6 +69,7 @@ from autograder_b2.reference import (
     B3VerificationClient,
     ReferenceAnswerUnavailable,
     ReferenceAnswerWorkspace,
+    ReferenceVerificationDefect,
     ReferenceVerificationNotFound,
     ReferenceVerificationNotPossible,
     ReferenceVerificationService,
@@ -416,17 +417,45 @@ class _PackageSource:
 
 
 class _Runner:
-    """`CaseRunner` 替身：按 ordinal 决定通过与否，并观察工作区里被物化出来的入口脚本。"""
+    """`CaseRunner` 替身：按 ordinal 决定通过与否，并观察工作区里被物化出来的入口脚本。
+
+    逐用例模式走 `run_case`；`single_run`/`ssh_session` 走 `run_cases`（一次调用返回全部用例证据）。
+    """
 
     def __init__(
         self,
         *,
         outcomes: Mapping[int, tuple[bool, str | None]] | None = None,
+        batch_outcomes: Mapping[int, tuple[bool, str | None]] | None = None,
         error: Exception | None = None,
     ) -> None:
         self.outcomes = dict(outcomes or {0: (True, None), 1: (True, None)})
+        self.batch_outcomes = dict(
+            batch_outcomes if batch_outcomes is not None else self.outcomes
+        )
         self.error = error
         self.calls: list[dict[str, Any]] = []
+        self.batch_calls: list[dict[str, Any]] = []
+
+    def _evidence(self, case: Any, passed: bool, category: str | None) -> CaseEvidence:
+        return CaseEvidence(
+            case_id=str(case.case_id),
+            ordinal=int(case.ordinal),
+            weight=float(case.weight),
+            passed=passed,
+            failure_category=category,  # type: ignore[arg-type]
+            input_digest="c" * 64,
+            stdout_digest="d" * 64,
+            stderr_digest="e" * 64,
+            actual_output_excerpt=None,
+            expected_output_excerpt=None,
+            exit_code=0 if passed else 1,
+            duration_ms=7,
+            resource_limit_hit=None,
+            sandbox_violations=(),
+            message=None,
+            evidence_digest="f" * 64,
+        )
 
     def run_case(self, package: object, submission: Any) -> CaseEvidence:
         ordinal = int(submission.case.ordinal)
@@ -445,24 +474,30 @@ class _Runner:
         if self.error is not None:
             raise self.error
         passed, category = self.outcomes[ordinal]
-        return CaseEvidence(
-            case_id=str(submission.case.case_id),
-            ordinal=ordinal,
-            weight=float(submission.case.weight),
-            passed=passed,
-            failure_category=category,  # type: ignore[arg-type]
-            input_digest="c" * 64,
-            stdout_digest="d" * 64,
-            stderr_digest="e" * 64,
-            actual_output_excerpt=None,
-            expected_output_excerpt=None,
-            exit_code=0 if passed else 1,
-            duration_ms=7,
-            resource_limit_hit=None,
-            sandbox_violations=(),
-            message=None,
-            evidence_digest="f" * 64,
+        return self._evidence(submission.case, passed, category)
+
+    def run_cases(self, package: object, batch: Any) -> tuple[CaseEvidence, ...]:
+        workspace = pathlib.Path(batch.workspace)
+        files = sorted(path.name for path in workspace.iterdir()) if workspace.is_dir() else []
+        entry = workspace / "main.py"
+        self.batch_calls.append(
+            {
+                "package": package,
+                "cases": tuple(batch.cases),
+                "adapter": batch.adapter,
+                "policy": batch.policy,
+                "files": files,
+                "entry_text": entry.read_text(encoding="utf-8") if entry.is_file() else None,
+                "workspace": workspace,
+            }
         )
+        if self.error is not None:
+            raise self.error
+        evidences: list[CaseEvidence] = []
+        for case in batch.cases:
+            passed, category = self.batch_outcomes[int(case.ordinal)]
+            evidences.append(self._evidence(case, passed, category))
+        return tuple(evidences)
 
 
 # --- 真实 PostgreSQL 的夹具 ----------------------------------------------------------------
@@ -1398,3 +1433,220 @@ def test_the_script_double_raises_or_returns_as_scripted() -> None:
     assert isinstance(ReferenceVerificationNotPossible("x"), RuntimeError)
     assert isinstance(ReferenceVerificationUnavailable("x"), RuntimeError)
     assert isinstance(SandboxUnavailableError("x"), RuntimeError)
+
+
+# --- 执行模式：single_run / ssh_session ------------------------------------------------------
+#: `single_run` 版 package：每个用例声明自己的段号，分隔行取固定标记。
+SINGLE_RUN_OVERRIDES: dict[str, Any] = {
+    "execution": {"mode": "single_run", "segment_delimiter": "---SEGMENT---"},
+    "tests": [
+        {**PACKAGE["tests"][0], "segment": 0},
+        {**PACKAGE["tests"][1], "segment": 1},
+    ],
+}
+
+
+def _single_run_view(**overrides: Any) -> PackageView:
+    return _package_view(**{**SINGLE_RUN_OVERRIDES, **overrides})
+
+
+@requires_postgres
+def test_single_run_answer_goes_through_one_batch_call_with_one_workspace(
+    database_url: str, tmp_path: pathlib.Path
+) -> None:
+    """`single_run` 参考解：只准备**一份**批量工作区、只调用**一次** `run_cases`。"""
+    runner = _Runner()
+    transport = _Transport(answer=(200, _answer_body()))
+    service = _service(
+        transport=transport,
+        packages=_PackageSource(view=_single_run_view()),
+        runner=runner,
+        workspace_root=tmp_path / "workspaces",
+    )
+    result = service.verify(VERSION)
+    assert result.cases_total == 2
+    assert result.all_passed is True
+    assert runner.calls == [], "批量模式不得退化成逐用例沙箱"
+    assert len(runner.batch_calls) == 1
+    batch = runner.batch_calls[0]
+    assert batch["entry_text"] == ANSWER_TEXT
+    assert batch["workspace"].name == "batch"
+    assert not batch["workspace"].exists(), "受保护正文不得在验证后留在盘上"
+    assert result.attestation_id == ATTESTATION
+    assert len(transport.posts) == 1
+
+
+@requires_postgres
+def test_single_run_reports_every_case_even_when_one_is_security_blocked(
+    database_url: str, tmp_path: pathlib.Path
+) -> None:
+    """批量模式保持"逐用例给出结论、不在 security_blocked 处提前停止"的既有裁决。"""
+    runner = _Runner(batch_outcomes={0: (True, None), 1: (False, "security_blocked")})
+    transport = _Transport(answer=(200, _answer_body()))
+    service = _service(
+        transport=transport,
+        packages=_PackageSource(view=_single_run_view()),
+        runner=runner,
+        workspace_root=tmp_path / "workspaces",
+    )
+    result = service.verify(VERSION)
+    assert result.cases_total == 2, "cases_total 描述的是该版本的用例总数，不是跑过几个"
+    assert result.cases_passed == 1
+    assert [case.failure_category for case in result.cases] == [None, "security_blocked"]
+    assert result.attestation_id is None
+    assert transport.posts == [], "未全部通过不得产生存证"
+
+
+@requires_postgres
+def test_batch_evidence_that_does_not_cover_every_case_is_a_defect(
+    database_url: str, tmp_path: pathlib.Path
+) -> None:
+    """批量证据少一条 ⇒ 内部缺陷（不是"这条用例没跑"），不得归一成用例失败。"""
+    runner = _Runner()
+    original = runner.run_cases
+
+    def incomplete(package: object, batch: Any) -> tuple[CaseEvidence, ...]:
+        return original(package, batch)[:1]
+
+    runner.run_cases = incomplete  # type: ignore[method-assign]
+    service = _service(
+        transport=_Transport(answer=(200, _answer_body())),
+        packages=_PackageSource(view=_single_run_view()),
+        runner=runner,
+        workspace_root=tmp_path / "workspaces",
+    )
+    with pytest.raises(ReferenceVerificationDefect):
+        service.verify(VERSION)
+
+
+# --- 执行模式：email_delivery（合成回执，不是真实邮件端到端） --------------------------------
+
+#: 合成邮件回执（受保护参考答案正文）；键集合与共享规则引擎的输入一一对应。
+RECEIPT: dict[str, Any] = {
+    "student_number": "2020141440777",
+    "subject": "2020141440777_1",
+    "sender": "student@example.edu",
+    "account_email": "student@example.edu",
+    "attachment_names": ["2020141440777.txt"],
+    "received": True,
+    "account_email_verified": True,
+    "sender_binding_matches": True,
+}
+
+EMAIL_OVERRIDES: dict[str, Any] = {
+    "language": "bash",
+    "execution": {"mode": "email_delivery", "email": {"attempt": 1}},
+    "tests": [
+        {**PACKAGE["tests"][0], "email_check": "email_received"},
+        {**PACKAGE["tests"][1], "email_check": "subject"},
+    ],
+}
+
+
+def _email_view(**overrides: Any) -> PackageView:
+    return _package_view(**{**EMAIL_OVERRIDES, **overrides})
+
+
+def _receipt_body(**overrides: Any) -> str:
+    document = {**RECEIPT, **overrides}
+    return json.dumps(document, ensure_ascii=False)
+
+
+def _email_answer(**overrides: Any) -> str:
+    return _answer_body(language="bash", reference_answer=_receipt_body(**overrides))
+
+
+@requires_postgres
+def test_email_delivery_answer_is_checked_by_the_shared_rules_without_running_anything(
+    database_url: str, tmp_path: pathlib.Path
+) -> None:
+    """`email_delivery` 参考解：不启动沙箱、不开工作区，只用合成回执过共享规则引擎并给出逐项结论。"""
+    runner = _Runner()
+    transport = _Transport(answer=(200, _email_answer()))
+    service = _service(
+        transport=transport,
+        packages=_PackageSource(view=_email_view()),
+        runner=runner,
+        workspace_root=tmp_path / "workspaces",
+    )
+    result = service.verify(VERSION)
+    assert result.cases_total == 2
+    assert result.all_passed is True
+    assert runner.calls == [] and runner.batch_calls == []
+    assert not (tmp_path / "workspaces").exists(), "该模式不产生任何工作区"
+    # 存证仍然只表达"参考解答通过"，不表达"真实邮件已验证"。
+    assert result.attestation_id == ATTESTATION
+    response_text = json.dumps(result.as_contract(), ensure_ascii=False)
+    assert RECEIPT["sender"] not in response_text
+    assert RECEIPT["subject"] not in response_text
+    assert "student_number" not in response_text
+
+
+@requires_postgres
+def test_email_delivery_reference_with_a_mismatched_receipt_reports_the_failing_check(
+    database_url: str, tmp_path: pathlib.Path
+) -> None:
+    """回执字段不符 ⇒ 逐用例 `output_mismatch`（学生侧失败），且不产生存证。"""
+    runner = _Runner()
+    transport = _Transport(answer=(200, _email_answer(subject="2020141440777_9")))
+    service = _service(
+        transport=transport,
+        packages=_PackageSource(view=_email_view()),
+        runner=runner,
+        workspace_root=tmp_path / "workspaces",
+    )
+    result = service.verify(VERSION)
+    assert result.cases_total == 2
+    assert result.cases_passed == 1
+    assert [case.failure_category for case in result.cases] == [None, "output_mismatch"]
+    assert result.attestation_id is None
+    assert transport.posts == []
+
+
+@requires_postgres
+def test_email_delivery_reference_without_a_receipt_reports_missing_output(
+    database_url: str, tmp_path: pathlib.Path
+) -> None:
+    """回执声明"没收到" ⇒ 全部 `missing_output`（缺邮件不折算成字段不符）。"""
+    receipt = _receipt_body(received=False)
+    transport = _Transport(
+        answer=(200, _answer_body(language="bash", reference_answer=receipt))
+    )
+    service = _service(
+        transport=transport,
+        packages=_PackageSource(view=_email_view()),
+        runner=_Runner(),
+        workspace_root=tmp_path / "workspaces",
+    )
+    result = service.verify(VERSION)
+    assert result.cases_passed == 0
+    assert {case.failure_category for case in result.cases} == {"missing_output"}
+    assert result.attestation_id is None
+
+
+@requires_postgres
+def test_email_delivery_reference_with_a_malformed_receipt_is_a_defect(
+    database_url: str, tmp_path: pathlib.Path
+) -> None:
+    """合成回执 JSON 不合规 ⇒ 内部缺陷（不是"参考解没通过"）。"""
+    service = _service(
+        transport=_Transport(
+            answer=(200, _answer_body(language="bash", reference_answer="not-json"))
+        ),
+        packages=_PackageSource(view=_email_view()),
+        runner=_Runner(),
+        workspace_root=tmp_path / "workspaces",
+    )
+    with pytest.raises(ReferenceVerificationDefect):
+        service.verify(VERSION)
+    extra_key = _receipt_body(extra="nope")
+    service = _service(
+        transport=_Transport(
+            answer=(200, _answer_body(language="bash", reference_answer=extra_key))
+        ),
+        packages=_PackageSource(view=_email_view()),
+        runner=_Runner(),
+        workspace_root=tmp_path / "workspaces",
+    )
+    with pytest.raises(ReferenceVerificationDefect):
+        service.verify(VERSION)

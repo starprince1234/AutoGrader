@@ -42,6 +42,14 @@ FixtureMount = Literal["input", "expected_output"]
 CompareMode = Literal["exact", "ignore_trailing_whitespace", "numeric_tolerance", "ignored"]
 StderrCompareMode = Literal["exact", "ignore_trailing_whitespace", "ignored"]
 AuthoringTopic = Literal["quality", "comparison_policy", "wording", "difficulty", "coverage"]
+#: How a package's cases are produced (``common.yaml`` ``ExecutionMode``). ``per_case`` is
+#: the legacy default: one sandbox execution per case, which is what every version
+#: published before the field existed means.
+ExecutionMode = Literal["per_case", "single_run", "ssh_session", "email_delivery"]
+#: Real server-side facts an ``ssh_session`` case can judge (exactly one per case).
+SshCheck = Literal["service_ready", "auth_succeeded", "session_closed"]
+#: Facts about the actually received message an ``email_delivery`` case can judge.
+EmailCheck = Literal["email_received", "subject", "sender", "attachment"]
 
 #: Field names that must never appear in a public DTO, an event, a log line or a
 #: student-accessible store. Owned by this module (ADR-0004 §3); imported by the
@@ -63,6 +71,16 @@ PROTECTED_FIELD_NAMES: frozenset[str] = frozenset(
         "source_code",
         "student_id",
         "submitted_code",
+        # Execution declarations added for the Unix homeworks (SSH, email, file state,
+        # segmentation). They are *configuration* for the evaluator, and may carry an SSH
+        # password or the expected file digests, so they belong to the same class of
+        # protected vocabulary: never a public response, event or log key.
+        "execution_manifest",
+        "file_checks",
+        "segment_delimiter",
+        "subject_template",
+        "required_attachment_template",
+        "password",
     }
 )
 
@@ -115,6 +133,77 @@ class AdapterManifestInput(BaseModel):
     callable: CallableTargetInput | None = None
 
 
+class FileCheckInputModel(BaseModel):
+    """One post-run file assertion (``FileCheckInput``, PROTECTED).
+
+    ``content_sha256`` and ``mode`` are both optional and at least one must be present:
+    a check that asserts nothing cannot fail, so accepting it would make the author believe
+    a file was verified when the evaluator only looked for its path. ``mode`` is the contract's
+    canonical four-digit octal text (``"0744"``): the evaluator reports actual permission bits
+    in that same canonical form, so a three-digit declaration would never compare equal.
+    """
+
+    model_config = _STRICT
+
+    path: str = Field(min_length=1, max_length=200)
+    content_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    mode: str | None = Field(default=None, pattern=r"^0[0-7]{3}$")
+
+
+class ExecutionEmailInputModel(BaseModel):
+    """``ExecutionEmail``: what a delivered message must satisfy (PROTECTED)."""
+
+    model_config = _STRICT
+
+    attempt: int = Field(ge=1, le=99)
+    subject_template: str = Field(
+        default="{student_number}_{attempt}", min_length=1, max_length=200
+    )
+    required_attachment_template: str = Field(
+        default="{student_number}.txt", min_length=1, max_length=200
+    )
+
+
+class ExecutionSshInputModel(BaseModel):
+    """``ExecutionSsh``: the practice service for an ``ssh_session`` version (PROTECTED).
+
+    ``password`` is protected content: it is accepted on this authoring channel and in the
+    internal evaluation package only, never on a public DTO, event or log line.
+    """
+
+    model_config = _STRICT
+
+    host: str = Field(min_length=1, max_length=64)
+    port: int = Field(ge=1, le=65535)
+    username: str = Field(min_length=1, max_length=32)
+    password: str = Field(min_length=1, max_length=128)
+    #: The contract bounds both timeouts to (0, 30]; the lower bound 0.1 is shared with B2's
+    #: package parser (see ``compile.manifest``), because a declaration B2 refuses must not be
+    #: publishable here. The defaults are the contract's.
+    login_timeout_seconds: float = Field(default=10.0, ge=0.1, le=30, allow_inf_nan=False)
+    session_timeout_seconds: float = Field(default=10.0, ge=0.1, le=30, allow_inf_nan=False)
+
+
+class ExecutionManifestInputModel(BaseModel):
+    """The contract's ``ExecutionManifest`` as a write input.
+
+    The model only enforces the declared *shape*; the mode-specific rules (which fields are
+    required/forbidden per mode, and how the declaration lines up with the adapter and the
+    cases) are enforced by ``compile.manifest.validate_execution_manifest`` so the draft
+    path, the publish path and the internal package path share one implementation. Shape
+    errors are a ``422`` from the transport either way.
+    """
+
+    model_config = _STRICT
+
+    mode: ExecutionMode
+    segment_delimiter: str | None = Field(
+        default=None, min_length=8, max_length=120, pattern=r"^[!-~](?:[ -~]*[!-~])?$"
+    )
+    email: ExecutionEmailInputModel | None = None
+    ssh: ExecutionSshInputModel | None = None
+
+
 class TestCaseInputModel(BaseModel):
     """The contract's ``TestCaseInput`` (PROTECTED)."""
 
@@ -129,6 +218,13 @@ class TestCaseInputModel(BaseModel):
     expected_stdout: str | None = None
     expected_stderr: str | None = None
     expected_exit_code: int | None = None
+    #: Flat per-case execution declaration (segment/file_checks/ssh_check/email_check). The
+    #: mode-specific rules are checked in ``compile.manifest``; these defaults make an omitted
+    #: declaration mean "this case declares nothing", which is the legacy per_case shape.
+    segment: int | None = Field(default=None, ge=0)
+    file_checks: tuple[FileCheckInputModel, ...] = Field(default=(), max_length=20)
+    ssh_check: SshCheck | None = None
+    email_check: EmailCheck | None = None
 
 
 class QuestionDraftInputModel(BaseModel):
@@ -149,6 +245,13 @@ class QuestionDraftInputModel(BaseModel):
     language: Language
     reference_answer: str | None = None
     adapter: AdapterManifestInput
+    #: PROTECTED configuration: how the version's cases are produced. The semantics are
+    #: "omission preserves" like ``cases`` below, but with one deliberate difference: the
+    #: contract makes it nullable, and an explicit ``null`` is the **only** way to set a
+    #: version back to ``per_case``. The transport reads ``model_fields_set`` to tell an
+    #: omitted key (keep the stored declaration) from a present ``null`` (reset it), so this
+    #: model's value alone cannot express the difference.
+    execution: ExecutionManifestInputModel | None = None
     #: PROTECTED. Omitted keeps the version's existing cases unchanged; supplied replaces
     #: the whole set (CHG-0017 "omission preserves"). Deliberately **not** nullable and
     #: still ``minItems: 1`` when present, because the contract declares an array:
@@ -309,6 +412,67 @@ class ReferenceAnswerInternal:
 
 
 @dataclass(frozen=True)
+class FileCheck:
+    """One post-run assertion on a final workspace file (PROTECTED expected values)."""
+
+    path: str
+    content_sha256: str | None = None
+    mode: str | None = None
+
+
+@dataclass(frozen=True)
+class CaseExecution:
+    """The per-case half of an execution declaration.
+
+    Empty for the legacy shape. A case's ``segment`` is single_run-only, ``ssh_check``
+    ssh_session-only, ``email_check`` email_delivery-only, and ``file_checks`` may accompany
+    per_case or single_run (a mode that runs code in a workspace); the mode-specific
+    admissibility is enforced by ``compile.manifest`` and mirrors B2's package parser.
+    """
+
+    segment: int | None = None
+    file_checks: tuple[FileCheck, ...] = ()
+    ssh_check: SshCheck | None = None
+    email_check: EmailCheck | None = None
+
+
+@dataclass(frozen=True)
+class ExecutionEmail:
+    """``email_delivery`` requirements: attempt plus the templates the receipt must match."""
+
+    attempt: int
+    subject_template: str = "{student_number}_{attempt}"
+    required_attachment_template: str = "{student_number}.txt"
+
+
+@dataclass(frozen=True)
+class ExecutionSsh:
+    """``ssh_session`` practice service. ``password`` is protected content."""
+
+    host: str
+    port: int
+    username: str
+    password: str
+    login_timeout_seconds: float = 10.0
+    session_timeout_seconds: float = 10.0
+
+
+@dataclass(frozen=True)
+class ExecutionManifest:
+    """A version's explicit execution declaration (``ExecutionManifest``, PROTECTED).
+
+    ``mode="per_case"`` is the default and the meaning of a NULL stored declaration. Only a
+    non-default declaration is written into the package or into the content digest, which is
+    what keeps already-published versions byte- and digest-identical after this feature.
+    """
+
+    mode: ExecutionMode = "per_case"
+    segment_delimiter: str | None = None
+    email: ExecutionEmail | None = None
+    ssh: ExecutionSsh | None = None
+
+
+@dataclass(frozen=True)
 class TestCaseInternal:
     """A test case, hidden or visible. ``visible_to_student`` defaults to hidden."""
 
@@ -326,6 +490,11 @@ class TestCaseInternal:
     expected_stdout: str | None = None
     expected_stderr: str | None = None
     expected_exit_code: int | None = None
+    #: Per-case execution declaration (segment/file_checks/ssh_check/email_check). The default
+    #: is the empty declaration, which is the legacy ``per_case`` case shape -- and the reason
+    #: content digests of already-published versions stay reproducible (see
+    #: ``domain.content.content_wire``).
+    execution: CaseExecution = field(default_factory=lambda: CaseExecution())
 
 
 @dataclass(frozen=True)
@@ -400,6 +569,10 @@ class VersionContentSnapshot:
     fixtures: tuple[FixtureInternal, ...]
     max_files: int
     max_total_bytes: int
+    #: The version-level execution declaration. The default is ``per_case`` and, like a NULL
+    #: stored declaration, it is **not** part of the content digest: see
+    #: ``domain.content.content_wire`` for the compatibility rule this protects.
+    execution: ExecutionManifest = field(default_factory=ExecutionManifest)
 
 
 @dataclass(frozen=True)
@@ -426,6 +599,9 @@ class PublishedVersionSnapshot:
     max_files: int
     max_total_bytes: int
     manifest: AdapterManifestInternal
+    #: Execution declaration carried into the package. Omitted means ``per_case`` (the default,
+    #: and the shape of every package compiled before the field existed).
+    execution: ExecutionManifest = field(default_factory=ExecutionManifest)
 
 
 @dataclass(frozen=True)
@@ -466,6 +642,10 @@ class EvaluationPackage:
     max_files: int
     max_total_bytes: int
     created_at: datetime
+    #: The wire form of a **non-default** execution declaration; ``None`` means ``per_case``
+    #: and keeps the package byte-identical to what B3 compiled before the field existed
+    #: (``wire.package_to_wire`` only emits the key when this is set).
+    execution: Mapping[str, Any] | None = None
 
     def to_wire(self) -> dict[str, Any]:
         from .wire import package_to_wire
@@ -516,6 +696,51 @@ class ReferenceAnswerDelivery:
             "language": self.language,
             "adapter_kind": self.adapter_kind,
             "reference_answer": self.body,
+        }
+
+
+@dataclass(frozen=True)
+class FixtureContentItem:
+    """One input fixture's protected bytes plus the digest B3 computed from them.
+
+    ``content_base64`` is the only place in B3 where fixture bytes leave the database
+    deliberately, and the delivery is scoped to ``mount=input`` (see
+    :class:`FixtureContentBundle`).
+    """
+
+    path: str
+    mount: FixtureMount
+    content_sha256: str
+    size_bytes: int
+    content_base64: str
+
+    def to_wire(self) -> dict[str, Any]:
+        return {
+            "path": self.path,
+            "mount": self.mount,
+            "content_sha256": self.content_sha256,
+            "size_bytes": self.size_bytes,
+            "content_base64": self.content_base64,
+        }
+
+
+@dataclass(frozen=True)
+class FixtureContentBundle:
+    """The ``FixtureContentBundle`` response of ``getVersionFixtureContents`` (PROTECTED).
+
+    Deliberately only ``mount=input``: an ``expected_output`` comparison needs the digest the
+    package already carries, so a read channel for those bytes would widen protected content
+    in flight for no benefit. The bundle is bounded by the delivery function that builds it
+    (per-item and total caps, refused rather than truncated).
+    """
+
+    question_version_id: UUID
+    items: tuple[FixtureContentItem, ...]
+
+    def to_wire(self) -> dict[str, Any]:
+        return {
+            "question_version_id": str(self.question_version_id),
+            "items": [item.to_wire() for item in self.items],
         }
 
 

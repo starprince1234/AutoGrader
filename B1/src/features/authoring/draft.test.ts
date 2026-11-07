@@ -1,23 +1,36 @@
 import { describe, expect, it } from "vitest";
 import { questionPublic, questionVersionPublic } from "../../testing/contractFixtures";
-import type { QuestionDraftProposal } from "../../api/types";
+import type { QuestionDraftContent, QuestionDraftProposal } from "../../api/types";
 import {
   MAX_FILES_LIMIT,
   TAG_MAX_ITEMS,
+  applyExecutionDeclaration,
+  applyExecutionMode,
   applyProposal,
+  applyProtectedContent,
   assetMarkdown,
   buildDraftInput,
+  caseExecutionIssues,
+  caseFormFrom,
   draftFormFrom,
   emptyDraftForm,
+  emptyFileCheck,
+  executionDeclarationIssues,
   fieldLabel,
   insertIntoStem,
   isDirty,
   isValidFixturePath,
+  isValidSegmentDelimiter,
   normalizeTag,
   parseTags,
   type DraftForm,
   deriveTags,
 } from "./draft";
+import {
+  readDraftExecution,
+  type QuestionDraftInputWithExecution,
+  type TestCaseInputWithExecution,
+} from "./execution";
 
 /**
  * 表单 → `QuestionDraftInput` 的纯映射与校验。
@@ -504,3 +517,430 @@ describe("界面上的字段位置用中文说清楚（不暴露内部字段名�
     expect(fieldLabel("")).toBe("本页内容");
   });
 });
+
+describe("评分方式 / 执行声明（Unix 作业扩展）", () => {
+  /** 已构造请求体里的执行声明（生成类型尚未包含该字段，测试在边界处读它）。 */
+  function payload(form: DraftForm): QuestionDraftInputWithExecution {
+    return built(form) as QuestionDraftInputWithExecution;
+  }
+
+  function uploadedFileCheck(path: string, mode: string) {
+    return { path, mode, content: "", contentSha256: "" };
+  }
+
+  it("默认 per_case：请求体显式声明，且不携带任何模式专属配置", () => {
+    const input = payload(validForm());
+    // 显式声明是必须的：省略执行声明在服务端意味着"保留已有声明"，那会把旧模式带回来。
+    expect(input.execution).toEqual({ mode: "per_case" });
+    expect(JSON.stringify(input)).not.toContain("ssh");
+    expect(JSON.stringify(input)).not.toContain("segment_delimiter");
+  });
+
+  it("single_run：分隔行与分段序号按契约形状发送；全部用文件校验时分隔行为 null", () => {
+    const segmented = payload(
+      validForm({
+        executionMode: "single_run",
+        segmentDelimiter: "===== SEGMENT =====",
+        cases: [
+          {
+            ...emptyDraftForm().cases[0],
+            name: "第一段",
+            weight: "1",
+            segmentScored: true,
+            segment: "0",
+            expectedStdout: "a\n",
+          },
+          {
+            ...emptyDraftForm().cases[0],
+            name: "第二段",
+            weight: "1",
+            segmentScored: true,
+            segment: "1",
+            expectedStdout: "b\n",
+          },
+        ],
+      }),
+    );
+    expect(segmented.execution).toEqual({
+      mode: "single_run",
+      segment_delimiter: "===== SEGMENT =====",
+    });
+    const segmentCases = segmented.cases as TestCaseInputWithExecution[];
+    expect(segmentCases[0].segment).toBe(0);
+    expect(segmentCases[1].segment).toBe(1);
+    // XOR：按分段的用例不带 file_checks。
+    expect(segmentCases[0]).not.toHaveProperty("file_checks");
+
+    const filesOnly = payload(
+      validForm({
+        executionMode: "single_run",
+        segmentDelimiter: "",
+        cases: [
+          {
+            ...emptyDraftForm().cases[0],
+            name: "改权限",
+            weight: "1",
+            fileChecks: [uploadedFileCheck("week6_1.txt", "0744")],
+          },
+        ],
+      }),
+    );
+    expect(filesOnly.execution).toEqual({ mode: "single_run", segment_delimiter: null });
+    const fileCases = filesOnly.cases as TestCaseInputWithExecution[];
+    expect(fileCases[0]).not.toHaveProperty("segment");
+    expect(fileCases[0].file_checks).toEqual([{ path: "week6_1.txt", mode: "0744" }]);
+  });
+
+  it("ssh_session：配置按契约发送；切回 per_case 后口令从表单与请求里消失", () => {
+    const sshForm = validForm({
+      language: "bash",
+      executionMode: "ssh_session",
+      sshPort: "2222",
+      sshUsername: "user01",
+      sshPassword: "practice-secret",
+      sshLoginTimeout: "5",
+      sshSessionTimeout: "7",
+      cases: [
+        {
+          ...emptyDraftForm().cases[0],
+          name: "登录并退出",
+          weight: "1",
+          sshCheck: "auth_succeeded",
+        },
+      ],
+    });
+    const input = payload(sshForm);
+    expect(input.execution).toEqual({
+      mode: "ssh_session",
+      ssh: {
+        host: "127.0.0.1",
+        port: 2222,
+        username: "user01",
+        password: "practice-secret",
+        login_timeout_seconds: 5,
+        session_timeout_seconds: 7,
+      },
+    });
+    const sshCases = input.cases as TestCaseInputWithExecution[];
+    expect(sshCases[0].ssh_check).toBe("auth_succeeded");
+
+    // 切换评分方式 = 换一份声明：口令必须从表单和后续请求里消失（要求 A 的硬约束）。
+    const cleared = applyExecutionMode(sshForm, "per_case");
+    expect(cleared.sshPassword).toBe("");
+    expect(cleared.sshPort).toBe("22");
+    expect(cleared.cases[0].sshCheck).toBe("");
+    const perCaseInput = built(cleared);
+    expect(readDraftExecution(perCaseInput)).toEqual({ mode: "per_case" });
+    expect(JSON.stringify(perCaseInput)).not.toContain("practice-secret");
+  });
+
+  it("email_delivery：attempt 与读回的模板一起按契约发送", () => {
+    const input = payload(
+      validForm({
+        language: "bash",
+        executionMode: "email_delivery",
+        emailAttempt: "3",
+        emailSubjectTemplate: "{student_number}_{attempt}",
+        emailAttachmentTemplate: "{student_number}.txt",
+        cases: [
+          {
+            ...emptyDraftForm().cases[0],
+            name: "收件",
+            weight: "1",
+            emailCheck: "email_received",
+          },
+        ],
+      }),
+    );
+    expect(input.execution).toEqual({
+      mode: "email_delivery",
+      email: {
+        attempt: 3,
+        subject_template: "{student_number}_{attempt}",
+        required_attachment_template: "{student_number}.txt",
+      },
+    });
+    const emailCases = input.cases as TestCaseInputWithExecution[];
+    expect(emailCases[0].email_check).toBe("email_received");
+    // 读同一份请求体也应得到同一份声明（序列化与反序列化互相对称）。
+    expect(readDraftExecution(input)).toEqual(input.execution);
+  });
+
+  it("版本级校验与写规则一致：分隔行、尝试次数、SSH 字段、适配器与语言", () => {
+    const segmentedBase = {
+      ...emptyDraftForm().cases[0],
+      weight: "1",
+      segmentScored: true,
+      segment: "0",
+      expectedStdout: "a\n",
+    };
+
+    const noDelimiter = validForm({
+      executionMode: "single_run",
+      segmentDelimiter: "",
+      cases: [segmentedBase],
+    });
+    expect(executionDeclarationIssues(noDelimiter).map((issue) => issue.key)).toContain(
+      "authoring.execution.issue.delimiterRequired",
+    );
+    expect(issueKeys(noDelimiter)).toContain("authoring.execution.issue.delimiterRequired");
+
+    expect(isValidSegmentDelimiter("===== SEGMENT =====")).toBe(true);
+    expect(isValidSegmentDelimiter("short")).toBe(false);
+    expect(isValidSegmentDelimiter(" leading-space")).toBe(false);
+
+    const badShape = validForm({
+      executionMode: "single_run",
+      segmentDelimiter: "short",
+      cases: [segmentedBase],
+    });
+    expect(executionDeclarationIssues(badShape).map((issue) => issue.key)).toContain(
+      "authoring.execution.issue.delimiterShape",
+    );
+
+    const markerInOutput = validForm({
+      executionMode: "single_run",
+      segmentDelimiter: "===== SEGMENT =====",
+      cases: [{ ...segmentedBase, expectedStdout: "===== SEGMENT =====\n" }],
+    });
+    expect(executionDeclarationIssues(markerInOutput).map((issue) => issue.key)).toContain(
+      "authoring.execution.issue.delimiterInExpected",
+    );
+
+    const delimiterWithoutSegments = validForm({
+      executionMode: "single_run",
+      segmentDelimiter: "===== SEGMENT =====",
+      cases: [
+        {
+          ...emptyDraftForm().cases[0],
+          weight: "1",
+          fileChecks: [uploadedFileCheck("a.txt", "0744")],
+        },
+      ],
+    });
+    expect(
+      executionDeclarationIssues(delimiterWithoutSegments).map((issue) => issue.key),
+    ).toContain("authoring.execution.issue.delimiterWithoutSegments");
+
+    // single_run 不能用 callable（批量执行模型是按调用一次）。
+    const callable = validForm({
+      executionMode: "single_run",
+      adapterKind: "callable",
+      callableModule: "solution",
+      callableAttribute: "run",
+    });
+    expect(executionDeclarationIssues(callable).map((issue) => issue.key)).toContain(
+      "authoring.execution.issue.adapterKindSingleRun",
+    );
+
+    const badSsh = validForm({
+      language: "bash",
+      executionMode: "ssh_session",
+      sshPort: "0",
+      sshUsername: "User01",
+      sshPassword: "",
+      sshLoginTimeout: "31",
+      sshSessionTimeout: "0",
+      cases: [{ ...emptyDraftForm().cases[0], weight: "1", sshCheck: "service_ready" }],
+    });
+    expect(executionDeclarationIssues(badSsh).map((issue) => issue.key)).toEqual(
+      expect.arrayContaining([
+        "authoring.execution.issue.sshPort",
+        "authoring.execution.issue.sshUsername",
+        "authoring.execution.issue.sshPassword",
+        "authoring.execution.issue.sshLoginTimeout",
+        "authoring.execution.issue.sshSessionTimeout",
+      ]),
+    );
+
+    // SSH / 邮件模式要求 Bash + 命令行输入：这与 runner 的真实前提一致。
+    const pythonSsh = validForm({
+      executionMode: "ssh_session",
+      sshPort: "22",
+      sshUsername: "user01",
+      sshPassword: "pw",
+      cases: [{ ...emptyDraftForm().cases[0], weight: "1", sshCheck: "service_ready" }],
+    });
+    expect(executionDeclarationIssues(pythonSsh).map((issue) => issue.key)).toContain(
+      "authoring.execution.issue.requiresBashStdin",
+    );
+
+    const badAttempt = validForm({
+      language: "bash",
+      executionMode: "email_delivery",
+      emailAttempt: "0",
+      cases: [{ ...emptyDraftForm().cases[0], weight: "1", emailCheck: "subject" }],
+    });
+    expect(executionDeclarationIssues(badAttempt).map((issue) => issue.key)).toContain(
+      "authoring.execution.issue.emailAttempt",
+    );
+  });
+
+  it("用例级校验与写规则一致：segment XOR file_checks、0..N-1、判定项唯一、文件校验至少一项", () => {
+    expect(
+      caseExecutionIssues([{ ...emptyCaseLike(), fileChecks: [] }], "single_run").map(
+        (issue) => issue.key,
+      ),
+    ).toContain("authoring.execution.issue.caseFileChecksRequired");
+
+    // 两个用例都声明分段 0：重复，且 1 缺失。
+    const duplicate = caseExecutionIssues(
+      [
+        { ...emptyCaseLike(), segmentScored: true, segment: "0" },
+        { ...emptyCaseLike(), segmentScored: true, segment: "0" },
+      ],
+      "single_run",
+    ).map((issue) => issue.key);
+    expect(duplicate).toContain("authoring.execution.issue.segmentDuplicate");
+    expect(duplicate).toContain("authoring.execution.issue.segmentIncomplete");
+
+    // 值越界（声明了 2 个分段用例，却出现 2）。
+    expect(
+      caseExecutionIssues(
+        [
+          { ...emptyCaseLike(), segmentScored: true, segment: "0" },
+          { ...emptyCaseLike(), segmentScored: true, segment: "2" },
+        ],
+        "single_run",
+      ).map((issue) => issue.key),
+    ).toContain("authoring.execution.issue.caseSegmentRange");
+
+    const sshKeys = caseExecutionIssues(
+      [
+        { ...emptyCaseLike(), sshCheck: "service_ready" },
+        { ...emptyCaseLike(), sshCheck: "service_ready" },
+        { ...emptyCaseLike(), sshCheck: "" },
+      ],
+      "ssh_session",
+    ).map((issue) => issue.key);
+    expect(sshKeys).toContain("authoring.execution.issue.sshCheckDuplicate");
+    expect(sshKeys).toContain("authoring.execution.issue.sshCheckRequired");
+
+    expect(
+      caseExecutionIssues(
+        [
+          { ...emptyCaseLike(), emailCheck: "subject" },
+          { ...emptyCaseLike(), emailCheck: "subject" },
+        ],
+        "email_delivery",
+      ).map((issue) => issue.key),
+    ).toContain("authoring.execution.issue.emailCheckDuplicate");
+
+    const emptyCheckKeys = caseExecutionIssues(
+      [{ ...emptyCaseLike(), fileChecks: [emptyFileCheck()] }],
+      "per_case",
+    ).map((issue) => issue.key);
+    expect(emptyCheckKeys).toContain("authoring.execution.issue.fileCheckEmpty");
+    expect(emptyCheckKeys).toContain("authoring.execution.issue.fileCheckPath");
+
+    expect(
+      caseExecutionIssues(
+        [
+          {
+            ...emptyCaseLike(),
+            fileChecks: [{ path: "a.txt", mode: "0844", content: "", contentSha256: "" }],
+          },
+        ],
+        "per_case",
+      ).map((issue) => issue.key),
+    ).toContain("authoring.execution.issue.fileCheckMode");
+
+    // 内容已填、摘要还没算完：不允许用旧摘要或"空内容"蒙混过去。
+    expect(
+      caseExecutionIssues(
+        [
+          {
+            ...emptyCaseLike(),
+            fileChecks: [
+              { path: "a.txt", mode: "0744", content: "abc", contentSha256: "" },
+            ],
+          },
+        ],
+        "per_case",
+      ).map((issue) => issue.key),
+    ).toContain("authoring.execution.issue.fileCheckDigestPending");
+  });
+
+  it("读回受保护草稿内容：execution 与用例执行字段回到表单，内容原文不读回", () => {
+    const cases: TestCaseInputWithExecution[] = [
+      {
+        name: "第一段",
+        ordinal: 0,
+        weight: 1,
+        visible_to_student: false,
+        expected_stdout: "a\n",
+        segment: 0,
+      },
+      {
+        name: "改权限",
+        ordinal: 1,
+        weight: 1,
+        visible_to_student: false,
+        file_checks: [
+          { path: "week6_1.txt", content_sha256: "a".repeat(64), mode: "0744" },
+        ],
+      },
+    ];
+    const content = {
+      reference_answer: "print(1)",
+      execution: { mode: "single_run", segment_delimiter: "===== SEGMENT =====" },
+      cases,
+    } as QuestionDraftContent;
+
+    const form = applyProtectedContent(emptyDraftForm(), content);
+    expect(form.executionMode).toBe("single_run");
+    expect(form.segmentDelimiter).toBe("===== SEGMENT =====");
+    expect(form.referenceAnswer).toBe("print(1)");
+    expect(form.confirmCaseReplacement).toBe(true);
+    expect(form.cases[0]).toMatchObject({ segmentScored: true, segment: "0" });
+    // 期望内容原文不可读回：只带回摘要；留空内容表示沿用已保存摘要。
+    expect(form.cases[1].fileChecks).toEqual([
+      {
+        path: "week6_1.txt",
+        mode: "0744",
+        content: "",
+        contentSha256: "a".repeat(64),
+      },
+    ]);
+  });
+
+  it("读回 ssh_session 的练习配置；缺失执行声明时回落 per_case", () => {
+    const manifest = readDraftExecution({
+      execution: {
+        mode: "ssh_session",
+        ssh: {
+          host: "127.0.0.1",
+          port: 2222,
+          username: "user01",
+          password: "practice-secret",
+          login_timeout_seconds: 5,
+          session_timeout_seconds: 7,
+        },
+      },
+    });
+    const form = applyExecutionDeclaration(emptyDraftForm(), manifest);
+    expect(form.executionMode).toBe("ssh_session");
+    expect(form.sshPort).toBe("2222");
+    expect(form.sshUsername).toBe("user01");
+    expect(form.sshPassword).toBe("practice-secret");
+    expect(form.sshLoginTimeout).toBe("5");
+    expect(form.sshSessionTimeout).toBe("7");
+
+    // 服务端缺失该键（旧服务）时是 per_case，不是 undefined。
+    expect(readDraftExecution({})).toEqual({ mode: "per_case" });
+    expect(
+      caseFormFrom({
+        name: "a",
+        ordinal: 0,
+        weight: 1,
+        visible_to_student: false,
+        ssh_check: "auth_succeeded",
+      }),
+    ).toMatchObject({ sshCheck: "auth_succeeded" });
+  });
+});
+
+/** 用例执行字段的空白副本（`emptyCase` 的另一个引用，避免测试间共享对象）。 */
+function emptyCaseLike(): ReturnType<typeof emptyDraftForm>["cases"][number] {
+  return emptyDraftForm().cases[0];
+}

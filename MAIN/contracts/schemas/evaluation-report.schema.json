@@ -38,6 +38,17 @@
       },
       "additionalProperties": false
     },
+    "execution": {
+      "type": "object",
+      "description": "How the cases were produced. `invocation_count` is the number of sandbox executions actually started (per_case = number of cases, single_run/ssh_session = 1, email_delivery = 0 because no code is executed). It is recorded separately from `evidence_count` so a single-run question cannot be reported as if each case had its own sandbox.",
+      "required": ["mode", "invocation_count", "evidence_count"],
+      "properties": {
+        "mode": { "type": "string", "enum": ["per_case", "single_run", "ssh_session", "email_delivery"] },
+        "invocation_count": { "type": "integer", "minimum": 0 },
+        "evidence_count": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
     "static_findings": {
       "type": "array",
       "description": "Static legality findings (RQ-B-2-40). A high-severity finding blocks dynamic execution and makes the outcome 'rejected'; in that case the report must not claim the code ran successfully.",
@@ -61,7 +72,7 @@
       "description": "Three-state security conclusion. 'not_checked' is distinct from 'not_found': an unperformed check must never be reported as a clean result.",
       "required": ["status", "findings"],
       "properties": {
-        "status": { "type": "string", "enum": ["found", "not_found", "not_checked"] },
+        "status": { "type": "string", "enum": ["found", "not_found", "not_checked", "not_applicable"] },
         "findings": {
           "type": "array",
           "items": {
@@ -101,6 +112,7 @@
         "properties": {
           "case_id": { "type": "string", "format": "uuid" },
           "ordinal": { "type": "integer", "minimum": 0 },
+          "segment": { "type": ["integer", "null"], "minimum": 0, "description": "For a single_run package, which delimiter-separated stdout segment this evidence describes. Null for other modes and for file/ssh/email checks." },
           "weight": { "type": "number", "exclusiveMinimum": 0, "default": 1 },
           "awarded": { "type": "number", "minimum": 0 },
           "passed": { "type": "boolean" },
@@ -195,6 +207,23 @@
       "properties": {
         "expected_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$", "description": "PROTECTED. Digest of the expected produced file. Omitted from the student view: a digest is not content, but it is a checkable oracle for a guessed file, and only visible cases may expose it." },
         "actual_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+        "file_checks": {
+          "type": "array",
+          "description": "Decisions made directly on files after the run (single_run `file_checks`). Recorded here so 'the file content/permission bits were checked' is auditable after the fact rather than merely claimed in an explanation.",
+          "items": {
+            "type": "object",
+            "required": ["path", "matched"],
+            "properties": {
+              "path": { "type": "string", "maxLength": 200 },
+              "expected_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+              "actual_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+              "expected_mode": { "type": ["string", "null"], "pattern": "^0[0-7]{3}$" },
+              "actual_mode": { "type": ["string", "null"], "pattern": "^0[0-7]{3}$" },
+              "matched": { "type": "boolean" }
+            },
+            "additionalProperties": false
+          }
+        },
         "created": { "$ref": "#/$defs/file_change_list" },
         "modified": { "$ref": "#/$defs/file_change_list" },
         "deleted": { "$ref": "#/$defs/file_change_list" }

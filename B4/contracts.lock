@@ -1,5 +1,5 @@
-contract_version: 0.29.0
+contract_version: 0.30.0
 source: ../MAIN/contracts
 digest_policy: sha256
-digest: e5387c421faacc0cf829368e5306dbb48f681e1ed4613d2a759678c091fbb093
+digest: de58be63f50bfa44a5315100bbb9746814e0f00aa2c1cea78242702099b005ce
 status: baseline

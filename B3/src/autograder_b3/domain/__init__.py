@@ -31,6 +31,7 @@ from .draft_generations import (
     read_generation,
     request_generation,
 )
+from .fixtures import load_fixture_contents
 from .outbox import DrainReport, drain_outbox
 from .packages import load_evaluation_package, load_reference_answer
 from .version_content import load_editable_draft_content
@@ -70,6 +71,7 @@ __all__ = [
     "load_asset_for_delivery",
     "load_editable_draft_content",
     "load_evaluation_package",
+    "load_fixture_contents",
     "load_learning_context",
     "load_reference_answer",
     "publish_version",

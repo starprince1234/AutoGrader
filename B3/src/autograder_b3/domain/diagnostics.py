@@ -53,7 +53,14 @@ def question_diagnostics(
             raise NotFound("question has no version")
 
         cases = ProtectedContentRepository(session).list_cases(version.question_version_id)
-        manifest = manifest_from_stored(version.adapter_manifest)
+        # Diagnostics is the reader allowed to *inspect* a declaration the write/compile path
+        # would refuse: reporting "stdout compares numerically but no tolerance was declared"
+        # (CMP-004) is the whole point of this read-only surface, and a version stored before
+        # that rule existed still has to be explainable to the teacher. Nothing is compiled or
+        # executed here.
+        manifest = manifest_from_stored(
+            version.adapter_manifest, require_runnable_comparison=False
+        )
         report = analyse_comparison(manifest, cases)
         version_id = version.question_version_id
 

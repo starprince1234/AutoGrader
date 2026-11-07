@@ -30,6 +30,15 @@ ENTRY_SCRIPT_BY_LANGUAGE: dict[str, str] = {"python": "main.py", "bash": "main.s
 #: callable harness 的固定文件名（保留路径：工作区里已存在同名文件即拒绝执行）。
 HARNESS_FILENAME = "__b2_harness__.py"
 
+#: `workspace_prep` 准备程序的固定文件名（保留路径，同 harness 的规则）。
+#: 与 `runner.policy.WORKSPACE_PREP_SCRIPT_NAME` 同值；这里再导出一次是为了让 adapters 的
+#: 调用方不必同时 import policy（值由测试逐字比对）。
+PREPARE_PROGRAM_FILENAME = "__b2_prepare__.py"
+
+#: 准备程序失败时的固定退出码/标记（归类 `infrastructure_error`；不是学生失败）。
+PREPARE_PROGRAM_FAILURE_EXIT = 4
+PREPARE_PROGRAM_FAILURE_MARKER = "B2_PREPARE_ERROR"
+
 #: harness 解析失败（import 失败 / 属性不可调用）的退出码与 stderr 标记 → `import_error`。
 HARNESS_RESOLUTION_EXIT = 3
 HARNESS_RESOLUTION_MARKER = "B2_CALLABLE_ERROR"
@@ -159,6 +168,61 @@ def build_execution_plan(*, adapter: PackageAdapter, case: PackageCase, policy: 
         expected_outputs=tuple(item for item in adapter.files if item.mount == "expected_output"),
         harness_name=harness_name,
     )
+
+
+def build_batch_execution_plan(
+    *, adapter: PackageAdapter, policy: RunnerPolicy, language: str, submitted_entry: str | None = None
+) -> ExecutionPlan:
+    """批量模式（`single_run`）的执行计划：输入/参数/退出码取 **adapter 级**声明。
+
+    批量模式一次运行只覆盖一份程序输入：用例级 `stdin`/`args`/`expected_exit_code` 没有独立执行的
+    位置（分段与文件检查才是用例级判定），因此这里刻意只用 adapter 级值——不静默挑某个用例的值。
+    """
+    entry_name = submitted_entry if submitted_entry is not None else entry_name_for(language)
+    return ExecutionPlan(
+        kind=adapter.kind,
+        language=language,
+        interpreter=policy.interpreter_for(language),
+        script=sandbox_script_path(policy, entry_name),
+        entry_name=entry_name,
+        arguments=tuple(adapter.args),
+        stdin_text=adapter.stdin,
+        expected_stdout=None,
+        expected_stderr=None,
+        expected_exit_code=adapter.expect_exit_code,
+        stdout_strategy=adapter.comparison.stdout,
+        stderr_strategy=adapter.comparison.stderr,
+        numeric_tolerance=adapter.comparison.numeric_tolerance,
+        input_fixtures=tuple(item for item in adapter.files if item.mount == "input"),
+        expected_outputs=tuple(item for item in adapter.files if item.mount == "expected_output"),
+        harness_name=None,
+    )
+
+
+def render_workspace_prepare_program() -> str:
+    """渲染 `workspace_prep` 准备程序源码（固定内容；提交侧无法替换）。
+
+    职责（设计文档 §3.4）：把工作区条目 chown 给被囚 uid、目录 chmod 0777、文件 chmod 0644，
+    然后 `setgroups([])/setgid/setuid` 降权并 exec 学生脚本。安全约束：
+
+    - 从 argv 读取的 `jailed_uid`/`jailed_gid` **必须等于 65534**（固定被囚身份），其他值直接失败；
+    - 只处理 `realpath` 后仍在 `/workspace` 内的路径，符号链接一律跳过（`lstat` 判断），
+      绝不对工作区之外的路径 chown/chmod；
+    - 不接受任何学生输入参数：脚本路径与解释器都由 B2 从 package/策略生成。
+    """
+    return _PREPARE_PROGRAM_TEMPLATE
+
+
+def write_workspace_prepare_program(workspace: Path) -> str:
+    """把准备程序写进工作区（保留文件名；已存在即拒绝，绝不覆盖提交文件）。
+
+    返回沙箱内脚本路径（`/workspace/__b2_prepare__.py`）。
+    """
+    target = Path(workspace) / PREPARE_PROGRAM_FILENAME
+    if target.exists() or target.is_symlink():
+        raise ValueError(f"reserved prepare-program path already exists: {PREPARE_PROGRAM_FILENAME}")
+    target.write_text(render_workspace_prepare_program(), encoding="utf-8")
+    return f"/workspace/{PREPARE_PROGRAM_FILENAME}"
 
 
 def workspace_path(workspace: Path, relative: str) -> Path:
@@ -417,6 +481,106 @@ if __name__ == "__main__":
 '''
 
 
+_PREPARE_PROGRAM_TEMPLATE = '''"""B2 workspace_prep 准备程序（服务端固定生成；提交侧不得提供或替换同名文件）。
+
+在 nsjail 的用户命名空间内以 root 运行：把工作区条目 chown 给被囚 uid、目录设为可写，
+然后 setgroups([])/setgid/setuid 降权到被囚身份并 exec 学生脚本。学生代码始终以 subordinate
+uid 运行；本程序是 B2 自有代码，不接受任何学生输入参数。
+
+argv: <jailed_uid> <jailed_gid> <interpreter> <script> [package args...]
+"""
+
+from __future__ import annotations
+
+import os
+import sys
+
+WORKSPACE = "/workspace"
+JAILED_UID = 65534
+JAILED_GID = 65534
+FAILURE_EXIT = 4
+FAILURE_MARKER = "B2_PREPARE_ERROR"
+
+
+def _fail(reason: str) -> None:
+    sys.stderr.write(FAILURE_MARKER + ": " + reason + "\\n")
+    sys.stderr.flush()
+    raise SystemExit(FAILURE_EXIT)
+
+
+def _inside_workspace(path: str) -> bool:
+    try:
+        resolved = os.path.realpath(path)
+    except OSError:
+        return False
+    return resolved == WORKSPACE or resolved.startswith(WORKSPACE + "/")
+
+
+def _prepare_entries() -> None:
+    for root, dirnames, filenames in os.walk(WORKSPACE, topdown=False, followlinks=False):
+        for name in filenames:
+            path = os.path.join(root, name)
+            if os.path.islink(path) or not _inside_workspace(path):
+                # 符号链接一律跳过：不允许借链接把 chown/chmod 作用到工作区之外。
+                continue
+            if not os.path.isfile(path):
+                continue
+            try:
+                os.chown(path, JAILED_UID, JAILED_GID)
+                os.chmod(path, 0o644)
+            except OSError as error:
+                _fail("file preparation failed: " + type(error).__name__)
+        for name in dirnames:
+            path = os.path.join(root, name)
+            if os.path.islink(path) or not _inside_workspace(path):
+                continue
+            try:
+                os.chown(path, JAILED_UID, JAILED_GID)
+                os.chmod(path, 0o777)
+            except OSError as error:
+                _fail("directory preparation failed: " + type(error).__name__)
+    try:
+        os.chown(WORKSPACE, JAILED_UID, JAILED_GID)
+        os.chmod(WORKSPACE, 0o777)
+    except OSError as error:
+        _fail("workspace root preparation failed: " + type(error).__name__)
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) < 5:
+        _fail("wrong number of arguments")
+    try:
+        jailed_uid = int(argv[1])
+        jailed_gid = int(argv[2])
+    except ValueError:
+        _fail("jailed uid/gid are not integers")
+    if jailed_uid != JAILED_UID or jailed_gid != JAILED_GID:
+        # 固定被囚身份：任何其他值都意味着调用方/策略被改坏，拒绝继续。
+        _fail("unexpected jailed identity")
+    interpreter = argv[3]
+    script = argv[4]
+    extra = argv[5:]
+    if not interpreter.startswith("/") or not script.startswith("/workspace/"):
+        _fail("interpreter/script path rejected")
+    _prepare_entries()
+    try:
+        os.setgroups([])
+        os.setgid(jailed_gid)
+        os.setuid(jailed_uid)
+    except OSError as error:
+        _fail("privilege drop failed: " + type(error).__name__)
+    try:
+        os.execv(interpreter, [interpreter, script] + extra)
+    except OSError as error:
+        _fail("exec of the student program failed: " + type(error).__name__)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv))
+'''
+
+
 __all__ = [
     "ENTRY_SCRIPT_BY_LANGUAGE",
     "EVIDENCE_HASH_BUDGET_BYTES",
@@ -427,10 +591,14 @@ __all__ = [
     "HARNESS_RESOLUTION_MARKER",
     "IGNORED_CHANGE_PREFIXES",
     "IGNORED_CHANGE_SUFFIXES",
+    "PREPARE_PROGRAM_FAILURE_EXIT",
+    "PREPARE_PROGRAM_FAILURE_MARKER",
+    "PREPARE_PROGRAM_FILENAME",
     "ExecutionPlan",
     "FixtureOutcome",
     "WorkspaceChanges",
     "WorkspaceFile",
+    "build_batch_execution_plan",
     "build_execution_plan",
     "collect_fixture_outcomes",
     "created_files",
@@ -441,7 +609,9 @@ __all__ = [
     "prepare_case_workspace",
     "recorded_change_path",
     "render_callable_harness",
+    "render_workspace_prepare_program",
     "snapshot_workspace",
     "workspace_changes",
     "workspace_path",
+    "write_workspace_prepare_program",
 ]

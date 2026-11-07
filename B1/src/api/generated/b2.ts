@@ -751,6 +751,65 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/email-verification/challenges": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Issue a one-time e-mail verification code for a question version (student)
+         * @description Starts the ownership proof behind an `email_delivery` question. The student is
+         *     authenticated; the code is returned **once**, bound to `(student, course, section,
+         *     question version)`, stored only as a SHA-256 digest, and expires after 30 minutes.
+         *
+         *     Why a code: a `From` header is forgeable, so matching on the sender address alone would
+         *     let anyone submit mail as another account. The code travels only through this
+         *     authenticated response and must appear in the message; the receiving intake then
+         *     requires the sending account to be the challenge owner. That is what makes the link
+         *     between a real message and a verified account email a fact rather than a guess.
+         *
+         *     A new code may be requested at any time; each code is single-use, so an old one is not a
+         *     replay vector. Issuing a code does not create a submission and does not change any grade.
+         */
+        post: operations["createEmailVerificationChallenge"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/email-verification/challenges/{challenge_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                challenge_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Read the state of a student's e-mail verification code
+         * @description The student-visible feedback channel for `email_delivery`: it distinguishes "message not
+         *     received yet", "message received and bound to a submission", "message received but
+         *     rejected (with a stable reason code)" and "code expired". The same distinction keeps a
+         *     mail-intake outage from reading as a student answer mistake: `reason_code =
+         *     intake_unavailable` belongs to the platform, not the answer. Only the challenge owner can
+         *     read it; the response never contains the code, the sender address, the subject or any
+         *     message body.
+         */
+        get: operations["getEmailVerificationChallengeStatus"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1349,6 +1408,48 @@ export interface components {
             /** @description Normative labels that must be displayed with the steps: model-generated, not part of the score, no complete answer. */
             disclaimers: string[];
         };
+        /** @description Which assignment the student is about to prove ownership of an e-mail address for. */
+        EmailVerificationChallengeRequest: {
+            course_id: components["schemas"]["Uuid"];
+            section_id: components["schemas"]["Uuid"];
+            question_version_id: components["schemas"]["Uuid"];
+        };
+        /**
+         * @description The one-time code, returned once at creation. The server stores only its SHA-256, so a
+         *     database read cannot recover it; it is never logged and never appears in an event.
+         */
+        EmailVerificationChallenge: {
+            challenge_id: components["schemas"]["Uuid"];
+            /** @description Single-use ownership proof the student puts in the message body. */
+            code: string;
+            expires_at: components["schemas"]["Timestamp"];
+        };
+        /**
+         * @description Student-visible state of the ownership proof. `pending` means no message carrying this
+         *     code has been read yet; `received` means a real IMAP message was bound and a submission
+         *     was created; `rejected` carries a stable reason code; `expired` means the code can no
+         *     longer bind a message. The response never echoes the code, the address, the subject or
+         *     any message body.
+         */
+        EmailVerificationChallengeStatus: {
+            challenge_id: components["schemas"]["Uuid"];
+            /** @enum {string} */
+            state: "pending" | "received" | "rejected" | "expired";
+            /**
+             * @description Stable machine code; null unless state is rejected. `intake_unavailable` is a
+             *     platform condition, not a student mistake. `subject_mismatch` and
+             *     `attachment_missing` are reserved for an intake-side check that needs the
+             *     question's subject/attachment templates (they only exist in the evaluation
+             *     package); until such a check is wired they are never produced, and the
+             *     per-case evaluation reports the corresponding mismatch instead.
+             * @enum {string|null}
+             */
+            reason_code?: "subject_mismatch" | "attachment_missing" | "email_sender_mismatch" | "email_verification_rejected" | "email_verification_expired" | "intake_unavailable" | null;
+            expires_at: components["schemas"]["Timestamp"];
+            verified_at?: components["schemas"]["Timestamp"] | null;
+            /** @description Present when state=received: the submission the message became. */
+            submission_id?: components["schemas"]["Uuid"] | null;
+        };
         file: {
             path: string;
             content_sha256: string;
@@ -1449,6 +1550,15 @@ export interface components {
             /** @description PROTECTED. Digest of the expected produced file. Omitted from the student view: a digest is not content, but it is a checkable oracle for a guessed file, and only visible cases may expose it. */
             expected_sha256?: string | null;
             actual_sha256?: string | null;
+            /** @description Decisions made directly on files after the run (single_run `file_checks`). Recorded here so 'the file content/permission bits were checked' is auditable after the fact rather than merely claimed in an explanation. */
+            file_checks?: {
+                path: string;
+                expected_sha256?: string | null;
+                actual_sha256?: string | null;
+                expected_mode?: string | null;
+                actual_mode?: string | null;
+                matched: boolean;
+            }[];
             created?: components["schemas"]["file_change_list"];
             modified?: components["schemas"]["file_change_list"];
             deleted?: components["schemas"]["file_change_list"];
@@ -1477,6 +1587,13 @@ export interface components {
                 /** @description Deterministic, rule-derived conclusion text. Not model-generated: scoring never depends on an LLM (ADR-0005). */
                 summary?: string | null;
             };
+            /** @description How the cases were produced. `invocation_count` is the number of sandbox executions actually started (per_case = number of cases, single_run/ssh_session = 1, email_delivery = 0 because no code is executed). It is recorded separately from `evidence_count` so a single-run question cannot be reported as if each case had its own sandbox. */
+            execution?: {
+                /** @enum {string} */
+                mode: "per_case" | "single_run" | "ssh_session" | "email_delivery";
+                invocation_count: number;
+                evidence_count: number;
+            };
             /** @description Static legality findings (RQ-B-2-40). A high-severity finding blocks dynamic execution and makes the outcome 'rejected'; in that case the report must not claim the code ran successfully. */
             static_findings: {
                 rule_id: string;
@@ -1495,7 +1612,7 @@ export interface components {
             /** @description Three-state security conclusion. 'not_checked' is distinct from 'not_found': an unperformed check must never be reported as a clean result. */
             security_conclusion: {
                 /** @enum {string} */
-                status: "found" | "not_found" | "not_checked";
+                status: "found" | "not_found" | "not_checked" | "not_applicable";
                 findings: {
                     /** Format: uuid */
                     finding_id: string;
@@ -1513,6 +1630,8 @@ export interface components {
                 /** Format: uuid */
                 case_id: string;
                 ordinal: number;
+                /** @description For a single_run package, which delimiter-separated stdout segment this evidence describes. Null for other modes and for file/ssh/email checks. */
+                segment?: number | null;
                 /** @default 1 */
                 weight: number;
                 awarded?: number;
@@ -1572,6 +1691,15 @@ export interface components {
                     /** @description PROTECTED. Digest of the expected produced file. Omitted from the student view: a digest is not content, but it is a checkable oracle for a guessed file, and only visible cases may expose it. */
                     expected_sha256?: string | null;
                     actual_sha256?: string | null;
+                    /** @description Decisions made directly on files after the run (single_run `file_checks`). Recorded here so 'the file content/permission bits were checked' is auditable after the fact rather than merely claimed in an explanation. */
+                    file_checks?: {
+                        path: string;
+                        expected_sha256?: string | null;
+                        actual_sha256?: string | null;
+                        expected_mode?: string | null;
+                        actual_mode?: string | null;
+                        matched: boolean;
+                    }[];
                     created?: components["schemas"]["file_change_list"];
                     modified?: components["schemas"]["file_change_list"];
                     deleted?: components["schemas"]["file_change_list"];
@@ -2460,6 +2588,58 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    createEmailVerificationChallenge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["EmailVerificationChallengeRequest"];
+            };
+        };
+        responses: {
+            /** @description The one-time code. It is shown once and never logged. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmailVerificationChallenge"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    getEmailVerificationChallengeStatus: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                challenge_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current state, with a stable reason code when rejected. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmailVerificationChallengeStatus"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
 }

@@ -5,6 +5,12 @@
 本模块负责：前置可用性判定 → 执行计划 → nsjail 固定参数数组启动 → 输出采集与截断 →
 比较策略（**只来自 package**）→ 失败归类 → 证据与摘要。
 
+Unix 作业扩展（`MAIN/docs/architecture/unix-homework-evaluation.md`）：`per_case` 仍是本模块；
+声明了 `file_checks` 的用例在本次执行前物化 input fixture、执行后由 B2 直接检查工作区文件，
+并且**自动**切换到 `workspace_prep` profile（准备程序 chown 工作区后降权执行学生脚本）。
+批量模式（`single_run`/`ssh_session`）的公开入口是 `runner.run_cases`（委托给本模块的
+`execute_sandbox_plan`，共用同一条启动/清理/取样路径）。
+
 不可协商项：
 
 - **不降级**：`probe_sandbox` 判定不可执行即抛 `SandboxUnavailableError`，在**任何进程被创建之前**返回；
@@ -38,6 +44,7 @@ from autograder_b2.domain import (
     CaseArtifacts,
     CaseEvidence,
     CaseResource,
+    EnvelopeFile,
     FailureCategory,
     InternalEvaluationError,
     PackageUnavailableError,
@@ -48,9 +55,11 @@ from autograder_b2.domain import (
     SubmissionRunInput,
 )
 from autograder_b2.domain.clock import sha256_hex
+from autograder_b2.domain.evidence import BatchRunInput, FileCheckResult
 from autograder_b2.runner.adapters import (
     EXCERPT_LIMIT,
     HARNESS_RESOLUTION_MARKER,
+    PREPARE_PROGRAM_FAILURE_MARKER,
     ExecutionPlan,
     FixtureOutcome,
     WorkspaceChanges,
@@ -64,6 +73,7 @@ from autograder_b2.runner.adapters import (
     prepare_case_workspace,
     snapshot_workspace,
     workspace_changes,
+    write_workspace_prepare_program,
 )
 from autograder_b2.runner.cgroup import (
     CaseResourceSampler,
@@ -76,8 +86,13 @@ from autograder_b2.runner.comparator import (
     compare_stderr,
     compare_stdout,
 )
+from autograder_b2.runner.file_checks import classify_file_checks, evaluate_file_checks
+from autograder_b2.runner.fixtures import FixtureProvider, materialize_fixtures
 from autograder_b2.runner.package import EvaluationPackage, PackageAdapter, PackageCase
 from autograder_b2.runner.policy import (
+    SANDBOX_PROFILE_WORKSPACE_PREP,
+    WORKSPACE_PREP_GID,
+    WORKSPACE_PREP_UID,
     RunnerPolicy,
     build_argv,
     policy_digest,
@@ -456,6 +471,17 @@ def classify_case_outcome(
         return _failure(facts, "resource_limit", "files", violations)
     if facts.stdout_truncated or facts.stderr_truncated:
         return _failure(facts, "resource_limit", "output", violations)
+    if PREPARE_PROGRAM_FAILURE_MARKER in facts.stderr_text:
+        # 准备程序（B2 自有代码）在启动学生脚本前失败：技术故障，绝不折算成学生失败。
+        # 与 `HARNESS_RESOLUTION_MARKER` 一样，标记对学生可伪造，但伪造只会把一种学生侧失败
+        # 换成另一种（infrastructure_error 不会给分，也不会通过），拿不到收益。
+        return CaseOutcome(
+            False,
+            "infrastructure_error",
+            None,
+            tuple(violations),
+            "workspace preparation program failed before the student program could start",
+        )
     if _killed_by(facts.exit_code, SIGSYS_NUMBER):
         violations.append(
             make_finding(
@@ -672,8 +698,34 @@ def input_digest_of(
     policy: RunnerPolicy,
 ) -> str:
     """用例输入摘要：绑定用例声明、有效输入、提交文件摘要、package 与策略摘要。"""
-    files = sorted(submission.files, key=lambda item: item.path)
-    payload = {
+    return input_digest_for(
+        package,
+        files=submission.files,
+        case=case,
+        adapter=adapter,
+        plan=plan,
+        policy=policy,
+    )
+
+
+def input_digest_for(
+    package: EvaluationPackage,
+    *,
+    files: tuple[EnvelopeFile, ...],
+    case: PackageCase,
+    adapter: PackageAdapter,
+    plan: ExecutionPlan,
+    policy: RunnerPolicy,
+    execution_mode: str = "per_case",
+    execution_context: Mapping[str, Any] | None = None,
+) -> str:
+    """输入摘要的通用实现（`run_case` 与 `run_cases` 共用；缺省参数保持旧摘要字节不变）。
+
+    `execution_mode` 只在**非缺省**时进载荷；`execution_context` 用于批量/SSH 的执行参数
+    （不含任何受保护值：口令绝不参与摘要）。新增的用例级 `segment`/`file_checks` 同样只在非缺省时进。
+    """
+    sorted_files = sorted(files, key=lambda item: item.path)
+    payload: dict[str, Any] = {
         "case_id": case.case_id,
         "ordinal": case.ordinal,
         "name": case.name,
@@ -692,9 +744,24 @@ def input_digest_of(
         "input_fixtures": [item.content_sha256 for item in plan.input_fixtures],
         "expected_outputs": [item.content_sha256 for item in plan.expected_outputs],
         "submission_files": [
-            {"path": item.path, "content_sha256": item.content_sha256} for item in files
+            {"path": item.path, "content_sha256": item.content_sha256} for item in sorted_files
         ],
     }
+    if execution_mode != "per_case":
+        payload["execution_mode"] = execution_mode
+    if execution_context:
+        payload["execution_context"] = dict(execution_context)
+    if case.segment is not None:
+        payload["segment"] = case.segment
+    if case.file_checks:
+        payload["file_checks"] = [
+            {
+                "path": item.path,
+                "content_sha256": item.content_sha256,
+                "mode": item.mode,
+            }
+            for item in case.file_checks
+        ]
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return sha256_hex(canonical.encode("utf-8"))
 
@@ -713,6 +780,9 @@ def evidence_digest_of(evidence: CaseEvidence) -> str:
 
     反过来，`artifacts`（含逐文件内容摘要）与 `mismatch_line`/`missing_outputs`/`mismatched_outputs`
     **参与**摘要：它们是确定性事实，纳入它们让摘要对"产出文件被改动"这类差异有区分力。
+
+    新增的 `segment` 与 `file_checks` **只在非缺省时**进载荷：缺省（`None`/空元组）不改变旧证据的
+    摘要，已有数据的可重放性因此保持不变；一旦声明了它们，它们就是判定事实，必须进摘要。
     """
     payload: dict[str, Any] = {
         "case_id": evidence.case_id,
@@ -744,6 +814,20 @@ def evidence_digest_of(evidence: CaseEvidence) -> str:
         ],
         "message": evidence.message,
     }
+    if evidence.segment is not None:
+        payload["segment"] = evidence.segment
+    if evidence.file_checks:
+        payload["file_checks"] = [
+            {
+                "path": item.path,
+                "expected_sha256": item.expected_sha256,
+                "actual_sha256": item.actual_sha256,
+                "expected_mode": item.expected_mode,
+                "actual_mode": item.actual_mode,
+                "matched": item.matched,
+            }
+            for item in evidence.file_checks
+        ]
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return sha256_hex(canonical.encode("utf-8"))
 
@@ -803,25 +887,44 @@ def run_case(
     *,
     probe: Callable[..., Any] | None = None,
     launcher: ProcessLauncher | None = None,
+    fixture_provider: FixtureProvider | None = None,
 ) -> CaseEvidence:
-    """执行**一个**用例并返回证据。
+    """执行**一个**用例并返回证据（冻结签名的 `per_case` 入口）。
 
     生产调用只用两个位置参数（冻结签名）；`probe` / `launcher` 是**仅测试可见**的可选接缝，
-    默认值即生产实现（`probe_sandbox` / `PosixNsjailLauncher`）——**没有环境变量开关**。
+    `fixture_provider` 是生产接缝（B3 fixture 交付）——默认值即生产实现（`probe_sandbox` /
+    `PosixNsjailLauncher` / 无 provider ⇒ 声明了 input fixture 的包判技术故障），**没有环境变量开关**。
+
+    Unix 作业扩展：用例声明了 `file_checks` 时，本次执行自动使用 `workspace_prep` profile
+    （准备程序把工作区 chown/放开给被囚 uid 后降权执行学生脚本），执行后由 B2 直接检查文件。
+    普通题（无 file_checks）的执行策略与旧行为逐字节一致。
 
     只有三种情形抛异常：沙箱不可用（`SandboxUnavailableError`）、package 不可用
     （`PackageUnavailableError`）、内部缺陷（`InternalEvaluationError`）。学生侧失败一律返回证据。
     """
     started = time.monotonic()
     try:
+        if package.execution.mode != "per_case":
+            raise InternalEvaluationError(
+                "run_case executes per_case packages only; execution.mode is"
+                f" {package.execution.mode!r} (batch modes use run_cases)"
+            )
         case = resolve_case(package, submission)
         adapter = resolve_adapter(package, submission)
-        policy = resolve_policy(package, submission)
+        declared_policy = resolve_policy(package, submission)
+        policy = policy_for_case(declared_policy, case)
         plan = build_execution_plan(
             adapter=adapter, case=case, policy=policy, language=package.language,
             submitted_entry=submission.files[0].path if len(submission.files) == 1 else None,
         )
-        digest_input = input_digest_of(package, submission, case, adapter, plan, policy)
+        digest_input = input_digest_for(
+            package,
+            files=submission.files,
+            case=case,
+            adapter=adapter,
+            plan=plan,
+            policy=policy,
+        )
         probe_function = probe_sandbox if probe is None else probe
         availability = probe_function(policy)
         if not availability.available:
@@ -829,14 +932,19 @@ def run_case(
             raise SandboxUnavailableError(f"sandbox unavailable: {availability.reason}")
         active_launcher = launcher_for(policy) if launcher is None else launcher
         workspace = Path(submission.workspace)
+        fixture_problems = materialize_fixtures(package, workspace, fixture_provider)
         entry = adapter.callable
-        problems = prepare_case_workspace(
-            plan,
-            workspace,
-            entry_module=entry.module if entry is not None else None,
-            entry_attribute=entry.attribute if entry is not None else None,
-            arguments_json=entry.arguments_json if entry is not None else None,
-        )
+        problems = list(fixture_problems)
+        if not problems:
+            problems.extend(
+                prepare_case_workspace(
+                    plan,
+                    workspace,
+                    entry_module=entry.module if entry is not None else None,
+                    entry_attribute=entry.attribute if entry is not None else None,
+                    arguments_json=entry.arguments_json if entry is not None else None,
+                )
+            )
         if problems:
             return build_evidence(
                 case=case,
@@ -867,15 +975,34 @@ def run_case(
                 exit_code=None,
                 duration_ms=elapsed_ms(started),
             )
+        command = _prepare_command(policy, plan, workspace)
         before = snapshot_workspace(workspace)
-        facts = _execute_case(
-            plan=plan, policy=policy, workspace=workspace, launcher=active_launcher, before=before
+        facts = execute_sandbox_plan(
+            plan=plan,
+            policy=policy,
+            workspace=workspace,
+            launcher=active_launcher,
+            before=before,
+            command=command,
         )
         outcome = classify_case_outcome(
             facts,
             expected_exit_code=plan.expected_exit_code,
             wall_limit_ms=int(policy.max_wall_seconds * 1000),
         )
+        file_checks = evaluate_file_checks(case, workspace)
+        if file_checks and outcome.passed:
+            failure = classify_file_checks(file_checks)
+            if failure.category is not None:
+                outcome = CaseOutcome(
+                    False,
+                    failure.category,  # type: ignore[arg-type]
+                    None,
+                    tuple(outcome.violations),
+                    failure.message,
+                    missing_outputs=failure.missing,
+                    mismatched_outputs=failure.mismatched,
+                )
         return build_evidence(
             case=case,
             outcome=outcome,
@@ -897,6 +1024,7 @@ def run_case(
                 ),
                 limit_hit=limit_hit_for(outcome.resource_limit_hit),
             ),
+            file_checks=file_checks,
         )
     except (SandboxUnavailableError, PackageUnavailableError, InternalEvaluationError):
         raise
@@ -904,6 +1032,41 @@ def run_case(
         raise InternalEvaluationError(
             f"run_case failed internally: {type(error).__name__}: {error}"
         ) from error
+
+
+def policy_for_case(policy: RunnerPolicy, case: PackageCase) -> RunnerPolicy:
+    """用例级执行策略：声明了 `file_checks` 的用例使用 `workspace_prep` profile。
+
+    触发条件只有显式声明（设计文档 §3.4）：普通题策略**逐字节不变**。profile 只在这里派生，
+    package 的 `security_policy` 里没有任何字段能直接选择它。
+    """
+    if not case.file_checks:
+        return policy
+    return replace(policy, sandbox_profile=SANDBOX_PROFILE_WORKSPACE_PREP)
+
+
+def _prepare_command(
+    policy: RunnerPolicy, plan: ExecutionPlan, workspace: Path
+) -> SandboxCommand | None:
+    """`workspace_prep` 的执行命令：B2 固定准备程序 + 学生解释器/脚本/参数（无学生输入驱动）。
+
+    准备程序在被囚命名空间内以 root 启动，chown 工作区后 `setuid/setgid` 降权再 exec 学生脚本；
+    argv 里的 uid/gid 是固定常量（准备程序会再次校验），学生代码拿不到 root。
+    """
+    if policy.sandbox_profile != SANDBOX_PROFILE_WORKSPACE_PREP:
+        return None
+    script = write_workspace_prepare_program(workspace)
+    return SandboxCommand(
+        language="python",
+        script=script,
+        arguments=(
+            str(WORKSPACE_PREP_UID),
+            str(WORKSPACE_PREP_GID),
+            plan.interpreter,
+            plan.script,
+            *plan.arguments,
+        ),
+    )
 
 
 def first_mismatch_line(facts: RunFacts) -> int | None:
@@ -917,15 +1080,37 @@ def first_mismatch_line(facts: RunFacts) -> int | None:
     return None
 
 
-def _execute_case(
+@dataclass(frozen=True, slots=True)
+class SandboxCommand:
+    """覆盖默认执行命令的沙箱启动指令（workspace_prep 准备程序、SSH 驱动使用）。
+
+    `language` 决定解释器（来自策略）；`script` 必须是 `/workspace/...`（`build_argv` 校验）。
+    """
+
+    language: str
+    script: str
+    arguments: tuple[str, ...] = ()
+
+
+def execute_sandbox_plan(
     *,
     plan: ExecutionPlan,
     policy: RunnerPolicy,
     workspace: Path,
     launcher: ProcessLauncher,
     before: Mapping[str, WorkspaceFile],
+    command: SandboxCommand | None = None,
+    config_text: str | None = None,
+    stdin_text: str | None = None,
 ) -> RunFacts:
     """启动沙箱、采集有界输出与**宿主自有沙箱日志**、必要时清理整棵进程树，并汇总事实。
+
+    这是 `run_case` / `run_cases`（single_run、SSH）共用的**唯一**沙箱启动路径：
+
+    - `command` 覆盖本次执行的解释器/脚本/参数（workspace_prep 准备程序、SSH 驱动）；
+    - `config_text` 覆盖本次配置文本（SSH profile 的配置由 `render_nsjail_ssh_config` 生成）；
+    - `stdin_text` 覆盖子进程 stdin（SSH 驱动经 stdin 接收含口令的运行配置）。
+      三者缺省时行为与旧 `_execute_case` 完全一致（普通题路径不变）。
 
     沙箱日志（`<stem>.nsjail.log`，由 `--log` 写入）与配置/标准流同放工作区**旁边**：该目录在沙箱内
     被遮蔽为只读空 tmpfs，因此被囚进程**既读不到也写不进**；它是"沙箱侧归因"的唯一文本来源。
@@ -939,16 +1124,23 @@ def _execute_case(
     stdout_path = run_dir / f"{stem}.stdout"
     stderr_path = run_dir / f"{stem}.stderr"
     stdin_path = run_dir / f"{stem}.stdin"
-    config_path.write_text(render_nsjail_config(policy, workspace), encoding="utf-8")
+    active_config = (
+        render_nsjail_config(policy, workspace) if config_text is None else config_text
+    )
+    config_path.write_text(active_config, encoding="utf-8")
     _unlink_quietly(sandbox_log_path)  # nsjail 以追加方式打开日志：本轮扫描只认本轮产生的字节
-    argv = build_argv(
+    active_language = plan.language if command is None else command.language
+    active_script = plan.script if command is None else command.script
+    active_arguments = plan.arguments if command is None else command.arguments
+    active_argv = build_argv(
         policy,
         config_path=config_path,
         sandbox_log_path=sandbox_log_path,
-        language=plan.language,
-        script=plan.script,
-        arguments=plan.arguments,
+        language=active_language,
+        script=active_script,
+        arguments=active_arguments,
     )
+    active_stdin = plan.stdin_text if stdin_text is None else stdin_text
     timed_out = False
     kill_detail: str | None = None
     tree_still_alive = False
@@ -957,10 +1149,10 @@ def _execute_case(
     run_started = time.monotonic()
     try:
         process = launcher.start(
-            argv,
+            active_argv,
             cwd=workspace,
             env=dict(sandbox_env(policy)),
-            stdin_text=plan.stdin_text,
+            stdin_text=active_stdin,
             stdin_path=stdin_path,
             stdout_path=stdout_path,
             stderr_path=stderr_path,
@@ -1021,6 +1213,20 @@ def _execute_case(
     )
 
 
+def _execute_case(
+    *,
+    plan: ExecutionPlan,
+    policy: RunnerPolicy,
+    workspace: Path,
+    launcher: ProcessLauncher,
+    before: Mapping[str, WorkspaceFile],
+) -> RunFacts:
+    """旧内部入口（`canary.py` 依赖）：等价于 `execute_sandbox_plan` 的缺省参数形式。"""
+    return execute_sandbox_plan(
+        plan=plan, policy=policy, workspace=workspace, launcher=launcher, before=before
+    )
+
+
 def _unlink_quietly(path: Path) -> None:
     try:
         Path(path).unlink()
@@ -1069,8 +1275,13 @@ def build_evidence(
     mismatch_line: int | None = None,
     changes: WorkspaceChanges | None = None,
     resource: CaseResource | None = None,
+    segment: int | None = None,
+    file_checks: tuple[FileCheckResult, ...] = (),
 ) -> CaseEvidence:
-    """组装 `CaseEvidence`（字段齐全、摘录截断、摘要确定性）。"""
+    """组装 `CaseEvidence`（字段齐全、摘录截断、摘要确定性）。
+
+    `segment` / `file_checks` 是 Unix 作业扩展字段：缺省不改变旧证据的字段值与摘要。
+    """
     file_excerpt = next(
         (item.actual_excerpt for item in fixture_outcomes if item.actual_excerpt), None
     )
@@ -1104,6 +1315,8 @@ def build_evidence(
         mismatched_outputs=outcome.mismatched_outputs,
         resource=resource,
         artifacts=build_case_artifacts(fixture_outcomes, changes),
+        segment=segment,
+        file_checks=file_checks,
         evidence_digest="",
     )
     return replace(evidence, evidence_digest=evidence_digest_of(evidence))
@@ -1141,6 +1354,29 @@ def resolve_policy(package: EvaluationPackage, submission: SubmissionRunInput) -
     return package.security_policy
 
 
+def run_cases(
+    package: EvaluationPackage,
+    batch: BatchRunInput,
+    *,
+    probe: Callable[..., Any] | None = None,
+    launcher: ProcessLauncher | None = None,
+    fixture_provider: FixtureProvider | None = None,
+) -> tuple[CaseEvidence, ...]:
+    """稳定导入路径（实现见 `runner.run_cases`）：批量执行入口 `run_cases(package, batch)`。
+
+    延迟导入：`runner.run_cases` 依赖本模块的执行原语，放在模块顶部会形成循环导入。
+    """
+    from autograder_b2.runner.run_cases import run_cases as _run_cases
+
+    return _run_cases(
+        package,
+        batch,
+        probe=probe,
+        launcher=launcher,
+        fixture_provider=fixture_provider,
+    )
+
+
 __all__ = [
     "LIMIT_MARKERS",
     "MESSAGE_LIMIT",
@@ -1155,19 +1391,24 @@ __all__ = [
     "ProcessTreeKiller",
     "RunFacts",
     "RunningProcess",
+    "SandboxCommand",
     "build_case_artifacts",
     "build_evidence",
     "classify_case_outcome",
     "elapsed_ms",
     "evidence_digest_of",
+    "execute_sandbox_plan",
     "first_mismatch_line",
+    "input_digest_for",
     "input_digest_of",
     "launcher_for",
     "make_finding",
+    "policy_for_case",
     "read_capped",
     "redact",
     "resolve_adapter",
     "resolve_case",
     "resolve_policy",
     "run_case",
+    "run_cases",
 ]

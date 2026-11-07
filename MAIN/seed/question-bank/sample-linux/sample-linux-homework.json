@@ -1,48 +1,89 @@
 [
   {
     "title": "第1题 邮件标题与发件人地址绑定",
-    "stem_markdown": "第1题\n\n向 linuxos_assignment@163.com 发送一封电子邮件。\n\n要求邮件主题为：学号_第几次作业。注意学号用半角阿拉伯数字，下划线为半角下划线，题号使用阿拉伯数字表示。本次邮件的发件人邮件地址，将固定作为以后提交作业的邮件发件地址。需要先提交第一次作业答案后才能提交后续作业答案，提交后续作业答案使用的邮件地址需要与提交第一次作业答案的邮件地址相同。\n\n例：学号为 2020141440777 的同学提交的第一次作业电子邮件的标题应为：2020141440777_1\n\n### 作业提交要求\n\n1. 邮件标题：`学号_第几次作业`。学号用半角阿拉伯数字，下划线为半角下划线，题号用阿拉伯数字表示。\n   例：学号为 2020141440777 的同学提交第 2 次作业，邮件标题为 `2020141440777_2`。\n   首次提交作业所使用的发件人地址，即为之后所有作业的发件地址，后续作业必须用同一地址发送。\n2. 附件文件名：`学号.txt`。例：学号为 2020141440777 的同学提交的附件文件名为 `2020141440777.txt`。\n3. 附件里只能包含 linux 命令、命令选项以及参数，每行只能写入一条命令。\n4. 附件文本文件使用「记事本」「TextEdit」软件编辑，并使用 ANSI/ASCII 编码格式保存后提交。\n",
+    "stem_markdown": "第1题\n\n向 linuxos_assignment@163.com 发送一封电子邮件。\n\n要求邮件主题为：学号_第几次作业。注意学号用半角阿拉伯数字，下划线为半角下划线，题号使用阿拉伯数字表示。本次邮件的发件人邮件地址，将固定作为以后提交作业的邮件发件地址。需要先提交第一次作业答案后才能提交后续作业答案，提交后续作业答案使用的邮件地址需要与提交第一次作业答案的邮件地址相同。\n\n例：学号为 2020141440777 的同学提交的第一次作业电子邮件的标题应为：2020141440777_1\n\n### 本平台的邮件核验流程\n\n1. 在课程页面打开本题，点击「获取邮件核验码」，平台会给出一次性核验码（形如 `AG-XXXXXXXXXXXX`）和有效期。\n2. 把核验码写在邮件正文的第一行。核验码是证明「这个邮箱属于你」的一次性凭据：只发给你已登录的账号，用过一次即失效。\n3. 发送邮件后回到课程页面，可以随时查看核验状态：pending（尚未收到）/ received（已收到并创建提交）/ rejected（附稳定原因码）/ expired（核验码过期）。平台收到合格邮件后会自动创建提交并触发评测。\n4. 平台会核对邮件主题、发件地址是否与账号已核验的邮箱一致、首次发件地址绑定和附件名。伪造发件人、重复使用核验码或使用其他同学的核验码都会被拒绝。\n\n### 作业提交要求\n\n1. 邮件标题：`学号_第几次作业`。学号用半角阿拉伯数字，下划线为半角下划线，题号用阿拉伯数字表示。\n   例：学号为 2020141440777 的同学提交第 2 次作业，邮件标题为 `2020141440777_2`。\n   首次提交作业所使用的发件人地址，即为之后所有作业的发件地址，后续作业必须用同一地址发送。\n2. 附件文件名：`学号.txt`。例：学号为 2020141440777 的同学提交的附件文件名为 `2020141440777.txt`。\n3. 附件里只能包含 linux 命令、命令选项以及参数，每行只能写入一条命令。\n4. 附件文本文件使用「记事本」「TextEdit」软件编辑，并使用 ANSI/ASCII 编码格式保存后提交。\n",
     "language": "bash",
-    "manual": true,
     "publish": false,
-    "reference_answer": "true\n",
+    "reference_answer": "{\"account_email\": \"student@example.edu\", \"account_email_verified\": true, \"attachment_names\": [\"2020141440777.txt\"], \"received\": true, \"sender\": \"student@example.edu\", \"sender_binding_matches\": true, \"student_number\": \"2020141440777\", \"subject\": \"2020141440777_1\"}\n",
     "adapter": {
       "kind": "stdin",
       "args": [],
       "expect_exit_code": 0,
       "comparison": {
-        "stdout": "ignore_trailing_whitespace",
+        "stdout": "ignored",
         "stderr": "ignored",
         "numeric_tolerance": null
       }
     },
+    "execution": {
+      "mode": "email_delivery",
+      "email": {
+        "attempt": 1
+      }
+    },
     "cases": [
       {
-        "name": "人工核验：邮箱绑定题，通过邮件标题与发件人地址人工判分（无法沙箱自动判分）",
+        "name": "平台真实收到了这封邮件",
         "ordinal": 0,
         "weight": 1,
-        "visible_to_student": false,
-        "stdin": "",
+        "visible_to_student": true,
+        "stdin": null,
         "args": [],
-        "expected_stdout": "",
+        "expected_stdout": null,
         "expected_stderr": null,
-        "expected_exit_code": 0
+        "expected_exit_code": null,
+        "email_check": "email_received"
+      },
+      {
+        "name": "邮件主题等于 学号_1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": null,
+        "args": [],
+        "expected_stdout": null,
+        "expected_stderr": null,
+        "expected_exit_code": null,
+        "email_check": "subject"
+      },
+      {
+        "name": "发件地址等于账号已验证邮箱且符合首次绑定",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": null,
+        "args": [],
+        "expected_stdout": null,
+        "expected_stderr": null,
+        "expected_exit_code": null,
+        "email_check": "sender"
+      },
+      {
+        "name": "附件名为 学号.txt",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": null,
+        "args": [],
+        "expected_stdout": null,
+        "expected_stderr": null,
+        "expected_exit_code": null,
+        "email_check": "attachment"
       }
     ],
     "tags": [
       "linux",
       "email",
-      "manual-review",
-      "submission"
+      "submission",
+      "verification"
     ],
     "max_files": 20,
     "max_total_bytes": 1048576
   },
   {
     "title": "第2题 ssh 登录与退出",
-    "stem_markdown": "第2题\n\n使用 ssh 命令登录到 127.0.0.1 主机。登录用户：user01，密码：12345678，登录成功后退出登录。可以暂不考虑判断输入 yes 的问题。\n\n### 作业提交要求\n\n1. 邮件标题：`学号_第几次作业`。学号用半角阿拉伯数字，下划线为半角下划线，题号用阿拉伯数字表示。\n   例：学号为 2020141440777 的同学提交第 2 次作业，邮件标题为 `2020141440777_2`。\n   首次提交作业所使用的发件人地址，即为之后所有作业的发件地址，后续作业必须用同一地址发送。\n2. 附件文件名：`学号.txt`。例：学号为 2020141440777 的同学提交的附件文件名为 `2020141440777.txt`。\n3. 附件里只能包含 linux 命令、命令选项以及参数，每行只能写入一条命令。\n4. 附件文本文件使用「记事本」「TextEdit」软件编辑，并使用 ANSI/ASCII 编码格式保存后提交。\n",
+    "stem_markdown": "第2题\n\n使用 ssh 命令登录到 127.0.0.1 主机。登录用户：user01，密码：12345678，登录成功后退出登录。可以暂不考虑判断输入 yes 的问题。\n\n### 本平台如何评测本题\n\n平台会在隔离的练习环境中启动一个真实的 SSH 服务，并真实执行你写的登录与退出流程：\n\n1. 答案的第一条命令必须是 `ssh` 登录命令，形如 `ssh user01@127.0.0.1`。\n2. 登录成功后，答案后续每一行都会作为远端会话中依次输入的命令执行；用 `exit`（或 `logout`）退出登录。\n3. 登录密码由练习环境在出现密码提示时自动输入，请不要把密码写进答案文件（题面要求每行只能是一条命令）。\n4. 评测分别判定三件事：练习服务真实可用、真实密码认证登录成功、会话干净退出。伪造命令文本、打印假的登录信息、只运行 `ssh --version` 都不会通过。\n\n### 作业提交要求\n\n1. 邮件标题：`学号_第几次作业`。学号用半角阿拉伯数字，下划线为半角下划线，题号用阿拉伯数字表示。\n   例：学号为 2020141440777 的同学提交第 2 次作业，邮件标题为 `2020141440777_2`。\n   首次提交作业所使用的发件人地址，即为之后所有作业的发件地址，后续作业必须用同一地址发送。\n2. 附件文件名：`学号.txt`。例：学号为 2020141440777 的同学提交的附件文件名为 `2020141440777.txt`。\n3. 附件里只能包含 linux 命令、命令选项以及参数，每行只能写入一条命令。\n4. 附件文本文件使用「记事本」「TextEdit」软件编辑，并使用 ANSI/ASCII 编码格式保存后提交。\n",
     "language": "bash",
-    "manual": true,
     "publish": false,
     "reference_answer": "ssh user01@127.0.0.1\nexit\n",
     "adapter": {
@@ -50,28 +91,64 @@
       "args": [],
       "expect_exit_code": 0,
       "comparison": {
-        "stdout": "ignore_trailing_whitespace",
+        "stdout": "ignored",
         "stderr": "ignored",
         "numeric_tolerance": null
       }
     },
+    "execution": {
+      "mode": "ssh_session",
+      "ssh": {
+        "host": "127.0.0.1",
+        "port": 22,
+        "username": "user01",
+        "password": "12345678",
+        "login_timeout_seconds": 10,
+        "session_timeout_seconds": 10
+      }
+    },
     "cases": [
       {
-        "name": "人工核验：需要真实的 ssh 服务与 user01 账号，沙箱内无法执行，人工判分",
+        "name": "练习环境中的 SSH 服务真实可用",
         "ordinal": 0,
         "weight": 1,
-        "visible_to_student": false,
-        "stdin": "",
+        "visible_to_student": true,
+        "stdin": null,
         "args": [],
-        "expected_stdout": "",
+        "expected_stdout": null,
         "expected_stderr": null,
-        "expected_exit_code": 0
+        "expected_exit_code": null,
+        "ssh_check": "service_ready"
+      },
+      {
+        "name": "以 user01 与真实密码认证登录成功",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": null,
+        "args": [],
+        "expected_stdout": null,
+        "expected_stderr": null,
+        "expected_exit_code": null,
+        "ssh_check": "auth_succeeded"
+      },
+      {
+        "name": "登录后干净退出会话",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": null,
+        "args": [],
+        "expected_stdout": null,
+        "expected_stderr": null,
+        "expected_exit_code": null,
+        "ssh_check": "session_closed"
       }
     ],
     "tags": [
       "linux",
       "ssh",
-      "manual-review"
+      "login"
     ],
     "max_files": 20,
     "max_total_bytes": 1048576
@@ -199,31 +276,69 @@
   },
   {
     "title": "第6题 vi 批处理命令与权限调整",
-    "stem_markdown": "第6题\n\n作业如下：\n\n1. vi 是一个非常灵活的文本编辑工具。在 vi 8.0 版本中，各种 vi 命令都可以通过命令行参数的形式传递给 vi，使得 vi 能自动地执行各种编辑操作。例如，以下命令可以自动打开 vi_test.txt 文件并将“++++++”写入第一行：\nvi +′evitest.txt′+'e vi_test.txt' +′evit​est.txt′+​​​​​​​​​​​​​​​​​​':1' +$'i\\n++++++' +x\n+ 表示命令开始，带参数的命令在加上使用 $' 和 '。\n使用 vi 的这一特性，编写命令编辑当前目录中的 week6_1.txt 文件，在文件的第 2 行插入 [line22222222]（包含方括号），原第 2 行变为第 3 行，删除此时文档的第 5 行，存盘并退出 vi。\n2. 对当前目录下 week6_2.dat 文件进行权限调整，调整如下：文件所有者添加执行权限，所有者同组用户去掉写入权限，其他用户的权限修改为只读。\n\n### 作业提交要求\n\n1. 邮件标题：`学号_第几次作业`。学号用半角阿拉伯数字，下划线为半角下划线，题号用阿拉伯数字表示。\n   例：学号为 2020141440777 的同学提交第 2 次作业，邮件标题为 `2020141440777_2`。\n   首次提交作业所使用的发件人地址，即为之后所有作业的发件地址，后续作业必须用同一地址发送。\n2. 附件文件名：`学号.txt`。例：学号为 2020141440777 的同学提交的附件文件名为 `2020141440777.txt`。\n3. 附件里只能包含 linux 命令、命令选项以及参数，每行只能写入一条命令。\n4. 附件文本文件使用「记事本」「TextEdit」软件编辑，并使用 ANSI/ASCII 编码格式保存后提交。\n",
+    "stem_markdown": "第6题\n\n作业如下：\n\n1. vi 是一个非常灵活的文本编辑工具。在 vi 8.0 版本中，各种 vi 命令都可以通过命令行参数的形式传递给 vi，使得 vi 能自动地执行各种编辑操作。例如，以下命令可以自动打开 vi_test.txt 文件并将“++++++”写入第一行：\nvi +':1' +$'i\\n++++++' +x vi_test.txt\n+ 表示命令开始，带参数的命令在加上使用 $' 和 '。\n使用 vi 的这一特性，编写命令编辑当前目录中的 week6_1.txt 文件，在文件的第 2 行插入 [line22222222]（包含方括号），原第 2 行变为第 3 行，删除此时文档的第 5 行，存盘并退出 vi。\n2. 对当前目录下 week6_2.dat 文件进行权限调整，调整如下：文件所有者添加执行权限，所有者同组用户去掉写入权限，其他用户的权限修改为只读。\n\n### 本平台如何评测本题\n\n1. 平台会为评测提供两个初始文件：`week6_1.txt`（六行 line1..line6）与 `week6_2.dat`（初始权限 0644）。学生程序和参考答案使用同一份初始文件。\n2. 第 1 小题直接读取 `week6_1.txt` 的**最终字节**并比较内容摘要，不看你打印了什么。\n3. 第 2 小题直接读取 `week6_2.dat` 的**最终权限位**，打印一段假的 `stat` 输出不能通过。\n4. 两个小题在一次评测运行中完成，请把两条命令都写进答案文件。\n\n### 作业提交要求\n\n1. 邮件标题：`学号_第几次作业`。学号用半角阿拉伯数字，下划线为半角下划线，题号用阿拉伯数字表示。\n   例：学号为 2020141440777 的同学提交第 2 次作业，邮件标题为 `2020141440777_2`。\n   首次提交作业所使用的发件人地址，即为之后所有作业的发件地址，后续作业必须用同一地址发送。\n2. 附件文件名：`学号.txt`。例：学号为 2020141440777 的同学提交的附件文件名为 `2020141440777.txt`。\n3. 附件里只能包含 linux 命令、命令选项以及参数，每行只能写入一条命令。\n4. 附件文本文件使用「记事本」「TextEdit」软件编辑，并使用 ANSI/ASCII 编码格式保存后提交。\n",
     "language": "bash",
     "publish": false,
-    "reference_answer": "mkdir -p sample && cd sample\nprintf 'line1\\nline2\\nline3\\nline4\\nline5\\nline6\\n' > week6_1.txt\nprintf 'data\\n' > week6_2.dat\n# 第 1 小题：vi 的命令行参数随 vim 版本变化，本题按“人工核验”记录，参考命令如下：\n# vi +':2' +$'i\\n[line22222222]' +':2d' +':5d' +'wq' week6_1.txt\n# 第 2 小题：所有者加执行、同组去掉写、其他用户只读\nchmod u+x,g-w,o=r week6_2.dat\nstat -c '%A' week6_2.dat\n",
+    "reference_answer": "vi +':2' +$':normal O[line22222222]\\e' +':5d' +':wq' week6_1.txt\nchmod u+x,g-w,o=r week6_2.dat\n",
     "adapter": {
-      "kind": "stdin",
+      "kind": "file",
       "args": [],
       "expect_exit_code": 0,
       "comparison": {
-        "stdout": "ignore_trailing_whitespace",
+        "stdout": "ignored",
         "stderr": "ignored",
         "numeric_tolerance": null
       }
     },
+    "execution": {
+      "mode": "single_run"
+    },
+    "fixtures": [
+      {
+        "path": "week6_1.txt",
+        "mount": "input",
+        "content_text": "line1\nline2\nline3\nline4\nline5\nline6\n"
+      },
+      {
+        "path": "week6_2.dat",
+        "mount": "input",
+        "content_text": "data\n"
+      }
+    ],
     "cases": [
       {
-        "name": "权限调整后为 -rwxr--r--（vi 部分见题面，人工核验）",
+        "name": "vi 编辑后的 week6_1.txt 最终内容正确",
         "ordinal": 0,
         "weight": 1,
         "visible_to_student": true,
-        "stdin": "",
+        "stdin": null,
         "args": [],
-        "expected_stdout": "-rwxr--r--\n",
+        "expected_stdout": null,
         "expected_stderr": null,
-        "expected_exit_code": 0
+        "expected_exit_code": null,
+        "file_checks": [
+          {
+            "path": "week6_1.txt",
+            "content_sha256": "beb528badbe6925be357bd8be10b3db62ede88b840321620146c7f9d37c12fc5"
+          }
+        ]
+      },
+      {
+        "name": "week6_2.dat 最终权限位为 0744",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": null,
+        "args": [],
+        "expected_stdout": null,
+        "expected_stderr": null,
+        "expected_exit_code": null,
+        "file_checks": [
+          {
+            "path": "week6_2.dat",
+            "mode": "0744"
+          }
+        ]
       }
     ],
     "tags": [
@@ -231,17 +346,17 @@
       "shell",
       "vi",
       "chmod",
-      "manual-review"
+      "file-state"
     ],
     "max_files": 20,
     "max_total_bytes": 1048576
   },
   {
     "title": "第7题 grep 统计与排序",
-    "stem_markdown": "第7题\n\n作业如下：\n\n1. 使用 grep 命令统计 week7.txt 文件中含有单词 linux 出现的行数，统计时忽略首字母大小写。\n2. 使用 grep 命令统计 week7.txt 文件中空行数。\n3. 使用 grep 命令输出 week7.txt 文件中不包含空格的非空行，输出时包含该行在 week7.txt 中的行号。提示：1.可以使用管道操作符分解为两个 grep 命令完成，2.注意观察输出的空行的特征。\n4. 如果需要在 grep 命令中使用扩展正则表达式，需要 E 选项。使用 grep 命令找出 week7.txt 文件中只包含数字的行，并按数值由大到小排序。\n5. 将 week7.txt 文件中以 The，You，One 开始的句子按行号大到小排序。\n\n作业提交要求同第2题。week7.txt 不包含中文字符和全角字符。每题答案占用一行（可包含多个命令）。grep (GNU grep): v3.1，sort (GNU coreutils) : v8.28\n\n### 作业提交要求\n\n1. 邮件标题：`学号_第几次作业`。学号用半角阿拉伯数字，下划线为半角下划线，题号用阿拉伯数字表示。\n   例：学号为 2020141440777 的同学提交第 2 次作业，邮件标题为 `2020141440777_2`。\n   首次提交作业所使用的发件人地址，即为之后所有作业的发件地址，后续作业必须用同一地址发送。\n2. 附件文件名：`学号.txt`。例：学号为 2020141440777 的同学提交的附件文件名为 `2020141440777.txt`。\n3. 附件里只能包含 linux 命令、命令选项以及参数，每行只能写入一条命令。\n4. 附件文本文件使用「记事本」「TextEdit」软件编辑，并使用 ANSI/ASCII 编码格式保存后提交。\n",
+    "stem_markdown": "第7题\n\n作业如下：\n\n1. 使用 grep 命令统计 week7.txt 文件中含有单词 linux 出现的行数，统计时忽略首字母大小写。\n2. 使用 grep 命令统计 week7.txt 文件中空行数。\n3. 使用 grep 命令输出 week7.txt 文件中不包含空格的非空行，输出时包含该行在 week7.txt 中的行号。提示：1.可以使用管道操作符分解为两个 grep 命令完成，2.注意观察输出的空行的特征。\n4. 如果需要在 grep 命令中使用扩展正则表达式，需要 E 选项。使用 grep 命令找出 week7.txt 文件中只包含数字的行，并按数值由大到小排序。\n5. 将 week7.txt 文件中以 The，You，One 开始的句子按行号大到小排序。\n\n### 分段输出要求（本题按小题分段评分）\n\n- 按上面 1、2、3、4、5 的顺序输出每个小题的结果，每个小题的输出连续书写。\n- 相邻两个小题之间必须输出下面这一行固定分隔行（独占一行，前后不要空格）：\n\n```\n---AUTOGRADER-SEGMENT---\n```\n\n- 最后一个小题（第 5 小题）之后不要再输出分隔行。\n- 平台会把你的输出按这个分隔行切成 5 段，逐段与各小题的期望输出比较；分隔行缺失、多余或段为空都会导致分段不合法，整题各段都不会被判为通过。\n- 每个小题只输出该小题的结果，不要输出题号、提示语或额外的空行。\n\n作业提交要求同第2题。week7.txt 不包含中文字符和全角字符。每题答案占用一行（可包含多个命令）。grep (GNU grep): v3.1，sort (GNU coreutils) : v8.28\n\n### 作业提交要求\n\n1. 邮件标题：`学号_第几次作业`。学号用半角阿拉伯数字，下划线为半角下划线，题号用阿拉伯数字表示。\n   例：学号为 2020141440777 的同学提交第 2 次作业，邮件标题为 `2020141440777_2`。\n   首次提交作业所使用的发件人地址，即为之后所有作业的发件地址，后续作业必须用同一地址发送。\n2. 附件文件名：`学号.txt`。例：学号为 2020141440777 的同学提交的附件文件名为 `2020141440777.txt`。\n3. 附件里只能包含 linux 命令、命令选项以及参数，每行只能写入一条命令。\n4. 附件文本文件使用「记事本」「TextEdit」软件编辑，并使用 ANSI/ASCII 编码格式保存后提交。\n",
     "language": "bash",
     "publish": false,
-    "reference_answer": "mkdir -p sample && cd sample\ncat > week7.txt <<'EOF'\nLinux is a kernel\nThe quick brown fox\nYou have no spaces\nOne two three\n\nLinux linux LINUX\n123\n45\n7\nEOF\n# 1. 含 linux 的行数（忽略大小写）\ngrep -ic linux week7.txt\n# 2. 空行数\ngrep -c '^$' week7.txt\n# 3. 不含空格的非空行，带行号\ngrep -n '^[^ ]\\+$' week7.txt\n# 4. 只包含数字的行，按数值由大到小\ngrep -E '^[0-9]+$' week7.txt | sort -rn\n# 5. 以 The / You / One 开头的行，按行号由大到小\ngrep -En '^(The|You|One)' week7.txt | sort -t: -k1,1nr\n",
+    "reference_answer": "mkdir -p sample && cd sample\ncat > week7.txt <<'EOF'\nLinux is a kernel\nThe quick brown fox\nYou have no spaces\nOne two three\n\nLinux linux LINUX\n123\n45\n7\nEOF\n# 1. 含 linux 的行数（忽略大小写）\ngrep -ic linux week7.txt\nprintf '%s\\n' '---AUTOGRADER-SEGMENT---'\n# 2. 空行数\ngrep -c '^$' week7.txt\nprintf '%s\\n' '---AUTOGRADER-SEGMENT---'\n# 3. 不含空格的非空行，带行号\ngrep -n '^[^ ]\\+$' week7.txt\nprintf '%s\\n' '---AUTOGRADER-SEGMENT---'\n# 4. 只包含数字的行，按数值由大到小\ngrep -E '^[0-9]+$' week7.txt | sort -rn\nprintf '%s\\n' '---AUTOGRADER-SEGMENT---'\n# 5. 以 The / You / One 开头的行，按行号由大到小\ngrep -En '^(The|You|One)' week7.txt | sort -t: -k1,1nr\n",
     "adapter": {
       "kind": "stdin",
       "args": [],
@@ -252,61 +367,70 @@
         "numeric_tolerance": null
       }
     },
+    "execution": {
+      "mode": "single_run",
+      "segment_delimiter": "---AUTOGRADER-SEGMENT---"
+    },
     "cases": [
       {
-        "name": "含 linux 的行数",
+        "name": "第1小题：含 linux 的行数",
         "ordinal": 0,
         "weight": 1,
         "visible_to_student": false,
-        "stdin": "",
+        "stdin": null,
         "args": [],
         "expected_stdout": "2\n",
         "expected_stderr": null,
-        "expected_exit_code": 0
+        "expected_exit_code": null,
+        "segment": 0
       },
       {
-        "name": "空行数",
+        "name": "第2小题：空行数",
         "ordinal": 1,
         "weight": 1,
         "visible_to_student": false,
-        "stdin": "",
+        "stdin": null,
         "args": [],
         "expected_stdout": "1\n",
         "expected_stderr": null,
-        "expected_exit_code": 0
+        "expected_exit_code": null,
+        "segment": 1
       },
       {
-        "name": "不含空格的非空行（带行号）",
+        "name": "第3小题：不含空格的非空行（带行号）",
         "ordinal": 2,
         "weight": 1,
         "visible_to_student": false,
-        "stdin": "",
+        "stdin": null,
         "args": [],
         "expected_stdout": "7:123\n8:45\n9:7\n",
         "expected_stderr": null,
-        "expected_exit_code": 0
+        "expected_exit_code": null,
+        "segment": 2
       },
       {
-        "name": "只含数字的行按数值降序",
+        "name": "第4小题：只含数字的行按数值降序",
         "ordinal": 3,
         "weight": 1,
         "visible_to_student": false,
-        "stdin": "",
+        "stdin": null,
         "args": [],
         "expected_stdout": "123\n45\n7\n",
         "expected_stderr": null,
-        "expected_exit_code": 0
+        "expected_exit_code": null,
+        "segment": 3
       },
       {
-        "name": "以 The/You/One 开头的行按行号降序",
+        "name": "第5小题：以 The/You/One 开头的行按行号降序",
         "ordinal": 4,
         "weight": 1,
         "visible_to_student": false,
-        "stdin": "",
+        "stdin": null,
         "args": [],
         "expected_stdout": "4:One two three\n3:You have no spaces\n2:The quick brown fox\n",
         "expected_stderr": null,
-        "expected_exit_code": 0
+        "expected_exit_code": null,
+        "segment": 4
       }
     ],
     "tags": [
@@ -320,10 +444,10 @@
   },
   {
     "title": "第8题 sed 输出含 argument 的行号",
-    "stem_markdown": "第8题\n\n作业如下：\n\n1. 使用 sed 命令显示出 week8.txt 文件中包含 argument 单词的行的行号，不区分首字母大小写。注意，只显示行号。\n2. 使用 sed 命令显示出 week8.txt 文件中包含 argument 单词的行的行号与该行文字。行号在前，行号和文字间用冒号分开，不区分首字母大小写。\n\n作业提交要求同第2题。week8.txt 不包含中文字符和全角字符。每题答案占用一行（可包含多个命令）。sed (GNU sed) 4.4\n\n### 作业提交要求\n\n1. 邮件标题：`学号_第几次作业`。学号用半角阿拉伯数字，下划线为半角下划线，题号用阿拉伯数字表示。\n   例：学号为 2020141440777 的同学提交第 2 次作业，邮件标题为 `2020141440777_2`。\n   首次提交作业所使用的发件人地址，即为之后所有作业的发件地址，后续作业必须用同一地址发送。\n2. 附件文件名：`学号.txt`。例：学号为 2020141440777 的同学提交的附件文件名为 `2020141440777.txt`。\n3. 附件里只能包含 linux 命令、命令选项以及参数，每行只能写入一条命令。\n4. 附件文本文件使用「记事本」「TextEdit」软件编辑，并使用 ANSI/ASCII 编码格式保存后提交。\n",
+    "stem_markdown": "第8题\n\n作业如下：\n\n1. 使用 sed 命令显示出 week8.txt 文件中包含 argument 单词的行的行号，不区分首字母大小写。注意，只显示行号。\n2. 使用 sed 命令显示出 week8.txt 文件中包含 argument 单词的行的行号与该行文字。行号在前，行号和文字间用冒号分开，不区分首字母大小写。\n\n### 分段输出要求（本题按小题分段评分）\n\n- 按上面 1、2 的顺序输出每个小题的结果，每个小题的输出连续书写。\n- 两个小题之间必须输出下面这一行固定分隔行（独占一行，前后不要空格）：\n\n```\n---AUTOGRADER-SEGMENT---\n```\n\n- 第 2 小题之后不要再输出分隔行。\n- 平台会把你的输出按这个分隔行切成 2 段，逐段与各小题的期望输出比较；分隔行缺失、多余或段为空都会导致分段不合法，整题各段都不会被判为通过。\n- 每个小题只输出该小题的结果，不要输出题号、提示语或额外的空行。\n\n作业提交要求同第2题。week8.txt 不包含中文字符和全角字符。每题答案占用一行（可包含多个命令）。sed (GNU sed) 4.4\n\n### 作业提交要求\n\n1. 邮件标题：`学号_第几次作业`。学号用半角阿拉伯数字，下划线为半角下划线，题号用阿拉伯数字表示。\n   例：学号为 2020141440777 的同学提交第 2 次作业，邮件标题为 `2020141440777_2`。\n   首次提交作业所使用的发件人地址，即为之后所有作业的发件地址，后续作业必须用同一地址发送。\n2. 附件文件名：`学号.txt`。例：学号为 2020141440777 的同学提交的附件文件名为 `2020141440777.txt`。\n3. 附件里只能包含 linux 命令、命令选项以及参数，每行只能写入一条命令。\n4. 附件文本文件使用「记事本」「TextEdit」软件编辑，并使用 ANSI/ASCII 编码格式保存后提交。\n",
     "language": "bash",
     "publish": false,
-    "reference_answer": "mkdir -p sample && cd sample\ncat > week8.txt <<'EOF'\nThe argument is strong\nno match here\nARGUMENT again\nanother line\nEOF\n# 1. 只显示行号\nsed -n '/argument/I=' week8.txt\n# 2. 行号:该行文字\nsed -n '/argument/I{=;p;}' week8.txt | sed 'N;s/\\n/:/'\n",
+    "reference_answer": "mkdir -p sample && cd sample\ncat > week8.txt <<'EOF'\nThe argument is strong\nno match here\nARGUMENT again\nanother line\nEOF\n# 1. 只显示行号\nsed -n '/argument/I=' week8.txt\nprintf '%s\\n' '---AUTOGRADER-SEGMENT---'\n# 2. 行号:该行文字\nsed -n '/argument/I{=;p;}' week8.txt | sed 'N;s/\\n/:/'\n",
     "adapter": {
       "kind": "stdin",
       "args": [],
@@ -334,28 +458,34 @@
         "numeric_tolerance": null
       }
     },
+    "execution": {
+      "mode": "single_run",
+      "segment_delimiter": "---AUTOGRADER-SEGMENT---"
+    },
     "cases": [
       {
-        "name": "只显示行号",
+        "name": "第1小题：只显示行号",
         "ordinal": 0,
         "weight": 1,
         "visible_to_student": false,
-        "stdin": "",
+        "stdin": null,
         "args": [],
         "expected_stdout": "1\n3\n",
         "expected_stderr": null,
-        "expected_exit_code": 0
+        "expected_exit_code": null,
+        "segment": 0
       },
       {
-        "name": "行号:该行文字",
+        "name": "第2小题：行号:该行文字",
         "ordinal": 1,
         "weight": 1,
         "visible_to_student": false,
-        "stdin": "",
+        "stdin": null,
         "args": [],
         "expected_stdout": "1:The argument is strong\n3:ARGUMENT again\n",
         "expected_stderr": null,
-        "expected_exit_code": 0
+        "expected_exit_code": null,
+        "segment": 1
       }
     ],
     "tags": [
@@ -368,10 +498,10 @@
   },
   {
     "title": "第9题 awk 统计销售平均收入",
-    "stem_markdown": "第9题\n\n作业如下：\n\nemployee.txt 文件形式如下：\n\n1 ajay manager account 45000\n2 sunil clerk account 25000\n3 varun manager sales 50000\n4 amit manager account 47000\n5 tarun peon sales 15000\n6 deepak clerk sales 23000\n7 sunil peon sales 13000\n8 satvik director purchase 80000\n\n1. 使用 awk 计算销售部门（sales）员工的平均收入\n2. 使用 awk 打印 varun 员工的全部信息\n\n作业提交要求同第2题。employee.txt 不包含中文字符和全角字符。每题答案占用一行（可包含多个命令）。GNU Awk 4.1.4, API: 1.1 (GNU MPFR 4.0.1, GNU MP 6.1.2)\n\n### 作业提交要求\n\n1. 邮件标题：`学号_第几次作业`。学号用半角阿拉伯数字，下划线为半角下划线，题号用阿拉伯数字表示。\n   例：学号为 2020141440777 的同学提交第 2 次作业，邮件标题为 `2020141440777_2`。\n   首次提交作业所使用的发件人地址，即为之后所有作业的发件地址，后续作业必须用同一地址发送。\n2. 附件文件名：`学号.txt`。例：学号为 2020141440777 的同学提交的附件文件名为 `2020141440777.txt`。\n3. 附件里只能包含 linux 命令、命令选项以及参数，每行只能写入一条命令。\n4. 附件文本文件使用「记事本」「TextEdit」软件编辑，并使用 ANSI/ASCII 编码格式保存后提交。\n",
+    "stem_markdown": "第9题\n\n作业如下：\n\nemployee.txt 文件形式如下：\n\n1 ajay manager account 45000\n2 sunil clerk account 25000\n3 varun manager sales 50000\n4 amit manager account 47000\n5 tarun peon sales 15000\n6 deepak clerk sales 23000\n7 sunil peon sales 13000\n8 satvik director purchase 80000\n\n1. 使用 awk 计算销售部门（sales）员工的平均收入\n2. 使用 awk 打印 varun 员工的全部信息\n\n### 分段输出要求（本题按小题分段评分）\n\n- 按上面 1、2 的顺序输出每个小题的结果，每个小题的输出连续书写。\n- 两个小题之间必须输出下面这一行固定分隔行（独占一行，前后不要空格）：\n\n```\n---AUTOGRADER-SEGMENT---\n```\n\n- 第 2 小题之后不要再输出分隔行。\n- 平台会把你的输出按这个分隔行切成 2 段，逐段与各小题的期望输出比较；分隔行缺失、多余或段为空都会导致分段不合法，整题各段都不会被判为通过。\n- 每个小题只输出该小题的结果，不要输出题号、提示语或额外的空行。\n\n作业提交要求同第2题。employee.txt 不包含中文字符和全角字符。每题答案占用一行（可包含多个命令）。GNU Awk 4.1.4, API: 1.1 (GNU MPFR 4.0.1, GNU MP 6.1.2)\n\n### 作业提交要求\n\n1. 邮件标题：`学号_第几次作业`。学号用半角阿拉伯数字，下划线为半角下划线，题号用阿拉伯数字表示。\n   例：学号为 2020141440777 的同学提交第 2 次作业，邮件标题为 `2020141440777_2`。\n   首次提交作业所使用的发件人地址，即为之后所有作业的发件地址，后续作业必须用同一地址发送。\n2. 附件文件名：`学号.txt`。例：学号为 2020141440777 的同学提交的附件文件名为 `2020141440777.txt`。\n3. 附件里只能包含 linux 命令、命令选项以及参数，每行只能写入一条命令。\n4. 附件文本文件使用「记事本」「TextEdit」软件编辑，并使用 ANSI/ASCII 编码格式保存后提交。\n",
     "language": "bash",
     "publish": false,
-    "reference_answer": "mkdir -p sample && cd sample\ncat > employee.txt <<'EOF'\n1 ajay manager account 45000\n2 sunil clerk account 25000\n3 varun manager sales 50000\n4 amit manager account 47000\n5 tarun peon sales 15000\n6 deepak clerk sales 23000\n7 sunil peon sales 13000\n8 satvik director purchase 80000\nEOF\n# 1. sales 部门平均收入\nawk '$4==\"sales\"{sum+=$5; count++} END{print sum/count}' employee.txt\n# 2. varun 的全部信息\nawk '$2==\"varun\"' employee.txt\n",
+    "reference_answer": "mkdir -p sample && cd sample\ncat > employee.txt <<'EOF'\n1 ajay manager account 45000\n2 sunil clerk account 25000\n3 varun manager sales 50000\n4 amit manager account 47000\n5 tarun peon sales 15000\n6 deepak clerk sales 23000\n7 sunil peon sales 13000\n8 satvik director purchase 80000\nEOF\n# 1. sales 部门平均收入\nawk '$4==\"sales\"{sum+=$5; count++} END{print sum/count}' employee.txt\nprintf '%s\\n' '---AUTOGRADER-SEGMENT---'\n# 2. varun 的全部信息\nawk '$2==\"varun\"' employee.txt\n",
     "adapter": {
       "kind": "stdin",
       "args": [],
@@ -382,28 +512,34 @@
         "numeric_tolerance": null
       }
     },
+    "execution": {
+      "mode": "single_run",
+      "segment_delimiter": "---AUTOGRADER-SEGMENT---"
+    },
     "cases": [
       {
-        "name": "sales 部门平均收入",
+        "name": "第1小题：sales 部门平均收入",
         "ordinal": 0,
         "weight": 1,
         "visible_to_student": false,
-        "stdin": "",
+        "stdin": null,
         "args": [],
         "expected_stdout": "25250\n",
         "expected_stderr": null,
-        "expected_exit_code": 0
+        "expected_exit_code": null,
+        "segment": 0
       },
       {
-        "name": "varun 的全部信息",
+        "name": "第2小题：varun 的全部信息",
         "ordinal": 1,
         "weight": 1,
         "visible_to_student": false,
-        "stdin": "",
+        "stdin": null,
         "args": [],
         "expected_stdout": "3 varun manager sales 50000\n",
         "expected_stderr": null,
-        "expected_exit_code": 0
+        "expected_exit_code": null,
+        "segment": 1
       }
     ],
     "tags": [

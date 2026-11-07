@@ -36,7 +36,17 @@ from autograder_b2.domain.envelope import is_allowed_relative_path
 
 
 class ReferenceAnswerWorkspace:
-    """一次性工作区的生产者/回收者（每个用例一份，绝不复用）。"""
+    """一次性工作区的生产者/回收者。
+
+    两种粒度，都**每次新建、用完即删**：
+
+    - `prepare(...)`：逐用例模式，每个用例一份目录（`<root>/<verification>/case-<id>`）；
+    - `prepare_batch(...)`：`single_run`/`ssh_session` 的**一次批量执行**只一份目录
+      （`<root>/<verification>/batch`）——批量入口一次调用产出全部用例证据，因此不需要、也
+      **不允许**按用例复制受保护正文。
+
+    两种粒度的权限口径相同（0711 可穿越的父目录、0777 工作区、0644 入口脚本）。
+    """
 
     def __init__(self, *, root: Path | str) -> None:
         self._root = Path(root)
@@ -48,18 +58,28 @@ class ReferenceAnswerWorkspace:
     def prepare(
         self, *, verification_id: str, case_id: str, filename: str, content: str
     ) -> Path:
-        """建一个**新的**工作区并把参考解答写成入口脚本，返回其路径。"""
+        """建一个**新的**逐用例工作区并把参考解答写成入口脚本，返回其路径。"""
         verification = _canonical_uuid(verification_id, "verification_id")
         case = _canonical_uuid(case_id, "case_id")
+        return self._materialize(self._base() / verification / f"case-{case}", filename, content)
+
+    def prepare_batch(self, *, verification_id: str, filename: str, content: str) -> Path:
+        """建一个**新的**批量工作区（一次 `run_cases` 的唯一工作区），返回其路径。"""
+        verification = _canonical_uuid(verification_id, "verification_id")
+        return self._materialize(self._base() / verification / "batch", filename, content)
+
+    def _base(self) -> Path:
+        return self._select_base()
+
+    def _materialize(self, target: Path, filename: str, content: str) -> Path:
+        """把受保护正文写进目标目录（路径白名单 + 确定性权限位；不翻译行尾）。"""
         if not is_allowed_relative_path(filename):
             raise ValueError("reference answer filename is not an allowed relative path")
-        base = self._select_base()
-        target = base / verification / f"case-{case}"
         target.mkdir(parents=True, exist_ok=True)
         # The sandboxed process runs as `nobody` (uid 65534); this process runs under
         # systemd's `UMask=0077`, so every directory `mkdir(parents=True)` creates is 0700.
         #
-        # Two levels matter, not one. Giving `case-<id>` 0777 is not enough: `nobody` still has
+        # Two levels matter, not one. Giving the leaf 0777 is not enough: `nobody` still has
         # to *traverse* `<root>/<verification>` and `<root>` itself. Those parents stay 0700,
         # so the sandbox cannot even reach the entry script -- the process then exits without
         # producing output, which reads as `crash`/`output_mismatch` for **every** case and

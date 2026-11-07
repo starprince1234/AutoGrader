@@ -267,6 +267,28 @@ def test_postgres_refuses_new_protected_content_on_a_published_version(
     assert getattr(error.value.orig, "sqlstate", None) == "23001"
 
 
+def test_postgres_refuses_an_execution_declaration_change_on_a_published_version(
+    database, settings, owner_engine
+):
+    """The execution declaration is content: an SSH password and expected digests live in it.
+
+    Migration 0007 extends the immutability trigger's column list, so "frozen content" means
+    the declaration too -- not just the stem and the adapter manifest.
+    """
+    question, version = create_published_question(database, settings, payload=draft_payload())
+    with pytest.raises(DBAPIError) as error:
+        with owner_engine.connect() as connection:
+            connection.execute(
+                text(
+                    "UPDATE b3.question_versions "
+                    "SET execution_manifest = '{\"mode\": \"single_run\"}'::jsonb "
+                    "WHERE question_version_id = :vid"
+                ),
+                {"vid": version.question_version_id},
+            )
+    assert getattr(error.value.orig, "sqlstate", None) == "23001"
+
+
 def test_postgres_refuses_deleting_a_published_version(database, settings, owner_engine):
     question, version = create_published_question(database, settings, payload=draft_payload())
     with pytest.raises(DBAPIError) as error:

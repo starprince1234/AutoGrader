@@ -431,7 +431,7 @@ def test_run_case_signature_is_the_frozen_two_argument_form() -> None:
     parameters = list(inspect.signature(run_case_function).parameters.values())
     assert [item.name for item in parameters[:2]] == ["package", "submission"]
     assert all(item.kind is inspect.Parameter.POSITIONAL_OR_KEYWORD for item in parameters[:2])
-    assert [item.name for item in parameters[2:]] == ["probe", "launcher"]
+    assert [item.name for item in parameters[2:]] == ["probe", "launcher", "fixture_provider"]
     assert all(item.kind is inspect.Parameter.KEYWORD_ONLY for item in parameters[2:])
 
 
@@ -516,6 +516,8 @@ class TestPolicyDigest:
             "max_open_files": 128,
             "stack_mib": 16,
             "masked_paths": ("/srv/secret",),
+            # 非缺省 profile 必须改变摘要（缺省 profile 刻意不进载荷，见 `policy_digest`）。
+            "sandbox_profile": "ssh_session",
         }
         assert set(perturbations) == set(RunnerPolicy.__dataclass_fields__)
         for name, value in perturbations.items():
@@ -527,6 +529,24 @@ class TestPolicyDigest:
         right = RunnerPolicy(max_processes=4, max_memory_bytes=64 * 1024 * 1024)
         assert left == right
         assert policy_digest(left) == policy_digest(right)
+
+    def test_default_profile_keeps_the_legacy_digest_byte_identical(self) -> None:
+        """缺省 `sandbox_profile` 不进规范化载荷：普通题策略摘要与引入 profile 前逐字节相同。
+
+        这是"已有已发布题目的摘要保持有效"（设计文档 §1.3/§8）在 B2 侧的对应约束：
+        旧证据的 `input_digest`（含 `runner_policy_digest`）因此仍可重放。
+        """
+        payload: dict[str, object] = {}
+        for name, field in RunnerPolicy.__dataclass_fields__.items():
+            if name == "sandbox_profile":
+                continue
+            value = getattr(RunnerPolicy(), name)
+            payload[name] = list(value) if isinstance(value, tuple) else value
+        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        assert policy_digest(RunnerPolicy()) == sha256_hex(canonical.encode("utf-8"))
+        assert policy_digest(RunnerPolicy(sandbox_profile="ssh_session")) != policy_digest(
+            RunnerPolicy()
+        )
 
 
 # =============================================================================================
@@ -1960,6 +1980,9 @@ class TestEvidence:
             "mismatched_outputs",
             "resource",
             "artifacts",
+            # Unix 作业扩展（设计文档 §2/§3.2/§3.4）。
+            "segment",
+            "file_checks",
             "evidence_digest",
         }
         assert evidence.case_id == CASE_ID

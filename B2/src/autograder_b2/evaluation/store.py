@@ -18,6 +18,14 @@
 4. **提交状态机与运行同步**：`advance_submission_state` 是评测侧推进 `b2.submissions.state` 的**唯一**
    出口（与 `domain.transitions.record_transitions` 同事务），使契约 `SubmissionTransitions` 的
    "静态高危必须在**不进入沙箱**的情况下被拒（`validated -> rejected`）"成为可核验的事实。
+
+## 两个"证据明细"字段的存储落点（报告 JSON，不是表列）
+
+`single_run` 的分段段号（`CaseEvidence.segment`）与文件检查明细（`CaseEvidence.file_checks`）是
+**判分事实**，它们在 `evaluation_results.report` 的 `case_evidence[].segment` 与
+`case_artifacts.file_checks` 里**完整持久化**并可复核；`b2.case_evidence` 表保持既有列（`segment`/
+`file_checks` 不是表列）。这是有意的最小事实源：报告 JSON 已经是逐用例证据的权威副本，
+再给表加列会产生第二份需要同步的副本，而本表只承担"按 ordinal 索引逐项得分/摘要"的查询职责。
 """
 
 from __future__ import annotations

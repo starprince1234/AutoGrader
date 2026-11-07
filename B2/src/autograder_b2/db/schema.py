@@ -16,7 +16,7 @@ SCHEMA = "b2"
 #: 本代码期望的迁移版本（必须与 `module.yaml: database.migration_head` 和 Alembic head 三者一致）。
 #: 用途：readyness 探测据此判断"库结构与代码是否匹配"——连接得上但版本落后同样是**不可用**，
 #: 否则 health 会谎报健康而受权读请求全线 500。三者一致性由 `tests/test_migrations.py` 断言。
-EXPECTED_SCHEMA_REVISION = "20261029_0019"
+EXPECTED_SCHEMA_REVISION = "20261107_0020"
 
 metadata = sa.MetaData(schema=SCHEMA)
 
@@ -410,4 +410,116 @@ intake_messages = sa.Table(
     sa.Column("received_at", sa.DateTime(timezone=True), nullable=False),
     sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
     sa.UniqueConstraint("submission_id", name="uq_intake_messages_submission_id"),
+)
+
+# 迁移 0020（一次性核验码，设计 §4）。四张内部表：
+#
+# 1. `email_verification_challenges`：已认证学生为本题目申请的一次性码。库里**只有摘要**
+#    （`code_sha256`），因此读库无法还原核验码。`attempts`/`last_rejection_code` 记录学生侧
+#    拒绝尝试（供状态查询区分"被拒"与"还没到"；契约 reason_code 里 subject_mismatch /
+#    attachment_missing 属保留值，本表只写收件侧判定得出的三个原因）。
+# 2. `email_verifications`：一次真实 IMAP 拉取产生的邮件事实（发件地址、主题、附件名、邮箱位置）
+#    与它变成的提交；`challenge_id` / `submission_id` 唯一，保证"一个挑战只被消费一次、
+#    一份提交只来自一封真实邮件"。
+# 3. `email_sender_bindings`：首次通过验证的发件地址绑定（同一学生同一课程/课序只一行）。
+# 4. `intake_state`：收件拉取心跳（单行）。评测据此区分"邮件没到"（学生侧）与"收件依赖不可用"
+#    （基础设施错误）。
+email_verification_challenges = sa.Table(
+    "email_verification_challenges",
+    metadata,
+    sa.Column("challenge_id", sa.Uuid(), primary_key=True),
+    sa.Column("student_id", sa.Uuid(), nullable=False),
+    sa.Column("course_id", sa.Uuid(), nullable=False),
+    sa.Column("section_id", sa.Uuid(), nullable=False),
+    sa.Column("question_version_id", sa.Uuid(), nullable=False),
+    sa.Column("code_sha256", sa.CHAR(64), nullable=False),
+    sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+    sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
+    sa.Column("consumed_at", sa.DateTime(timezone=True), nullable=True),
+    sa.Column("consumed_verification_id", sa.Uuid(), nullable=True),
+    sa.Column("last_rejection_code", sa.Text(), nullable=True),
+    sa.Column("attempts", sa.Integer(), nullable=False),
+    sa.UniqueConstraint(
+        "code_sha256", name="uq_email_verification_challenges_code_sha256"
+    ),
+    sa.CheckConstraint("expires_at > created_at", name="ck_email_verification_challenges_window"),
+    sa.CheckConstraint("attempts >= 0", name="ck_email_verification_challenges_attempts"),
+    sa.CheckConstraint(
+        "(consumed_at IS NULL AND consumed_verification_id IS NULL)"
+        " OR (consumed_at IS NOT NULL AND consumed_verification_id IS NOT NULL)",
+        name="ck_email_verification_challenges_consumption",
+    ),
+    sa.CheckConstraint(
+        "last_rejection_code IS NULL"
+        " OR last_rejection_code IN ('email_verification_rejected',"
+        " 'email_sender_mismatch', 'email_verification_expired')",
+        name="ck_email_verification_challenges_rejection",
+    ),
+)
+
+email_verifications = sa.Table(
+    "email_verifications",
+    metadata,
+    sa.Column("verification_id", sa.Uuid(), primary_key=True),
+    sa.Column("challenge_id", sa.Uuid(), nullable=False),
+    sa.Column("student_id", sa.Uuid(), nullable=False),
+    sa.Column("course_id", sa.Uuid(), nullable=False),
+    sa.Column("section_id", sa.Uuid(), nullable=False),
+    sa.Column("question_version_id", sa.Uuid(), nullable=False),
+    sa.Column("submission_id", sa.Uuid(), nullable=True),
+    sa.Column("sender", sa.Text(), nullable=False),
+    sa.Column("subject", sa.Text(), nullable=True),
+    sa.Column("student_number", sa.Text(), nullable=True),
+    sa.Column("message_id", sa.Text(), nullable=True),
+    sa.Column("mailbox", sa.Text(), nullable=False),
+    sa.Column("uidvalidity", sa.BigInteger(), nullable=False),
+    sa.Column("uid", sa.BigInteger(), nullable=False),
+    sa.Column("attachment_names", JSONB(), nullable=False),
+    sa.Column("received_at", sa.DateTime(timezone=True), nullable=False),
+    sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+    sa.UniqueConstraint("challenge_id", name="uq_email_verifications_challenge_id"),
+    sa.UniqueConstraint("submission_id", name="uq_email_verifications_submission_id"),
+    sa.UniqueConstraint(
+        "mailbox",
+        "uidvalidity",
+        "uid",
+        name="uq_email_verifications_mailbox_uidvalidity_uid",
+    ),
+    sa.CheckConstraint(
+        "jsonb_typeof(attachment_names) = 'array'",
+        name="ck_email_verifications_attachment_names",
+    ),
+)
+
+email_sender_bindings = sa.Table(
+    "email_sender_bindings",
+    metadata,
+    sa.Column("binding_id", sa.Uuid(), primary_key=True),
+    sa.Column("student_id", sa.Uuid(), nullable=False),
+    sa.Column("course_id", sa.Uuid(), nullable=False),
+    sa.Column("section_id", sa.Uuid(), nullable=False),
+    sa.Column("sender", sa.Text(), nullable=False),
+    sa.Column("bound_at", sa.DateTime(timezone=True), nullable=False),
+    sa.UniqueConstraint(
+        "student_id",
+        "course_id",
+        "section_id",
+        name="uq_email_sender_bindings_scope",
+    ),
+    sa.CheckConstraint(
+        "sender = lower(sender) AND char_length(sender) BETWEEN 3 AND 320",
+        name="ck_email_sender_bindings_sender",
+    ),
+)
+
+#: 单行表：`id` 主键固定为 1（`ck_intake_state_singleton`）。不用 uuid 主键是为了让"只有一行"
+#: 成为约束而不是约定。
+intake_state = sa.Table(
+    "intake_state",
+    metadata,
+    sa.Column("id", sa.SmallInteger(), primary_key=True),
+    sa.Column("last_successful_pull_at", sa.DateTime(timezone=True), nullable=True),
+    sa.Column("last_error_code", sa.Text(), nullable=True),
+    sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
+    sa.CheckConstraint("id = 1", name="ck_intake_state_singleton"),
 )

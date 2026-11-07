@@ -7,6 +7,20 @@ queued -> fetching_package -> static_analysis -> security_check -> dynamic_execu
        -> scoring -> reporting -> terminal
 ```
 
+**流水线按 package 的 `execution.mode` 分派**（设计基线 `MAIN/docs/architecture/unix-homework-evaluation.md`
+§3/§6；行为只由 package 的显式声明决定，绝不从标题/标签/路径推断）：
+
+| mode | 工作区 | 静态/安全 | 动态执行 | `invocation_count` |
+|---|---|---|---|---|
+| `per_case` | 运行级 + 每用例一份 | 执行 | `run_case` 逐用例循环（既有行为） | = 用例数 |
+| `single_run` / `ssh_session` | 运行级 + **一份批量工作区** | 执行 | `run_cases` **一次**（过并发闸门一次） | = 1 |
+| `email_delivery` | **不准备** | **不适用**（报告写 `not_applicable` / 空静态明细） | `DeliveryVerifier.verify`（不启动沙箱） | = 0 |
+
+批量与投递核验模式**仍逐条写证据与进度帧**（`cases_done` 1..N），但那只是证据条数，
+**不得**被解释成执行次数：报告顶层的 `execution.invocation_count` 如实写实际沙箱启动次数。
+`email_delivery` 的阶段推进照旧连续（`fetching_package -> dynamic_execution -> scoring -> reporting ->
+terminal`），但帧文本明确写"投递核验（不执行代码）"——不假装跑过静态/安全/沙箱。
+
 运行状态机（已锁定，不再设计）：`queued -> {running, rejected, failed}`、`running -> {completed,
 rejected, failed}`。允许 `queued` 直达终态，因为静态/安全阻断发生在进入沙箱**之前**；没有运行实体就
 无法通过 SSE 发出 `rejected` 终态帧。由此得到四条硬规则（都有测试）：
@@ -65,9 +79,10 @@ from pathlib import Path
 from sqlalchemy import Connection, Engine
 from sqlalchemy.exc import IntegrityError
 
-from autograder_b2.domain.clock import utc_now
+from autograder_b2.domain.clock import sha256_hex, utc_now
 from autograder_b2.domain.envelope import EnvelopeFile, SubmissionEnvelope
 from autograder_b2.domain.evidence import (
+    BatchRunInput,
     CaseEvidence,
     InternalEvaluationError,
     PackageUnavailableError,
@@ -80,6 +95,9 @@ from autograder_b2.evaluation import progress, store
 from autograder_b2.evaluation.ports import (
     CaseDescriptor,
     CaseRunner,
+    DeliveryUnavailableError,
+    DeliveryVerificationDefect,
+    DeliveryVerifier,
     PackageSource,
     PackageView,
     SecurityDecider,
@@ -93,7 +111,12 @@ from autograder_b2.evaluation.progress import (
     ProgressFrame,
     schema_conflict,
 )
-from autograder_b2.evaluation.report import ReportBinding, ReportInputs, build_report
+from autograder_b2.evaluation.report import (
+    ReportBinding,
+    ReportExecution,
+    ReportInputs,
+    build_report,
+)
 from autograder_b2.evaluation.scoring import ScoreBreakdown, score_run
 from autograder_b2.events.outbox import (
     EVALUATION_COMPLETED,
@@ -134,6 +157,12 @@ MESSAGE_STATIC_NOT_CHECKED = (
     "不以「未检查」充当通过，评测终止。"
 )
 MESSAGE_CASE_TECHNICAL_FAILURE = "用例输入资产缺失或摘要不符：属技术故障，不计入学生失败。"
+MESSAGE_DELIVERY_UNAVAILABLE = (
+    "邮件投递核验依赖不可用（收件链路心跳过期或未配置）：本次评测未能完成，不是学生的问题。"
+)
+MESSAGE_DELIVERY_EVIDENCE_DEFECT = (
+    "邮件投递核验返回的证据与 package 声明的用例不一致：属评测内部缺陷，本次评测未能完成。"
+)
 MESSAGE_INTERNAL_DEFECT = "评测内部缺陷：本次评测未能完成，已记录迁移原因，不计入学生成绩。"
 MESSAGE_PERSIST_FAILED = "结果未成功持久化：不对外声称评测完成（报告可读等价于结果已落库）。"
 MESSAGE_SCHEMA_CONFLICT = "数据库约束与契约语义冲突：拒绝写入不真实值，评测未完成。"
@@ -144,7 +173,17 @@ class OrchestrationError(RuntimeError):
 
 
 class InfrastructureError(OrchestrationError):
-    """技术性失败：沙箱/依赖/工作区不可用（`failed + infrastructure_error`）。"""
+    """技术性失败：沙箱/依赖/工作区不可用（`failed + infrastructure_error`）。
+
+    `invocations`/`evidence_written` 记录**已经发生的事实**：批量执行里某条用例证据是
+    `infrastructure_error`（fixture 缺失/摘要不符）时，沙箱其实已经启动过、前面的证据也已经落库；
+    终态 `EvaluationOutcome` 必须如实报告这两个数，而不是一律报 0。
+    """
+
+    def __init__(self, message: str, *, invocations: int = 0, evidence_written: int = 0) -> None:
+        super().__init__(message)
+        self.invocations = invocations
+        self.evidence_written = evidence_written
 
 
 class InternalDefectError(OrchestrationError):
@@ -171,6 +210,47 @@ class _Blocked(Exception):
         self.message = message
         self.invocations = invocations
         self.evidence_written = evidence_written
+
+
+def _not_applicable_static(language: str) -> StaticAnalysisResult:
+    """`email_delivery` 的静态检查结论：**不适用**（该模式不执行代码）。
+
+    报告契约的 `static_findings` 没有状态位，因此这里用一份"零检查、零发现"的结果表达它；
+    真正的"不适用"由报告的 `execution.mode` 与 `security_conclusion.status=not_applicable` 共同表达。
+    `checks=()` 保证任何"未检查"推导都不会把它当成"检查过且干净"（静态阶段本身不会运行，
+    `_run_static` 的 fail-closed 判据也不适用）。
+    """
+    return StaticAnalysisResult(
+        language=language,  # type: ignore[arg-type] - package 已按契约校验为 python|bash
+        checks=(),
+        findings=(),
+        blocking=False,
+        error_count=0,
+        warning_count=0,
+        info_count=0,
+        result_digest=sha256_hex(
+            b"b2.evaluation.static:not_applicable:email_delivery"
+        ),
+    )
+
+
+def _not_applicable_security() -> SecurityDecision:
+    """`email_delivery` 的安全判定占位：**不适用**（不执行代码，也不读取学生源码做静态判定）。
+
+    `SecurityDecision` 的三态词表里没有 `not_applicable`（三态语义是"检查过/未查到/没检查"），
+    因此这里用一个"无发现、不阻断、无未检查项"的占位对象，让评分的前置校验通过；报告层**不使用**
+    它的 `status`——`ReportInputs.security_not_applicable=True` 会让报告写 `not_applicable`。
+    这个占位对象不落库（`_run_security` 不会被调用，`security_status` 保持 NULL = 没走到安全判定），
+    也不进日志/事件。
+    """
+    return SecurityDecision(
+        status="not_found",
+        findings=(),
+        blocking=False,
+        covered=(),
+        unchecked=(),
+        rationale="email_delivery 不执行代码，安全检查不适用（not_applicable）。",
+    )
 
 
 class DynamicExecutionGate:
@@ -264,6 +344,10 @@ class EvaluationOutcome:
 
     `score`/`is_pass`/`result_digest`/`report` **只在**结果已持久化（`completed`）时非空——未完成的
     评测绝不以 0 分呈现，也绝不给出报告。
+
+    `runner_invocations` 是**实际启动的沙箱次数**（设计基线 §6）：`per_case` = 用例数、
+    `single_run`/`ssh_session` = 1、`email_delivery` = 0；`case_evidence_written` 是已落库的证据条数。
+    两者不可互相推导：批量执行的一次调用可以产出 N 条证据。
     """
 
     evaluation_run_id: str
@@ -294,6 +378,7 @@ class EvaluationOrchestrator:
         workspace_provider: WorkspaceProvider,
         security: SecurityDecider,
         runner: CaseRunner,
+        delivery: DeliveryVerifier | None = None,
         gate: DynamicExecutionGate | None = None,
         now: Callable[[], datetime] = utc_now,
     ) -> None:
@@ -302,6 +387,7 @@ class EvaluationOrchestrator:
         self._workspaces = workspace_provider
         self._security = security
         self._runner = runner
+        self._delivery = delivery
         self._gate = DynamicExecutionGate() if gate is None else gate
         self._now = now
 
@@ -356,6 +442,10 @@ class EvaluationOrchestrator:
         `bind_context(stage=...)` 只换阶段名——于是"接收 → 静态 → 安全 → 动态 → 报告"的日志都带同一个
         `correlation_id`，可凭它串起全链路（RQ-B-2-99 场景 2-99-C）。日志只写白名单字段（标识、阶段、
         计数、结论），绝不写源码/参考答案/隐藏用例/凭据/内部路径。
+
+        模式分派：`per_case` 走既有逐用例流水线；`single_run`/`ssh_session` 在通过静态/安全后
+        只准备**一份**批量工作区并调用一次批量入口；`email_delivery` 跳过工作区/静态/安全/沙箱，
+        走投递核验（不执行代码），报告里静态明细为空、安全结论显式 `not_applicable`。
         """
         run_id = self._create_run(submission, self._now())
         invocations = 0
@@ -371,23 +461,43 @@ class EvaluationOrchestrator:
             try:
                 with self._stage("package_fetch"):
                     view = self._fetch_package(submission, run_id)
-                with self._stage("workspace_prepare"):
-                    workspace = self._prepare_workspace(submission, run_id)
-                with self._stage("static_analysis"):
-                    static = self._run_static(submission, run_id, view, workspace)
-                with self._stage("security_decision"):
-                    security = self._run_security(submission, run_id, view, workspace)
-                with self._stage("dynamic_execution"):
-                    evidences = self._run_dynamic(submission, run_id, view)
-                invocations = len(evidences)
+                mode = view.execution.mode
+                if mode == "email_delivery":
+                    # 该模式不执行代码：静态/安全不适用（报告里显式写 not_applicable，不是 not_checked）。
+                    static = _not_applicable_static(view.language)
+                    security = _not_applicable_security()
+                    with self._stage("dynamic_execution"):
+                        evidences, invocations = self._run_delivery(submission, run_id, view)
+                else:
+                    with self._stage("workspace_prepare"):
+                        workspace = self._prepare_workspace(submission, run_id)
+                    with self._stage("static_analysis"):
+                        static = self._run_static(submission, run_id, view, workspace)
+                    with self._stage("security_decision"):
+                        security = self._run_security(submission, run_id, view, workspace)
+                    with self._stage("dynamic_execution"):
+                        evidences, invocations = self._run_dynamic(submission, run_id, view)
+                evidence_written = len(evidences)
                 with self._stage("scoring", count=invocations):
                     breakdown = self._run_scoring(
-                        submission, run_id, view, evidences, static, security
+                        submission, run_id, view, evidences, static, security, mode=mode
                     )
-                evidence_written = len(evidences)
                 with self._stage("reporting", count=invocations):
                     outcome = self._run_reporting(
-                        submission, run_id, view, static, security, evidences, breakdown
+                        submission,
+                        run_id,
+                        view,
+                        static,
+                        security,
+                        evidences,
+                        breakdown,
+                        invocations=invocations,
+                        execution=ReportExecution(
+                            mode=mode,
+                            invocation_count=invocations,
+                            evidence_count=len(evidences),
+                        ),
+                        security_not_applicable=mode == "email_delivery",
                     )
                 log_event(
                     logger,
@@ -421,8 +531,8 @@ class EvaluationOrchestrator:
                     run_id,
                     terminal_reason="infrastructure_error",
                     message=str(error),
-                    invocations=invocations,
-                    evidence_written=evidence_written,
+                    invocations=max(invocations, error.invocations),
+                    evidence_written=max(evidence_written, error.evidence_written),
                 )
                 log_event(
                     logger,
@@ -506,6 +616,14 @@ class EvaluationOrchestrator:
         except Exception as error:  # 依赖方任何异常都归类为技术失败
             raise InfrastructureError(MESSAGE_PACKAGE_UNAVAILABLE) from error
         moment = self._now()
+        mode = view.execution.mode
+        if mode == "email_delivery":
+            # 该模式不执行代码：下一阶段直接是投递核验（不假装开始了静态/安全检查）。
+            next_stage = "dynamic_execution"
+            readiness_message = "评测包就绪，开始投递核验（不执行代码）。"
+        else:
+            next_stage = "static_analysis"
+            readiness_message = "评测包就绪，开始静态检查。"
         with self._engine.begin() as connection:
             store.bind_digests(
                 connection,
@@ -528,11 +646,11 @@ class EvaluationOrchestrator:
                 evaluation_run_id=run_id,
                 event=EVENT_PROGRESS,
                 state="queued",
-                stage="static_analysis",
+                stage=next_stage,
                 occurred_at=moment,
                 cases_total=view.cases_total,
                 cases_done=0,
-                message="评测包就绪，开始静态检查。",
+                message=readiness_message,
             )
             self._enqueue(
                 connection,
@@ -543,7 +661,7 @@ class EvaluationOrchestrator:
                     "submission_id": submission.submission_id,
                     "evaluation_run_id": run_id,
                     "question_version_id": submission.question_version_id,
-                    "stage": "static_analysis",
+                    "stage": next_stage,
                     "package_digest": view.package_digest,
                     "runner_policy_digest": view.runner_policy_digest,
                     "environment_digest": view.environment_digest,
@@ -556,15 +674,33 @@ class EvaluationOrchestrator:
         return view
 
     def _prepare_workspace(
-        self, submission: SubmissionEnvelope, run_id: str, *, case_id: str | None = None
+        self,
+        submission: SubmissionEnvelope,
+        run_id: str,
+        *,
+        case_id: str | None = None,
+        batch: bool = False,
     ) -> Path:
-        """准备工作区：`case_id=None` 是运行级（静态/安全用），非空是该用例的独立沙箱工作区。"""
+        """准备工作区。
+
+        `case_id=None` 是运行级（静态/安全用）；非空是该用例的独立沙箱工作区；
+        `batch=True` 是 `single_run`/`ssh_session` 一次批量执行唯一的那份工作区。
+        """
         try:
+            if not batch:
+                return self._workspaces.prepare(
+                    submission_id=submission.submission_id,
+                    evaluation_run_id=run_id,
+                    files=submission.files,
+                    case_id=case_id,
+                )
+            # 只有批量模式才传 `batch=`：逐用例/运行级路径保持既有调用形态（不改动无关实现）。
             return self._workspaces.prepare(
                 submission_id=submission.submission_id,
                 evaluation_run_id=run_id,
                 files=submission.files,
                 case_id=case_id,
+                batch=True,
             )
         except Exception as error:  # 工作区不可用是技术失败，不是学生的错
             raise InfrastructureError(MESSAGE_WORKSPACE_UNAVAILABLE) from error
@@ -688,52 +824,59 @@ class EvaluationOrchestrator:
         submission: SubmissionEnvelope,
         run_id: str,
         view: PackageView,
-    ) -> tuple[CaseEvidence, ...]:
-        """阶段 `dynamic_execution`：`queued -> running`，逐用例过闸门执行并即时落证据。
+    ) -> tuple[tuple[CaseEvidence, ...], int]:
+        """阶段 `dynamic_execution`：按 `execution.mode` 分派执行并即时落证据。
 
-        提交（submission）状态机在同一事务内跟进：`validated -> queued -> running`。契约
-        `SubmissionTransitions` 要求"静态高危必须在不进入沙箱的情况下被拒"，因此静态与安全检查
-        **之前**提交保持 `validated`，通过之后才进入 `queued`；两套状态机各管自己的取值域。
+        返回 `(证据, 实际沙箱启动次数)`：`per_case` 每个用例一次；`single_run`/`ssh_session`
+        **一次批量执行**产出全部证据（`invocation_count=1`）。批量执行仍逐条写证据/进度帧，
+        但那只是证据条数，不是执行次数。
         """
-        moment = self._now()
-        with self._engine.begin() as connection:
-            store.transition_run(
-                connection,
-                evaluation_run_id=run_id,
-                to_state="running",
-                occurred_at=moment,
-                reason="静态与安全检查通过，进入沙箱执行。",
-                stage="dynamic_execution",
+        mode = view.execution.mode
+        if mode == "per_case":
+            self._enter_dynamic_stage(
+                submission, run_id, view, mode=mode, message="进入沙箱执行。"
             )
-            # 提交侧：通过静态/安全后才入队，随后立刻获得执行槽（同一事务，故两步同刻）。
-            store.advance_submission_state(
-                connection,
+            evidences = self._run_per_case(submission, run_id, view)
+            return evidences, len(evidences)
+        if mode not in ("single_run", "ssh_session"):
+            raise InternalDefectError(
+                f"{MESSAGE_INTERNAL_DEFECT}（未知的批量执行模式：{mode!r}）"
+            )
+        self._enter_dynamic_stage(
+            submission,
+            run_id,
+            view,
+            mode=mode,
+            message="进入沙箱执行（一次批量执行：本次运行的多个用例共用它）。",
+        )
+        batch_workspace = self._prepare_workspace(submission, run_id, batch=True)
+        try:
+            batch = BatchRunInput(
                 submission_id=submission.submission_id,
-                to_state="queued",
-                occurred_at=moment,
-                reason="静态与安全检查通过，进入评测队列。",
-            )
-            store.advance_submission_state(
-                connection,
-                submission_id=submission.submission_id,
-                to_state="running",
-                occurred_at=moment,
-                reason="获得执行槽。",
-            )
-            frame = progress.append_frame(
-                connection,
                 evaluation_run_id=run_id,
-                event=EVENT_PROGRESS,
-                state="running",
-                stage="dynamic_execution",
-                occurred_at=moment,
-                cases_total=view.cases_total,
-                cases_done=0,
-                message="进入沙箱执行。",
+                correlation_id=submission.correlation_id,
+                workspace=batch_workspace,
+                files=tuple(submission.files),
+                cases=tuple(case.handle for case in view.ordered_cases()),  # type: ignore[arg-type]
+                adapter=view.adapter_handle,  # type: ignore[arg-type] - 不透明句柄
+                policy=view.policy_handle,  # type: ignore[arg-type] - 不透明句柄
             )
-            self._enqueue_progress(
-                connection, submission=submission, run_id=run_id, frame=frame, occurred_at=moment
-            )
+            with self._runner_failure_scope(), self._gate.hold():
+                evidences = self._runner.run_cases(view.handle, batch)
+        finally:
+            self._workspaces.release(batch_workspace)
+        ordered = self._validate_evidence_set(view, evidences, source=f"{mode} batch")
+        # 一次批量执行 = 一次沙箱启动；证据条数由 package 声明。
+        self._record_evidences(submission, run_id, view, ordered, invocations=1)
+        return ordered, 1
+
+    def _run_per_case(
+        self,
+        submission: SubmissionEnvelope,
+        run_id: str,
+        view: PackageView,
+    ) -> tuple[CaseEvidence, ...]:
+        """`per_case`：逐用例过闸门执行、逐条落证据（既有行为不变）。"""
         evidences: list[CaseEvidence] = []
         for done, case in enumerate(view.ordered_cases(), start=1):
             case_workspace = self._prepare_workspace(submission, run_id, case_id=case.case_id)
@@ -752,28 +895,162 @@ class EvaluationOrchestrator:
             evidences.append(evidence)
         return tuple(evidences)
 
-    def _execute_case(
+    def _run_delivery(
         self,
         submission: SubmissionEnvelope,
         run_id: str,
         view: PackageView,
-        case_workspace: Path,
-        case: CaseDescriptor,
-    ) -> CaseEvidence:
-        """过一次闸门、执行一个用例（三个句柄原样来自 package 解析结果，每用例一份工作区）。"""
-        run_input = SubmissionRunInput(
-            submission_id=submission.submission_id,
-            evaluation_run_id=run_id,
-            correlation_id=submission.correlation_id,
-            workspace=case_workspace,
-            files=tuple(submission.files),
-            case=case.handle,  # type: ignore[arg-type] - 不透明句柄：编排不解释 package 内部结构
-            adapter=view.adapter_handle,  # type: ignore[arg-type] - 同上
-            policy=view.policy_handle,  # type: ignore[arg-type] - 同上
+    ) -> tuple[tuple[CaseEvidence, ...], int]:
+        """`email_delivery`：不准备/不释放工作区、不跑静态/安全/沙箱，调用投递核验端口。
+
+        计数语义：该模式**不启动沙箱**，因此返回 `invocation_count=0`；证据仍按 package 逐用例
+        产出（一条对应一个 `email_check` 断言）。依赖故障（心跳过期/未配置）不是学生失败：
+        映射为 `InfrastructureError`，由运行终态 `failed(infrastructure_error)` 承担。
+        """
+        self._enter_dynamic_stage(
+            submission, run_id, view, mode="email_delivery", message="进入投递核验（不执行代码）。"
         )
+        if self._delivery is None:
+            # 依赖没装配也是依赖不可用：留日志、落 failed(infrastructure_error)，绝不静默跳过核验。
+            log_dependency_unavailable(
+                logger,
+                dependency="email-delivery",
+                error=DeliveryUnavailableError("the delivery verifier is not configured"),
+                stage="dynamic_execution",
+                reason="delivery verifier is not wired into the orchestrator",
+            )
+            raise InfrastructureError(MESSAGE_DELIVERY_UNAVAILABLE)
         try:
-            with self._gate.hold():
-                return self._runner.run_case(view.handle, run_input)
+            evidences = self._delivery.verify(view.handle, submission)
+        except DeliveryUnavailableError as error:
+            log_dependency_unavailable(
+                logger,
+                dependency="email-delivery",
+                error=error,
+                stage="dynamic_execution",
+            )
+            raise InfrastructureError(MESSAGE_DELIVERY_UNAVAILABLE) from error
+        except DeliveryVerificationDefect as error:
+            raise InternalDefectError(MESSAGE_DELIVERY_EVIDENCE_DEFECT) from error
+        except Exception as error:
+            raise InternalDefectError(MESSAGE_INTERNAL_DEFECT) from error
+        ordered = self._validate_evidence_set(view, evidences, source="email_delivery verification")
+        self._record_evidences(submission, run_id, view, ordered, invocations=0)
+        return ordered, 0
+
+    def _enter_dynamic_stage(
+        self,
+        submission: SubmissionEnvelope,
+        run_id: str,
+        view: PackageView,
+        *,
+        mode: str,
+        message: str,
+    ) -> None:
+        """`queued -> running` + 进入 `dynamic_execution` 的进度帧（各模式共用）。
+
+        提交（submission）状态机在同一事务内跟进：`validated -> queued -> running`。契约
+        `SubmissionTransitions` 要求"静态高危必须在不进入沙箱的情况下被拒"，因此静态与安全检查
+        **之前**提交保持 `validated`，通过之后才进入 `queued`；两套状态机各管自己的取值域。
+        `email_delivery` 不执行代码，迁移原因如实写投递核验，不假装"进入沙箱执行"。
+        """
+        if mode == "email_delivery":
+            run_reason = "该模式不执行代码：进入投递核验（静态与安全检查不适用）。"
+            queued_reason = "进入投递核验队列。"
+            running_reason = "获得投递核验槽。"
+        else:
+            run_reason = "静态与安全检查通过，进入沙箱执行。"
+            queued_reason = "静态与安全检查通过，进入评测队列。"
+            running_reason = "获得执行槽。"
+        moment = self._now()
+        with self._engine.begin() as connection:
+            store.transition_run(
+                connection,
+                evaluation_run_id=run_id,
+                to_state="running",
+                occurred_at=moment,
+                reason=run_reason,
+                stage="dynamic_execution",
+            )
+            store.advance_submission_state(
+                connection,
+                submission_id=submission.submission_id,
+                to_state="queued",
+                occurred_at=moment,
+                reason=queued_reason,
+            )
+            store.advance_submission_state(
+                connection,
+                submission_id=submission.submission_id,
+                to_state="running",
+                occurred_at=moment,
+                reason=running_reason,
+            )
+            frame = progress.append_frame(
+                connection,
+                evaluation_run_id=run_id,
+                event=EVENT_PROGRESS,
+                state="running",
+                stage="dynamic_execution",
+                occurred_at=moment,
+                cases_total=view.cases_total,
+                cases_done=0,
+                message=message,
+            )
+            self._enqueue_progress(
+                connection, submission=submission, run_id=run_id, frame=frame, occurred_at=moment
+            )
+
+    def _record_evidences(
+        self,
+        submission: SubmissionEnvelope,
+        run_id: str,
+        view: PackageView,
+        evidences: Sequence[CaseEvidence],
+        *,
+        invocations: int,
+    ) -> None:
+        """批量/投递证据**逐条**落库并逐条发进度帧（一段证据一行，执行次数另记）。"""
+        for done, evidence in enumerate(evidences, start=1):
+            self._escalate_case_outcome(
+                run_id,
+                evidence,
+                invocations=invocations,
+                evidence_written=done - 1,
+            )
+            self._record_evidence(submission, run_id, view, evidence, done)
+
+    def _validate_evidence_set(
+        self,
+        view: PackageView,
+        evidences: Sequence[CaseEvidence],
+        *,
+        source: str,
+    ) -> tuple[CaseEvidence, ...]:
+        """批量/投递证据与 package 用例集合的一致性（形状不符即内部缺陷，不猜测补齐）。"""
+        declared = {case.ordinal: case for case in view.ordered_cases()}
+        if len(evidences) != len(declared):
+            raise InternalDefectError(
+                f"{source}: 证据数 {len(evidences)} 与 package 用例数 {len(declared)} 不一致"
+            )
+        collected: dict[int, CaseEvidence] = {}
+        for evidence in evidences:
+            ordinal = evidence.ordinal
+            case = declared.get(ordinal)
+            if case is None:
+                raise InternalDefectError(f"{source}: 出现 package 未声明的用例证据（ordinal {ordinal}）")
+            if ordinal in collected:
+                raise InternalDefectError(f"{source}: 用例证据 ordinal 重复（{ordinal}）")
+            if str(evidence.case_id) != case.case_id:
+                raise InternalDefectError(f"{source}: 用例证据与 package 用例不是同一个（ordinal {ordinal}）")
+            collected[ordinal] = evidence
+        return tuple(collected[ordinal] for ordinal in sorted(collected))
+
+    @contextmanager
+    def _runner_failure_scope(self) -> Iterator[None]:
+        """把 runner 的异常按**既定语义**翻译成编排层的失败类别（不吞、不改写）。"""
+        try:
+            yield
         except SandboxUnavailableError as error:
             # 依赖不可用必须**有日志**、不只是有状态（RQ-B-2-99 场景 2-99-D）：沙箱不可用会经
             # `InfrastructureError` 落到运行终态 `failed(infrastructure_error)`（状态），日志这一侧
@@ -795,6 +1072,29 @@ class EvaluationOrchestrator:
             raise InfrastructureError(MESSAGE_PACKAGE_UNAVAILABLE) from error
         except InternalEvaluationError as error:
             raise InternalDefectError(MESSAGE_INTERNAL_DEFECT) from error
+
+    def _execute_case(
+        self,
+        submission: SubmissionEnvelope,
+        run_id: str,
+        view: PackageView,
+        case_workspace: Path,
+        case: CaseDescriptor,
+    ) -> CaseEvidence:
+        """过一次闸门、执行一个用例（三个句柄原样来自 package 解析结果，每用例一份工作区）。"""
+        run_input = SubmissionRunInput(
+            submission_id=submission.submission_id,
+            evaluation_run_id=run_id,
+            correlation_id=submission.correlation_id,
+            workspace=case_workspace,
+            files=tuple(submission.files),
+            case=case.handle,  # type: ignore[arg-type] - 不透明句柄：编排不解释 package 内部结构
+            adapter=view.adapter_handle,  # type: ignore[arg-type] - 同上
+            policy=view.policy_handle,  # type: ignore[arg-type] - 同上
+        )
+        with self._runner_failure_scope(), self._gate.hold():
+            return self._runner.run_case(view.handle, run_input)
+
 
     def _escalate_case_outcome(
         self,
@@ -826,7 +1126,11 @@ class EvaluationOrchestrator:
                 evidence_written=evidence_written,
             )
         if evidence.failure_category == "infrastructure_error":
-            raise InfrastructureError(MESSAGE_CASE_TECHNICAL_FAILURE)
+            raise InfrastructureError(
+                MESSAGE_CASE_TECHNICAL_FAILURE,
+                invocations=invocations,
+                evidence_written=evidence_written,
+            )
 
     def _record_runtime_security_findings(self, run_id: str, evidence: CaseEvidence) -> int:
         """把执行期违规写进 `b2.security_findings`（与终态迁移分开事务：拒绝不可能因为没有明细而消失）。"""
@@ -885,6 +1189,8 @@ class EvaluationOrchestrator:
         evidence: Sequence[CaseEvidence],
         static: StaticAnalysisResult,
         security: SecurityDecision,
+        *,
+        mode: str,
     ) -> ScoreBreakdown:
         """阶段 `scoring`：纯确定性评分（无模型、无时间、无随机）。"""
         self._enter_stage(
@@ -904,6 +1210,7 @@ class EvaluationOrchestrator:
                 static=static,
                 security=security,
                 comparison=view.comparison,
+                mode=mode,
             )
         except Exception as error:  # 评分缺陷必须失败，不得四舍五入
             raise InternalDefectError(MESSAGE_INTERNAL_DEFECT) from error
@@ -917,6 +1224,10 @@ class EvaluationOrchestrator:
         security: SecurityDecision,
         evidence: Sequence[CaseEvidence],
         breakdown: ScoreBreakdown,
+        *,
+        invocations: int,
+        execution: ReportExecution,
+        security_not_applicable: bool,
     ) -> EvaluationOutcome:
         """阶段 `reporting`：组报告 → 与结果**同事务**写入 → 迁 `completed` → 终态帧 → 事件。"""
         self._enter_stage(
@@ -947,6 +1258,8 @@ class EvaluationOrchestrator:
                         question_version_binding=view.question_version_binding,
                         interpreter_version=view.interpreter_version,
                     ),
+                    execution=execution,
+                    security_not_applicable=security_not_applicable,
                 ),
                 generated_at=self._now(),
             )
@@ -1021,7 +1334,7 @@ class EvaluationOrchestrator:
                 run_id,
                 terminal_reason="internal_error",
                 message=MESSAGE_SCHEMA_CONFLICT if conflict else MESSAGE_PERSIST_FAILED,
-                invocations=len(evidence),
+                invocations=invocations,
                 evidence_written=len(evidence),
                 cause=str(conflict) if conflict is not None else None,
             )
@@ -1031,7 +1344,7 @@ class EvaluationOrchestrator:
                 run_id,
                 terminal_reason="internal_error",
                 message=MESSAGE_PERSIST_FAILED,
-                invocations=len(evidence),
+                invocations=invocations,
                 evidence_written=len(evidence),
             )
         return EvaluationOutcome(
@@ -1043,7 +1356,7 @@ class EvaluationOrchestrator:
             is_pass=breakdown.is_pass,
             result_digest=digest,
             report=stored,
-            runner_invocations=len(evidence),
+            runner_invocations=invocations,
             case_evidence_written=len(evidence),
         )
 

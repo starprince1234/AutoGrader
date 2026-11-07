@@ -31,6 +31,9 @@ const SECURITY_LABEL = {
   found: "grades.security.found",
   not_found: "grades.security.not_found",
   not_checked: "grades.security.not_checked",
+  // CHG-0031: email_delivery 不执行代码，安全检查不适用；它必须与"未检查"分开展示，
+  // 否则读者会把"该模式没有安全判定"误读成"有检查没跑"。
+  not_applicable: "grades.security.not_applicable",
 } as const;
 
 export function GradeDrilldown({

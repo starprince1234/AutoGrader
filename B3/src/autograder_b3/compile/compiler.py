@@ -38,13 +38,20 @@ from ..dto.internal import (
 from ..errors import ManifestInvalid
 from .adapters import register_builtin_adapters
 from .canonical import digest_without
-from .manifest import assert_fixture_binding
+from .manifest import (
+    assert_fixture_binding,
+    case_execution_payload,
+    execution_manifest_to_storage,
+    validate_case_executions,
+)
 from .policy import DEFAULT_POLICY
 from .registry import adapter_compiler_for
 
 register_builtin_adapters()
 
-#: Keys of a ``tests[]`` entry, in the order the contract declares them.
+#: Keys of a ``tests[]`` entry, in the order the contract declares them. The last four are
+#: optional: ``case_to_package_entry`` only emits them when a case declares execution
+#: behaviour, which is what keeps legacy entries (and therefore the content digest) unchanged.
 TEST_ENTRY_KEYS: tuple[str, ...] = (
     "case_id",
     "name",
@@ -56,6 +63,10 @@ TEST_ENTRY_KEYS: tuple[str, ...] = (
     "expected_stdout",
     "expected_stderr",
     "expected_exit_code",
+    "segment",
+    "file_checks",
+    "ssh_check",
+    "email_check",
 )
 
 
@@ -72,8 +83,14 @@ def compute_package_digest(package: Mapping[str, Any]) -> str:
 
 
 def case_to_package_entry(case: TestCaseInternal) -> dict[str, Any]:
-    """Map a protected test case onto a contract ``tests[]`` entry."""
-    return {
+    """Map a protected test case onto a contract ``tests[]`` entry.
+
+    Execution fields are added **only when the case declares them**, so a case written before
+    the fields existed compiles to exactly the entry it used to. The same function feeds the
+    content digest (``domain.content.content_wire``), which is what keeps "the package a
+    runner executes" and "the content a digest covers" one shape.
+    """
+    entry: dict[str, Any] = {
         "case_id": str(case.case_id),
         "name": case.name,
         "ordinal": case.ordinal,
@@ -85,6 +102,8 @@ def case_to_package_entry(case: TestCaseInternal) -> dict[str, Any]:
         "expected_stderr": case.expected_stderr,
         "expected_exit_code": case.expected_exit_code,
     }
+    entry.update(case_execution_payload(case.execution))
+    return entry
 
 
 def compile_evaluation_package(
@@ -124,9 +143,21 @@ def compile_evaluation_package(
     compiler.validate(manifest, cases=cases, fixtures=fixtures)
     if fixtures:
         assert_fixture_binding(manifest, fixtures)
+    # The double-sided guard the design baseline requires: B3 refuses an unusable execution
+    # declaration here (publish, verification and the internal package endpoint all compile
+    # through this function), and B2 re-rejects at package parse time. The declaration is
+    # cross-checked against the adapter kind, the language and the case set because those are
+    # what give its fields meaning.
+    validate_case_executions(
+        cases,
+        execution=snapshot.execution,
+        adapter_kind=manifest.kind,
+        language=snapshot.language,
+    )
 
     adapter_section = compiler.to_package_section(manifest, cases=cases, fixtures=fixtures)
     tests = tuple(case_to_package_entry(case) for case in sorted(cases, key=lambda c: c.ordinal))
+    execution_section = execution_manifest_to_storage(snapshot.execution)
 
     draft = EvaluationPackage(
         question_version_id=version_id,
@@ -138,6 +169,7 @@ def compile_evaluation_package(
         max_files=snapshot.max_files,
         max_total_bytes=snapshot.max_total_bytes,
         created_at=created_at,
+        execution=execution_section,
     )
     digest = compute_package_digest(draft.to_wire())
     if len(digest) != 64:

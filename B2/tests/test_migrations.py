@@ -54,13 +54,20 @@ BUSINESS_TABLES = {
     "artifacts",
     "case_evidence",
     "email_checkpoints",
+    "email_sender_bindings",
+    "email_verification_challenges",
+    "email_verifications",
     "evaluation_commentaries",
     "evaluation_learning_hints",
     "evaluation_results",
     "evaluation_run_state_transitions",
     "evaluation_runs",
     "inbox_events",
+    "intake_messages",
     "intake_quarantines",
+    "intake_state",
+    "manual_grade_history",
+    "manual_grades",
     "outbox_events",
     "progress_events",
     "security_findings",
@@ -74,6 +81,19 @@ BUSINESS_TABLES = {
 COMPOSITE_PRIMARY_KEYS = {
     "submission_files": ["submission_id", "path"],
     "inbox_events": ["consumer", "event_id"],
+}
+
+#: 迁移 `20260915_0011`（0012 的整改对象）时**已经存在**的业务表。
+#: 之后的迁移只新增表/列，因此"0011 新库自合规 + 0012 在其上是 no-op"的断言只能对照这个子集。
+TABLES_AT_0011 = BUSINESS_TABLES - {
+    "evaluation_learning_hints",  # 0015/0016 分支新增
+    "manual_grades",  # 0017
+    "manual_grade_history",  # 0017
+    "intake_messages",  # 0018
+    "email_verification_challenges",  # 0020
+    "email_verifications",  # 0020
+    "email_sender_bindings",  # 0020
+    "intake_state",  # 0020
 }
 
 pytestmark = requires_postgres
@@ -214,6 +234,43 @@ def test_created_constraints_exist(empty_database_url: str) -> None:
         "ck_evaluation_learning_hints_status",
         "ck_evaluation_learning_hints_shape",
         "ck_evaluation_learning_hints_context_scope_is_array",
+        # 迁移 0017（人工评分）：迁移本身较晚，之前的表清单断言漏登记了两张表；
+        # 迁移测试必须与真实库一致，否则"契约声明 vs 实现"的读数会失真。
+        "pk_manual_grades",
+        "uq_manual_grades_submission_id",
+        "fk_manual_grades_submission_id",
+        "ck_manual_grades_score",
+        "ck_manual_grades_revision",
+        "pk_manual_grade_history",
+        "fk_manual_grade_history_submission_id",
+        "ck_manual_grade_history_previous_score",
+        "ck_manual_grade_history_score",
+        "ck_manual_grade_history_reason",
+        # 迁移 0018（来信内容）：一封信一份摘录，且跟随提交级联删除。
+        "pk_intake_messages",
+        "uq_intake_messages_submission_id",
+        "fk_intake_messages_submission_id",
+        "ck_intake_messages_body_excerpt",
+        # 迁移 0020（一次性邮件核验码，设计 §4）：四张内部表的关键约束。
+        "pk_email_verification_challenges",
+        "uq_email_verification_challenges_code_sha256",
+        "ck_email_verification_challenges_window",
+        "ck_email_verification_challenges_attempts",
+        "ck_email_verification_challenges_consumption",
+        "ck_email_verification_challenges_rejection",
+        "fk_email_verification_challenges_consumed_verification_id",
+        "pk_email_verifications",
+        "uq_email_verifications_challenge_id",
+        "uq_email_verifications_submission_id",
+        "uq_email_verifications_mailbox_uidvalidity_uid",
+        "fk_email_verifications_challenge_id",
+        "fk_email_verifications_submission_id",
+        "ck_email_verifications_attachment_names",
+        "pk_email_sender_bindings",
+        "uq_email_sender_bindings_scope",
+        "ck_email_sender_bindings_sender",
+        "pk_intake_state",
+        "ck_intake_state_singleton",
     ):
         assert expected in constraints, f"约束缺失: {expected}"
 
@@ -237,6 +294,17 @@ def test_indexes_and_unique_keys_exist(empty_database_url: str) -> None:
         "ix_artifact_gc_audits_content_sha256",
         "ix_submission_state_transitions_submission_id_occurred_at",
         "ix_evaluation_learning_hints_student_requested_at",
+        # 迁移 0017 / 0018 / 0020：唯一约束在 PostgreSQL 里以唯一索引形态出现。
+        "uq_manual_grades_submission_id",
+        "ix_manual_grade_history_submission_id_recorded_at",
+        "uq_intake_messages_submission_id",
+        "uq_email_verification_challenges_code_sha256",
+        "ix_email_verification_challenges_student_question",
+        "uq_email_verifications_challenge_id",
+        "uq_email_verifications_submission_id",
+        "uq_email_verifications_mailbox_uidvalidity_uid",
+        "ix_email_verifications_student_id",
+        "uq_email_sender_bindings_scope",
     ):
         assert expected in indexes, f"索引/唯一键缺失: {expected}"
 
@@ -282,6 +350,8 @@ def test_primary_keys_follow_b4_naming_standard(empty_database_url: str) -> None
         "evaluation_results": ("evaluation_run_id", "uuid"),
         "evaluation_run_state_transitions": ("evaluation_run_state_transition_id", "uuid"),
         "evaluation_runs": ("evaluation_run_id", "uuid"),
+        "manual_grades": ("manual_grade_id", "uuid"),
+        "manual_grade_history": ("history_id", "uuid"),
         "outbox_events": ("event_id", "uuid"),
         "progress_events": ("progress_event_id", "uuid"),
         "security_findings": ("security_finding_id", "uuid"),
@@ -289,7 +359,14 @@ def test_primary_keys_follow_b4_naming_standard(empty_database_url: str) -> None
         "submission_state_transitions": ("submission_state_transition_id", "uuid"),
         "submissions": ("submission_id", "uuid"),
         "email_checkpoints": ("email_checkpoint_id", "uuid"),
+        "intake_messages": ("intake_message_id", "uuid"),
         "intake_quarantines": ("intake_quarantine_id", "uuid"),
+        # 迁移 0020：核验码链路的四张表。`intake_state` 是**单行表**（id=1 由 CHECK 钉住），
+        # 因此主键有意不是 `<实体>_id` uuid —— "只有一行"是这里的领域不变量。
+        "email_verification_challenges": ("challenge_id", "uuid"),
+        "email_verifications": ("verification_id", "uuid"),
+        "email_sender_bindings": ("binding_id", "uuid"),
+        "intake_state": ("id", "smallint"),
     }
     assert keys == expected, f"主键形态不符合 B4 规范: {keys}"
     # 复合主键表：列名与顺序也要合规
@@ -620,12 +697,30 @@ def test_every_timestamp_column_has_millisecond_precision(empty_database_url: st
 
     expected = {f"{table}.{column}" for table, column in remediation.MILLISECOND_COLUMNS}
     # 迁移 0016 新增的表自带 `timestamptz(3)`（建表时就按标准写），因此它不在 0012 的
-    # "整改清单"里，但必须同样满足精度要求；0018 与 0019 的时间列同样必须满足。
+    # "整改清单"里，但必须同样满足精度要求；0017/0018 的建表时间列当时用了默认精度，
+    # 由 0020 统一收窄（0019 的时间列本就合规）。
     expected |= {
         "evaluation_learning_hints.requested_at",
         "evaluation_learning_hints.generated_at",
         "intake_quarantines.resolved_at",
         "intake_quarantines.held_at",
+        # 迁移 0020（一次性核验码）：挑战窗口、邮件事实、绑定时间与心跳时间。
+        "email_verification_challenges.created_at",
+        "email_verification_challenges.expires_at",
+        "email_verification_challenges.consumed_at",
+        "email_verifications.received_at",
+        "email_verifications.created_at",
+        "email_sender_bindings.bound_at",
+        "intake_state.last_successful_pull_at",
+        "intake_state.updated_at",
+        # 迁移 0017（人工评分）与 0018（来信摘录）建表时用的是默认精度的 timestamptz；
+        # 迁移 0020 起把这些列收窄到毫秒精度（0017/0018 本身未改），因此它们从 0020 开始
+        # 与其余表一样满足本用例的判据。
+        "manual_grades.graded_at",
+        "manual_grades.updated_at",
+        "manual_grade_history.recorded_at",
+        "intake_messages.received_at",
+        "intake_messages.created_at",
     }
     assert {f"{row[0]}.{row[1]}" for row in rows} == expected
 
@@ -668,9 +763,11 @@ def test_fresh_database_needs_no_correction_and_the_revision_is_a_true_no_op() -
 
     1. 用**已整改过声明文本**的原始修订建到 `20260915_0011`（停在修正者之前）；
     2. 此刻库本身就应合规 ⇒ 证明文本编辑本身是对的（不是靠 0012 兜住的）；
-    3. 再 `upgrade head`（跑 0012），断言主键名、**约束 OID** 与列精度逐项不变。
+    3. 再 `upgrade head`（先跑 0012，之后 0013+ 只新增表/列），断言 0011 存量表的
+       主键名、**约束 OID** 与列精度逐项不变。
 
-    第 3 步的 OID 比对排除了"删了又建"这种伪 no-op。
+    第 3 步只比较 0011 时已存在的表：head 早已不是 0012，0013+ 的迁移会新增表（那是合法增量，
+    不是 0012 改动了结构）。OID 比对排除了"删了又建"这种伪 no-op。
     """
     from tests.conftest import temporary_database
 
@@ -679,16 +776,21 @@ def test_fresh_database_needs_no_correction_and_the_revision_is_a_true_no_op() -
         assert result.returncode == 0, result.stderr[-800:]
         before = _standard_snapshot(url)
         names, precisions = before
-        assert set(names) == BUSINESS_TABLES, "表集合与业务表不一致"
+        assert set(names) == TABLES_AT_0011, "0011 的表集合与预置清单不一致"
         conformant = {table: name for table, (name, _oid) in names.items() if name == f"pk_{table}"}
         assert len(conformant) == len(names), f"新库上主键名仍不合标准: {names}"
         assert set(precisions.values()) == {3}, f"新库上时间列精度仍不合标准: {precisions}"
 
         result = _alembic(url, "upgrade", "head")
         assert result.returncode == 0, result.stderr[-800:]
-        assert _standard_snapshot(url) == before, (
+        after_names, after_precisions = _standard_snapshot(url)
+        assert TABLES_AT_0011 <= set(after_names)
+        # 0012 在已经合规的新库上必须完全不碰既有表（主键名 + OID 逐项相等）。
+        assert {table: after_names[table] for table in TABLES_AT_0011} == names, (
             "0012 在已经合规的新库上改动了结构（或重建了主键约束）：它应当是完全的 no-op"
         )
+        # 0011 存量表的 created_at/updated_at 精度同样逐项不变（新表的列不参与该比较）。
+        assert {key: after_precisions[key] for key in precisions} == precisions
 
 
 def test_standard_remediation_round_trip_is_reversible_and_idempotent(

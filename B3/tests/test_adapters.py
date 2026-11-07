@@ -77,7 +77,14 @@ def validate_against_contract(package) -> None:
 
 
 def diagnostics_for(manifest: dict, outputs: list[str | None]):
-    """Run the fitness rules over a manifest and a set of expected stdout values."""
+    """Run the fitness rules over a manifest and a set of expected stdout values.
+
+    The manifest is built with ``require_runnable_comparison=False`` on purpose: CMP-004
+    reports a declaration the write/compile path now refuses (stdout compares numerically
+    without a tolerance), and a version stored before that rule existed must still be
+    diagnosable. This is the same lenient read the diagnostics endpoint uses; every other
+    validation in ``validate_adapter_manifest`` still applies.
+    """
     from autograder_b3.compile.diagnostics import Rule, analyse_comparison, rule_by_id
 
     from .examples import build_cases
@@ -85,7 +92,8 @@ def diagnostics_for(manifest: dict, outputs: list[str | None]):
     # A legal stdin adapter must declare at least one exercise; the diagnostics only
     # care about the comparison policy, so the exercise itself is boilerplate.
     validated = validate_adapter_manifest(
-        {"stdin": "a\n", "args": [], **manifest, "expect_exit_code": 0}
+        {"stdin": "a\n", "args": [], **manifest, "expect_exit_code": 0},
+        require_runnable_comparison=False,
     )
     rows = [
         {
@@ -141,6 +149,21 @@ def test_numeric_tolerance_without_a_value_is_an_error():
     report = diagnostics_for(manifest, ["3.14\n"])
     assert [item.rule_id for item in report.errors] == ["CMP-004"]
     assert report.passed is False
+
+
+def test_numeric_tolerance_without_a_value_is_refused_at_validation():
+    """The write/compile path refuses what B2's package parser would refuse anyway.
+
+    CMP-004 remains the *diagnostic* for a declaration stored before this rule (see
+    ``diagnostics_for``), but a new declaration cannot reach the bank: B2's runner parser
+    requires a tolerance whenever stdout compares numerically, and a package B2 refuses must
+    not be publishable in B3.
+    """
+    with pytest.raises(ManifestInvalid) as error:
+        validate_adapter_manifest(
+            {"kind": "stdin", "comparison": {"stdout": "numeric_tolerance"}}
+        )
+    assert error.value.field == "adapter.comparison"
 
 
 def test_a_well_formed_policy_produces_no_findings():
@@ -325,6 +348,25 @@ def test_duplicate_fixture_declaration_is_rejected():
     }
     with pytest.raises(ManifestInvalid):
         validate_adapter_manifest(manifest)
+
+
+def test_the_same_fixture_path_under_two_mounts_is_rejected():
+    """The consumer keys its fixture map by path, so the same path twice is ambiguous.
+
+    B2's package parser rejects a duplicate fixture path regardless of mount; B3 applies the
+    stricter of the two readings at authoring time so "publishable here" and "parseable there"
+    are the same set.
+    """
+    manifest = {
+        "kind": "file",
+        "files": [
+            {"path": "data/in.txt", "content_sha256": "c" * 64, "mount": "input"},
+            {"path": "data/in.txt", "content_sha256": "d" * 64, "mount": "expected_output"},
+        ],
+    }
+    with pytest.raises(ManifestInvalid) as error:
+        validate_adapter_manifest(manifest)
+    assert error.value.field == "adapter.files"
 
 
 # --- TC-ADP-03: callable --------------------------------------------------

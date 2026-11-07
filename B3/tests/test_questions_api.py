@@ -157,6 +157,10 @@ def test_question_version_dto_is_public_only(client, auth_headers, published_que
         "status",
         "language",
         "adapter_kind",
+        # The execution *mode* is public (a teacher must know what kind of question they are
+        # assigning); the declaration behind it is protected configuration and must not appear
+        # here -- see tests/test_execution.py for the negative half of that assertion.
+        "execution_mode",
         "content_digest",
         # CHG-0013: why this version exists, and what changed. Both are deliberately
         # content-free - the reason is text the author wrote, the diff is counts and
@@ -175,6 +179,8 @@ def test_question_version_dto_is_public_only(client, auth_headers, published_que
     assert body["content_digest"] and len(body["content_digest"]) == 64
     # A first version has nothing to diff against; `null`, not an object of falses.
     assert body["revision_diff"] is None
+    # Nothing declared a mode for this question, and the public enum defaults to the legacy one.
+    assert body["execution_mode"] == "per_case"
 
 
 def test_public_dto_vocabulary_is_disjoint_from_the_protected_one():
@@ -2241,30 +2247,42 @@ def test_diagnostics_report_the_content_rules_with_declared_severities(client, a
     assert "café" not in response.text
 
 
-def test_diagnostics_report_a_tolerance_that_was_never_declared(client, auth_headers):
-    """CMP-004 is diagnosable on a draft, where the policy is still being written.
+def test_diagnostics_report_a_tolerance_that_was_never_declared(
+    client, auth_headers, owner_engine
+):
+    """CMP-004 is diagnosable on a declaration stored before the runnability rule existed.
 
-    The question is deliberately not published: the point of an authoring-time finding is
-    that it arrives *before* the version is frozen, and a teacher can act on it. (This is
-    also why the endpoint selects the latest draft when nothing is published.)
+    The write path now refuses ``numeric_tolerance`` without a tolerance (B2's package parser
+    requires one), so a *new* version cannot carry this shape. Diagnostics is the read-only
+    surface that has to be able to **report** a declaration the write path would refuse, so the
+    legacy row is manufactured directly through the owner connection -- the same shape an older
+    row can still have, and the finding is what tells the teacher why it cannot be compiled.
     """
+    from sqlalchemy import text
+
     created = client.post(
         "/api/v1/questions",
         params={"course_id": str(COURSE_A)},
-        json=draft_payload(
-            reference_answer=REFERENCE_ANSWER,
-            comparison={
-                "stdout": "numeric_tolerance",
-                "stderr": "ignored",
-                "numeric_tolerance": None,
-            },
-        ),
+        json=draft_payload(reference_answer=REFERENCE_ANSWER),
         headers=auth_headers("teacher-a"),
     )
     assert created.status_code == 201, created.text
+    question_id = created.json()["question_id"]
+    version_id = created.json()["versions"][0]["question_version_id"]
+
+    with owner_engine.connect() as connection:
+        connection.execute(
+            text(
+                "UPDATE b3.question_versions SET adapter_manifest = adapter_manifest || "
+                "'{\"comparison\": {\"stdout\": \"numeric_tolerance\", \"stderr\": \"ignored\", "
+                "\"numeric_tolerance\": null}}'::jsonb "
+                "WHERE question_version_id = :vid"
+            ),
+            {"vid": version_id},
+        )
 
     response = client.get(
-        f"/api/v1/questions/{created.json()['question_id']}/diagnostics",
+        f"/api/v1/questions/{question_id}/diagnostics",
         headers=auth_headers("teacher-a"),
     )
     assert response.status_code == 200, response.text

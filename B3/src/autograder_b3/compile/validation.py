@@ -159,13 +159,23 @@ def validate_bounded_text(
     return value
 
 
-def validate_distinct_paths(paths: Iterable[tuple[str, str]]) -> None:
-    seen: set[tuple[str, str]] = set()
-    for path, mount in paths:
-        key = (path, mount)
-        if key in seen:
-            raise ManifestInvalid(f"duplicate fixture declaration for {path} ({mount})")
-        seen.add(key)
+def validate_distinct_paths(paths: Iterable[str], *, field: str = "adapter.files") -> None:
+    """Reject a fixture path declared more than once, whatever its mount.
+
+    The package's fixture list is keyed by ``path`` on the consumer side (B2 materialises
+    ``mount=input`` bytes and compares declared ``expected_output`` digests by path), so the
+    same path mounted twice is ambiguous there even though the two mounts mean different
+    things. This is the stricter of the two sides' rules applied at the producer, which keeps
+    "publishable in B3" and "parseable by B2" the same set.
+    """
+    seen: set[str] = set()
+    for path in paths:
+        if path in seen:
+            raise ManifestInvalid(
+                f"duplicate fixture declaration for {path!r}: a path may be mounted only once",
+                field=field,
+            )
+        seen.add(path)
 
 
 def unique_ordinals(ordinals: Sequence[int]) -> None:

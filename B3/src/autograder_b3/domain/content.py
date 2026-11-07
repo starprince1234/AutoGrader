@@ -13,9 +13,14 @@ from typing import Any
 from collections.abc import Sequence
 
 from ..compile.canonical import digest_of
-from ..compile.manifest import manifest_to_storage
+from ..compile.compiler import case_to_package_entry
+from ..compile.manifest import (
+    execution_manifest_to_storage,
+    manifest_to_storage,
+)
 from ..dto.internal import (
     AdapterManifestInternal,
+    ExecutionManifest,
     ReferenceAnswerInternal,
     TestCaseInternal,
     VersionContentSnapshot,
@@ -54,8 +59,17 @@ def validate_stem_markdown(stem: str, *, max_chars: int) -> str:
 
 
 def content_wire(snapshot: VersionContentSnapshot) -> dict[str, Any]:
-    """Canonical, JSON-ready representation whose digest is ``content_digest``."""
-    return {
+    """Canonical, JSON-ready representation whose digest is ``content_digest``.
+
+    **Compatibility rule (design baseline §8).** Only a *non-default* execution declaration
+    enters this payload: the top-level ``execution`` key is added only when the version
+    declaration is not ``per_case``, and each case's execution keys are added only when that
+    case declares one. Both used to be "absent" (the fields did not exist), so a version
+    published before the feature re-computes to exactly the digest it was published with.
+    Defaulting them into the payload would silently change every frozen ``content_digest``
+    and invalidate every stored reference-answer attestation.
+    """
+    wire: dict[str, Any] = {
         "question_version_id": str(snapshot.question_version_id),
         "question_id": str(snapshot.question_id),
         "version": snapshot.version,
@@ -66,19 +80,11 @@ def content_wire(snapshot: VersionContentSnapshot) -> dict[str, Any]:
             for answer in sorted(snapshot.reference_answers, key=lambda item: item.language)
         ],
         "adapter": manifest_to_storage(snapshot.manifest),
+        # One mapping function for the package and the digest: `case_to_package_entry` emits a
+        # case's execution fields only when it declares them, which is precisely the
+        # "non-default declarations only" rule this payload needs.
         "cases": [
-            {
-                "case_id": str(case.case_id),
-                "name": case.name,
-                "ordinal": case.ordinal,
-                "weight": case.weight,
-                "visible_to_student": case.visible_to_student,
-                "stdin": case.stdin,
-                "args": list(case.args),
-                "expected_stdout": case.expected_stdout,
-                "expected_stderr": case.expected_stderr,
-                "expected_exit_code": case.expected_exit_code,
-            }
+            case_to_package_entry(case)
             for case in sorted(snapshot.cases, key=lambda item: item.ordinal)
         ],
         "fixtures": [
@@ -93,6 +99,10 @@ def content_wire(snapshot: VersionContentSnapshot) -> dict[str, Any]:
         "max_files": snapshot.max_files,
         "max_total_bytes": snapshot.max_total_bytes,
     }
+    execution = execution_manifest_to_storage(snapshot.execution)
+    if execution is not None:
+        wire["execution"] = execution
+    return wire
 
 
 def compute_content_digest(snapshot: VersionContentSnapshot) -> str:
@@ -112,6 +122,7 @@ def build_snapshot(
     fixtures: Sequence[Any],
     max_files: int,
     max_total_bytes: int,
+    execution: ExecutionManifest | None = None,
 ) -> VersionContentSnapshot:
     return VersionContentSnapshot(
         question_version_id=question_version_id,
@@ -125,4 +136,5 @@ def build_snapshot(
         fixtures=tuple(fixtures),
         max_files=max_files,
         max_total_bytes=max_total_bytes,
+        execution=execution if execution is not None else ExecutionManifest(),
     )

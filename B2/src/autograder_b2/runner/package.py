@@ -7,6 +7,12 @@
 `interfaces.md` 第 5.4 节"package 不可获取 / 不可解析 → `failed` + `infrastructure_error`"处理即可）。
 这里**不**做"取交集"式放宽——例如包里写 `network: true` 不是"降级为禁网"，而是**整包拒绝**。
 
+**Unix 作业扩展（设计文档 `MAIN/docs/architecture/unix-homework-evaluation.md` §2）**：顶层可选
+`execution`（缺省 = `{"mode": "per_case"}`，字节级兼容旧包）与用例级 `segment` / `file_checks` /
+`ssh_check` / `email_check`。模式与字段的互斥/必需规则在 `_validate_execution` 里逐条拒绝；稳定原因码
+为 `invalid_execution` / `invalid_segment` / `invalid_file_check` / `invalid_ssh_check` /
+`invalid_email_check`。受保护值（SSH 口令、期望内容摘要）只存在于本对象内，绝不进 repr/日志/公开 DTO。
+
 资源账本边界（`MAIN/docs/workstreams/B2.md` 第 8 节）与契约 `maximum` 在 `runner.policy` 中定义为常量。
 """
 
@@ -14,8 +20,9 @@ from __future__ import annotations
 
 import json
 import re
+import string
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
 
@@ -30,6 +37,42 @@ AdapterKind = Literal["stdin", "file", "callable"]
 FixtureMount = Literal["input", "expected_output"]
 StdoutStrategy = Literal["exact", "ignore_trailing_whitespace", "numeric_tolerance", "ignored"]
 StderrStrategy = Literal["exact", "ignore_trailing_whitespace", "ignored"]
+ExecutionMode = Literal["per_case", "single_run", "ssh_session", "email_delivery"]
+SshCheck = Literal["service_ready", "auth_succeeded", "session_closed"]
+EmailCheck = Literal["email_received", "subject", "sender", "attachment"]
+
+EXECUTION_MODES: tuple[ExecutionMode, ...] = (
+    "per_case",
+    "single_run",
+    "ssh_session",
+    "email_delivery",
+)
+SSH_CHECKS: tuple[SshCheck, ...] = ("service_ready", "auth_succeeded", "session_closed")
+EMAIL_CHECKS: tuple[EmailCheck, ...] = ("email_received", "subject", "sender", "attachment")
+
+#: `execution.segment_delimiter` 的长度范围与形态（设计文档 §2）。
+MIN_SEGMENT_DELIMITER_LENGTH = 8
+MAX_SEGMENT_DELIMITER_LENGTH = 120
+
+#: SSH 口令只存在于受保护 package 内：长度上限只是"不把无界字符串带进内存"的护栏。
+MAX_SSH_PASSWORD_LENGTH = 128
+#: SSH 登录/会话超时的允许范围（秒）。与契约 `security_policy.max_wall_seconds` 上限同一量级。
+MIN_SSH_TIMEOUT_SECONDS = 0.1
+MAX_SSH_TIMEOUT_SECONDS = 60.0
+#: email_delivery 的 `attempt` 允许范围（契约 1..99）。
+MIN_EMAIL_ATTEMPT = 1
+MAX_EMAIL_ATTEMPT = 99
+
+#: 稳定原因码：`email`/`ssh` 的模板只允许这两个占位符（由 B2 用学生/课程事实填充）。
+_EMAIL_TEMPLATE_PLACEHOLDERS = {"student_number", "attempt"}
+
+#: `execution.email` / `execution.ssh` 中带契约默认值的可选字段（缺省即用默认值，不是拒绝）。
+DEFAULT_EMAIL_SUBJECT_TEMPLATE = "{student_number}_{attempt}"
+DEFAULT_EMAIL_ATTACHMENT_TEMPLATE = "{student_number}.txt"
+DEFAULT_SSH_LOGIN_TIMEOUT_SECONDS = 10.0
+DEFAULT_SSH_SESSION_TIMEOUT_SECONDS = 10.0
+#: `execution.ssh` 的必填字段；两个 timeout 有默认值，不在其中。
+_SSH_REQUIRED_FIELDS = ("host", "port", "username", "password")
 
 STDOUT_STRATEGIES: tuple[StdoutStrategy, ...] = (
     "exact",
@@ -56,6 +99,11 @@ PackageReason = Literal[
     "policy_out_of_range",
     "policy_unknown_field",
     "out_of_range",
+    "invalid_execution",
+    "invalid_segment",
+    "invalid_file_check",
+    "invalid_ssh_check",
+    "invalid_email_check",
 ]
 
 _REQUIRED_PACKAGE_FIELDS = (
@@ -84,7 +132,22 @@ _CASE_FIELDS = {
     "expected_stdout",
     "expected_stderr",
     "expected_exit_code",
+    "segment",
+    "file_checks",
+    "ssh_check",
+    "email_check",
 }
+_EXECUTION_FIELDS = {"mode", "segment_delimiter", "email", "ssh"}
+_EMAIL_FIELDS = {"attempt", "subject_template", "required_attachment_template"}
+_SSH_FIELDS = {
+    "host",
+    "port",
+    "username",
+    "password",
+    "login_timeout_seconds",
+    "session_timeout_seconds",
+}
+_FILE_CHECK_FIELDS = {"path", "content_sha256", "mode"}
 _POLICY_FIELDS = {
     "network",
     "read_only_root",
@@ -100,6 +163,13 @@ _POLICY_FIELDS = {
 _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 _DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
 _IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+#: 权限位文本：四位八进制（设计文档示例 `"0744"`）。实际值同形格式化后逐字比较。
+_FILE_MODE_RE = re.compile(r"^0[0-7]{3}$")
+#: SSH 练习账号名（POSIX 用户名的保守子集；不含空格/斜杠/控制字符）。
+_SSH_USERNAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]{0,31}$")
+#: 可打印 ASCII（含空格）。行尾空白另行拒绝（"独占一行的固定标记"）。
+_PRINTABLE_ASCII_RE = re.compile(r"^[\x20-\x7e]+$")
+_SSH_HOST = "127.0.0.1"
 
 
 class PackageRejected(PackageUnavailableError):
@@ -118,6 +188,54 @@ class PackageFixture:
     path: str
     content_sha256: str
     mount: FixtureMount
+
+
+@dataclass(frozen=True, slots=True)
+class PackageFileCheck:
+    """运行后对工作区文件的一项检查（设计文档 §3.4）。
+
+    `content_sha256` 是**受保护**的期望值（只存在于 package）；`mode` 是四位八进制文本
+    （例如 `"0744"`），与进程 umask 无关。两项至少声明一项（由解析期校验）。
+    """
+
+    path: str
+    content_sha256: str | None
+    mode: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class PackageEmailConfig:
+    """`email_delivery` 的投递配置（设计文档 §2/§3.5）。"""
+
+    attempt: int
+    subject_template: str
+    required_attachment_template: str
+
+
+@dataclass(frozen=True, slots=True)
+class PackageSshConfig:
+    """`ssh_session` 的练习账号配置（设计文档 §2/§3.3）。
+
+    `password` 是**受保护**值：`repr=False` 保证它不进任何 repr/调试输出；任何摘要也都不得
+    把它作为输入（见 `runner.run_cases` 的 `input_digest` 构造）。
+    """
+
+    host: str
+    port: int
+    username: str
+    password: str = field(repr=False)
+    login_timeout_seconds: float = 10.0
+    session_timeout_seconds: float = 10.0
+
+
+@dataclass(frozen=True, slots=True)
+class PackageExecution:
+    """package 顶层可选的 `execution` 声明；缺省 = `{"mode": "per_case"}`（现有行为）。"""
+
+    mode: ExecutionMode = "per_case"
+    segment_delimiter: str | None = None
+    email: PackageEmailConfig | None = None
+    ssh: PackageSshConfig | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,7 +271,12 @@ class PackageAdapter:
 
 @dataclass(frozen=True, slots=True)
 class PackageCase:
-    """一个隐藏用例：输入、期望输出、退出码与权重。"""
+    """一个隐藏用例：输入、期望输出、退出码与权重。
+
+    新增的四个字段均为可选且带缺省值（缺省 = 旧行为），语义见设计文档 §2：
+    `segment`（single_run 的第几段）、`file_checks`（运行后文件检查）、
+    `ssh_check`/`email_check`（ssh_session / email_delivery 的判定项）。
+    """
 
     case_id: str
     name: str
@@ -165,6 +288,10 @@ class PackageCase:
     expected_stdout: str | None
     expected_stderr: str | None
     expected_exit_code: int | None
+    segment: int | None = None
+    file_checks: tuple[PackageFileCheck, ...] = ()
+    ssh_check: SshCheck | None = None
+    email_check: EmailCheck | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,6 +307,9 @@ class EvaluationPackage:
     max_files: int
     max_total_bytes: int
     created_at: str
+    #: 顶层 `execution` 声明；缺省为 `PackageExecution()`（= per_case）。追加在最后且带默认值，
+    #: 因此旧构造点（解析器之外的测试/工具）不需要改。
+    execution: PackageExecution = field(default_factory=PackageExecution)
 
     def case_by_id(self, case_id: str) -> PackageCase | None:
         """按 `case_id` 取用例（找不到返回 None，由调用方判定）。"""
@@ -192,7 +322,10 @@ class EvaluationPackage:
 def parse_evaluation_package(payload: object) -> EvaluationPackage:
     """解析契约形状的 package JSON（`Mapping`）→ `EvaluationPackage`；不合规即 `PackageRejected`。"""
     root = _require_mapping(payload, "package")
-    _reject_unknown(root, _REQUIRED_PACKAGE_FIELDS, "package")
+    # `_REQUIRED_PACKAGE_FIELDS` is both the required set and (before CHG-0031) the allowed
+    # key set, because the package used to accept exactly its required keys. `execution` is
+    # optional -- absent means per_case -- so it is allowed without being required.
+    _reject_unknown(root, (*_REQUIRED_PACKAGE_FIELDS, "execution"), "package")
     for name in _REQUIRED_PACKAGE_FIELDS:
         if name not in root:
             _reject("schema_invalid", f"missing required field: {name}")
@@ -211,6 +344,8 @@ def parse_evaluation_package(payload: object) -> EvaluationPackage:
     adapter = _parse_adapter(root["adapter"])
     tests = _parse_tests(root["tests"])
     policy = _parse_security_policy(root["security_policy"])
+    execution = _parse_execution(root.get("execution"))
+    _validate_execution(execution, adapter=adapter, language=language, cases=tests)
 
     max_files = _require_int(root["max_files"], "max_files")
     if not 1 <= max_files <= 100:
@@ -231,6 +366,7 @@ def parse_evaluation_package(payload: object) -> EvaluationPackage:
         max_files=max_files,
         max_total_bytes=max_total_bytes,
         created_at=created_at,
+        execution=execution,
     )
 
 
@@ -376,6 +512,20 @@ def _parse_tests(payload: object) -> tuple[PackageCase, ...]:
         visible = case.get("visible_to_student", False)
         if not isinstance(visible, bool):
             _reject("invalid_test_case", f"{where}.visible_to_student must be a boolean")
+        segment_value = case.get("segment")
+        segment: int | None
+        if segment_value is None:
+            segment = None
+        else:
+            segment = _require_int(segment_value, f"{where}.segment")
+            if segment < 0:
+                _reject("invalid_segment", f"{where}.segment must be >= 0, got {segment}")
+        ssh_check = case.get("ssh_check")
+        if ssh_check is not None and ssh_check not in SSH_CHECKS:
+            _reject("invalid_ssh_check", f"{where}.ssh_check unsupported: {ssh_check!r}")
+        email_check = case.get("email_check")
+        if email_check is not None and email_check not in EMAIL_CHECKS:
+            _reject("invalid_email_check", f"{where}.email_check unsupported: {email_check!r}")
         cases.append(
             PackageCase(
                 case_id=case_id,
@@ -390,9 +540,366 @@ def _parse_tests(payload: object) -> tuple[PackageCase, ...]:
                 expected_exit_code=_optional_int(
                     case.get("expected_exit_code"), f"{where}.expected_exit_code"
                 ),
+                segment=segment,
+                file_checks=_parse_file_checks(case.get("file_checks", []), where),
+                ssh_check=ssh_check,
+                email_check=email_check,
             )
         )
     return tuple(sorted(cases, key=lambda item: item.ordinal))
+
+
+def _parse_file_checks(payload: object, where: str) -> tuple[PackageFileCheck, ...]:
+    """用例级 `file_checks`（设计文档 §2/§3.4）：每项至少声明摘要或权限位之一。"""
+    if payload is None:
+        return ()
+    if not isinstance(payload, list):
+        _reject("invalid_file_check", f"{where}.file_checks must be an array")
+    checks: list[PackageFileCheck] = []
+    seen: set[str] = set()
+    for index, item in enumerate(payload):
+        place = f"{where}.file_checks[{index}]"
+        check = _require_mapping(item, place)
+        _reject_unknown(check, _FILE_CHECK_FIELDS, place)
+        if "path" not in check:
+            _reject("invalid_file_check", f"{place} missing required field: path")
+        path = _require_str(check["path"], f"{place}.path", 200)
+        if not is_allowed_relative_path(path):
+            _reject("path_not_allowed", f"{place}.path rejected: {path!r}")
+        if path in seen:
+            _reject("invalid_file_check", f"duplicate file_check path: {path!r}")
+        seen.add(path)
+        digest_value = check.get("content_sha256")
+        digest: str | None
+        if digest_value is None:
+            digest = None
+        else:
+            digest = _require_str(digest_value, f"{place}.content_sha256", 64)
+            if not _DIGEST_RE.match(digest):
+                _reject(
+                    "invalid_file_check",
+                    f"{place}.content_sha256 must be 64 lowercase hex characters",
+                )
+        mode_value = check.get("mode")
+        mode: str | None
+        if mode_value is None:
+            mode = None
+        else:
+            mode = _require_str(mode_value, f"{place}.mode", 4)
+            if not _FILE_MODE_RE.match(mode):
+                _reject(
+                    "invalid_file_check",
+                    f"{place}.mode must be four octal digits such as 0644, got {mode!r}",
+                )
+        if digest is None and mode is None:
+            _reject(
+                "invalid_file_check",
+                f"{place} must declare content_sha256 or mode (an empty check proves nothing)",
+            )
+        checks.append(PackageFileCheck(path=path, content_sha256=digest, mode=mode))
+    return tuple(checks)
+
+
+def _parse_execution(payload: object) -> PackageExecution:
+    """顶层可选 `execution`（缺省 = per_case）。字段名与语义以设计文档 §2 为准。"""
+    if payload is None:
+        return PackageExecution()
+    execution = _require_mapping(payload, "execution")
+    _reject_unknown(execution, _EXECUTION_FIELDS, "execution", reason="invalid_execution")
+    if "mode" not in execution:
+        _reject("invalid_execution", "execution.mode is required when execution is declared")
+    mode = execution["mode"]
+    if mode not in EXECUTION_MODES:
+        _reject("invalid_execution", f"execution.mode unsupported: {mode!r}")
+    delimiter_value = execution.get("segment_delimiter")
+    delimiter: str | None
+    if delimiter_value is None:
+        delimiter = None
+    else:
+        delimiter = _parse_segment_delimiter(delimiter_value)
+    email = _parse_email_config(execution.get("email"))
+    ssh = _parse_ssh_config(execution.get("ssh"))
+    return PackageExecution(mode=mode, segment_delimiter=delimiter, email=email, ssh=ssh)
+
+
+def _parse_segment_delimiter(value: object) -> str:
+    """分段标记：独占一行的固定标记（8..120 可打印 ASCII、不含行尾空白）。"""
+    if not isinstance(value, str) or not value:
+        _reject("invalid_execution", "execution.segment_delimiter must be a non-empty string")
+    if not (
+        MIN_SEGMENT_DELIMITER_LENGTH <= len(value) <= MAX_SEGMENT_DELIMITER_LENGTH
+    ):
+        _reject(
+            "invalid_execution",
+            "execution.segment_delimiter must be"
+            f" {MIN_SEGMENT_DELIMITER_LENGTH}..{MAX_SEGMENT_DELIMITER_LENGTH} characters",
+        )
+    if not _PRINTABLE_ASCII_RE.match(value):
+        _reject(
+            "invalid_execution",
+            "execution.segment_delimiter must contain printable ASCII characters only",
+        )
+    if value[-1].isspace():
+        _reject(
+            "invalid_execution",
+            "execution.segment_delimiter must not end with whitespace (it is a whole line)",
+        )
+    return value
+
+
+def _parse_email_config(payload: object) -> PackageEmailConfig | None:
+    if payload is None:
+        return None
+    config = _require_mapping(payload, "execution.email")
+    _reject_unknown(config, _EMAIL_FIELDS, "execution.email", reason="invalid_email_check")
+    # Contract: only `attempt` is required. The two templates carry defaults in both the
+    # contract schema and B3's DTO, so a package that omits them means "use the documented
+    # defaults", not "reject the package".
+    if "attempt" not in config:
+        _reject("invalid_email_check", "execution.email missing required field: attempt")
+    attempt = _require_int(config["attempt"], "execution.email.attempt")
+    if not MIN_EMAIL_ATTEMPT <= attempt <= MAX_EMAIL_ATTEMPT:
+        _reject(
+            "invalid_email_check",
+            f"execution.email.attempt must be {MIN_EMAIL_ATTEMPT}..{MAX_EMAIL_ATTEMPT},"
+            f" got {attempt}",
+        )
+    subject_template = config.get("subject_template", DEFAULT_EMAIL_SUBJECT_TEMPLATE)
+    attachment_template = config.get(
+        "required_attachment_template", DEFAULT_EMAIL_ATTACHMENT_TEMPLATE
+    )
+    return PackageEmailConfig(
+        attempt=attempt,
+        subject_template=_parse_template(
+            subject_template, "execution.email.subject_template"
+        ),
+        required_attachment_template=_parse_template(
+            attachment_template,
+            "execution.email.required_attachment_template",
+        ),
+    )
+
+
+def _parse_template(value: object, where: str) -> str:
+    """模板只允许 `{student_number}` / `{attempt}` 两个占位符（且必须是合法格式串）。"""
+    template = _require_str(value, where, 200)
+    if "\x00" in template or any(not ch.isprintable() and ch not in "\t" for ch in template):
+        _reject("invalid_email_check", f"{where} contains non-printable characters")
+    try:
+        parsed = list(string.Formatter().parse(template))
+    except ValueError:
+        _reject("invalid_email_check", f"{where} is not a valid format template")
+    for _literal, field_name, format_spec, conversion in parsed:
+        if field_name is None:
+            continue
+        if field_name not in _EMAIL_TEMPLATE_PLACEHOLDERS:
+            _reject(
+                "invalid_email_check",
+                f"{where} uses an unsupported placeholder: {field_name!r}",
+            )
+        if format_spec or conversion:
+            _reject("invalid_email_check", f"{where} must not use format specifiers")
+    return template
+
+
+def _parse_ssh_config(payload: object) -> PackageSshConfig | None:
+    if payload is None:
+        return None
+    config = _require_mapping(payload, "execution.ssh")
+    _reject_unknown(config, _SSH_FIELDS, "execution.ssh", reason="invalid_ssh_check")
+    for name in _SSH_REQUIRED_FIELDS:
+        if name not in config:
+            _reject("invalid_ssh_check", f"execution.ssh missing required field: {name}")
+    host = config["host"]
+    if host != _SSH_HOST:
+        # 练习环境只在作业自身的回环接口上监听；任何其他地址都属于越界配置。
+        _reject("invalid_ssh_check", f"execution.ssh.host must be {_SSH_HOST}, got {host!r}")
+    port = _require_int(config["port"], "execution.ssh.port")
+    if not 1 <= port <= 65535:
+        _reject("invalid_ssh_check", f"execution.ssh.port must be 1..65535, got {port}")
+    username = config["username"]
+    if not isinstance(username, str) or not _SSH_USERNAME_RE.match(username):
+        _reject("invalid_ssh_check", "execution.ssh.username is not a valid POSIX user name")
+    password = config["password"]
+    if not isinstance(password, str) or not password:
+        _reject("invalid_ssh_check", "execution.ssh.password must be a non-empty string")
+    if len(password) > MAX_SSH_PASSWORD_LENGTH:
+        _reject(
+            "invalid_ssh_check",
+            f"execution.ssh.password exceeds {MAX_SSH_PASSWORD_LENGTH} characters",
+        )
+    if any(not ch.isprintable() for ch in password):
+        _reject("invalid_ssh_check", "execution.ssh.password contains non-printable characters")
+    # The two timeouts carry contract defaults (10s); an omitted value means the default.
+    login_timeout = _require_timeout(
+        config.get("login_timeout_seconds", DEFAULT_SSH_LOGIN_TIMEOUT_SECONDS),
+        "execution.ssh.login_timeout_seconds",
+    )
+    session_timeout = _require_timeout(
+        config.get("session_timeout_seconds", DEFAULT_SSH_SESSION_TIMEOUT_SECONDS),
+        "execution.ssh.session_timeout_seconds",
+    )
+    return PackageSshConfig(
+        host=_SSH_HOST,
+        port=port,
+        username=username,
+        password=password,
+        login_timeout_seconds=login_timeout,
+        session_timeout_seconds=session_timeout,
+    )
+
+
+def _require_timeout(value: object, where: str) -> float:
+    timeout = _require_number(value, where)
+    if not MIN_SSH_TIMEOUT_SECONDS <= timeout <= MAX_SSH_TIMEOUT_SECONDS:
+        _reject(
+            "invalid_ssh_check",
+            f"{where} must be {MIN_SSH_TIMEOUT_SECONDS}..{MAX_SSH_TIMEOUT_SECONDS} seconds,"
+            f" got {timeout}",
+        )
+    return timeout
+
+
+def _validate_execution(
+    execution: PackageExecution,
+    *,
+    adapter: PackageAdapter,
+    language: Language,
+    cases: tuple[PackageCase, ...],
+) -> None:
+    """模式 × 字段的互斥/必需规则（设计文档 §2；B2 解析期与 B3 编译期双端一致）。
+
+    这里的每一条拒绝都对应"这种声明无法被真实、可复现地判定"——不是风格偏好。
+    """
+    mode = execution.mode
+    if mode == "per_case":
+        _reject_mode_fields(
+            execution, mode, forbidden={"segment_delimiter", "email", "ssh"}
+        )
+        for case in cases:
+            if case.segment is not None:
+                _reject("invalid_execution", "per_case forbids case-level segment")
+            if case.ssh_check is not None:
+                _reject("invalid_execution", "per_case forbids case-level ssh_check")
+            if case.email_check is not None:
+                _reject("invalid_execution", "per_case forbids case-level email_check")
+        return
+
+    if mode == "single_run":
+        _reject_mode_fields(execution, mode, forbidden={"email", "ssh"})
+        # 设计文档 §2：single_run 允许 stdin/file（第 6 题是 file adapter + 一次执行 + file_checks）；
+        # 但只要存在 segment 用例，比较的就是程序 stdout，因此 kind 必须是 stdin。
+        if adapter.kind not in ("stdin", "file"):
+            _reject(
+                "invalid_execution",
+                "single_run requires adapter.kind in {stdin, file}, got"
+                f" {adapter.kind!r}",
+            )
+        segment_cases = [case for case in cases if case.segment is not None]
+        for case in cases:
+            if case.ssh_check is not None:
+                _reject("invalid_execution", "single_run forbids case-level ssh_check")
+            if case.email_check is not None:
+                _reject("invalid_execution", "single_run forbids case-level email_check")
+            declares_segment = case.segment is not None
+            declares_files = bool(case.file_checks)
+            if declares_segment == declares_files:
+                _reject(
+                    "invalid_execution",
+                    f"single_run case {case.case_id} must declare exactly one of"
+                    " segment or non-empty file_checks",
+                )
+        if segment_cases:
+            if adapter.kind != "stdin":
+                _reject(
+                    "invalid_execution",
+                    "single_run requires adapter.kind == stdin when a case declares segment"
+                    " (segments compare the program's stdout)",
+                )
+            if execution.segment_delimiter is None:
+                _reject(
+                    "invalid_execution",
+                    "single_run requires execution.segment_delimiter when a case declares segment",
+                )
+            values = sorted(case.segment for case in segment_cases if case.segment is not None)
+            if values != list(range(len(values))):
+                _reject(
+                    "invalid_segment",
+                    "single_run segment values must be exactly 0..N-1 without duplicates",
+                )
+        elif execution.segment_delimiter is not None:
+            _reject(
+                "invalid_execution",
+                "execution.segment_delimiter is declared but no case declares segment",
+            )
+        return
+
+    if mode == "ssh_session":
+        _reject_mode_fields(execution, mode, forbidden={"segment_delimiter", "email"})
+        if execution.ssh is None:
+            _reject("invalid_execution", "ssh_session requires execution.ssh")
+        if adapter.kind != "stdin" or language != "bash":
+            _reject(
+                "invalid_execution",
+                "ssh_session requires adapter.kind == stdin and language == bash",
+            )
+        seen: set[str] = set()
+        for case in cases:
+            if case.segment is not None or case.file_checks:
+                _reject(
+                    "invalid_execution",
+                    "ssh_session forbids case-level segment/file_checks",
+                )
+            if case.email_check is not None:
+                _reject("invalid_execution", "ssh_session forbids case-level email_check")
+            if case.ssh_check is None:
+                _reject(
+                    "invalid_ssh_check",
+                    f"ssh_session case {case.case_id} must declare exactly one ssh_check",
+                )
+            if case.ssh_check in seen:
+                _reject("invalid_ssh_check", f"duplicate ssh_check: {case.ssh_check}")
+            seen.add(case.ssh_check)
+        return
+
+    # email_delivery
+    _reject_mode_fields(execution, mode, forbidden={"segment_delimiter", "ssh"})
+    if execution.email is None:
+        _reject("invalid_execution", "email_delivery requires execution.email")
+    if adapter.kind != "stdin" or language != "bash":
+        _reject(
+            "invalid_execution",
+            "email_delivery requires adapter.kind == stdin and language == bash",
+        )
+    seen_email: set[str] = set()
+    for case in cases:
+        if case.segment is not None or case.file_checks:
+            _reject(
+                "invalid_execution",
+                "email_delivery forbids case-level segment/file_checks",
+            )
+        if case.ssh_check is not None:
+            _reject("invalid_execution", "email_delivery forbids case-level ssh_check")
+        if case.email_check is None:
+            _reject(
+                "invalid_email_check",
+                f"email_delivery case {case.case_id} must declare exactly one email_check",
+            )
+        if case.email_check in seen_email:
+            _reject("invalid_email_check", f"duplicate email_check: {case.email_check}")
+        seen_email.add(case.email_check)
+
+
+def _reject_mode_fields(
+    execution: PackageExecution, mode: str, *, forbidden: set[str]
+) -> None:
+    """模式不使用的字段必须**缺席**：静默忽略会让 package 声明与实际行为不一致。"""
+    for name in sorted(forbidden):
+        if getattr(execution, name) is not None:
+            _reject(
+                "invalid_execution",
+                f"execution.{name} is not used by execution.mode={mode}",
+            )
 
 
 def _parse_security_policy(payload: object) -> RunnerPolicy:
@@ -531,19 +1038,36 @@ def _reject(reason: PackageReason, detail: str) -> None:
 
 
 __all__ = [
+    "EMAIL_CHECKS",
+    "EXECUTION_MODES",
+    "MAX_EMAIL_ATTEMPT",
+    "MAX_SEGMENT_DELIMITER_LENGTH",
+    "MAX_SSH_PASSWORD_LENGTH",
+    "MAX_SSH_TIMEOUT_SECONDS",
+    "MIN_EMAIL_ATTEMPT",
+    "MIN_SEGMENT_DELIMITER_LENGTH",
+    "MIN_SSH_TIMEOUT_SECONDS",
+    "SSH_CHECKS",
     "STDERR_STRATEGIES",
     "STDOUT_STRATEGIES",
     "AdapterKind",
+    "EmailCheck",
     "EvaluationPackage",
+    "ExecutionMode",
     "FixtureMount",
     "Language",
     "PackageAdapter",
     "PackageCallable",
     "PackageCase",
     "PackageComparison",
+    "PackageEmailConfig",
+    "PackageExecution",
+    "PackageFileCheck",
     "PackageFixture",
     "PackageReason",
     "PackageRejected",
+    "PackageSshConfig",
+    "SshCheck",
     "StderrStrategy",
     "StdoutStrategy",
     "parse_evaluation_package",

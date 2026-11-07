@@ -39,6 +39,9 @@ from __future__ import annotations
 from autograder_platform import HealthReport, ModuleDescriptor
 from fastapi import APIRouter
 
+from autograder_b2.api.email_verification_routes import (
+    build_router as build_email_verification_router,
+)
 from autograder_b2.api.evaluation_routes import build_evaluation_router
 from autograder_b2.api.grades_routes import build_grades_router
 from autograder_b2.api.manual_grade_routes import build_manual_grade_router
@@ -50,7 +53,7 @@ from autograder_b2.runtime import B2Runtime, build_b2_runtime
 class B2Module:
     descriptor = ModuleDescriptor(
         module="B2",
-        contract_version="0.29.0",
+        contract_version="0.30.0",
         provides=("b2-submissions",),
         requires=("host", "b4-auth", "b3-questions"),
         routes=(
@@ -64,6 +67,10 @@ class B2Module:
             # CHG-0019: reference verification is the execution entry of the publish gate. It is
             # neither a submission nor a grade, so it carries its own prefix on both sides.
             "/api/v1/reference-verifications",
+            # CHG-0031: the one-time e-mail ownership proof behind an email_delivery question.
+            # It is not a submission (it creates none) and not a grade; B4's registry compares
+            # these prefixes to `module.yaml` item for item, so both sides carry it.
+            "/api/v1/email-verification",
         ),
         events=(
             "autograder.v1.submission.accepted",
@@ -87,7 +94,7 @@ class B2Module:
         return self._runtime
 
     def router(self, context) -> APIRouter:
-        """四个路由族的唯一注册点：intake 4 条 + 评测 9 条 + 成绩 2 条 + 参考解答验证 1 条。"""
+        """路由族的唯一注册点：intake + 评测 + 成绩 + 参考解答验证 + 邮件核验码。"""
         runtime = self._runtime_for(context)
         router = APIRouter()
         router.include_router(build_intake_router(runtime.intake))
@@ -95,6 +102,7 @@ class B2Module:
         router.include_router(build_grades_router(runtime))
         router.include_router(build_manual_grade_router(runtime))
         router.include_router(build_reference_router(runtime))
+        router.include_router(build_email_verification_router(runtime.email_verification))
         return router
 
     def health(self, context) -> HealthReport:

@@ -72,6 +72,48 @@ DEFAULT_WORKSPACE_MOUNT = "/workspace"
 NSJAIL_SANDBOX_UID = "65534"
 NSJAIL_SANDBOX_GID = "65534"
 
+#: 沙箱 profile（B2 内部执行形态；**不来自** package 的 `security_policy`，只由 package 的
+#: `execution.mode` / 用例 `file_checks` 声明在 runner 内部派生）。
+#:
+#: - `default`：现有普通题行为（jailed uid 65534、keep_caps false、无 lo、基础 seccomp）；
+#: - `workspace_prep`：声明了 `file_checks` 的用例使用（jailed uid 0-in-userns + keep_caps，
+#:   由 B2 固定准备程序 chown 工作区后降权到 65534 再执行学生脚本）；
+#: - `ssh_session`：SSH 练习环境（jailed uid 0-in-userns + keep_caps + lo + SSH 专项 seccomp，
+#:   由 B2 固定驱动起真实 sshd）。
+SANDBOX_PROFILE_DEFAULT = "default"
+SANDBOX_PROFILE_WORKSPACE_PREP = "workspace_prep"
+SANDBOX_PROFILE_SSH = "ssh_session"
+SANDBOX_PROFILES: tuple[str, ...] = (
+    SANDBOX_PROFILE_DEFAULT,
+    SANDBOX_PROFILE_WORKSPACE_PREP,
+    SANDBOX_PROFILE_SSH,
+)
+
+#: workspace_prep 准备程序与被囚身份的固定约定（准备程序内部逐字校验这两个值）。
+WORKSPACE_PREP_UID = 65534
+WORKSPACE_PREP_GID = 65534
+WORKSPACE_PREP_SCRIPT_NAME = "__b2_prepare__.py"
+PREPARE_FAILURE_EXIT = 4
+PREPARE_FAILURE_MARKER = "B2_PREPARE_ERROR"
+
+#: SSH 驱动的固定文件名（写在工作区里；提交侧提供同名文件即拒绝执行）。
+SSH_DRIVER_SCRIPT_NAME = "__b2_ssh_driver__.py"
+#: 驱动/sshd 的稳定路径（宿主与沙箱内一致：它们来自只读 bind 的系统目录）。
+#: 候选列表**只含 SSH profile 实际挂载的目录**（/usr/bin、/usr/sbin、/bin、/sbin）：
+#: 探测说可用、沙箱里却不存在，会把"环境可用"变成谎话。
+SSH_DAEMON_CANDIDATES: tuple[str, ...] = (
+    "/usr/sbin/sshd",
+    "/usr/bin/sshd",
+)
+SSH_CLIENT_CANDIDATES: tuple[str, ...] = (
+    "/usr/bin/ssh",
+    "/bin/ssh",
+)
+SSH_KEYGEN_CANDIDATES: tuple[str, ...] = (
+    "/usr/bin/ssh-keygen",
+    "/bin/ssh-keygen",
+)
+
 #: 沙箱内固定环境（`keep_env: false` 与之配套：不继承宿主环境，避免宿主路径/凭据进入沙箱）。
 SANDBOX_ENV_FIXED: tuple[tuple[str, str], ...] = (
     ("LANG", "C.UTF-8"),
@@ -426,6 +468,9 @@ class RunnerPolicy:
     max_open_files: int = 64
     stack_mib: int = 8
     masked_paths: tuple[str, ...] = ()
+    #: 沙箱 profile（见 `SANDBOX_PROFILES` 的说明）。它**不来自** package：package 的
+    #: `security_policy` 里没有这个字段，派生只发生在 runner 内部（`run_case`/`run_cases`）。
+    sandbox_profile: str = SANDBOX_PROFILE_DEFAULT
 
     @property
     def digest(self) -> str:
@@ -444,10 +489,17 @@ def policy_digest(policy: RunnerPolicy) -> str:
     """策略的规范化摘要：**全部字段** → 排序键 JSON（紧凑分隔符）→ SHA-256。
 
     同策略恒同摘要；改动任一字段即改摘要（`tests/test_runner_core.py` 逐字段断言）。
+
+    **唯一例外**：`sandbox_profile` 取缺省值 `default` 时**不进入载荷**。理由是"新增可选字段的
+    缺省语义必须让既有摘要保持有效"（设计文档 §1.3/§8 对 B3 `content_digest` 的同一原则）：
+    普通题策略的摘要与 nsjail 配置因此逐字节不变；只有显式派生出的非默认 profile（prep/ssh）
+    才改变摘要——它们本来就不存在于旧数据里。
     """
     payload: dict[str, Any] = {}
     for field in fields(policy):
         value = getattr(policy, field.name)
+        if field.name == "sandbox_profile" and value == SANDBOX_PROFILE_DEFAULT:
+            continue
         payload[field.name] = list(value) if isinstance(value, tuple) else value
     canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return sha256_hex(canonical.encode("utf-8"))
@@ -650,7 +702,7 @@ def _relational_violations(policy: RunnerPolicy) -> list[PolicyBoundViolation]:
 
 
 def policy_constraint_violations(policy: RunnerPolicy) -> tuple[str, ...]:
-    """布尔常量与开关越界清单（seccomp/cgroup 不得关闭，三个常量不得翻转）。"""
+    """布尔常量与开关越界清单（seccomp/cgroup 不得关闭，三个常量不得翻转，profile 必须已知）。"""
     messages: list[str] = []
     if not policy.use_seccomp:
         messages.append("seccomp cannot be disabled (ADR-0002)")
@@ -658,6 +710,11 @@ def policy_constraint_violations(policy: RunnerPolicy) -> tuple[str, ...]:
         messages.append("cgroup v2 cannot be disabled (ADR-0002)")
     if policy.network or not policy.read_only_root or policy.allow_root:
         messages.append("network/read_only_root/allow_root are constants and cannot be relaxed")
+    if policy.sandbox_profile not in SANDBOX_PROFILES:
+        messages.append(
+            f"unknown sandbox_profile {policy.sandbox_profile!r}; expected one of"
+            f" {', '.join(SANDBOX_PROFILES)}"
+        )
     return tuple(messages)
 
 
@@ -779,6 +836,121 @@ def _seccomp_chunks(names: Sequence[str], per_line: int = 6) -> list[str]:
     return chunks
 
 
+#: `workspace_prep` profile 在基础允许清单之外新增的系统调用。
+#:
+#: 只有准备程序需要、且**学生脚本执行前**就已完成的特权操作：把工作区条目 chown 给被囚 uid、
+#: 以及把自身降权到被囚身份（setgroups/setgid/setuid）。它们**不**加入普通题清单；准备程序降权后
+#: 这些调用也再不可用（capability 随 setuid 清空），学生代码拿不到提权面。
+WORKSPACE_PREP_SECCOMP_ALLOW_EXTRA: tuple[str, ...] = (
+    "chown",
+    "fchown",
+    "fchownat",
+    "setgid",
+    "setgroups",
+    "setuid",
+)
+
+#: `ssh_session` profile 在基础允许清单之外新增的系统调用：
+#:
+#: - 本地网络（`socket/connect/bind/listen/accept/...`）：仅存在于独立网络命名空间内的 lo，
+#:   没有任何外部接口（`network=false` 语义不变）；
+#: - 身份切换/chroot 家族：驱动以用户命名空间 root 起 sshd、把客户端与会话降权到 subordinate uid；
+#: - `setsid`/`accept` 等 sshd 会话管理所需的进程/侦听调用。
+#:
+#: **不得**把这份清单合进普通题（`SECCOMP_ALLOW`/`SECCOMP_DENY` 常量保持原样）。
+SSH_SECCOMP_ALLOW_EXTRA: tuple[str, ...] = (
+    "accept",
+    "bind",
+    "capset",
+    "chown",
+    "chroot",
+    "connect",
+    "fchown",
+    "fchownat",
+    "getpeername",
+    "getsockname",
+    "getsockopt",
+    "lchown",
+    "listen",
+    "recvfrom",
+    "recvmsg",
+    "sendmsg",
+    "sendto",
+    "setgid",
+    "setgroups",
+    "setregid",
+    "setresgid",
+    "setresuid",
+    "setreuid",
+    "setrlimit",
+    "setsid",
+    "setsockopt",
+    "setuid",
+    "shutdown",
+    "socket",
+    "socketpair",
+)
+
+
+def workspace_prep_seccomp_policy_lines(policy: RunnerPolicy) -> tuple[str, ...]:
+    """`workspace_prep` 的 kafel 策略：基础允许清单 + 准备程序降权所需的最小增量。"""
+    _assert_seccomp_arch(policy)
+    allow = _extended_allowlist(WORKSPACE_PREP_SECCOMP_ALLOW_EXTRA)
+    deny = tuple(name for name in SECCOMP_DENY if name not in WORKSPACE_PREP_SECCOMP_ALLOW_EXTRA)
+    return _seccomp_lines(allow, deny, socket_allowed=False)
+
+
+def ssh_seccomp_policy_lines(policy: RunnerPolicy) -> tuple[str, ...]:
+    """`ssh_session` 的 kafel 策略：基础允许清单 + 本地网络/身份切换增量。"""
+    _assert_seccomp_arch(policy)
+    allow = _extended_allowlist(SSH_SECCOMP_ALLOW_EXTRA)
+    deny = tuple(name for name in SECCOMP_DENY if name not in SSH_SECCOMP_ALLOW_EXTRA)
+    return _seccomp_lines(allow, deny, socket_allowed=True)
+
+
+def _assert_seccomp_arch(policy: RunnerPolicy) -> None:
+    if _current_machine() != policy.seccomp_arch:
+        raise SandboxUnavailableError(
+            f"policy refused: seccomp policy is calibrated for {policy.seccomp_arch},"
+            f" host is {_current_machine()}"
+        )
+
+
+def _extended_allowlist(extra: Sequence[str]) -> tuple[str, ...]:
+    """基础允许清单 + 增量（增量先排序去重再追加 ⇒ 同输入逐字节确定）。"""
+    merged = list(SECCOMP_ALLOW)
+    for name in sorted(set(extra)):
+        if name not in merged:
+            merged.append(name)
+    return tuple(merged)
+
+
+def _seccomp_lines(
+    allow: Sequence[str], deny: Sequence[str], *, socket_allowed: bool
+) -> tuple[str, ...]:
+    """kafel 策略逐行渲染（与 `seccomp_policy_lines` 同一语法形态）。
+
+    `socket_allowed=False` 时保留 `ERRNO(1) { socket }` 行：普通/准备 profile 里 libc/NSS 可能探测
+    socket，返回 EPERM 让程序正常处理"服务不可用"而不是被 SIGSYS 杀死。SSH profile 里 socket
+    在允许清单内，所以既无 ERRNO 行也不在 KILL 列表。
+    """
+    lines = [f"#define {name} {number}" for name, number in SECCOMP_X86_64_DEFINES]
+    lines.append("POLICY b2_sandbox {")
+    lines.append("  ALLOW {")
+    lines.extend(_seccomp_chunks(allow))
+    lines.append("  },")
+    if not socket_allowed:
+        lines.append("  ERRNO(1) { socket },")
+    lines.append("  KILL {")
+    # 与旧实现逐字节一致：socket 已由上面的 ERRNO 行处理，不再进 KILL 列表。
+    kill_names = tuple(name for name in deny if name != "socket") if not socket_allowed else tuple(deny)
+    lines.extend(_seccomp_chunks(kill_names))
+    lines.append("  }")
+    lines.append("}")
+    lines.append("USE b2_sandbox DEFAULT KILL")
+    return tuple(lines)
+
+
 def seccomp_policy_lines(policy: RunnerPolicy) -> tuple[str, ...]:
     """kafel seccomp 策略的**逐行**形态（每行一条 `seccomp_string`，nsjail 按行拼接）。
 
@@ -792,25 +964,8 @@ def seccomp_policy_lines(policy: RunnerPolicy) -> tuple[str, ...]:
     kafel 不认识的系统调用名先用 `#define NAME <x86_64 编号>` 补齐（`SECCOMP_X86_64_DEFINES`）。
     """
     assert_policy_executable(policy)
-    if _current_machine() != policy.seccomp_arch:
-        raise SandboxUnavailableError(
-            f"policy refused: seccomp policy is calibrated for {policy.seccomp_arch},"
-            f" host is {_current_machine()}"
-        )
-    lines = [f"#define {name} {number}" for name, number in SECCOMP_X86_64_DEFINES]
-    lines.append("POLICY b2_sandbox {")
-    lines.append("  ALLOW {")
-    lines.extend(_seccomp_chunks(SECCOMP_ALLOW))
-    lines.append("  },")
-    # libc/NSS may probe an unavailable socket during interpreter startup. Deny
-    # creation with EPERM so normal programs can handle the unavailable service.
-    lines.append("  ERRNO(1) { socket },")
-    lines.append("  KILL {")
-    lines.extend(_seccomp_chunks(tuple(name for name in SECCOMP_DENY if name != "socket")))
-    lines.append("  }")
-    lines.append("}")
-    lines.append("USE b2_sandbox DEFAULT KILL")
-    return tuple(lines)
+    _assert_seccomp_arch(policy)
+    return _seccomp_lines(SECCOMP_ALLOW, SECCOMP_DENY, socket_allowed=False)
 
 
 def _subordinate_id(kind: str, caller: int) -> int:
@@ -846,7 +1001,76 @@ def uid_maps(
     )
 
 
+def profile_id_maps(
+    policy: RunnerPolicy, *, caller_uid: int | None = None, caller_gid: int | None = None
+) -> tuple[tuple[str, str, str], ...]:
+    """`workspace_prep` / `ssh_session` 的 uid/gid 映射：首条 uidmap 使 jailed uid = 0-in-userns。
+
+    **硬事实（生产服务器实测，OpenCloudOS 9.6 / nsjail /usr/local/bin）**：
+
+    - nsjail 由 `uidmap` 的**第一条**决定 jailed uid（内核映射写入后 `setresuid(uids[0].inside_id)`），
+      因此首条写 `0 -> caller` 即得到"用户命名空间内的 root"（宿主 uid 仍是服务账号，**不是宿主 root**）；
+    - **不要**传 `--user 0` / `--group 0`：实测它们会让 newuidmap/newgidmap 失败（EINVAL/EPERM）；
+    - `gidmap` **只需** `65534 -> subgid`：分到的 subgid 只有 count=1，再映射 gid 0 既无用途也会失败；
+      jailed gid 由 gidmap 第一条决定，正好就是被囚的 subordinate gid；
+    - 第二条 uidmap `65534 -> subuid` 让准备程序/驱动把工作区与会话降权到被囚身份。
+    """
+    uid = _current_uid() if caller_uid is None else int(caller_uid)
+    gid = _current_gid() if caller_gid is None else int(caller_gid)
+    jailed_uid = int(policy.sandbox_uid) if uid == 0 else _subordinate_id("uid", uid)
+    jailed_gid = int(policy.sandbox_gid) if gid == 0 else _subordinate_id("gid", gid)
+    return (
+        ("uidmap", "0", str(uid)),
+        ("uidmap", policy.sandbox_uid, str(jailed_uid)),
+        ("gidmap", policy.sandbox_gid, str(jailed_gid)),
+    )
+
+
+def _write_id_map_blocks(
+    lines: list[str], maps: Sequence[tuple[str, str, str]], *, use_helper: bool
+) -> None:
+    """把 `(block, inside, outside)` 三元组写成 nsjail 的 uidmap/gidmap 块。"""
+    for block, inside, outside in maps:
+        lines.append(f"{block} {{")
+        lines.append(f'  inside_id: "{inside}"')
+        lines.append(f'  outside_id: "{outside}"')
+        lines.append("  count: 1")
+        if use_helper:
+            lines.append("  use_newidmap: true")
+        lines.append("}")
+
+
 def render_nsjail_policy_body(
+    policy: RunnerPolicy,
+    *,
+    caller_uid: int | None = None,
+    caller_gid: int | None = None,
+) -> str:
+    """渲染只依赖策略与调用者 uid/gid 的 nsjail 配置片段（按 profile 分派）。
+
+    `default` 路径的输出与引入 profile 之前**逐字节相同**（普通题配置与摘要不变）；
+    `workspace_prep` 复用同一骨架，只改 keep_caps/uid map 顺序/seccomp；
+    `ssh_session` 的挂载依赖运行目录布局，必须走 `render_nsjail_ssh_config`，此处显式拒绝
+    （否则会渲染出一份"看起来正常但缺少 SSH 挂载"的配置——静默错误比明确拒绝更糟）。
+    """
+    assert_policy_executable(policy)
+    if policy.sandbox_profile == SANDBOX_PROFILE_DEFAULT:
+        return _render_default_policy_body(
+            policy, caller_uid=caller_uid, caller_gid=caller_gid
+        )
+    if policy.sandbox_profile == SANDBOX_PROFILE_WORKSPACE_PREP:
+        return _render_workspace_prep_policy_body(
+            policy, caller_uid=caller_uid, caller_gid=caller_gid
+        )
+    if policy.sandbox_profile == SANDBOX_PROFILE_SSH:
+        raise SandboxUnavailableError(
+            "ssh_session sandbox config requires the run-directory layout:"
+            " use render_nsjail_ssh_config instead"
+        )
+    raise SandboxUnavailableError(f"unknown sandbox_profile {policy.sandbox_profile!r}")
+
+
+def _render_default_policy_body(
     policy: RunnerPolicy, *, caller_uid: int | None = None, caller_gid: int | None = None
 ) -> str:
     """渲染**只依赖策略与调用者 uid/gid** 的 nsjail 配置片段（不含工作区相关挂载行）。
@@ -943,6 +1167,104 @@ def render_nsjail_policy_body(
     return "\n".join(lines)
 
 
+def _render_workspace_prep_policy_body(
+    policy: RunnerPolicy, *, caller_uid: int | None = None, caller_gid: int | None = None
+) -> str:
+    """`workspace_prep` 的 nsjail 策略片段。
+
+    与 default 的差异只有三处，且都服务于"准备程序 chown 工作区后降权执行学生脚本"：
+    jailed uid = 0-in-userns（首条 uidmap）、`keep_caps: true`（chown/setuid/setgroups 需要
+    namespace 内的 capability）、seccomp 允许清单加入准备程序所需的最小增量。
+    网络/只读根/cgroup/进程树清理与 default 完全一致。
+    """
+    assert_policy_executable(policy)
+    wall_seconds = _ceil_int(policy.max_wall_seconds)
+    cpu_seconds = _ceil_int(policy.max_cpu_seconds)
+    memory_mib = _ceil_int(policy.max_memory_bytes / MIB)
+    output_mib = max(1, _ceil_int(policy.max_output_bytes / MIB))
+    cpu_ms_per_sec = min(1000, max(1, round(cpu_seconds / wall_seconds * 1000)))
+    lines: list[str] = []
+    add = lines.append
+    add("# AutoGrader B2 nsjail 配置（workspace_prep profile；由 RunnerPolicy 确定性生成，请勿手改）")
+    add(f"# runner_policy_digest: {policy_digest(policy)}")
+    add('name: "autograder-b2-workspace-prep"')
+    add('description: "workspace prep: uid-0-in-userns, chown workspace, drop to jailed uid, then exec"')
+    add("mode: ONCE")
+    add("log_level: ERROR")
+    add('hostname: "sandbox"')
+    add(f'cwd: "{policy.workspace_mount}"')
+    add("")
+    add("# 禁网（与 default 相同）：独立网络命名空间且不启用 lo")
+    add("clone_newnet: true")
+    add("iface_no_lo: true")
+    add("")
+    add("# 其余命名空间隔离（宿主 PID/IPC/UTS/cgroup 视图不可见）")
+    add("clone_newuser: true")
+    add("clone_newns: true")
+    add("clone_newpid: true")
+    add("clone_newipc: true")
+    add("clone_newuts: true")
+    add("clone_newcgroup: true")
+    add("")
+    add("# 保留 namespace 内 capability（仅准备程序需要；它降权后 capability 随 setuid 清空）")
+    add("keep_caps: true")
+    add("disable_no_new_privs: false")
+    add("")
+    add("# 首条 uidmap 决定 jailed uid：0-in-userns；第二条把被囚身份映射到 subordinate uid")
+    use_helper = (_current_uid() if caller_uid is None else int(caller_uid)) != 0
+    _write_id_map_blocks(
+        lines,
+        profile_id_maps(policy, caller_uid=caller_uid, caller_gid=caller_gid),
+        use_helper=use_helper,
+    )
+    add("")
+    add("# 墙钟 / CPU / 内存 / 进程数 / 输出 / 文件数限制（与 default 相同）")
+    add(f"time_limit: {wall_seconds + NSJAIL_TIME_LIMIT_BACKSTOP_SECONDS}")
+    add(f"max_cpus: {policy.max_cpus}")
+    add(f"rlimit_as: {memory_mib}")
+    add("rlimit_as_type: VALUE")
+    add("rlimit_core: 0")
+    add("rlimit_core_type: VALUE")
+    add(f"rlimit_cpu: {cpu_seconds}")
+    add("rlimit_cpu_type: VALUE")
+    add(f"rlimit_fsize: {output_mib}")
+    add("rlimit_fsize_type: VALUE")
+    add(f"rlimit_nofile: {policy.max_open_files}")
+    add("rlimit_nofile_type: VALUE")
+    add(f"rlimit_nproc: {policy.max_processes}")
+    add("rlimit_nproc_type: VALUE")
+    add(f"rlimit_stack: {policy.stack_mib}")
+    add("rlimit_stack_type: VALUE")
+    add(f"cgroup_mem_max: {policy.max_memory_bytes}")
+    add(f"cgroup_pids_max: {policy.max_processes}")
+    add(f"cgroup_cpu_ms_per_sec: {cpu_ms_per_sec}")
+    add(f'cgroupv2_mount: "{policy.cgroup_v2_mount}"')
+    add("use_cgroupv2: true")
+    add("")
+    add("# 固定环境（与 default 相同）")
+    add("keep_env: false")
+    for name, value in sandbox_env(policy):
+        add(f'envar: "{name}={value}"')
+    add("")
+    add("mount_proc: true")
+    add("")
+    add("# 只读根（工作区由 render_nsjail_config 追加为唯一 rw 挂载）")
+    add(_mount_block('src: "/"', 'dst: "/"', "is_bind: true", "rw: false"))
+    add("")
+    add("# seccomp：基础允许清单 + 准备程序降权所需增量（socket/网络/提权仍拒绝）")
+    for seccomp_line in workspace_prep_seccomp_policy_lines(policy):
+        add(f'seccomp_string: "{seccomp_line}"')
+    add("")
+    return "\n".join(lines)
+
+
+def workspace_prep_config_digest(policy: RunnerPolicy, workspace: Path) -> str:
+    """`workspace_prep` 完整 nsjail 配置的规范化摘要（同输入逐字节可复现）。"""
+    return sha256_hex(
+        render_nsjail_config(policy, workspace).encode("utf-8")
+    )
+
+
 def masked_mount_paths(policy: RunnerPolicy, workspace: Path) -> tuple[str, ...]:
     """需要在沙箱内遮蔽的宿主路径（排序去重 ⇒ 确定性）。
 
@@ -975,7 +1297,16 @@ def render_nsjail_config(
 
     配置内容 = f(策略, 工作区路径, 调用者 uid/gid)：**同一组输入 ⇒ 逐字节相同**；
     仅工作区变化时，差异只出现在工作区挂载与遮蔽行（见测试）。
+
+    `default` 与 `workspace_prep` 都走这里（body 按 profile 分派，default 输出逐字节不变）；
+    `ssh_session` 的根是一个由运行目录构造的最小练习根，必须走 `render_nsjail_ssh_config`，
+    这里显式拒绝——渲染一份"看起来正常但缺 SSH 挂载"的配置是静默错误。
     """
+    if policy.sandbox_profile == SANDBOX_PROFILE_SSH:
+        raise SandboxUnavailableError(
+            "ssh_session sandbox config requires the run-directory layout:"
+            " use render_nsjail_ssh_config instead"
+        )
     body = render_nsjail_policy_body(policy, caller_uid=caller_uid, caller_gid=caller_gid)
     lines = [body]
     add = lines.append
@@ -994,6 +1325,308 @@ def render_nsjail_config(
 def nsjail_config_digest(policy: RunnerPolicy, workspace: Path) -> str:
     """配置内容摘要（供"配置未被偷改"与可重放性核验）。"""
     return sha256_hex(render_nsjail_config(policy, workspace).encode("utf-8"))
+
+
+# --- SSH 练习环境：运行目录布局与 nsjail 配置 ------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class SshSandboxPaths:
+    """SSH profile 需要的**运行目录布局**（全部由 B2 在每次运行内创建，之后清理）。
+
+    为什么不是"策略字段"：这些是每次运行的临时路径（tmpfs/临时文件），不是可复用配置；
+    它们不进 `policy_digest`，但会出现在 nsjail 配置里（配置摘要因此按运行复现）。
+    """
+
+    practice_root: Path        # 最小练习根（同时也是沙箱的 "/"）
+    empty_root: Path           # 绑定到 /var/empty 与 /usr/share/empty.sshd 的空目录
+    client_root: Path          # 本地 ssh 客户端的 chroot
+    passwd_path: Path          # 运行时生成的 NSS 文件（bind 覆盖 /etc/*）
+    group_path: Path
+    shadow_path: Path
+
+
+#: 最小练习根里的固定挂载点（相对 practice_root）。
+_SSH_PRACTICE_MOUNT_DIRS: tuple[str, ...] = (
+    "bin",
+    "dev",
+    "etc",
+    "home/user01",
+    "lib",
+    "lib64",
+    "proc",
+    "run",
+    "sbin",
+    "tmp",
+    "usr/bin",
+    "usr/lib",
+    "usr/lib64",
+    "usr/sbin",
+    "usr/share/empty.sshd",
+    "usr/share/terminfo",
+    "var/empty",
+    "workspace",
+)
+#: 本地 ssh 客户端 chroot 里的固定挂载点（相对 client_root）。
+_SSH_CLIENT_MOUNT_DIRS: tuple[str, ...] = (
+    "bin",
+    "dev",
+    "etc",
+    "lib",
+    "lib64",
+    "usr/bin",
+    "usr/lib",
+    "usr/lib64",
+)
+
+
+def create_ssh_sandbox_paths(run_dir: Path) -> SshSandboxPaths:
+    """在运行目录里创建 SSH profile 的运行目录布局（幂等；权限按 userns 内 root-owned 设计）。
+
+    关键权限事实（生产实测）：运行目录属于服务账号（autograder），在 uidmap `0 -> caller` 下
+    它在用户命名空间内表现为 **root-owned**；sshd 的 `safely_chroot`/privsep 目录校验要求的
+    正是"root-owned 且非 group/world 可写"。因此练习根 0755、`empty_root` 0755，而被练习账号
+    写入的目录（`home/user01`、`tmp`）显式 0777。
+    """
+    practice = Path(run_dir) / "practice"
+    empty = Path(run_dir) / "empty"
+    client = practice / "client"
+    practice.mkdir(parents=True, exist_ok=True)
+    empty.mkdir(parents=True, exist_ok=True)
+    (empty / "sshd").mkdir(exist_ok=True)
+    for relative in _SSH_PRACTICE_MOUNT_DIRS:
+        (practice / relative).mkdir(parents=True, exist_ok=True)
+    for relative in _SSH_CLIENT_MOUNT_DIRS:
+        (client / relative).mkdir(parents=True, exist_ok=True)
+    # 客户端 chroot 里需要存在的文件挂载点（bind 的 destination 必须存在）。
+    for name in ("null", "random", "urandom", "tty"):
+        (client / "dev" / name).touch(exist_ok=True)
+    (client / "etc" / "ld.so.cache").touch(exist_ok=True)
+    (client / "etc" / "passwd").touch(exist_ok=True)
+    (client / "etc" / "group").touch(exist_ok=True)
+    paths = SshSandboxPaths(
+        practice_root=practice,
+        empty_root=empty,
+        client_root=client,
+        passwd_path=Path(run_dir) / "ssh_passwd",
+        group_path=Path(run_dir) / "ssh_group",
+        shadow_path=Path(run_dir) / "ssh_shadow",
+    )
+    (practice / "home" / "user01").chmod(0o777)
+    (practice / "tmp").chmod(0o777)
+    return paths
+
+
+def _ssh_mount(source: str, destination: str, *, mandatory: bool = True) -> str:
+    entries = [f'src: "{source}"', f'dst: "{destination}"', "is_bind: true", "rw: false"]
+    if not mandatory:
+        entries.append("mandatory: false")
+    return _mount_block(*entries)
+
+
+def render_nsjail_ssh_config(
+    policy: RunnerPolicy,
+    workspace: Path,
+    paths: SshSandboxPaths,
+    *,
+    caller_uid: int | None = None,
+    caller_gid: int | None = None,
+) -> str:
+    """渲染 `ssh_session` profile 的完整 nsjail 配置（**根 = 最小练习根**）。
+
+    nsjail 的挂载顺序语义（源码 `mnt_legacy.cc`）：先建一个 staging 目录，按配置顺序把 src
+    （相对**外层**根解析）挂到 `staging/<dst>`，最后 pivot_root。因此可以：
+
+    1. 先 `src: <practice_root> -> dst: "/"`，让沙箱根就是最小练习根；`/` 的宿主属主是服务账号，
+       在 uidmap `0 -> caller` 下表现为 root-owned，sshd 的 `safely_chroot("/")` 因此**能通过**；
+    2. 再按 dst 挂入宿主只读系统目录、每次运行的 NSS 覆盖文件、tmpfs 与可写 home/workspace；
+    3. sshd 的 privsep 目录 `/var/empty`、`/usr/share/empty.sshd` 挂载**运行目录**里的空目录
+       （autograder-owned ⇒ userns 内 root-owned），覆盖宿主上 root-owned 的 65534 显示问题；
+       `/run/sshd` 由驱动在 tmpfs 里以 namespace root 创建。
+    """
+    assert_policy_executable(policy)
+    if policy.sandbox_profile != SANDBOX_PROFILE_SSH:
+        raise SandboxUnavailableError(
+            f"render_nsjail_ssh_config requires sandbox_profile={SANDBOX_PROFILE_SSH!r}"
+        )
+    wall_seconds = _ceil_int(policy.max_wall_seconds)
+    cpu_seconds = _ceil_int(policy.max_cpu_seconds)
+    memory_mib = _ceil_int(policy.max_memory_bytes / MIB)
+    output_mib = max(1, _ceil_int(policy.max_output_bytes / MIB))
+    cpu_ms_per_sec = min(1000, max(1, round(cpu_seconds / wall_seconds * 1000)))
+    practice = Path(paths.practice_root).as_posix()
+    lines: list[str] = []
+    add = lines.append
+    add("# AutoGrader B2 nsjail 配置（ssh_session profile；由 RunnerPolicy + 运行目录确定性生成）")
+    add(f"# runner_policy_digest: {policy_digest(policy)}")
+    add('name: "autograder-b2-ssh"')
+    add('description: "ssh practice sandbox: uid-0-in-userns sshd, subordinate session uid, loopback only"')
+    add("mode: ONCE")
+    add("log_level: ERROR")
+    add('hostname: "practice"')
+    add(f'cwd: "{policy.workspace_mount}"')
+    add("")
+    add("# 独立网络命名空间，但启用 lo：没有外部接口（network=false 语义不变）")
+    add("clone_newnet: true")
+    add("iface_no_lo: false")
+    add("")
+    add("# 其余命名空间隔离")
+    add("clone_newuser: true")
+    add("clone_newns: true")
+    add("clone_newpid: true")
+    add("clone_newipc: true")
+    add("clone_newuts: true")
+    add("clone_newcgroup: true")
+    add("")
+    add("# 保留 namespace 内 capability：驱动需要起 sshd / chroot / 降权（宿主 uid 仍是服务账号）")
+    add("keep_caps: true")
+    add("disable_no_new_privs: false")
+    add("")
+    add("# 首条 uidmap 决定 jailed uid：0-in-userns；第二条把会话/客户端降权到 subordinate uid")
+    use_helper = (_current_uid() if caller_uid is None else int(caller_uid)) != 0
+    _write_id_map_blocks(
+        lines,
+        profile_id_maps(policy, caller_uid=caller_uid, caller_gid=caller_gid),
+        use_helper=use_helper,
+    )
+    add("")
+    add("# 墙钟 / CPU / 内存 / 进程数 / 输出限制（与普通题同一份账本；sshd+会话因此有确定上界）")
+    add(f"time_limit: {wall_seconds + NSJAIL_TIME_LIMIT_BACKSTOP_SECONDS}")
+    add(f"max_cpus: {policy.max_cpus}")
+    add(f"rlimit_as: {memory_mib}")
+    add("rlimit_as_type: VALUE")
+    add("rlimit_core: 0")
+    add("rlimit_core_type: VALUE")
+    add(f"rlimit_cpu: {cpu_seconds}")
+    add("rlimit_cpu_type: VALUE")
+    add(f"rlimit_fsize: {output_mib}")
+    add("rlimit_fsize_type: VALUE")
+    add(f"rlimit_nofile: {policy.max_open_files}")
+    add("rlimit_nofile_type: VALUE")
+    add(f"rlimit_nproc: {policy.max_processes}")
+    add("rlimit_nproc_type: VALUE")
+    add(f"rlimit_stack: {policy.stack_mib}")
+    add("rlimit_stack_type: VALUE")
+    add(f"cgroup_mem_max: {policy.max_memory_bytes}")
+    add(f"cgroup_pids_max: {policy.max_processes}")
+    add(f"cgroup_cpu_ms_per_sec: {cpu_ms_per_sec}")
+    add(f'cgroupv2_mount: "{policy.cgroup_v2_mount}"')
+    add("use_cgroupv2: true")
+    add("")
+    add("# 固定环境（不继承宿主环境）")
+    add("keep_env: false")
+    for name, value in sandbox_env(policy):
+        add(f'envar: "{name}={value}"')
+    add("")
+    add("mount_proc: true")
+    add("")
+    add("# 沙箱根 = 最小练习根（一次运行一份；宿主属主 = 服务账号 ⇒ userns 内 root-owned）")
+    add(_ssh_mount(practice, "/"))
+    add("")
+    add("# 只读系统目录（驱动/sshd/远端 shell 的工具链；全部来自宿主只读 bind）")
+    for source, destination in (
+        ("/bin", "/bin"),
+        ("/lib", "/lib"),
+        ("/lib64", "/lib64"),
+        ("/sbin", "/sbin"),
+        ("/usr/bin", "/usr/bin"),
+        ("/usr/sbin", "/usr/sbin"),
+        ("/usr/lib", "/usr/lib"),
+        ("/usr/lib64", "/usr/lib64"),
+        ("/dev", "/dev"),
+        ("/etc", "/etc"),
+    ):
+        add(_ssh_mount(source, destination))
+    # terminfo 只影响终端能力的显示，缺了不该让整次评测失败（仍如实记录在配置摘要里）。
+    add(_ssh_mount("/usr/share/terminfo", "/usr/share/terminfo", mandatory=False))
+    add("")
+    add("# 独立 devpts 实例：PTY 节点归**沙箱自己的**用户命名空间所有，sshd 才能把 tty chown")
+    add("# 给会话用户（宿主 devpts 归属 init userns，非 root 服务账号没有 chown 权限）。")
+    add(
+        _mount_block(
+            'dst: "/dev/pts"',
+            'fstype: "devpts"',
+            'options: "newinstance,ptmxmode=0666,mode=0620"',
+            "rw: true",
+        )
+    )
+    add("")
+    add("# /etc 的 NSS 覆盖：每次运行生成的 passwd/group/shadow（autograder-owned，runtime 删除）")
+    for source, destination in (
+        (paths.passwd_path.as_posix(), "/etc/passwd"),
+        (paths.group_path.as_posix(), "/etc/group"),
+        (paths.shadow_path.as_posix(), "/etc/shadow"),
+    ):
+        add(_ssh_mount(source, destination))
+    add("")
+    add("# sshd 的 privsep 目录：用运行目录里的 autograder-owned 空目录覆盖宿主 root-owned 路径")
+    empty = Path(paths.empty_root).as_posix()
+    add(_ssh_mount(empty, "/var/empty", mandatory=False))
+    add(_ssh_mount(empty, "/usr/share/empty.sshd", mandatory=False))
+    add("")
+    add("# 驱动运行时目录（tmpfs）：sshd 配置/主机密钥/日志与本地 PTY 全部在内存里，不落宿主持久位置")
+    add(_mount_block('dst: "/run"', 'fstype: "tmpfs"', "rw: true", "nosuid: true", "nodev: true"))
+    add(_mount_block('dst: "/tmp"', 'fstype: "tmpfs"', "rw: true", "nosuid: true", "nodev: true"))
+    add("")
+    add("# 练习账号可写的 home（其余根只读）")
+    home = (Path(paths.practice_root) / "home").as_posix()
+    add(_mount_block(f'src: "{home}"', 'dst: "/home"', "is_bind: true", "rw: true"))
+    add("")
+    add("# 学生提交文件（只读）：驱动程序读取学生脚本；远端会话不应写它")
+    add(_mount_block(f'src: "{Path(workspace).as_posix()}"', f'dst: "{policy.workspace_mount}"',
+                     "is_bind: true", "rw: false"))
+    add("")
+    add("# 本地 ssh 客户端的最小 chroot（客户端以 subordinate uid 运行在这里）")
+    # Destination paths are **sandbox-relative**: after nsjail pivots to the practice root, the
+    # client chroot must appear at `/client` inside the jail. Mounting the host-side
+    # `paths.client_root` path here would put the directories under a path that does not exist
+    # after pivot_root, and the driver's `chroot("/client")` would fail. The driver carries the
+    # same literal (`ssh_session.SSH_CLIENT_ROOT`); the Linux acceptance test pins `/client`.
+    for source, relative in (
+        ("/usr/bin", "usr/bin"),
+        ("/usr/lib", "usr/lib"),
+        ("/usr/lib64", "usr/lib64"),
+        ("/bin", "bin"),
+        ("/lib", "lib"),
+        ("/lib64", "lib64"),
+    ):
+        add(_ssh_mount(source, f"/client/{relative}", mandatory=False))
+    for device in ("null", "random", "urandom", "tty"):
+        add(_ssh_mount(f"/dev/{device}", f"/client/dev/{device}", mandatory=False))
+    add(_ssh_mount("/etc/ld.so.cache", "/client/etc/ld.so.cache", mandatory=False))
+    add(_ssh_mount(paths.passwd_path.as_posix(), "/client/etc/passwd"))
+    add(_ssh_mount(paths.group_path.as_posix(), "/client/etc/group"))
+    add("")
+    add("# seccomp：基础允许清单 + 仅 SSH profile 的本地网络/身份切换增量（普通题清单不变）")
+    for seccomp_line in ssh_seccomp_policy_lines(policy):
+        add(f'seccomp_string: "{seccomp_line}"')
+    add("")
+    return "\n".join(lines)
+
+
+def ssh_config_digest(
+    policy: RunnerPolicy,
+    workspace: Path,
+    paths: SshSandboxPaths,
+    *,
+    caller_uid: int | None = None,
+    caller_gid: int | None = None,
+) -> str:
+    """SSH profile 完整 nsjail 配置的规范化摘要（同输入逐字节可复现）。"""
+    return sha256_hex(
+        render_nsjail_ssh_config(
+            policy, workspace, paths, caller_uid=caller_uid, caller_gid=caller_gid
+        ).encode("utf-8")
+    )
+
+
+def resolve_ssh_binary(candidates: Sequence[str], *, is_executable: Callable[[str], bool] | None = None) -> str | None:
+    """解析实际可用的 ssh 相关二进制绝对路径；都不存在时返回 `None`（调用方判不可用）。"""
+    check = is_executable if is_executable is not None else _default_is_executable
+    for candidate in candidates:
+        if candidate and check(candidate) and not os.path.isdir(candidate):
+            return candidate
+    return None
 
 
 def _ceil_int(value: float) -> int:
@@ -1271,20 +1904,36 @@ __all__ = [
     "NSJAIL_SANDBOX_GID",
     "NSJAIL_SANDBOX_UID",
     "POLICY_BOUNDS",
+    "PREPARE_FAILURE_EXIT",
+    "PREPARE_FAILURE_MARKER",
     "SANDBOX_ENV_FIXED",
+    "SANDBOX_PROFILES",
+    "SANDBOX_PROFILE_DEFAULT",
+    "SANDBOX_PROFILE_SSH",
+    "SANDBOX_PROFILE_WORKSPACE_PREP",
     "SECCOMP_ALLOW",
     "SECCOMP_ARCH",
     "SECCOMP_DENY",
     "SECCOMP_X86_64_DEFINES",
+    "SSH_CLIENT_CANDIDATES",
+    "SSH_DAEMON_CANDIDATES",
+    "SSH_DRIVER_SCRIPT_NAME",
+    "SSH_KEYGEN_CANDIDATES",
+    "SSH_SECCOMP_ALLOW_EXTRA",
+    "WORKSPACE_PREP_GID",
+    "WORKSPACE_PREP_SCRIPT_NAME",
+    "WORKSPACE_PREP_UID",
     "PolicyBound",
     "PolicyBoundViolation",
     "RunnerPolicy",
     "SandboxAvailability",
     "SandboxCheck",
+    "SshSandboxPaths",
     "assert_policy_executable",
     "assert_sandbox_available",
     "build_argv",
     "create_case_workspace",
+    "create_ssh_sandbox_paths",
     "masked_mount_paths",
     "normalize_machine",
     "nsjail_config_digest",
@@ -1292,11 +1941,18 @@ __all__ = [
     "policy_constraint_violations",
     "policy_digest",
     "probe_sandbox",
+    "profile_id_maps",
     "render_nsjail_config",
     "render_nsjail_policy_body",
+    "render_nsjail_ssh_config",
     "resolve_nsjail_path",
+    "resolve_ssh_binary",
     "sandbox_env",
     "sandbox_script_path",
     "seccomp_policy_lines",
+    "ssh_config_digest",
+    "ssh_seccomp_policy_lines",
     "uid_maps",
+    "workspace_prep_config_digest",
+    "workspace_prep_seccomp_policy_lines",
 ]

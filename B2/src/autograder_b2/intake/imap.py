@@ -45,7 +45,7 @@ from typing import Literal, Self
 
 import sqlalchemy as sa
 from sqlalchemy import Connection, Engine, insert
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from autograder_b2.config import ImapSettings
 from autograder_b2.db.schema import email_checkpoints, intake_messages, intake_quarantines
@@ -54,10 +54,18 @@ from autograder_b2.domain.envelope import EmailProvenance
 from autograder_b2.intake.attachments import (
     AttachmentRejected,
     EmailIntakeReason,
+    EmailMessage,
     parse_message,
     screen_attachments,
 )
-from autograder_b2.intake.matching import EmailMatcher, ScopeContext
+from autograder_b2.intake.email_verification import (
+    EmailVerificationService,
+    IntakeStateStore,
+    VerificationRejected,
+    contains_verification_code,
+    redact_challenge_codes,
+)
+from autograder_b2.intake.matching import EmailMatcher, MatchingUnavailable, ScopeContext
 from autograder_b2.intake.service import (
     IntakeLimits,
     SubmissionIntakeService,
@@ -78,6 +86,10 @@ CHECKPOINT_EXISTS = "checkpoint_exists"
 FETCH_FAILED = "fetch_failed"
 MISSING_MESSAGE_ID = "missing_message_id"
 MESSAGE_TOO_LARGE = "message_too_large"
+#: 一次性核验码路径的隔离原因码（设计 §4.6；与 `attachments.EmailIntakeReason` 同域）。
+EMAIL_VERIFICATION_REJECTED = "email_verification_rejected"
+EMAIL_SENDER_MISMATCH = "email_sender_mismatch"
+EMAIL_VERIFICATION_EXPIRED = "email_verification_expired"
 
 _SECURITY_EVENT = "email_intake_rejected"
 #: checkpoint 的两条唯一约束名（与迁移 0002 的 DDL 一致）：只有它们代表"并发重复拉取"。
@@ -468,7 +480,13 @@ class PullReport:
 
 
 class EmailIntakeService:
-    """邮件入口：拉取 + 归一化 + 幂等 + 隔离。业务校验/存储全部委托给 `SubmissionIntakeService`。"""
+    """邮件入口：拉取 + 归一化 + 幂等 + 隔离。业务校验/存储全部委托给 `SubmissionIntakeService`。
+
+    `verification` 是可选的一次性核验码消费者（设计 §4）：装配后，正文携带核验码的邮件走
+    **核验路径**（挑战所有者 == 发件账号 → 同一条 `persist` 创建提交并回填 verification），
+    失败进隔离区；未装配时行为与以前完全一致。无论是否装配，每轮拉取都会写
+    `b2.intake_state` 心跳：那是评测判定"收件依赖是否可用"的只读事实。
+    """
 
     def __init__(
         self,
@@ -480,6 +498,7 @@ class EmailIntakeService:
         checkpoints: EmailCheckpointStore,
         quarantines: QuarantineStore,
         client_factory: type[ImapMailboxClient] = ImapMailboxClient,
+        verification: EmailVerificationService | None = None,
     ) -> None:
         self._engine = engine
         self._settings = settings
@@ -488,6 +507,8 @@ class EmailIntakeService:
         self._checkpoints = checkpoints
         self._quarantines = quarantines
         self._client_factory = client_factory
+        self._verification = verification
+        self._intake_state = IntakeStateStore(engine)
 
     @property
     def limits(self) -> IntakeLimits:
@@ -505,10 +526,29 @@ class EmailIntakeService:
     def checkpoints(self) -> EmailCheckpointStore:
         return self._checkpoints
 
+    @property
+    def verification(self) -> EmailVerificationService | None:
+        return self._verification
+
     # --- 拉取 ------------------------------------------------------------------
 
     def pull(self) -> PullReport:
-        """连一次邮箱，按 UID 升序处理到上限为止。返回逐封结论（可断言的凭据）。"""
+        """连一次邮箱，按 UID 升序处理到上限为止。返回逐封结论（可断言的凭据）。
+
+        心跳语义（设计 §4.7）：一轮**成功完成**才刷新 `last_successful_pull_at`；失败轮只往前写
+        `last_error_code`，成功时间保持不变。心跳写入失败不改变拉取结论（它只会让评测判
+        `infrastructure_error`——方向是安全的，绝不会把一个学生误判成答错）。
+        """
+        try:
+            report = self._pull_once()
+        except Exception as error:
+            self._record_pull_heartbeat(_pull_failure_code(error))
+            raise
+        self._record_pull_heartbeat(None)
+        return report
+
+    def _pull_once(self) -> PullReport:
+        """执行一次真实拉取（与以前完全相同的处理顺序）；异常原样上抛给 `pull` 记心跳。"""
         settings = self._settings
         outcomes: list[MessageOutcome] = []
         fetched = 0
@@ -723,6 +763,16 @@ class EmailIntakeService:
                 detail=f"checkpoint status={existing.status}",
             )
 
+        # 一次性核验码路径（设计 §4）：**只有**正文里出现核验码形状、且装配了消费者时才走这里。
+        # 没有核验码的邮件保持既有匹配/隔离语义，一行都不改。
+        # 注意"形状命中但并非真实核验码"的文本（例如正文里恰好写了 `AG-XXXXXXXXXXXX`）也会走核验
+        # 路径并被隔离（email_verification_rejected）——这是**有意**的：假码不能冒充普通邮件绕过
+        # 核验；是否真的存在待处理挑战由数据库按 SHA-256 判定，绝不凭形状放行。
+        if self._verification is not None and contains_verification_code(message.body_excerpt):
+            return self._process_verification(
+                uidvalidity=uidvalidity, uid=uid, message=message
+            )
+
         try:
             accepted = screen_attachments(message, limits=self.limits)
         except AttachmentRejected as rejected:
@@ -831,6 +881,197 @@ class EmailIntakeService:
             submission_id=result.submission_id,
             detail="attachment normalised and stored through the shared intake service",
         )
+
+    # --- 一次性核验码路径 -------------------------------------------------------
+
+    def _process_verification(
+        self, *, uidvalidity: int, uid: int, message: EmailMessage
+    ) -> MessageOutcome:
+        """正文携带核验码的邮件：证据链只认"挑战所有者 == 发件账号"。
+
+        顺序是有意的：**附件安全闸门先跑**（附件不合格的邮件不应消费任何挑战，学生改附件后可用
+        同一码重发）；然后解析发件账号（依赖不可用时本轮拉取失败重试，绝不把故障记成隔离）；
+        最后才尝试消费挑战。消费成功仍走**同一条** `SubmissionIntakeService.persist`，
+        并在其事务钩子里回填 `email_verifications.submission_id`。
+        """
+        verification = self._verification
+        assert verification is not None  # 调用方已判空
+        mailbox = self._settings.mailbox
+        message_id = message.message_id
+        assert message_id is not None  # process_raw 已在缺 Message-ID 时拒绝
+
+        try:
+            accepted = screen_attachments(message, limits=self.limits)
+        except AttachmentRejected as rejected:
+            # 核验路径的隔离记录**不带主题**（主题里可能含学号/姓名；核验码邮件的内容不外泄）。
+            return self._reject(
+                uidvalidity=uidvalidity,
+                uid=uid,
+                message_id=message_id,
+                rejection=rejected,
+            )
+        names = tuple(item.filename for item in accepted)
+
+        # 查不了（令牌错误/服务不可达）不是"没这个账号"：让本轮拉取失败，下次重试。
+        account = verification.resolve_sender(message.sender)
+        if account is None:
+            return self._quarantine(
+                uidvalidity=uidvalidity,
+                uid=uid,
+                message_id=message_id,
+                reason_code=EMAIL_VERIFICATION_REJECTED,
+                detail="the sender address is not registered to any account",
+                scope=None,
+            )
+
+        consumed = verification.try_consume_received(
+            message=message,
+            mailbox=mailbox,
+            uidvalidity=uidvalidity,
+            uid=uid,
+            sender=message.sender,
+            matched_account=account,
+            attachment_names=names,
+        )
+        if isinstance(consumed, VerificationRejected):
+            scope = (
+                ScopeContext(course_id=consumed.course_id, section_id=consumed.section_id)
+                if consumed.course_id is not None and consumed.section_id is not None
+                else None
+            )
+            return self._quarantine(
+                uidvalidity=uidvalidity,
+                uid=uid,
+                message_id=message_id,
+                reason_code=consumed.reason_code,
+                detail=consumed.detail,
+                scope=scope,
+            )
+
+        files = tuple((item.filename, item.content) for item in accepted)
+        envelope = build_submission_envelope(
+            submission_id=str(uuid.uuid4()),
+            student_id=consumed.student_id,
+            course_id=consumed.course_id,
+            section_id=consumed.section_id,
+            question_version_id=consumed.question_version_id,
+            idempotency_key=email_idempotency_key(
+                mailbox=mailbox, message_id=message_id, uidvalidity=uidvalidity, uid=uid
+            ),
+            intake="email",
+            provenance=EmailProvenance(
+                mailbox=mailbox, uidvalidity=uidvalidity, uid=uid, message_id=message_id
+            ),
+            correlation_id=str(uuid.uuid4()),
+            files=files,
+        )
+        try:
+            result = self._intake.persist(
+                envelope,
+                files,
+                on_persist=lambda connection, created: _persist_verification_message(
+                    connection,
+                    created=created,
+                    message=message,
+                    checkpoints=self._checkpoints,
+                    verification=verification,
+                    verification_id=consumed.verification_id,
+                    mailbox=mailbox,
+                    uidvalidity=uidvalidity,
+                    uid=uid,
+                    message_id=message_id,
+                ),
+            )
+        except IntegrityError as error:
+            # 只有 checkpoint 唯一约束的冲突才是"并发重复"；其它完整性错误必须响亮失败。
+            if not _is_checkpoint_conflict(error):
+                raise
+            return self._already_recorded(uid=uid)
+
+        if result.idempotent_replay:
+            # 提交层命中幂等键（同一封邮件已有提交）：补齐 checkpoint 与 verification 绑定，
+            # 否则重放会留下"有提交、verification 未绑定"的半成品。
+            self._finish_verification_replay(
+                verification=verification,
+                verification_id=consumed.verification_id,
+                submission_id=result.submission_id,
+                uidvalidity=uidvalidity,
+                uid=uid,
+                message_id=message_id,
+            )
+            return MessageOutcome(
+                uid=uid,
+                status="replayed",
+                reason_code=None,
+                submission_id=result.submission_id,
+                detail="submission already existed for this idempotency key",
+            )
+
+        logger.info(
+            "email_intake verification_processed mailbox=%s uidvalidity=%d uid=%d"
+            " message_id=%s submission_id=%s",
+            mailbox,
+            uidvalidity,
+            uid,
+            message_id,
+            result.submission_id,
+        )
+        return MessageOutcome(
+            uid=uid,
+            status="processed",
+            reason_code=None,
+            submission_id=result.submission_id,
+            detail="verification code consumed; submission created through the shared intake service",
+        )
+
+    def _finish_verification_replay(
+        self,
+        *,
+        verification: EmailVerificationService,
+        verification_id: str,
+        submission_id: str,
+        uidvalidity: int,
+        uid: int,
+        message_id: str,
+    ) -> None:
+        """幂等重放时补齐 checkpoint 与 verification 绑定（两个写入同一事务）。"""
+        now = utc_now()
+        try:
+            with self._engine.begin() as connection:
+                self._checkpoints.record(
+                    connection,
+                    mailbox=self._settings.mailbox,
+                    uidvalidity=uidvalidity,
+                    uid=uid,
+                    message_id=message_id,
+                    status="processed",
+                    reason_code=None,
+                    submission_id=submission_id,
+                    now=now,
+                )
+                verification.record_submission(connection, verification_id, submission_id)
+        except IntegrityError as error:
+            if not _is_checkpoint_conflict(error):
+                raise
+            logger.info(
+                "email_intake checkpoint_race mailbox=%s uid=%d message_id=%s",
+                self._settings.mailbox,
+                uid,
+                message_id,
+            )
+
+    def _record_pull_heartbeat(self, error_code: str | None) -> None:
+        """写收件心跳（成功=刷新成功时间；失败=只记原因码）。写失败只记日志，不改变拉取结论。"""
+        try:
+            if error_code is None:
+                self._intake_state.record_pull_success()
+            else:
+                self._intake_state.record_pull_failure(error_code)
+        except SQLAlchemyError:
+            # 心跳写不进去只可能是库故障；本轮结论已经确定，把"心跳旧了"留给评测侧判基础设施错误。
+            logger.warning(
+                "email_intake heartbeat_write_failed mailbox=%s", self._settings.mailbox
+            )
 
     # --- 内部 ------------------------------------------------------------------
 
@@ -1097,6 +1338,9 @@ def _first_text(data: Sequence[object]) -> str:
 # 公开入口（`intake/__init__.py` 从这里再导出）。
 __all__ = [
     "CHECKPOINT_EXISTS",
+    "EMAIL_SENDER_MISMATCH",
+    "EMAIL_VERIFICATION_EXPIRED",
+    "EMAIL_VERIFICATION_REJECTED",
     "Checkpoint",
     "CheckpointStatus",
     "EmailCheckpointStore",
@@ -1111,6 +1355,63 @@ __all__ = [
     "email_idempotency_key",
     "security_logger",
 ]
+
+
+def _pull_failure_code(error: BaseException) -> str:
+    """把一轮拉取的失败归类为有界原因码（写 `b2.intake_state.last_error_code`；无 PII）。"""
+    if isinstance(error, ImapProtocolError):
+        return "imap_unavailable"
+    if isinstance(error, MatchingUnavailable):
+        return "identity_unavailable"
+    if isinstance(error, SQLAlchemyError):
+        return "database_unavailable"
+    return "pull_failed"
+
+
+def _persist_verification_message(
+    connection: Connection,
+    *,
+    created: str,
+    message: object,
+    checkpoints: EmailCheckpointStore,
+    verification: EmailVerificationService,
+    verification_id: str,
+    mailbox: str,
+    uidvalidity: int,
+    uid: int,
+    message_id: str,
+) -> None:
+    """核验路径的 `on_persist` 钩子：checkpoint + 正文摘录 + `verification.submission_id`。
+
+    三件事与提交**同事务**：存在提交 ⇒ 必存在 checkpoint、必存在绑定到它的 verification
+    （设计 §4.5：邮件成为提交与一次性关联是一起发生的）。
+    """
+    checkpoints.record(
+        connection,
+        mailbox=mailbox,
+        uidvalidity=uidvalidity,
+        uid=uid,
+        message_id=message_id,
+        status="processed",
+        reason_code=None,
+        submission_id=created,
+        now=utc_now(),
+    )
+    excerpt = getattr(message, "body_excerpt", None)
+    if excerpt:
+        connection.execute(
+            insert(intake_messages).values(
+                intake_message_id=str(uuid.uuid4()),
+                submission_id=created,
+                subject=getattr(message, "subject", None),
+                sender=message.sender,
+                # 长期存储的摘录里不留明文核验码（它不是提交内容的一部分）。
+                body_excerpt=redact_challenge_codes(excerpt),
+                truncated=bool(getattr(message, "body_truncated", False)),
+                received_at=utc_now(),
+            )
+        )
+    verification.record_submission(connection, verification_id, created)
 
 
 def _persist_manual_message(

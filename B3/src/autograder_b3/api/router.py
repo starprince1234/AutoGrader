@@ -39,6 +39,7 @@ from ..domain import (
     load_asset_for_delivery,
     load_editable_draft_content,
     load_evaluation_package,
+    load_fixture_contents,
     load_learning_context,
     load_reference_answer,
     publish_version,
@@ -238,6 +239,9 @@ def create_question_endpoint(
         # from a present one, so that fact is read here and passed down, rather than
         # guessed from the parsed value inside the domain.
         cases_supplied="cases" in payload.model_fields_set,
+        # Same fact about `execution`: an omitted key keeps the stored declaration, while an
+        # explicit `null` resets it to per_case. Only the transport can tell them apart.
+        execution_supplied="execution" in payload.model_fields_set,
         generation_id=generation_id,
         now=dependencies.now,
     )
@@ -323,6 +327,8 @@ def update_question_endpoint(
         # Same fact about `cases` (CHG-0017): absent means "keep the stored cases", so a
         # caller that only renames a question never has to send hidden cases back.
         cases_supplied="cases" in payload.model_fields_set,
+        # Absent means "keep the stored execution declaration"; explicit `null` resets it.
+        execution_supplied="execution" in payload.model_fields_set,
         now=dependencies.now,
     )
     log_event(
@@ -864,6 +870,44 @@ def evaluation_package_endpoint(request: Request, question_version_id: uuid.UUID
     )
     # Deliberately NOT serialize_public: this is the internal DTO's own wire form.
     return package.to_wire()
+
+
+@router.get("/api/v1/question-versions/{question_version_id}/fixture-contents")
+def fixture_contents_endpoint(
+    request: Request,
+    question_version_id: uuid.UUID,
+    mount: str = "input",
+) -> dict:
+    """INTERNAL. Input-fixture bytes for an executed version (design baseline §5).
+
+    Service-to-service only, and ``require_service`` runs before the version is looked up (and
+    before ``mount`` is even interpreted, which is why it is a plain string here rather than a
+    ``Literal``: the enum is validated by the domain function *after* the caller's credential
+    has been established). The response deliberately serves ``mount=input`` only:
+    ``expected_output`` comparison needs the digest the package already declares, and a second
+    byte channel would widen protected content in flight for no benefit. The bundle is bounded
+    (1 MiB/item, 4 MiB total) and refused rather than truncated.
+
+    The log line carries the version, the item count, the total size and the status code, and
+    nothing that identifies a path's content.
+    """
+    context = _context(request)
+    dependencies = _dependencies(request)
+    require_service(context.principal)
+    bundle = load_fixture_contents(
+        dependencies.database, question_version_id=question_version_id, mount=mount
+    )
+    log_event(
+        get_logger("api.internal"),
+        "fixture.contents.served",
+        request_id=context.request_id,
+        question_version_id=str(question_version_id),
+        item_count=len(bundle.items),
+        total_size=sum(item.size_bytes for item in bundle.items),
+        status_code=200,
+    )
+    # Deliberately NOT serialize_public: this is protected content on the internal channel.
+    return bundle.to_wire()
 
 
 @router.get("/api/v1/question-versions/{question_version_id}/draft-content")

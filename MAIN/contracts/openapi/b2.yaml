@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AutoGrader B2 Evaluation API
-  version: 0.29.0
+  version: 0.30.0
   description: |
     Submission intake (API and email), content-addressed storage, static legality,
     security confirmation, sandboxed dynamic execution, explainable and replayable
@@ -998,6 +998,64 @@ paths:
         '403': {$ref: './common.yaml#/components/responses/Forbidden'}
         '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
 
+  /api/v1/email-verification/challenges:
+    post:
+      operationId: createEmailVerificationChallenge
+      summary: Issue a one-time e-mail verification code for a question version (student)
+      description: |
+        Starts the ownership proof behind an `email_delivery` question. The student is
+        authenticated; the code is returned **once**, bound to `(student, course, section,
+        question version)`, stored only as a SHA-256 digest, and expires after 30 minutes.
+
+        Why a code: a `From` header is forgeable, so matching on the sender address alone would
+        let anyone submit mail as another account. The code travels only through this
+        authenticated response and must appear in the message; the receiving intake then
+        requires the sending account to be the challenge owner. That is what makes the link
+        between a real message and a verified account email a fact rather than a guess.
+
+        A new code may be requested at any time; each code is single-use, so an old one is not a
+        replay vector. Issuing a code does not create a submission and does not change any grade.
+      tags: [submissions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EmailVerificationChallengeRequest'}
+      responses:
+        '201':
+          description: The one-time code. It is shown once and never logged.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EmailVerificationChallenge'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+
+  /api/v1/email-verification/challenges/{challenge_id}:
+    parameters:
+      - {name: challenge_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    get:
+      operationId: getEmailVerificationChallengeStatus
+      summary: Read the state of a student's e-mail verification code
+      description: |
+        The student-visible feedback channel for `email_delivery`: it distinguishes "message not
+        received yet", "message received and bound to a submission", "message received but
+        rejected (with a stable reason code)" and "code expired". The same distinction keeps a
+        mail-intake outage from reading as a student answer mistake: `reason_code =
+        intake_unavailable` belongs to the platform, not the answer. Only the challenge owner can
+        read it; the response never contains the code, the sender address, the subject or any
+        message body.
+      tags: [submissions]
+      responses:
+        '200':
+          description: Current state, with a stable reason code when rejected.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EmailVerificationChallengeStatus'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
 components:
   schemas:
     SubmissionTransitions:
@@ -1725,4 +1783,59 @@ components:
           minItems: 1
           items: {type: string, minLength: 1, maxLength: 300}
           description: "Normative labels that must be displayed with the steps: model-generated, not part of the score, no complete answer."
+      additionalProperties: false
+
+    EmailVerificationChallengeRequest:
+      type: object
+      description: "Which assignment the student is about to prove ownership of an e-mail address for."
+      required: [course_id, section_id, question_version_id]
+      properties:
+        course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        section_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        question_version_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+      additionalProperties: false
+
+    EmailVerificationChallenge:
+      type: object
+      description: |
+        The one-time code, returned once at creation. The server stores only its SHA-256, so a
+        database read cannot recover it; it is never logged and never appears in an event.
+      required: [challenge_id, code, expires_at]
+      properties:
+        challenge_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        code:
+          type: string
+          pattern: '^AG-[A-Z0-9]{12}$'
+          description: "Single-use ownership proof the student puts in the message body."
+        expires_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+      additionalProperties: false
+
+    EmailVerificationChallengeStatus:
+      type: object
+      description: |
+        Student-visible state of the ownership proof. `pending` means no message carrying this
+        code has been read yet; `received` means a real IMAP message was bound and a submission
+        was created; `rejected` carries a stable reason code; `expired` means the code can no
+        longer bind a message. The response never echoes the code, the address, the subject or
+        any message body.
+      required: [challenge_id, state, expires_at]
+      properties:
+        challenge_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        state: {type: string, enum: [pending, received, rejected, expired]}
+        reason_code:
+          type: [string, "null"]
+          enum: [subject_mismatch, attachment_missing, email_sender_mismatch, email_verification_rejected, email_verification_expired, intake_unavailable, null]
+          description: |
+            Stable machine code; null unless state is rejected. `intake_unavailable` is a
+            platform condition, not a student mistake. `subject_mismatch` and
+            `attachment_missing` are reserved for an intake-side check that needs the
+            question's subject/attachment templates (they only exist in the evaluation
+            package); until such a check is wired they are never produced, and the
+            per-case evaluation reports the corresponding mismatch instead.
+        expires_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+        verified_at:
+          anyOf: [{$ref: './common.yaml#/components/schemas/Timestamp'}, {type: "null"}]
+        submission_id:
+          anyOf: [{$ref: './common.yaml#/components/schemas/Uuid'}, {type: "null"}]
+          description: "Present when state=received: the submission the message became."
       additionalProperties: false

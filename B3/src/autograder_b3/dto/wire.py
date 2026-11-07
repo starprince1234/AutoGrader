@@ -39,7 +39,7 @@ def security_policy_to_wire(policy: SecurityPolicy) -> dict[str, Any]:
 
 
 def package_to_wire(package: EvaluationPackage) -> dict[str, Any]:
-    return {
+    wire: dict[str, Any] = {
         "question_version_id": _uuid_str(package.question_version_id),
         "package_digest": package.package_digest,
         "language": package.language,
@@ -50,6 +50,12 @@ def package_to_wire(package: EvaluationPackage) -> dict[str, Any]:
         "max_total_bytes": package.max_total_bytes,
         "created_at": to_rfc3339_millis(package.created_at),
     }
+    # Absent for the default `per_case` declaration: a package compiled from content authored
+    # before the field existed must stay byte-identical (design baseline §8). The key is only
+    # added when the compiler produced a non-default declaration.
+    if package.execution is not None:
+        wire["execution"] = _normalize_mapping(package.execution)
+    return wire
 
 
 def _normalize_mapping(value: Mapping[str, Any]) -> dict[str, Any]:

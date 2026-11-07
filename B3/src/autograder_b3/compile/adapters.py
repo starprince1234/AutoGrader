@@ -101,7 +101,16 @@ class StdinArgvAdapterCompiler:
         fixtures: Sequence[FixtureInternal],
     ) -> dict[str, Any]:
         _require_cases(cases)
-        return _common_section(manifest)
+        section = _common_section(manifest)
+        # The legacy omission: `stdin` questions that declared input fixtures dropped them from
+        # the package, so B2 could never materialise the files the submission reads. The
+        # contract allows `_files_section` for every kind, and a package that declares a digest
+        # without the bytes it describes is not usable for a file-seeded stdin exercise
+        # (design baseline §5). Files are emitted only when declared, so questions without
+        # fixtures compile exactly as before.
+        if manifest.files:
+            section["files"] = _files_section(manifest)
+        return section
 
 
 class FileIoAdapterCompiler:

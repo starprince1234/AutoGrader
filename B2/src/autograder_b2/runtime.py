@@ -108,7 +108,9 @@ from autograder_b2.hints.context import DEFAULT_LEARNING_CONTEXT_PATH, B3Learnin
 from autograder_b2.intake.runtime import IntakeRuntime, build_runtime
 from autograder_b2.integration.adapters import (
     B3Endpoint,
+    B3FixtureSource,
     CasWorkspaceProvider,
+    EmailDeliveryVerifier,
     HttpPackageSource,
     RunnerCaseRunner,
     StaticSecurityDecider,
@@ -179,6 +181,15 @@ class B2Runtime:
     def engine(self) -> Engine | None:
         """与接收层**共用**一个引擎：第二个引擎就是第二个连接池，只会让容量账本更难算。"""
         return self.intake.engine
+
+    @property
+    def email_verification(self):
+        """一次性邮箱核验服务（与学生提交同一条 HTTP 服务进程；未装配时为 `None`）。
+
+        它属于**接收运行时**（挑战签发的授权、收件身份目录与收件表都在那边），因此这里只做
+        转发而不另建一个实例：同一进程里两个实例会让"挑战是否已消费"出现两个缓存视图。
+        """
+        return self.intake.email_verification
 
     def record_failure(self) -> None:
         """记录一次**未预期**的端点依赖失败（供健康状态的 detail 如实报告；不含敏感细节）。
@@ -577,18 +588,24 @@ def _wire_evaluation_chain(runtime: B2Runtime) -> None:
         runtime.references_reason = str(error)
         return
     gate = DynamicExecutionGate(lock_path=chain.workspace_root / ".sandbox-execution.lock")
+    # 受保护 fixture 的字节交付链（设计基线 §5）：参考解答验证与学生评测**共用**同一个 source，
+    # 因此"参考答案执行时看到的初始文件"与"学生执行时看到的初始文件"来自同一条通道、同一份摘要校验。
+    fixtures = B3FixtureSource(endpoint)
     runtime.evaluator = EvaluationOrchestrator(
         engine=engine,
         package_source=source,
         workspace_provider=workspaces,
         security=StaticSecurityDecider(),
-        runner=RunnerCaseRunner(),
+        runner=RunnerCaseRunner(fixture_provider=fixtures),
+        # email_delivery 不执行代码，走投递核验端口（读真实收件事实）；未装配时该模式
+        # fail-closed 为 infrastructure_error，绝不伪造"邮件已验证"。
+        delivery=EmailDeliveryVerifier(engine=engine),
         gate=gate,
     )
     runtime.references = ReferenceVerificationService(
         reference_answers=B3VerificationClient(endpoint),
         packages=source,
-        runner=RunnerCaseRunner(),
+        runner=RunnerCaseRunner(fixture_provider=fixtures),
         workspaces=ReferenceAnswerWorkspace(root=chain.workspace_root),
         gate=gate,
     )

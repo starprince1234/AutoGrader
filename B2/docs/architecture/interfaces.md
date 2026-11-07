@@ -324,6 +324,8 @@ class CaseEvidence:
     mismatched_outputs: tuple[str, ...] = field(default=(), kw_only=True)
     resource: CaseResource | None = field(default=None, kw_only=True)
     artifacts: CaseArtifacts | None = field(default=None, kw_only=True)
+    segment: int | None = field(default=None, kw_only=True)
+    file_checks: tuple[FileCheckResult, ...] = field(default=(), kw_only=True)
     evidence_digest: str
 
 def run_case(package: EvaluationPackage, submission: SubmissionRunInput) -> CaseEvidence: ...
@@ -341,6 +343,17 @@ def run_case(package: EvaluationPackage, submission: SubmissionRunInput) -> Case
 >   `None`，绝不写 0**；`None` 的对象表示本用例没有真的执行（前置失败），不是"读数不可得"。
 > - `artifacts`：文件级证据（`RQ-B-0-30` 验收 2）。`expected_sha256` 是受保护值，
 >   学生视图按"未显式声明可见 ⇒ 不可见"的口径把它置空（见 `evaluation.report.for_student`）。
+>
+> **`CHG-0031` 追加的两个字段**（同样在 `artifacts` 之后、`evidence_digest` 之前，`kw_only` + 默认值）：
+>
+> - `segment`：`single_run` 包中该用例对应的 stdout 段序号（`0..N-1`）；其他模式为 `None`。
+> - `file_checks`：运行结束后直接对工作区文件做的检查明细（最终字节摘要与权限位、是否匹配）。
+>   它和 `artifacts` 分开：`artifacts` 是**工作区变化清单**，`file_checks` 是**题面声明的判定**。
+>
+> **批量入口**（`CHG-0031`）：`single_run` / `ssh_session` 包只启动一次沙箱，因此
+> `CaseRunner` 协议增加 `run_cases(package, batch: BatchRunInput) -> tuple[CaseEvidence, ...]`；
+> `run_case` 仍是 `per_case` 的冻结入口。一次批量调用产出 N 条证据，但 `runner_invocations` 只计 1
+> （报告 `execution.invocation_count` 如实区分启动次数与证据数）。
 
 ### 5.2 与契约的关系
 

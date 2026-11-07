@@ -13,7 +13,13 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from ..compile.manifest import manifest_from_stored
+from ..compile.manifest import (
+    case_execution_payload,
+    execution_from_stored,
+    execution_manifest_to_storage,
+    manifest_from_stored,
+    validate_case_executions,
+)
 from ..domain.content import build_snapshot, compute_content_digest
 from ..dto.internal import PublishedVersionSnapshot, VersionContentSnapshot
 from ..errors import ProtectedContentMissing
@@ -36,6 +42,10 @@ class VersionContent:
     @property
     def manifest(self):
         return self.snapshot.manifest
+
+    @property
+    def execution(self):
+        return self.snapshot.execution
 
     @property
     def cases(self):
@@ -67,6 +77,7 @@ class VersionContent:
             max_files=snapshot.max_files,
             max_total_bytes=snapshot.max_total_bytes,
             manifest=snapshot.manifest,
+            execution=snapshot.execution,
         )
 
 
@@ -79,15 +90,25 @@ class EditableDraftContent:
     course can load this, and only while the version is still a draft.
     """
 
-    __slots__ = ("reference_answer", "cases")
+    __slots__ = ("reference_answer", "cases", "execution")
 
-    def __init__(self, *, reference_answer: str | None, cases) -> None:
+    def __init__(self, *, reference_answer: str | None, cases, execution) -> None:
         self.reference_answer = reference_answer
         self.cases = tuple(cases)
+        self.execution = execution
 
     def to_wire(self) -> dict:
+        """The ``QuestionDraftContent`` shape (``reference_answer``, ``execution``, ``cases``).
+
+        ``execution`` is always present and normalized (a version that never declared one
+        reads back as ``{"mode": "per_case"}``), which is what lets the authoring page round
+        trip an edit without guessing whether a declaration exists. The case-level fields are
+        omitted when a case declares nothing, matching ``TestCaseInput``'s optional fields.
+        """
         return {
             "reference_answer": self.reference_answer,
+            "execution": execution_manifest_to_storage(self.execution)
+            or {"mode": "per_case"},
             "cases": [
                 {
                     "name": case.name,
@@ -99,6 +120,7 @@ class EditableDraftContent:
                     "expected_stdout": case.expected_stdout,
                     "expected_stderr": case.expected_stderr,
                     "expected_exit_code": case.expected_exit_code,
+                    **case_execution_payload(case.execution),
                 }
                 for case in self.cases
             ],
@@ -139,6 +161,7 @@ def load_editable_draft_content(database, *, question_version_id, principal) -> 
         return EditableDraftContent(
             reference_answer=answers[0].body if answers else None,
             cases=content.snapshot.cases,
+            execution=content.execution,
         )
 
 
@@ -165,6 +188,18 @@ def load_version_content(
     manifest = manifest_from_stored(
         version.adapter_manifest, cases=cases, fixtures=fixtures
     )
+    # The stored declaration is validated against the same content it describes; a row that
+    # predates the feature has NULL and means per_case, and a row whose declaration does not
+    # fit its cases is refused here so publish / package / attestation all fail loudly rather
+    # than compile an unusable artifact. `validate_case_executions` also re-checks each case's
+    # own declaration for the resolved mode.
+    execution = execution_from_stored(version.execution_manifest)
+    validate_case_executions(
+        cases,
+        execution=execution,
+        adapter_kind=manifest.kind,
+        language=version.language,
+    )
 
     if not cases:
         raise ProtectedContentMissing("a publishable version needs at least one test case")
@@ -188,6 +223,7 @@ def load_version_content(
             fixtures=fixtures,
             max_files=version.max_files,
             max_total_bytes=version.max_total_bytes,
+            execution=execution,
         )
     )
 

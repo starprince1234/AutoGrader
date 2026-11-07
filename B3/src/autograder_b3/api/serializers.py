@@ -17,14 +17,14 @@ test asserts field *absence* on real responses (TC-QST-01).
 from __future__ import annotations
 
 from datetime import datetime, UTC
-from typing import Any
+from typing import Any, get_args
 from collections.abc import Mapping
 from uuid import UUID
 
 from pydantic import BaseModel
 
 from ..assistance import AssistanceResult
-from ..dto.internal import PROTECTED_FIELD_NAMES
+from ..dto.internal import PROTECTED_FIELD_NAMES, ExecutionMode
 from ..dto.public import (
     AssignmentPublic,
     AuthoringAssistancePublic,
@@ -56,6 +56,11 @@ class SerializationViolation(B3Error):
     status = 500
     title = "Internal Server Error"
     slug = "public-serialization-violation"
+
+
+#: The contract's execution-mode enum, taken from the ``Literal`` rather than retyped so the
+#: public projection and the internal vocabulary cannot drift.
+_EXECUTION_MODES: tuple[str, ...] = get_args(ExecutionMode)
 
 
 def to_wire(value: Any) -> Any:
@@ -149,6 +154,13 @@ def version_to_public(row: Any, assets: list[Any] | None = None) -> QuestionVers
         # A stored manifest is validated when written; this guard keeps an
         # unexpected value out of the public enum rather than emitting junk.
         raise SerializationViolation("stored adapter kind is not a contract value")
+    execution = row.execution_manifest or {}
+    execution_mode = execution.get("mode", "per_case")
+    if execution_mode not in _EXECUTION_MODES:
+        # Only the mode is projected; the rest of the declaration (SSH credentials, expected
+        # file digests, email templates) must never reach this response. An unknown mode is a
+        # stored-row defect, refused here rather than emitted outside the contract enum.
+        raise SerializationViolation("stored execution mode is not a contract value")
     return QuestionVersionPublic(
         question_version_id=row.question_version_id,
         question_id=row.question_id,
@@ -156,6 +168,7 @@ def version_to_public(row: Any, assets: list[Any] | None = None) -> QuestionVers
         status=row.status,
         language=row.language,
         adapter_kind=kind,
+        execution_mode=execution_mode,
         stem_markdown=row.stem_markdown,
         stem_assets=tuple(
             StemAssetPublic(

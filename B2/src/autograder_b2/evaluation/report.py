@@ -24,8 +24,15 @@
   （读不到就是 null，绝不写 0）、文件证据把"算完即丢"的摘要落进报告（`RQ-B-0-30` 验收 2），
   `explanation` 是**纯函数**推导的说明文本（模型输出进不了这里——schema 是 `additionalProperties: false`，
   这是结构性事实）。
+- **执行模式如实入报告**（设计基线 §2/§6）：顶层 `execution` 写 `{mode, invocation_count, evidence_count}`，
+  `invocation_count` 是**实际启动的沙箱次数**（`per_case` = 用例数、`single_run`/`ssh_session` = 1、
+  `email_delivery` = 0），与证据数分开记录——一次批量执行不得被报成"每个用例都跑了一次沙箱"。
+  `case_evidence[]` 的 `segment` 与 `case_artifacts.file_checks` 同属可复核事实，均参与摘要。
+  `email_delivery` 不执行代码，因此 `static_findings` 为空、`security_conclusion.status` 显式写
+  `not_applicable`（**不是** `not_checked`/`not_found`：那两种会读成"检查了/没查到"）。
 - **学生视图脱敏**：`for_student` 默认**不暴露任何用例的输入/期望输出**（fail-closed：没显式声明可见
-  就等于不可见）；`for_teacher` 返回完整报告。
+  就等于不可见）；`case_artifacts.file_checks[].expected_sha256/expected_mode` 同属"期望侧"，一并裁掉；
+  `for_teacher` 返回完整报告。
 - **只有 `completed` 才有报告**：`rejected`/`failed` 没有分数，也不产生 `evaluation_results` 行；
   拒绝与失败经 SSE 终态帧送达（契约 `EvaluationStreamFrame`）。
 """
@@ -48,10 +55,12 @@ from autograder_b2.domain.evidence import (
     CaseEvidence,
     CaseResource,
     FileChange,
+    FileCheckResult,
 )
 from autograder_b2.domain.security import SecurityDecision
 from autograder_b2.domain.static_result import StaticAnalysisResult
 from autograder_b2.evaluation.explanation import explain_case
+from autograder_b2.evaluation.ports import EXECUTION_MODES
 from autograder_b2.evaluation.scoring import ScoreBreakdown, ScoreTotalMismatch, decimal_of
 
 #: 报告的终态取值（契约 `state` 枚举）。本模块只产出 `completed`。
@@ -117,8 +126,55 @@ class ReportBinding:
 
 
 @dataclass(frozen=True, slots=True)
+class ReportExecution:
+    """报告顶层 `execution`：**执行方式与次数的如实记录**（设计基线 §2/§6）。
+
+    三个字段各有不可混淆的用途：`mode` 让读者知道用例是怎么产生的；`invocation_count` 是
+    **实际启动的沙箱次数**（`per_case` = 用例数、`single_run`/`ssh_session` = 1、`email_delivery` = 0）；
+    `evidence_count` 是用例证据数。把后两者分开，是为了让"一次批量执行"不能被呈现成
+    "每个用例各跑了一次沙箱"——那会让可重放性与资源账本同时失真。
+    """
+
+    mode: str
+    invocation_count: int
+    evidence_count: int
+
+    def __post_init__(self) -> None:
+        if self.mode not in EXECUTION_MODES:
+            raise ReportRejected(f"未知执行模式：{self.mode!r}")
+        for name, value in (
+            ("invocation_count", self.invocation_count),
+            ("evidence_count", self.evidence_count),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise ReportRejected(f"{name} 必须是整数")
+            if value < 0:
+                raise ReportRejected(f"{name} 必须非负")
+        if self.mode == "email_delivery" and self.invocation_count != 0:
+            raise ReportRejected("email_delivery 不执行代码：invocation_count 必须为 0")
+        if (
+            self.mode in ("single_run", "ssh_session")
+            and self.evidence_count > 0
+            and self.invocation_count != 1
+        ):
+            raise ReportRejected(
+                f"{self.mode} 的一次批量执行：invocation_count 必须为 1（一次沙箱执行）"
+            )
+        if self.mode == "per_case" and self.invocation_count != self.evidence_count:
+            raise ReportRejected("per_case 的每个用例各执行一次：invocation_count 必须等于 evidence_count")
+
+
+@dataclass(frozen=True, slots=True)
 class ReportInputs:
-    """一份报告的全部输入（每一项都是判分依据的一部分）。"""
+    """一份报告的全部输入（每一项都是判分依据的一部分）。
+
+    `execution` 为空时按 `per_case` 处理（证据即调用次数），这是**向后兼容的诚实缺省**：
+    旧调用方不声明执行方式，而当时唯一的执行方式就是逐用例。新路径必须显式传入真实次数。
+
+    `security_not_applicable` 只用于 `email_delivery`：该模式不执行代码，静态/安全检查**不适用**。
+    它是**显式旗标**而不是"把结论伪装成 not_found"：报告里的 `security_conclusion.status` 会如实写
+    `not_applicable`，且 `build_report` 会强制"旗标 ⇔ email_delivery，且没有静态发现"。
+    """
 
     evaluation_run_id: str
     submission_id: str
@@ -130,6 +186,8 @@ class ReportInputs:
     binding: ReportBinding
     state: str = "completed"
     summary: str | None = field(default=None)
+    execution: ReportExecution | None = field(default=None)
+    security_not_applicable: bool = field(default=False)
 
 
 def _require_digest(name: str, value: object) -> str:
@@ -158,8 +216,18 @@ def _static_findings(static: StaticAnalysisResult) -> list[dict[str, object]]:
     return items
 
 
-def _security_conclusion(security: SecurityDecision) -> dict[str, object]:
-    """安全结论三态**原样**呈现：`not_checked` 绝不折算成 `not_found`。"""
+def _security_conclusion(
+    security: SecurityDecision, *, not_applicable: bool = False
+) -> dict[str, object]:
+    """安全结论**原样**呈现：`not_checked` 绝不折算成 `not_found`。
+
+    `not_applicable` 由调用方**显式**声明（`email_delivery` 不执行代码）：它不是"没检查"，
+    所以不能从 `SecurityDecision` 的三态里推导，也不允许用 `not_found` 顶替。
+    """
+    if not_applicable:
+        if security.findings:
+            raise ReportRejected("不适用安全检查的运行不得携带安全发现")
+        return {"status": "not_applicable", "findings": []}
     return {
         "status": security.status,
         "findings": [
@@ -183,6 +251,7 @@ def _case_items(inputs: ReportInputs) -> list[dict[str, object]]:
     三者都只由**本用例的证据对象**推出——`explain_case` 是纯函数，模型输出永远进不来这里。
     """
     awards = {award.ordinal: award for award in inputs.breakdown.awards}
+    mode = inputs.execution.mode if inputs.execution is not None else "per_case"
     items: list[dict[str, object]] = []
     seen: set[int] = set()
     for item in sorted(inputs.evidence, key=lambda entry: entry.ordinal):
@@ -198,6 +267,8 @@ def _case_items(inputs: ReportInputs) -> list[dict[str, object]]:
             {
                 "case_id": str(item.case_id),
                 "ordinal": item.ordinal,
+                # 分段模式的段号是判分事实（哪个段判给哪个用例），非分段模式为 None。
+                "segment": item.segment if mode == "single_run" else None,
                 "weight": float(decimal_of(item.weight)),
                 "awarded": float(award.awarded),
                 "passed": bool(item.passed),
@@ -210,8 +281,8 @@ def _case_items(inputs: ReportInputs) -> list[dict[str, object]]:
                 "duration_ms": item.duration_ms,
                 "message": item.message,
                 "resource": resource_payload(item.resource),
-                "artifacts": artifacts_payload(item.artifacts),
-                "explanation": explain_case(item),
+                "artifacts": artifacts_payload(item.artifacts, item.file_checks),
+                "explanation": explain_case(item, mode=mode),
             }
         )
     extra = sorted(set(awards) - seen)
@@ -237,20 +308,40 @@ def resource_payload(resource: CaseResource | None) -> dict[str, object] | None:
     }
 
 
-def artifacts_payload(artifacts: CaseArtifacts | None) -> dict[str, object] | None:
+def artifacts_payload(
+    artifacts: CaseArtifacts | None,
+    file_checks: Sequence[FileCheckResult] = (),
+) -> dict[str, object] | None:
     """契约 `case_artifacts` 的载荷。
+
+    `file_checks` 是 `single_run` 用例**执行后直接检查工作区文件**的明细（内容摘要/权限位/是否匹配）：
+    它挂在证据对象上（参与 `evidence_digest`），报告契约把它放在 `case_artifacts` 下。两者都为空时
+    `artifacts` 为 `None`（= 本用例没有文件级结果），否则合并呈现。
 
     `truncated` 是 B2 内部字段（用于解释文本），**不进契约**：报告 schema 没有这个键，
     而 `additionalProperties: false` 会拒绝它。
     """
-    if artifacts is None:
+    if artifacts is None and not file_checks:
         return None
     return {
-        "expected_sha256": artifacts.expected_sha256,
-        "actual_sha256": artifacts.actual_sha256,
-        "created": [_file_change_payload(item) for item in artifacts.created],
-        "modified": [_file_change_payload(item) for item in artifacts.modified],
-        "deleted": [_file_change_payload(item) for item in artifacts.deleted],
+        "expected_sha256": None if artifacts is None else artifacts.expected_sha256,
+        "actual_sha256": None if artifacts is None else artifacts.actual_sha256,
+        "file_checks": [_file_check_payload(item) for item in file_checks],
+        "created": [] if artifacts is None else [_file_change_payload(item) for item in artifacts.created],
+        "modified": [] if artifacts is None else [_file_change_payload(item) for item in artifacts.modified],
+        "deleted": [] if artifacts is None else [_file_change_payload(item) for item in artifacts.deleted],
+    }
+
+
+def _file_check_payload(check: FileCheckResult) -> dict[str, object]:
+    """一条文件检查的契约载荷（期望侧是受保护值，学生视图会裁掉）。"""
+    return {
+        "path": check.path,
+        "expected_sha256": check.expected_sha256,
+        "actual_sha256": check.actual_sha256,
+        "expected_mode": check.expected_mode,
+        "actual_mode": check.actual_mode,
+        "matched": bool(check.matched),
     }
 
 
@@ -270,6 +361,29 @@ def build_report(inputs: ReportInputs, *, generated_at: datetime) -> dict[str, o
         )
     if len(inputs.evidence) > MAX_REPORT_CASES:
         raise ReportRejected(f"用例数超过报告上限 {MAX_REPORT_CASES}")
+    execution = inputs.execution
+    if execution is None:
+        # 向后兼容的诚实缺省：旧调用方只知道逐用例模式，而逐用例的调用次数就是证据数。
+        count = len(inputs.evidence)
+        execution = ReportExecution(
+            mode="per_case", invocation_count=count, evidence_count=count
+        )
+    if execution.evidence_count != len(inputs.evidence):
+        raise ReportRejected(
+            f"execution.evidence_count={execution.evidence_count} 与证据数 {len(inputs.evidence)} 不一致"
+        )
+    not_applicable = bool(inputs.security_not_applicable)
+    if execution.mode == "email_delivery":
+        if not not_applicable:
+            raise ReportRejected(
+                "email_delivery 不执行代码：必须显式声明安全检查为 not_applicable（不得伪装成 not_checked/not_found）"
+            )
+        if inputs.static.findings:
+            raise ReportRejected("email_delivery 不执行代码：不得携带静态检查发现")
+        if inputs.security.findings or inputs.security.blocking:
+            raise ReportRejected("email_delivery 不执行代码：不得携带安全发现或阻断结论")
+    elif not_applicable:
+        raise ReportRejected("只有 email_delivery 允许把安全检查标为 not_applicable")
     case_items = _case_items(inputs)
     # 合计校验的**独立**一路：把报告里自己写出的 awarded 重新加总，与总分逐字比对。
     emitted_total = Decimal(0)
@@ -284,6 +398,11 @@ def build_report(inputs: ReportInputs, *, generated_at: datetime) -> dict[str, o
         "submission_id": inputs.submission_id,
         "question_version_id": inputs.question_version_id,
         "state": inputs.state,
+        "execution": {
+            "mode": execution.mode,
+            "invocation_count": execution.invocation_count,
+            "evidence_count": execution.evidence_count,
+        },
         "overall": {
             "score": float(inputs.breakdown.score),
             "max_score": float(inputs.breakdown.max_score),
@@ -291,7 +410,9 @@ def build_report(inputs: ReportInputs, *, generated_at: datetime) -> dict[str, o
             "summary": inputs.summary or inputs.breakdown.summary,
         },
         "static_findings": _static_findings(inputs.static),
-        "security_conclusion": _security_conclusion(inputs.security),
+        "security_conclusion": _security_conclusion(
+            inputs.security, not_applicable=not_applicable
+        ),
         "case_evidence": case_items,
         "binding": inputs.binding.as_contract_binding(),
         "total_check": {
@@ -364,6 +485,10 @@ def for_student(
     猜到文件内容就能用摘要验证猜对了。契约把该字段显式标为 PROTECTED，B2 库里没有"用例是否对学生
     可见"这一列（它属于 B3 的 package 声明），所以这里与摘录同口径：**没显式声明可见 = 不可见**。
 
+    同一条理由适用于 `case_artifacts.file_checks[].expected_sha256` 与 `expected_mode`：它们都是
+    "期望侧"的可检验断言，必须与 `expected_sha256` 同口径裁掉；`actual_*` 与 `matched` 保留
+    （那是学生自己产出的文件事实与判定结果）。
+
     `actual_sha256` 与三张文件变更清单**保留**：它们是学生自己产出的文件的摘要与清单，
     与同样保留的 `actual_output_digest` 同类；被裁掉的是"期望侧"。
 
@@ -384,4 +509,10 @@ def for_student(
             artifacts = item.get("artifacts")
             if isinstance(artifacts, dict):
                 artifacts["expected_sha256"] = None
+                checks = artifacts.get("file_checks")
+                if isinstance(checks, list):
+                    for check in checks:
+                        if isinstance(check, dict):
+                            check["expected_sha256"] = None
+                            check["expected_mode"] = None
     return view

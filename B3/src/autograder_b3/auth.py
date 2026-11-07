@@ -384,13 +384,19 @@ class StaticTokenVerifier:
         if claims is None:
             raise Unauthenticated("unknown test token")
         roles = claims.get("roles", [])
-        course_ids, section_ids = _parse_scope(claims.get("scope"))
+        # The scope parser also produces the (course, section) pairing and the course-wide
+        # set; this test verifier was still unpacking the old two-value shape, which made
+        # every HTTP test fail at authentication before the endpoint ran. Production
+        # verification goes through `JwksTokenVerifier` and was never affected.
+        course_ids, section_ids, scope_pairs, course_wide = _parse_scope(claims.get("scope"))
         subject = claims.get("sub", "test-subject")
         return Principal(
             subject=str(subject),
             roles=frozenset(roles),
             course_ids=course_ids,
             section_ids=section_ids,
+            scope_pairs=scope_pairs,
+            course_wide=course_wide,
             is_service=bool(claims.get("service", False)),
         )
 

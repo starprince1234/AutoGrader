@@ -213,6 +213,27 @@ def verify_problem(problem: dict, index: int) -> list[str]:
     cases = problem.get("cases") or []
     if not cases:
         return [f"{label}: no cases"]
+
+    # CHG-0031: a version can declare an execution profile that is **not** "one sandbox run per
+    # case" (single_run segments/file checks, ssh_session, email_delivery). This local harness
+    # only mirrors the legacy per-case stdout comparison; pretending otherwise would let a
+    # question pass here under rules the platform no longer uses. The authority for those
+    # questions is the platform's own reference verification endpoint, which runs the same
+    # runner path the students are graded by.
+    execution = problem.get("execution") or {}
+    mode = execution.get("mode", "per_case")
+    case_scoped = any(
+        key in case
+        for case in cases
+        for key in ("segment", "file_checks", "ssh_check", "email_check")
+        if case.get(key) is not None
+    )
+    if mode != "per_case" or case_scoped:
+        return [
+            f"{label}: execution.mode={mode!r} is not verifiable by this local per-case harness; "
+            "verify it through the platform (POST /api/v1/reference-verifications), which uses "
+            "the same runner path as student grading"
+        ]
     if cases[0].get("visible_to_student") is not True:
         failures.append(f"{label}: case 0 must be visible_to_student=true")
     for position, case in enumerate(cases):

@@ -135,7 +135,7 @@ def placeholder_png(width: int = 640, height: int = 200) -> bytes:
 
 
 def draft_body(problem: dict) -> dict:
-    return {
+    body = {
         "title": problem["title"],
         "stem_markdown": problem["stem_markdown"],
         "language": problem["language"],
@@ -146,6 +146,11 @@ def draft_body(problem: dict) -> dict:
         "max_total_bytes": problem.get("max_total_bytes", 1048576),
         "tags": problem.get("tags", []),
     }
+    # CHG-0031: the explicit scoring declaration. Absent means per_case (the legacy default),
+    # so banks written before this field stay exactly what they were.
+    if "execution" in problem:
+        body["execution"] = problem["execution"]
+    return body
 
 
 def create_question(base: str, token: str, course_id: str, problem: dict) -> tuple[str, str]:

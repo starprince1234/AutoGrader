@@ -153,7 +153,9 @@ MAX_SUBJECT_LENGTH = 200
 _BASE64_CHARACTERS_PER_GROUP = 4
 _BASE64_BYTES_PER_GROUP = 3
 
-#: 邮件入口的原因码全集。前 16 项由本模块判定，后 3 项由 `intake.imap`（匹配/解析阶段）判定。
+#: 邮件入口的原因码全集。前 16 项由本模块判定，第 17–19 项由 `intake.imap`（匹配/解析阶段）判定，
+#: 最后 3 项由 `intake.email_verification`（一次性核验码消费阶段）判定——它们复用同一个原因码类型，
+#: 因为隔离记录只有一套 `reason_code` 列。
 EmailIntakeReason = Literal[
     "malformed_message",
     "missing_message_id",
@@ -174,6 +176,11 @@ EmailIntakeReason = Literal[
     "message_too_large",
     "not_uniquely_matched",
     "ambiguous_match",
+    # 一次性核验码路径（`MAIN/docs/architecture/unix-homework-evaluation.md` §4，迁移 0020）：
+    # 被拒的邮件**绝不**变成提交，也绝不消耗不属于它的挑战。
+    "email_verification_rejected",
+    "email_sender_mismatch",
+    "email_verification_expired",
 ]
 
 _BASE64_ENCODINGS = frozenset({"base64", "x-base64"})

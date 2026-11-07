@@ -102,6 +102,30 @@ class EmailMatcher(Protocol):
 
 
 @dataclass(frozen=True, slots=True)
+class MatchedAccount:
+    """按发件地址解析出的**账号**事实（邮件核验路径的输入；不含地址副本、不含 PII 之外的字段）。
+
+    `student_number` 来自 B4 的 internal identity 响应（注册/名单流程里的学号）。它用于
+    `email_delivery` 的 `subject`/`attachment` 判定（"学号来自已核验账号"，不是从邮件里猜的）。
+    """
+
+    user_id: str
+    student_number: str | None = None
+
+
+@runtime_checkable
+class SenderDirectory(Protocol):
+    """发件地址 → 账号 的只读查询端口（`email_delivery` 的所有权校验用）。
+
+    与 `EmailMatcher` 分开：匹配器把"这封邮件属于哪个提交"绑定到部署配置的固定目标；
+    核验只关心"这个地址属于哪个账号"（目标由挑战给出）。`MatchingUnavailable` 表示**查不了**
+    （依赖故障），`None` 表示**确定没有这个账号**；两者绝不能混为一谈。
+    """
+
+    def lookup_account(self, sender: str) -> MatchedAccount | None: ...
+
+
+@dataclass(frozen=True, slots=True)
 class _Rule:
     sender: str | None  # None = 任意发件人
     required_attachment: str | None
@@ -267,14 +291,8 @@ class DirectoryEmailMatcher:
                 detail="the message carries no sender address",
                 scope_context=None,
             )
-        url = (
-            f"{self._base_url}/api/v1/internal/identities/by-email"
-            f"?email={quote(normalized, safe='')}"
-        )
-        status, payload = self._opener(
-            url, {"authorization": self._authorization}, self._timeout
-        )
-        if status == 404:
+        document = self._fetch_identity(normalized)
+        if document is None:
             return MatchResult(
                 outcome="not_matched",
                 target=None,
@@ -283,14 +301,6 @@ class DirectoryEmailMatcher:
                 detail="the sender address is not registered to any account",
                 scope_context=None,
             )
-        if status != 200:
-            raise MatchingUnavailable(f"identity lookup returned HTTP {status}")
-        try:
-            document = json.loads(payload)
-        except Exception as error:
-            raise MatchingUnavailable("identity lookup returned invalid JSON") from error
-        if not isinstance(document, dict) or not document.get("user_id"):
-            raise MatchingUnavailable("identity lookup returned no user id")
         if not document.get("is_active", True):
             return MatchResult(
                 outcome="not_matched",
@@ -317,6 +327,52 @@ class DirectoryEmailMatcher:
                 course_id=target.course_id, section_id=target.section_id
             ),
         )
+
+    def lookup_account(self, sender: str) -> MatchedAccount | None:
+        """发件地址 → 账号（`email_delivery` 所有权校验的只读入口）。
+
+        与 `match` 共用同一次 HTTP 查询（`_fetch_identity`），因此两条路径对"这个地址属于谁"
+        不可能给出不同答案。停用账号按"没有这个账号"处理（与 `match` 的 `not_matched` 一致，
+        停用账号不应通过任何核验）。`MatchingUnavailable` 原样上抛：查不了 ≠ 没有。
+        """
+        normalized = sender.strip().lower()
+        if not normalized:
+            return None
+        document = self._fetch_identity(normalized)
+        if document is None or not document.get("is_active", True):
+            return None
+        raw_number = document.get("student_number")
+        student_number = (
+            raw_number.strip()
+            if isinstance(raw_number, str) and raw_number.strip()
+            else None
+        )
+        return MatchedAccount(user_id=str(document["user_id"]), student_number=student_number)
+
+    def _fetch_identity(self, normalized_sender: str) -> dict[str, object] | None:
+        """查一次 B4 internal identity 端点：`None` = 404（确定没有该账号）。
+
+        所有"查不了"的情形（非 200/非 JSON/缺 user_id）都抛 `MatchingUnavailable`——把故障当成
+        "没有这个账号"会把一次配置/连通性问题伪装成一批无人认领的邮件。
+        """
+        url = (
+            f"{self._base_url}/api/v1/internal/identities/by-email"
+            f"?email={quote(normalized_sender, safe='')}"
+        )
+        status, payload = self._opener(
+            url, {"authorization": self._authorization}, self._timeout
+        )
+        if status == 404:
+            return None
+        if status != 200:
+            raise MatchingUnavailable(f"identity lookup returned HTTP {status}")
+        try:
+            document = json.loads(payload)
+        except Exception as error:
+            raise MatchingUnavailable("identity lookup returned invalid JSON") from error
+        if not isinstance(document, dict) or not document.get("user_id"):
+            raise MatchingUnavailable("identity lookup returned no user id")
+        return document
 
 
 def _http_get(url: str, headers: Mapping[str, str], timeout: float) -> tuple[int, bytes]:

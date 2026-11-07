@@ -65,6 +65,16 @@ export interface components {
          * @enum {string}
          */
         Language: "python" | "bash";
+        /**
+         * @description How a question version's cases are produced, declared explicitly on the version and
+         *     carried in the evaluation package. `per_case` (the legacy default) runs one sandbox per
+         *     case; `single_run` runs once and splits one bounded stdout into per-case segments;
+         *     `ssh_session` runs a real, isolated SSH practice service once and judges real server-side
+         *     events; `email_delivery` executes nothing and judges the message the real IMAP intake
+         *     received. Behaviour is never selected by a title, tag, path or magic string.
+         * @enum {string}
+         */
+        ExecutionMode: "per_case" | "single_run" | "ssh_session" | "email_delivery";
         /** @enum {string} */
         Role: "student" | "teacher" | "admin";
         /** @description Authorization scope resolved server-side from the verified token. Never trusted from the client. */

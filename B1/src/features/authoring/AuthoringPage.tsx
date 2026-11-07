@@ -30,18 +30,22 @@ import {
   STDERR_COMPARISONS,
   STDOUT_COMPARISONS,
   TITLE_MAX_LENGTH,
+  applyExecutionMode,
   applyProposal,
+  applyProtectedContent,
   buildDraftInput,
   buildDraftSkeleton,
   deriveTags,
   draftFormFrom,
   emptyDraftForm,
+  executionDeclarationIssues,
   insertIntoStem,
   isDirty,
   parseTags,
   type DraftForm,
   type DraftIssue,
 } from "./draft";
+import { EXECUTION_MODES, SSH_HOST, type ExecutionMode } from "./execution";
 import { useCreateQuestion, useDraftContent, useUpdateQuestionDraft } from "./useAuthoring";
 import { Select } from "../../ui/Select";
 
@@ -154,25 +158,8 @@ export function AuthoringPage({
     if (protectedSeeded || !draftContent.data) return;
     const content = draftContent.data;
     setForm((previous) => {
-      const next: DraftForm = {
-        ...previous,
-        referenceAnswer: content.reference_answer ?? "",
-        cases: content.cases.map((item) => ({
-          name: item.name,
-          weight: String(item.weight),
-          visibleToStudent: item.visible_to_student,
-          stdin: item.stdin ?? "",
-          args: (item.args ?? []).join(" "),
-          expectedStdout: item.expected_stdout ?? "",
-          expectedStderr: item.expected_stderr ?? "",
-          expectedExitCode:
-            item.expected_exit_code === null || item.expected_exit_code === undefined
-              ? ""
-              : String(item.expected_exit_code),
-        })),
-        // 现在拿到的是**真实的那份集合**，替换确认不再有意义。
-        confirmCaseReplacement: true,
-      };
+      // 参考答案、用例与执行声明都来自作者通道；评分方式的完整配置也在其中。
+      const next = applyProtectedContent(previous, content);
       setBaseline(next);
       return next;
     });
@@ -189,6 +176,8 @@ export function AuthoringPage({
   const mutation = questionId === null ? createQuestion : updateQuestion;
 
   const parsed = parseTags(form.tags);
+  // 评分方式的即时校验：与保存时的校验同一份规则，教师不必先点保存才知道配置不合法。
+  const declarationIssues = executionDeclarationIssues(form);
   const publishVersion = savedVersion.data ?? createdVersion.data ?? newestVersion.data ?? null;
   const dirty = useMemo(() => isDirty(form, baseline), [form, baseline]);
   // 教师读"哪门课"，不是内部编号：能查到就显示代码与名称，查不到留白。
@@ -632,6 +621,7 @@ export function AuthoringPage({
                 onChange={(cases) => {
                   setForm({ ...form, cases });
                 }}
+                executionMode={form.executionMode}
                 focusOrdinal={focusCaseOrdinal}
                 onFocusHandled={() => setFocusCaseOrdinal(null)}
               />
@@ -719,6 +709,188 @@ export function AuthoringPage({
               <p className="muted" data-testid="authoring-tolerance-hint">
                 {t("authoring.numericToleranceHint")}
               </p>
+
+              {/*
+                评分方式 / 执行声明：**唯一**决定用例如何被生产的声明（设计基线 §1）。
+                不根据标题、标签或路径推断行为；切换模式会清掉不属于目标模式的配置。
+              */}
+              <div className="stack" data-testid="execution-declaration">
+                <div className="inline">
+                  <h3>{t("authoring.execution.title")}</h3>
+                </div>
+                <p className="muted" data-testid="execution-intro">
+                  {t("authoring.execution.intro")}
+                </p>
+                <Field
+                  label={t("authoring.execution.mode")}
+                  htmlFor="authoring-execution-mode"
+                >
+                  <Select
+                    id="authoring-execution-mode"
+                    data-testid="execution-mode"
+                    value={form.executionMode}
+                    onChange={(event) =>
+                      // 换模式 = 换一份声明：不属于新模式的配置当场清掉（含 SSH 口令）。
+                      setForm(
+                        applyExecutionMode(form, event.target.value as ExecutionMode),
+                      )
+                    }
+                  >
+                    {EXECUTION_MODES.map((mode) => (
+                      <option key={mode} value={mode}>
+                        {t(`authoring.execution.mode.${mode}`)}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <p className="muted" data-testid="execution-mode-hint">
+                  {t(`authoring.execution.modeHint.${form.executionMode}`)}
+                </p>
+
+                {form.executionMode === "single_run" ? (
+                  <div className="form-grid" data-testid="execution-single-run">
+                    <Field
+                      label={t("authoring.execution.segmentDelimiter")}
+                      htmlFor="authoring-segment-delimiter"
+                      hint={t("authoring.execution.segmentDelimiterHint")}
+                    >
+                      <input
+                        id="authoring-segment-delimiter"
+                        data-testid="execution-segment-delimiter"
+                        value={form.segmentDelimiter}
+                        onChange={(event) =>
+                          setForm({ ...form, segmentDelimiter: event.target.value })
+                        }
+                      />
+                    </Field>
+                  </div>
+                ) : null}
+
+                {form.executionMode === "email_delivery" ? (
+                  <div className="form-grid" data-testid="execution-email">
+                    <Field
+                      label={t("authoring.execution.emailAttempt")}
+                      htmlFor="authoring-email-attempt"
+                      hint={t("authoring.execution.emailAttemptHint")}
+                    >
+                      <input
+                        id="authoring-email-attempt"
+                        data-testid="execution-email-attempt"
+                        inputMode="numeric"
+                        value={form.emailAttempt}
+                        onChange={(event) =>
+                          setForm({ ...form, emailAttempt: event.target.value })
+                        }
+                      />
+                    </Field>
+                  </div>
+                ) : null}
+
+                {form.executionMode === "ssh_session" ? (
+                  <div className="stack" data-testid="execution-ssh">
+                    <div className="form-grid">
+                      <Field
+                        label={t("authoring.execution.sshHost")}
+                        htmlFor="authoring-ssh-host"
+                        hint={t("authoring.execution.sshHostHint")}
+                      >
+                        {/* host 是固定值：契约只接受 127.0.0.1，不做成可编辑输入。 */}
+                        <input
+                          id="authoring-ssh-host"
+                          data-testid="execution-ssh-host"
+                          value={SSH_HOST}
+                          readOnly
+                        />
+                      </Field>
+                      <Field
+                        label={t("authoring.execution.sshPort")}
+                        htmlFor="authoring-ssh-port"
+                      >
+                        <input
+                          id="authoring-ssh-port"
+                          data-testid="execution-ssh-port"
+                          inputMode="numeric"
+                          value={form.sshPort}
+                          onChange={(event) =>
+                            setForm({ ...form, sshPort: event.target.value })
+                          }
+                        />
+                      </Field>
+                      <Field
+                        label={t("authoring.execution.sshUsername")}
+                        htmlFor="authoring-ssh-username"
+                        hint={t("authoring.execution.sshUsernameHint")}
+                      >
+                        <input
+                          id="authoring-ssh-username"
+                          data-testid="execution-ssh-username"
+                          autoComplete="off"
+                          value={form.sshUsername}
+                          onChange={(event) =>
+                            setForm({ ...form, sshUsername: event.target.value })
+                          }
+                        />
+                      </Field>
+                      <Field
+                        label={t("authoring.execution.sshPassword")}
+                        htmlFor="authoring-ssh-password"
+                        hint={t("authoring.execution.sshPasswordHint")}
+                      >
+                        {/*
+                          type=password + new-password：不显示明文，也不让浏览器把它当可保存的
+                          登录凭据。口令只存在于本页内存与本次请求体，绝不进 URL/日志/存储。
+                        */}
+                        <input
+                          id="authoring-ssh-password"
+                          data-testid="execution-ssh-password"
+                          type="password"
+                          autoComplete="new-password"
+                          value={form.sshPassword}
+                          onChange={(event) =>
+                            setForm({ ...form, sshPassword: event.target.value })
+                          }
+                        />
+                      </Field>
+                      <Field
+                        label={t("authoring.execution.sshLoginTimeout")}
+                        htmlFor="authoring-ssh-login-timeout"
+                        hint={t("authoring.execution.sshTimeoutHint")}
+                      >
+                        <input
+                          id="authoring-ssh-login-timeout"
+                          data-testid="execution-ssh-login-timeout"
+                          inputMode="decimal"
+                          value={form.sshLoginTimeout}
+                          onChange={(event) =>
+                            setForm({ ...form, sshLoginTimeout: event.target.value })
+                          }
+                        />
+                      </Field>
+                      <Field
+                        label={t("authoring.execution.sshSessionTimeout")}
+                        htmlFor="authoring-ssh-session-timeout"
+                        hint={t("authoring.execution.sshTimeoutHint")}
+                      >
+                        <input
+                          id="authoring-ssh-session-timeout"
+                          data-testid="execution-ssh-session-timeout"
+                          inputMode="decimal"
+                          value={form.sshSessionTimeout}
+                          onChange={(event) =>
+                            setForm({ ...form, sshSessionTimeout: event.target.value })
+                          }
+                        />
+                      </Field>
+                    </div>
+                  </div>
+                ) : null}
+
+                {declarationIssues.length > 0 ? (
+                  <Banner tone="warn" testId="execution-issues">
+                    {issueMessage(declarationIssues)}
+                  </Banner>
+                ) : null}
+              </div>
 
               {/*
                 运行配置属于进阶设置：普通出题不用碰它，所以默认收起。

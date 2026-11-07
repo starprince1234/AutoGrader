@@ -15,6 +15,7 @@ import {
   installFetchStub,
   jsonResponse,
   problemResponse,
+  type RecordedRequest,
   type StubbedRoute,
   type FetchStub,
 } from "../../testing/httpBoundary";
@@ -2066,5 +2067,308 @@ describe("AI 出题页课程选择区域", () => {
     expect(screen.queryByLabelText("这道题出给哪门课")).toBeNull();
     // 旧提示已删除。
     expect(screen.queryByText("选好课程后就可以生成草稿。")).toBeNull();
+  });
+});
+
+describe("评分方式 / 执行声明（Unix 作业扩展）", () => {
+  /** 新建成功后页面会用服务端返回的版本标识取回版本 DTO（渲染发布门禁）。 */
+  function createRoutes(): StubbedRoute[] {
+    return [
+      {
+        method: "POST",
+        path: "/api/v1/questions",
+        respond: () =>
+          jsonResponse(
+            questionPublic({
+              status: "draft",
+              versions: [
+                {
+                  question_version_id: NEW_VERSION,
+                  version: 1,
+                  status: "draft",
+                  published_at: "2026-09-15T07:20:00.000Z",
+                },
+              ],
+            }),
+          ),
+      },
+      {
+        path: `/api/v1/question-versions/${NEW_VERSION}`,
+        respond: () =>
+          jsonResponse(
+            questionVersionPublic({
+              question_version_id: NEW_VERSION,
+              version: 1,
+              status: "draft",
+              content_digest: SHA_A,
+            }),
+          ),
+      },
+    ];
+  }
+
+  /** 切到「判分比对规则与运行配置」并选择一个评分方式。 */
+  async function selectExecutionMode(
+    user: ReturnType<typeof userEvent.setup>,
+    mode: "per_case" | "single_run" | "ssh_session" | "email_delivery",
+  ) {
+    await goToStep(user, "comparison");
+    await user.selectOptions(screen.getByTestId("execution-mode"), mode);
+  }
+
+  /** 新建题的必填项。SSH / 邮件模式要求 Bash：语言也要一起选。 */
+  async function fillNewQuestionBasics(
+    user: ReturnType<typeof userEvent.setup>,
+    options: { bash?: boolean } = {},
+  ) {
+    await selectCourse(user);
+    await user.type(screen.getByLabelText("题目标题"), "练习环境题");
+    if (options.bash) {
+      await user.selectOptions(screen.getByLabelText("语言"), "bash");
+    }
+    await goToStep(user, "stem");
+    await user.type(screen.getByLabelText("题干"), "# 练习环境题");
+    await goToStep(user, "reference");
+    await user.type(screen.getByLabelText("参考答案"), "print(1)");
+  }
+
+  function saveRequest(): RecordedRequest {
+    const found = stub?.requests.find(
+      (item) =>
+        (item.method === "POST" && item.url.pathname === "/api/v1/questions") ||
+        (item.method === "PATCH" && item.url.pathname === `/api/v1/questions/${QUESTION_ID}`),
+    );
+    if (!found) throw new Error("尚未发出保存请求");
+    return found;
+  }
+
+  it("默认每个用例单独运行：保存请求体显式声明 per_case", async () => {
+    stub = installFetchStub(baseRoutes(createRoutes()));
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+
+    await fillCreateForm(user);
+    await user.click(screen.getByTestId("authoring-save"));
+
+    const request = await waitFor(() => saveRequest());
+    const body = request.body as Record<string, unknown>;
+    expect(body.execution).toEqual({ mode: "per_case" });
+    // 没有模式专属配置被顺手带上。
+    expect(JSON.stringify(body)).not.toContain("segment_delimiter");
+    expect(JSON.stringify(body)).not.toContain("ssh");
+  });
+
+  it("ssh_session：练习配置随保存发送，口令只出现在请求体里", async () => {
+    const lines: Record<string, unknown>[] = [];
+    setLogSink((records) => {
+      lines.push(...(records as unknown as Record<string, unknown>[]));
+    });
+    try {
+      stub = installFetchStub(baseRoutes(createRoutes()));
+      const user = userEvent.setup();
+      await signIn("teacher1", "pw");
+      renderAuthoring(null);
+
+      await fillNewQuestionBasics(user, { bash: true });
+      await selectExecutionMode(user, "ssh_session");
+
+      // host 是固定值且只读；口令框是 password，不被当作可保存的登录凭据。
+      expect(screen.getByTestId("execution-ssh-host")).toHaveValue("127.0.0.1");
+      expect(screen.getByTestId("execution-ssh-host")).toHaveAttribute("readonly");
+      const password = screen.getByTestId("execution-ssh-password");
+      expect(password).toHaveAttribute("type", "password");
+
+      const port = screen.getByTestId("execution-ssh-port");
+      await user.clear(port);
+      await user.type(port, "2222");
+      await user.type(screen.getByTestId("execution-ssh-username"), "user01");
+      await user.type(password, "practice-secret");
+      const loginTimeout = screen.getByTestId("execution-ssh-login-timeout");
+      await user.clear(loginTimeout);
+      await user.type(loginTimeout, "5");
+
+      // 用例要选一个真实的服务端事实才能保存。
+      await goToStep(user, "cases");
+      await user.type(screen.getByLabelText("分值"), "1");
+      await user.selectOptions(screen.getByLabelText("SSH 判定项"), "auth_succeeded");
+      await goToStep(user, "comparison");
+      await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
+      await user.click(screen.getByTestId("authoring-save"));
+
+      const request = await waitFor(() => saveRequest());
+      const body = request.body as Record<string, unknown>;
+      expect(body.execution).toEqual({
+        mode: "ssh_session",
+        ssh: {
+          host: "127.0.0.1",
+          port: 2222,
+          username: "user01",
+          password: "practice-secret",
+          login_timeout_seconds: 5,
+          session_timeout_seconds: 10,
+        },
+      });
+      expect((body.cases as Record<string, unknown>[])[0].ssh_check).toBe("auth_succeeded");
+      // 口令只在请求体里：地址栏、日志与浏览器持久化存储都不出现。
+      expect(request.url.href).not.toContain("practice-secret");
+      expect(JSON.stringify(lines)).not.toContain("practice-secret");
+      const persisted = Object.keys(localStorage)
+        .map((key) => localStorage.getItem(key) ?? "")
+        .join("\n");
+      expect(persisted).not.toContain("practice-secret");
+    } finally {
+      setLogSink(null);
+    }
+  });
+
+  it("从 ssh_session 切回 per_case：口令从表单消失，保存请求里没有任何练习配置", async () => {
+    stub = installFetchStub(baseRoutes(createRoutes()));
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+
+    await fillCreateForm(user);
+    await user.selectOptions(screen.getByTestId("execution-mode"), "ssh_session");
+    await user.type(screen.getByTestId("execution-ssh-username"), "user01");
+    await user.type(screen.getByTestId("execution-ssh-password"), "practice-secret");
+
+    // 切回默认模式：口令框整个消失，表单里也不再有值。
+    await user.selectOptions(screen.getByTestId("execution-mode"), "per_case");
+    expect(screen.queryByTestId("execution-ssh-password")).toBeNull();
+
+    await user.click(screen.getByTestId("authoring-save"));
+    const request = await waitFor(() => saveRequest());
+    const body = request.body as Record<string, unknown>;
+    expect(body.execution).toEqual({ mode: "per_case" });
+    expect(JSON.stringify(body)).not.toContain("practice-secret");
+    expect(request.url.href).not.toContain("practice-secret");
+  });
+
+  it("编辑草稿会读回执行声明：模式、分隔行与用例分段/文件校验都可继续编辑", async () => {
+    stub = installFetchStub(
+      baseRoutes([
+        {
+          path: `/api/v1/questions/${QUESTION_ID}`,
+          method: "GET",
+          respond: () => jsonResponse(draftQuestion()),
+        },
+        {
+          path: `/api/v1/question-versions/${DRAFT_VERSION}`,
+          respond: () =>
+            jsonResponse({
+              ...questionVersionPublic({
+                question_version_id: DRAFT_VERSION,
+                version: 1,
+                status: "draft",
+                content_digest: SHA_A,
+              }),
+              execution_mode: "single_run",
+            }),
+        },
+        {
+          path: `/api/v1/question-versions/${DRAFT_VERSION}/draft-content`,
+          respond: () =>
+            jsonResponse({
+              reference_answer: "print(1)",
+              execution: { mode: "single_run", segment_delimiter: "===== SEGMENT =====" },
+              cases: [
+                {
+                  name: "第一段",
+                  ordinal: 0,
+                  weight: 1,
+                  visible_to_student: false,
+                  expected_stdout: "a\n",
+                  segment: 0,
+                },
+                {
+                  name: "改权限",
+                  ordinal: 1,
+                  weight: 1,
+                  visible_to_student: false,
+                  file_checks: [
+                    { path: "week6_1.txt", content_sha256: "a".repeat(64), mode: "0744" },
+                  ],
+                },
+              ],
+            }),
+        },
+        {
+          method: "PATCH",
+          path: `/api/v1/questions/${QUESTION_ID}`,
+          respond: () => jsonResponse(draftQuestion()),
+        },
+      ]),
+    );
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(QUESTION_ID);
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("题目标题")).toHaveValue(questionPublic().title),
+    );
+    await goToStep(user, "comparison");
+    // 模式来自公开版本 DTO，完整配置（分隔行）来自受保护草稿内容：等两者都到齐再断言。
+    await waitFor(() =>
+      expect(screen.getByTestId("execution-segment-delimiter")).toHaveValue(
+        "===== SEGMENT =====",
+      ),
+    );
+    expect(screen.getByTestId("execution-mode")).toHaveValue("single_run");
+
+    await goToStep(user, "cases");
+    expect(await screen.findByTestId("case-segment-0")).toHaveValue("0");
+    // 已保存的文件校验只读回摘要；内容原文留空表示沿用这份摘要。
+    expect(screen.getByTestId("case-file-check-digest-1-0")).toHaveTextContent(
+      "a".repeat(64),
+    );
+
+    await goToStep(user, "comparison");
+    await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
+    await user.click(screen.getByTestId("authoring-save"));
+
+    const request = await waitFor(() => {
+      const found = stub?.requests.find((item) => item.method === "PATCH");
+      if (!found) throw new Error("尚未发出修改请求");
+      return found;
+    });
+    const body = request.body as Record<string, unknown>;
+    expect(body.execution).toEqual({
+      mode: "single_run",
+      segment_delimiter: "===== SEGMENT =====",
+    });
+    const cases = body.cases as Record<string, unknown>[];
+    expect(cases[0].segment).toBe(0);
+    expect(cases[0]).not.toHaveProperty("file_checks");
+    expect(cases[1].file_checks).toEqual([
+      { path: "week6_1.txt", content_sha256: "a".repeat(64), mode: "0744" },
+    ]);
+  });
+
+  it("single_run 有用例按分段但分隔行为空：即时提示并阻止保存请求", async () => {
+    stub = installFetchStub(baseRoutes());
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+
+    await fillCreateForm(user);
+    await user.selectOptions(screen.getByTestId("execution-mode"), "single_run");
+
+    await goToStep(user, "cases");
+    await user.click(screen.getByTestId("case-segment-scored-0"));
+    await user.type(screen.getByTestId("case-segment-0"), "0");
+
+    await goToStep(user, "comparison");
+    expect(await screen.findByTestId("execution-issues")).toHaveTextContent(
+      "请填写分段分隔行",
+    );
+    await user.click(screen.getByTestId("authoring-save"));
+
+    expect(await screen.findByTestId("toast")).toHaveTextContent("请填写分段分隔行");
+    expect(
+      stub.requests.filter(
+        (item) => item.method === "POST" && item.url.pathname === "/api/v1/questions",
+      ),
+    ).toHaveLength(0);
   });
 });

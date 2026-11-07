@@ -16,6 +16,7 @@ import {
   StatusPill,
 } from "../../ui/components";
 import { formatDateTime } from "../../ui/format";
+import { readExecutionMode } from "../authoring/execution";
 import { ReferenceVerificationPanel } from "../authoring/ReferenceVerificationPanel";
 import { SafeMarkdown } from "./SafeMarkdown";
 import { useDeleteQuestionVersion, useQuestion, useQuestionVersion } from "./useQuestions";
@@ -203,6 +204,11 @@ export function QuestionDetailPage({
               <span>{t("questions.version", { version: version.data.version })}</span>
               <span className="muted">
                 {t("questions.adapterKind")}：{t(`questions.adapter.${version.data.adapter_kind}`)}
+              </span>
+              {/* 公开面只有模式本身；分段标记、邮件尝试次数与 SSH 配置都不在这里出现。 */}
+              <span className="muted" data-testid="version-execution-mode">
+                {t("questions.executionMode")}：
+                {t(`questions.executionMode.${readExecutionMode(version.data)}`)}
               </span>
               <StatusPill
                 tone={

@@ -19,9 +19,12 @@ from decimal import Decimal
 from autograder_b2.domain.evidence import CaseEvidence
 from autograder_b2.domain.security import SecurityDecision
 from autograder_b2.domain.static_result import StaticAnalysisResult
-from autograder_b2.evaluation.ports import CaseDescriptor, ComparisonPolicy
+from autograder_b2.evaluation.ports import EXECUTION_MODES, CaseDescriptor, ComparisonPolicy
 
 ZERO = Decimal(0)
+
+#: 会真的比较 stdout/stderr 的执行模式；其余模式（SSH 事件、邮件投递）的失败类别与输出比较无关。
+_COMPARED_MODES = ("per_case", "single_run")
 
 
 class ScoringDefect(RuntimeError):
@@ -134,7 +137,7 @@ def _evidence_by_ordinal(evidence: Sequence[CaseEvidence]) -> Mapping[int, CaseE
 
 
 def _assert_evidence_consistent(
-    case: CaseDescriptor, item: CaseEvidence, comparison: ComparisonPolicy
+    case: CaseDescriptor, item: CaseEvidence, comparison: ComparisonPolicy, mode: str
 ) -> None:
     """证据与声明的一致性（比对策略矛盾、通过与否与失败类别矛盾都算缺陷）。
 
@@ -142,6 +145,10 @@ def _assert_evidence_consistent(
     （技术故障 ⇒ 运行必须落 `failed`）与 `security_blocked`（执行期沙箱违规 ⇒ 运行必须落
     `rejected`）。编排层本来就在评分之前把它们升格掉；这里再拦一次是为了让"升格被删掉"的回归
     **当场失败**，而不是静默给一份越权的代码打出分数。
+
+    "输出不符与比较策略矛盾"这条判据**只对真的比较输出的模式生效**：`ssh_session` 的判定依据是
+    真实服务器端事件、`email_delivery` 的判定依据是邮件规则引擎，两者都不看 stdout——按 stdout
+    比较策略去否认它们的 `output_mismatch`，等于要求它们伪造一个自己并不执行的过程。
     """
     if decimal_of(item.weight) != decimal_of(case.weight):
         raise EvidenceCaseMismatch(
@@ -163,12 +170,17 @@ def _assert_evidence_consistent(
         raise ScoringPreconditionError(
             f"用例 {item.ordinal} 是执行期沙箱违规：应落到 rejected/security_blocked，不得评分"
         )
-    if item.failure_category == "output_mismatch" and (
+    if mode in _COMPARED_MODES and item.failure_category == "output_mismatch" and (
         comparison.stdout == "ignored" and comparison.stderr == "ignored"
     ):
-        raise ComparisonEvidenceMismatch(
-            f"用例 {item.ordinal} 报告输出不符，但 package 声明 stdout/stderr 都比较—忽略"
-        )
+        # `output_mismatch` 也可能是**文件检查**的结论（设计 §3.4：内容/权限不符），而声明
+        # stdout/stderr 都比较—忽略只说明"没有比较终端输出"。当证据本身就是文件级结论时
+        # 不允许用比较策略去否认它。
+        file_level = bool(item.file_checks) or bool(item.mismatched_outputs)
+        if not file_level:
+            raise ComparisonEvidenceMismatch(
+                f"用例 {item.ordinal} 报告输出不符，但 package 声明 stdout/stderr 都比较—忽略"
+            )
     if comparison.stdout == "numeric_tolerance" and comparison.numeric_tolerance is None:
         raise ComparisonEvidenceMismatch("package 声明数值容差比较但未给出 numeric_tolerance")
 
@@ -180,8 +192,15 @@ def score_run(
     static: StaticAnalysisResult,
     security: SecurityDecision,
     comparison: ComparisonPolicy,
+    mode: str = "per_case",
 ) -> ScoreBreakdown:
-    """确定性评分：`score = Σ (通过的用例权重)`；不通过记为 0（不是"不得分"，是"这条没拿到"）。"""
+    """确定性评分：`score = Σ (通过的用例权重)`；不通过记为 0（不是"不得分"，是"这条没拿到"）。
+
+    `mode` 只影响"证据自洽性"的**适用判据**（见 `_assert_evidence_consistent`）；分数公式对所有
+    执行模式完全相同——批量执行改变的是"用例怎么产生"，不是"通过算什么分"。
+    """
+    if mode not in EXECUTION_MODES:
+        raise ScoringDefect(f"未知执行模式：{mode!r}")
     assert_scoring_allowed(static=static, security=security)
     if not cases:
         raise ScoringDefect("没有用例就没有分数：package 必须至少声明一个用例")
@@ -197,7 +216,7 @@ def score_run(
     awards: list[CaseAward] = []
     for case in sorted(cases, key=lambda item: item.ordinal):
         item = indexed[case.ordinal]
-        _assert_evidence_consistent(case, item, comparison)
+        _assert_evidence_consistent(case, item, comparison, mode)
         weight = decimal_of(case.weight)
         awarded = weight if item.passed else ZERO
         awards.append(

@@ -27,6 +27,11 @@ from pydantic import BaseModel, ConfigDict, Field
 Language = Literal["python", "bash"]
 QuestionStatus = Literal["draft", "published", "archived"]
 AdapterKind = Literal["stdin", "file", "callable"]
+#: The public half of an execution declaration: **how** cases are produced, never the
+#: configuration behind it. Restated here rather than imported from ``dto/internal.py`` because
+#: the public module must not import the internal one (ADR-0004); the contract's
+#: ``common.yaml#ExecutionMode`` is the authority for these four names.
+ExecutionMode = Literal["per_case", "single_run", "ssh_session", "email_delivery"]
 AssignmentStatus = Literal["open", "archived"]
 #: The model-advice surface (``CHG-0011``). An enum, not free text, so a caller cannot
 #: ask for "anything else" and every supported use is a documented one.
@@ -190,6 +195,13 @@ class QuestionVersionPublic(BaseModel):
     status: QuestionStatus
     language: Language
     adapter_kind: AdapterKind
+    #: How this version's cases are produced (design baseline §8). The **enum only**: the
+    #: declaration behind it may carry an SSH password, the expected file digests, an email
+    #: subject template or the segment marker, and none of that belongs on a public DTO. A
+    #: teacher still needs to know whether a question is a per-case exercise or a single-run
+    #: one, so the bare mode is public and everything else travels only on the authoring and
+    #: internal-package channels. Defaults to ``per_case`` for versions that never declared one.
+    execution_mode: ExecutionMode = "per_case"
     #: The stem of *this* version. A version is an immutable snapshot, so rendering a
     #: historical version requires its own stem -- reading the question's current stem
     #: instead would silently show the wrong content (RQ-B-1-40 acceptance 5).

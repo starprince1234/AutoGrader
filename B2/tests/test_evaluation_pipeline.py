@@ -35,7 +35,7 @@ import threading
 import time
 import uuid
 from collections.abc import Iterator, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -47,7 +47,11 @@ import yaml
 from sqlalchemy import Engine, text
 from sqlalchemy.exc import IntegrityError
 
-from autograder_b2.contracts import EVALUATION_PACKAGE_SCHEMA, load_contract_schema
+from autograder_b2.contracts import (
+    EVALUATION_PACKAGE_SCHEMA,
+    EVALUATION_REPORT_SCHEMA,
+    load_contract_schema,
+)
 from autograder_b2.db.schema import (
     case_evidence,
     evaluation_results,
@@ -59,11 +63,13 @@ from autograder_b2.db.schema import (
 from autograder_b2.domain.envelope import ApiProvenance, EnvelopeFile, SubmissionEnvelope
 from autograder_b2.domain.evidence import (
     CaseEvidence,
+    FileCheckResult,
     PackageUnavailableError,
     SandboxUnavailableError,
     SubmissionRunInput,
 )
 from autograder_b2.domain.security import SecurityDecision, SecurityFinding
+from autograder_b2.domain.static_result import StaticAnalysisResult
 from autograder_b2.domain.transitions import history_of as submission_history_of
 from autograder_b2.domain.transitions import record_transitions
 from autograder_b2.evaluation import (
@@ -72,6 +78,7 @@ from autograder_b2.evaluation import (
     EVENT_FAILED,
     EVENT_PROGRESS,
     EVENT_REJECTED,
+    EXECUTION_MODES,
     FRAME_EVENTS,
     RUN_TRANSITIONS,
     STAGES,
@@ -79,14 +86,19 @@ from autograder_b2.evaluation import (
     CaseAward,
     CaseDescriptor,
     ComparisonPolicy,
+    DeliveryUnavailableError,
+    DeliveryVerificationDefect,
     DynamicExecutionGate,
     EvaluationOrchestrator,
+    ExecutionView,
     FrameRejected,
     IllegalRunTransition,
     PackageView,
     ProgressFrame,
     ReportBinding,
+    ReportExecution,
     ReportInputs,
+    ReportRejected,
     ScoreTotalMismatch,
     ScoringPreconditionError,
     TerminalFrameExists,
@@ -173,6 +185,36 @@ class _FakePackageCase:
     ordinal: int
     weight: float
     visible_to_student: bool = False
+    segment: int | None = None
+    email_check: str | None = None
+    ssh_check: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _FakeEmails:
+    """**测试替身**：模仿 runner 解析出的 `execution.email` 配置（投递核验只需要这三个字段）。"""
+
+    attempt: int
+    subject_template: str = "{student_number}_{attempt}"
+    required_attachment_template: str = "{student_number}.txt"
+
+
+@dataclass(frozen=True, slots=True)
+class _FakeExecution:
+    """**测试替身**：模仿 runner 解析出的 `execution` 句柄（含 mode/email 与受保护配置的位置）。"""
+
+    mode: str = "per_case"
+    segment_delimiter: str | None = None
+    email: _FakeEmails | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _FakePackageHandle:
+    """**测试替身**：模仿 runner 侧解析后的 package（投递核验从它读 tests/execution）。"""
+
+    tests: tuple[_FakePackageCase, ...]
+    execution: _FakeExecution = field(default_factory=_FakeExecution)
+    question_version_id: str | None = None
 
 
 class _FixedPackageSource:
@@ -222,6 +264,9 @@ class _ScriptedCaseRunner:
 
     它像真实 runner 一样从 `submission.case.case_id` 取用例标识、用 `submission.workspace` 作为工作区，
     因此"每用例一份输入与独立工作区""句柄原样来自 package"这两条接线约定在这里被真的验证。
+
+    批量模式（`single_run`/`ssh_session`）走 `run_cases`：一次调用返回**全部**用例的证据，
+    并记录批量输入里的工作区/句柄（编排层必须只准备一份批量工作区）。
     """
 
     def __init__(
@@ -230,13 +275,45 @@ class _ScriptedCaseRunner:
         plan: Mapping[str, Mapping[str, Any]] | None = None,
         default_passed: bool = True,
         failure: Exception | None = None,
+        batch_failure: Exception | None = None,
         delay: float = 0.0,
     ) -> None:
         self.plan = {str(key): dict(value) for key, value in (plan or {}).items()}
         self.default_passed = default_passed
         self.failure = failure
+        self.batch_failure = batch_failure
         self.delay = delay
         self.calls: list[dict[str, Any]] = []
+        self.batch_calls: list[dict[str, Any]] = []
+
+    def _evidence_for(self, case: Any, spec: Mapping[str, Any]) -> CaseEvidence:
+        case_id = str(case.case_id)
+        passed = bool(spec.get("passed", self.default_passed))
+        category = spec.get("failure_category")
+        if not passed and category is None:
+            category = "output_mismatch"
+        actual = str(spec.get("actual_output_excerpt", f"actual-{case_id}"))
+        expected = str(spec.get("expected_output_excerpt", f"expected-{case_id}"))
+        return CaseEvidence(
+            case_id=case_id,
+            ordinal=int(case.ordinal),
+            weight=float(case.weight),
+            passed=passed,
+            failure_category=None if passed else category,
+            input_digest=_digest(f"input:{case_id}"),
+            stdout_digest=_digest(actual),
+            stderr_digest=_digest(""),
+            actual_output_excerpt=actual,
+            expected_output_excerpt=expected,
+            exit_code=0 if passed else 1,
+            duration_ms=int(spec.get("duration_ms", 7)),
+            resource_limit_hit=None,
+            sandbox_violations=tuple(spec.get("sandbox_violations", ())),
+            message=None,
+            evidence_digest=_digest(f"evidence:{case_id}:{passed}"),
+            segment=spec.get("segment"),
+            file_checks=tuple(spec.get("file_checks", ())),
+        )
 
     def run_case(self, package: object, submission: SubmissionRunInput) -> CaseEvidence:
         case = submission.case
@@ -255,37 +332,114 @@ class _ScriptedCaseRunner:
             time.sleep(self.delay)
         if self.failure is not None:
             raise self.failure
-        spec = self.plan.get(case_id, {})
-        passed = bool(spec.get("passed", self.default_passed))
-        category = spec.get("failure_category")
-        if not passed and category is None:
-            category = "output_mismatch"
-        actual = str(spec.get("actual_output_excerpt", f"actual-{case_id}"))
-        expected = str(spec.get("expected_output_excerpt", f"expected-{case_id}"))
-        return CaseEvidence(
-            case_id=case_id,
-            ordinal=int(case.ordinal),  # type: ignore[attr-defined]
-            weight=float(case.weight),  # type: ignore[attr-defined]
-            passed=passed,
-            failure_category=None if passed else category,
-            input_digest=_digest(f"input:{case_id}"),
-            stdout_digest=_digest(actual),
-            stderr_digest=_digest(""),
-            actual_output_excerpt=actual,
-            expected_output_excerpt=expected,
-            exit_code=0 if passed else 1,
-            duration_ms=int(spec.get("duration_ms", 7)),
-            resource_limit_hit=None,
-            sandbox_violations=tuple(spec.get("sandbox_violations", ())),
-            message=None,
-            evidence_digest=_digest(f"evidence:{case_id}:{passed}"),
+        return self._evidence_for(case, self.plan.get(case_id, {}))
+
+    def run_cases(self, package: object, batch: Any) -> tuple[CaseEvidence, ...]:
+        self.batch_calls.append(
+            {
+                "package": package,
+                "cases": tuple(batch.cases),
+                "adapter": batch.adapter,
+                "policy": batch.policy,
+                "workspace": Path(batch.workspace),
+                "files": batch.files,
+            }
         )
+        if self.delay:
+            time.sleep(self.delay)
+        if self.batch_failure is not None:
+            raise self.batch_failure
+        return tuple(
+            self._evidence_for(case, self.plan.get(str(case.case_id), {})) for case in batch.cases
+        )
+
+
+class _ScriptedDeliveryVerifier:
+    """**测试替身**：`DeliveryVerifier`（生产实现读真实收件记录 + 共享规则引擎）。
+
+    它只回放给定证据或异常，不做任何邮件判定——因此本文件的 email 用例只证明**编排语义**，
+    不证明规则引擎本身有效（规则引擎有它自己的测试）。
+    """
+
+    def __init__(
+        self,
+        *,
+        plan: Mapping[str, Mapping[str, Any]] | None = None,
+        error: Exception | None = None,
+        missing_ordinals: Sequence[int] = (),
+        extra_ordinal: int | None = None,
+    ) -> None:
+        self.plan = {str(key): dict(value) for key, value in (plan or {}).items()}
+        self.error = error
+        self.missing_ordinals = tuple(missing_ordinals)
+        self.extra_ordinal = extra_ordinal
+        self.calls: list[dict[str, Any]] = []
+
+    def verify(self, package: object, submission: Any) -> tuple[CaseEvidence, ...]:
+        self.calls.append({"package": package, "submission": submission})
+        if self.error is not None:
+            raise self.error
+        # 从 package 句柄读取用例（生产实现也是这样取 email_check 与权重）。
+        tests = getattr(package, "tests", ())
+        evidences: list[CaseEvidence] = []
+        for case in tests:
+            if int(case.ordinal) in self.missing_ordinals:
+                continue
+            spec = self.plan.get(str(case.case_id), {"passed": True})
+            passed = bool(spec.get("passed", True))
+            category = spec.get("failure_category")
+            if not passed and category is None:
+                category = "missing_output"
+            actual = str(spec.get("actual_output_excerpt", f"email-{case.case_id}"))
+            evidences.append(
+                CaseEvidence(
+                    case_id=str(case.case_id),
+                    ordinal=int(case.ordinal),
+                    weight=float(case.weight),
+                    passed=passed,
+                    failure_category=None if passed else category,
+                    input_digest=_digest(f"email-input:{case.case_id}"),
+                    stdout_digest=_digest(actual),
+                    stderr_digest=_digest(""),
+                    actual_output_excerpt=None,
+                    expected_output_excerpt=None,
+                    exit_code=None,
+                    duration_ms=None,
+                    resource_limit_hit=None,
+                    sandbox_violations=(),
+                    message=spec.get("message"),
+                    evidence_digest=_digest(f"email-evidence:{case.case_id}:{passed}"),
+                )
+            )
+        if self.extra_ordinal is not None:
+            evidences.append(
+                CaseEvidence(
+                    case_id=str(uuid.uuid4()),
+                    ordinal=int(self.extra_ordinal),
+                    weight=1.0,
+                    passed=True,
+                    failure_category=None,
+                    input_digest=_digest("extra"),
+                    stdout_digest=_digest("extra"),
+                    stderr_digest=_digest(""),
+                    actual_output_excerpt=None,
+                    expected_output_excerpt=None,
+                    exit_code=None,
+                    duration_ms=None,
+                    resource_limit_hit=None,
+                    sandbox_violations=(),
+                    message=None,
+                    evidence_digest=_digest("extra-evidence"),
+                )
+            )
+        return tuple(evidences)
 
 
 class _LocalWorkspaceProvider:
     """**测试本地实现**：把提交内容写进服务端生成的工作区目录（生产实现从 CAS 读内容）。
 
-    运行级工作区（`case_id=None`）供静态检查与安全判定读；每个用例一份**独立**工作区（绝不复用）。
+    运行级工作区（`case_id=None`）供静态检查与安全判定读；`per_case` 每个用例一份**独立**工作区；
+    `batch=True` 是批量执行唯一的工作区（每次 `prepare` 都新建，绝不复用）。
     """
 
     def __init__(self, root: Path, contents: Mapping[str, bytes]) -> None:
@@ -293,6 +447,7 @@ class _LocalWorkspaceProvider:
         self.contents = dict(contents)
         self.prepared: list[Path] = []
         self.released: list[Path] = []
+        self.batches: list[Path] = []
 
     def prepare(
         self,
@@ -301,8 +456,16 @@ class _LocalWorkspaceProvider:
         evaluation_run_id: str,
         files: Sequence[EnvelopeFile],
         case_id: str | None = None,
+        batch: bool = False,
     ) -> Path:
-        scope = "run" if case_id is None else f"case-{case_id[:8]}"
+        if batch and case_id is not None:
+            raise ValueError("batch workspace and case workspace are different scopes")
+        if batch:
+            scope = "batch"
+        elif case_id is None:
+            scope = "run"
+        else:
+            scope = f"case-{case_id[:8]}"
         workspace = self.root / f"ws-{evaluation_run_id[:8]}-{scope}-{len(self.prepared)}"
         workspace.mkdir(parents=True, exist_ok=False)
         for item in files:
@@ -310,6 +473,8 @@ class _LocalWorkspaceProvider:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(self.contents[item.path])
         self.prepared.append(workspace)
+        if batch:
+            self.batches.append(workspace)
         return workspace
 
     def release(self, workspace: Path) -> None:
@@ -370,33 +535,75 @@ def _package_view(
     cases: Sequence[tuple[str, int, float, bool]] | None = None,
     *,
     comparison: ComparisonPolicy | None = None,
+    execution: ExecutionView | None = None,
+    case_extras: Mapping[str, Mapping[str, Any]] | None = None,
+    language: str = "python",
 ) -> PackageView:
-    """构造 package 视图（句柄是测试替身对象：编排层只把它们当不透明句柄传递）。"""
+    """构造 package 视图（句柄是测试替身对象：编排层只把它们当不透明句柄传递）。
+
+    `execution` 是执行模式视图（缺省 per_case）；`case_extras` 给用例句柄补 `segment`/`email_check`
+    等模式相关属性（编排层不解释它们，投递核验的**测试替身**才读）。
+    """
     declared = list(cases or [(str(uuid.uuid4()), 0, 5.0, True)])
+    extras = dict(case_extras or {})
+    execution_view = execution or ExecutionView()
+    handles = tuple(
+        _FakePackageCase(
+            case_id=case_id,
+            ordinal=ordinal,
+            weight=weight,
+            visible_to_student=visible,
+            **dict(extras.get(case_id, {})),
+        )
+        for case_id, ordinal, weight, visible in declared
+    )
     descriptors = tuple(
         CaseDescriptor(
             case_id=case_id,
             ordinal=ordinal,
             weight=weight,
             visible_to_student=visible,
-            handle=_FakePackageCase(
-                case_id=case_id, ordinal=ordinal, weight=weight, visible_to_student=visible
-            ),
+            handle=handle,
         )
-        for case_id, ordinal, weight, visible in declared
+        for (case_id, ordinal, weight, visible), handle in zip(declared, handles)
     )
+    handle: object
+    if execution_view.mode == "email_delivery":
+        handle = _FakePackageHandle(
+            tests=handles,
+            execution=_FakeExecution(
+                mode=execution_view.mode,
+                segment_delimiter=execution_view.segment_delimiter,
+                email=_FakeEmails(attempt=1),
+            ),
+            question_version_id=DIGEST_QUESTION,
+        )
+    else:
+        handle = {"package": "fake-package-handle"}
     return PackageView(
         package_digest=_package_digest(),
-        language="python",
+        language=language,
         cases=descriptors,
         runner_policy_digest=DIGEST_POLICY,
         environment_digest=DIGEST_ENV,
         comparison=comparison or ComparisonPolicy(stdout="exact"),
         question_version_binding=DIGEST_QUESTION,
         interpreter_version="CPython 3.12",
-        handle={"package": "fake-package-handle"},
+        execution=execution_view,
+        handle=handle,
         adapter_handle={"adapter": "fake-package-adapter"},
         policy_handle={"policy": "fake-package-policy"},
+    )
+
+
+def _execution(mode: str, *, delimiter: str | None = None) -> ExecutionView:
+    """构造带规范化摘要的 execution 视图（摘要值只作内部诊断，测试里用固定派生值）。"""
+    digest = _digest(f"execution:{mode}:{delimiter or ''}")
+    return ExecutionView(
+        mode=mode,
+        execution_digest=digest,
+        segment_delimiter=delimiter,
+        handle={"execution": mode},
     )
 
 
@@ -513,7 +720,7 @@ def _envelope(
 
 @dataclass(frozen=True, slots=True)
 class _Rig:
-    """一次测试的装配：编排器 + 三个替身/本地实现 + 并发闸门。"""
+    """一次测试的装配：编排器 + 替身/本地实现 + 并发闸门。"""
 
     orchestrator: EvaluationOrchestrator
     packages: _FixedPackageSource
@@ -521,6 +728,7 @@ class _Rig:
     runner: _ScriptedCaseRunner
     workspaces: _LocalWorkspaceProvider
     gate: DynamicExecutionGate
+    delivery: _ScriptedDeliveryVerifier | None = None
 
     def run(self, envelope: SubmissionEnvelope) -> Any:
         return self.orchestrator.run(envelope)
@@ -535,15 +743,26 @@ def _rig(
     comparison: ComparisonPolicy | None = None,
     decision: SecurityDecision | None = None,
     runner: _ScriptedCaseRunner | None = None,
+    delivery: _ScriptedDeliveryVerifier | None = None,
     gate: DynamicExecutionGate | None = None,
     package_error: Exception | None = None,
+    execution: ExecutionView | None = None,
+    case_extras: Mapping[str, Mapping[str, Any]] | None = None,
+    language: str = "python",
 ) -> _Rig:
-    """装配一个编排器（静态检查是真的；安全判定与 runner 是显式标注的替身）。"""
+    """装配一个编排器（静态检查是真的；安全判定/runner/投递核验是显式标注的替身）。"""
     workspace_root = tmp_path / "workspaces"
     workspace_root.mkdir(exist_ok=True)
     payload = dict(contents or {"main.py": CLEAN_SOURCE.encode("utf-8")})
     packages = _FixedPackageSource(
-        view=_package_view(cases, comparison=comparison), error=package_error
+        view=_package_view(
+            cases,
+            comparison=comparison,
+            execution=execution,
+            case_extras=case_extras,
+            language=language,
+        ),
+        error=package_error,
     )
     security = _FixedSecurityDecider(decision or _clean_decision())
     workspaces = _LocalWorkspaceProvider(workspace_root, payload)
@@ -555,10 +774,19 @@ def _rig(
         workspace_provider=workspaces,
         security=security,
         runner=active_runner,
+        delivery=delivery,
         gate=active_gate,
         now=FrozenClock(),
     )
-    return _Rig(orchestrator, packages, security, active_runner, workspaces, active_gate)
+    return _Rig(
+        orchestrator,
+        packages,
+        security,
+        active_runner,
+        workspaces,
+        active_gate,
+        delivery,
+    )
 
 
 def _run_once(
@@ -569,8 +797,12 @@ def _run_once(
     cases: Sequence[tuple[str, int, float, bool]] | None = None,
     decision: SecurityDecision | None = None,
     runner: _ScriptedCaseRunner | None = None,
+    delivery: _ScriptedDeliveryVerifier | None = None,
     gate: DynamicExecutionGate | None = None,
     package_error: Exception | None = None,
+    execution: ExecutionView | None = None,
+    case_extras: Mapping[str, Mapping[str, Any]] | None = None,
+    language: str = "python",
 ) -> tuple[_Rig, Any]:
     """建提交 + 信封 + 装配，跑一次完整编排，返回 `(rig, outcome)`。"""
     submission_id, question_version_id = _seed_submission(engine)
@@ -585,8 +817,12 @@ def _run_once(
         cases=cases,
         decision=decision,
         runner=runner,
+        delivery=delivery,
         gate=gate,
         package_error=package_error,
+        execution=execution,
+        case_extras=case_extras,
+        language=language,
     )
     return rig, rig.run(envelope)
 
@@ -2098,6 +2334,596 @@ def test_terminal_failure_enqueues_failed_event_without_source(engine: Engine, t
     }
 
 
+# --- 10.5 执行模式：single_run / ssh_session -------------------------------------------------
+
+
+def test_single_run_calls_the_batch_entry_once_and_produces_one_evidence_per_case(
+    engine: Engine, tmp_path: Path
+) -> None:
+    """`single_run`：一份批量工作区 + 一次 `run_cases` ⇒ N 条证据、`invocation_count=1`。"""
+    cases = [(str(uuid.uuid4()), 0, 5.0, True), (str(uuid.uuid4()), 1, 5.0, True)]
+    runner = _ScriptedCaseRunner()
+    rig, outcome = _run_once(
+        engine,
+        tmp_path,
+        cases=cases,
+        runner=runner,
+        execution=_execution("single_run", delimiter="---SEGMENT---"),
+    )
+    assert (outcome.state, outcome.terminal_reason) == ("completed", None)
+    # 逐用例入口一次都没被调用：批量模式不得退化成 N 次沙箱。
+    assert runner.calls == []
+    assert len(runner.batch_calls) == 1
+    batch = runner.batch_calls[0]
+    assert [str(case.case_id) for case in batch["cases"]] == [case[0] for case in cases]
+    assert batch["workspace"] in rig.workspaces.batches
+    assert batch["workspace"] in rig.workspaces.released
+    # 证据数 = 用例数，但执行次数 = 1（这两个数在结果与报告里都必须如实分开）。
+    assert outcome.runner_invocations == 1
+    assert outcome.case_evidence_written == 2
+    assert outcome.score == Decimal(10)
+    assert outcome.is_pass is True
+    report = rig.orchestrator.read_report(outcome.evaluation_run_id)
+    assert report is not None
+    assert report["execution"] == {
+        "mode": "single_run",
+        "invocation_count": 1,
+        "evidence_count": 2,
+    }
+    # 逐条进度帧仍然按证据产生（证据数 ≠ 执行次数）。
+    frames = _frames(engine, outcome.evaluation_run_id)
+    dynamic_frames = [
+        frame
+        for frame in frames
+        if frame.event == EVENT_PROGRESS and frame.stage == "dynamic_execution"
+    ]
+    assert [frame.cases_done for frame in dynamic_frames if frame.cases_done] == [1, 2]
+
+
+@pytest.mark.parametrize("mode", ["single_run", "ssh_session"])
+def test_batch_modes_share_the_same_one_invocation_contract(
+    engine: Engine, tmp_path: Path, mode: str
+) -> None:
+    """`ssh_session` 与 `single_run` 同属"一次批量执行"：计数语义不得不同。"""
+    cases = [(str(uuid.uuid4()), 0, 1.0, True), (str(uuid.uuid4()), 1, 1.0, True)]
+    runner = _ScriptedCaseRunner()
+    rig, outcome = _run_once(
+        engine, tmp_path, cases=cases, runner=runner, execution=_execution(mode)
+    )
+    assert outcome.state == "completed"
+    assert len(runner.batch_calls) == 1 and runner.calls == []
+    assert outcome.runner_invocations == 1
+    report = rig.orchestrator.read_report(outcome.evaluation_run_id)
+    assert report is not None
+    assert report["execution"]["mode"] == mode
+    assert report["execution"]["invocation_count"] == 1
+
+
+def test_batch_security_blocked_rejects_the_run_without_scoring_it(
+    engine: Engine, tmp_path: Path
+) -> None:
+    """批量证据里的执行期违规仍按既有升格逻辑：`rejected + security_blocked`、不产生分数。"""
+    first = (str(uuid.uuid4()), 0, 5.0, True)
+    second = (str(uuid.uuid4()), 1, 5.0, True)
+    runner = _ScriptedCaseRunner(
+        plan={second[0]: {"passed": False, "failure_category": "security_blocked"}}
+    )
+    _, outcome = _run_once(
+        engine,
+        tmp_path,
+        cases=[first, second],
+        runner=runner,
+        execution=_execution("single_run", delimiter="---SEGMENT---"),
+    )
+    assert (outcome.state, outcome.terminal_reason) == ("rejected", "security_blocked")
+    assert outcome.score is None and outcome.is_pass is None and outcome.report is None
+    assert outcome.runner_invocations == 1
+    assert outcome.case_evidence_written == 1
+
+
+def test_batch_case_infrastructure_error_is_a_technical_failure(engine: Engine, tmp_path: Path) -> None:
+    """批量证据里的 `infrastructure_error`（fixture 缺失/摘要不符）⇒ `failed`，并把已发生的调用/证据数如实报出。"""
+    first = (str(uuid.uuid4()), 0, 5.0, True)
+    broken = (str(uuid.uuid4()), 1, 5.0, True)
+    runner = _ScriptedCaseRunner(
+        plan={broken[0]: {"passed": False, "failure_category": "infrastructure_error"}}
+    )
+    _, outcome = _run_once(
+        engine,
+        tmp_path,
+        cases=[first, broken],
+        runner=runner,
+        execution=_execution("single_run", delimiter="---SEGMENT---"),
+    )
+    assert (outcome.state, outcome.terminal_reason) == ("failed", "infrastructure_error")
+    assert outcome.score is None and outcome.report is None
+    # 沙箱真的启动过一次（一次批量执行），且第一条证据已经落库。
+    assert outcome.runner_invocations == 1
+    assert outcome.case_evidence_written == 1
+
+
+def test_batch_evidence_that_does_not_match_the_package_is_an_internal_defect(
+    engine: Engine, tmp_path: Path
+) -> None:
+    """批量入口返回的证据与 package 用例对不上 ⇒ 内部缺陷（`failed + internal_error`），不猜、不补齐。"""
+    cases = [(str(uuid.uuid4()), 0, 1.0, True), (str(uuid.uuid4()), 1, 1.0, True)]
+    runner = _ScriptedCaseRunner(plan={})
+    original = runner.run_cases
+
+    def incomplete(package: object, batch: Any) -> tuple[CaseEvidence, ...]:
+        return original(package, batch)[:1]
+
+    runner.run_cases = incomplete  # type: ignore[method-assign]
+    _, outcome = _run_once(
+        engine, tmp_path, cases=cases, runner=runner, execution=_execution("single_run")
+    )
+    assert (outcome.state, outcome.terminal_reason) == ("failed", "internal_error")
+    assert outcome.report is None
+
+
+# --- 10.6 执行模式：email_delivery ----------------------------------------------------------
+
+
+def test_email_delivery_skips_workspace_static_and_security_and_reports_not_applicable(
+    engine: Engine, tmp_path: Path
+) -> None:
+    """`email_delivery`：不准备/不释放工作区、不跑静态/安全/沙箱，报告如实标 `not_applicable`。"""
+    cases = [(str(uuid.uuid4()), 0, 2.0, True), (str(uuid.uuid4()), 1, 3.0, False)]
+    delivery = _ScriptedDeliveryVerifier(
+        plan={cases[0][0]: {"passed": True}, cases[1][0]: {"passed": False}}
+    )
+    rig, outcome = _run_once(
+        engine,
+        tmp_path,
+        cases=cases,
+        delivery=delivery,
+        execution=_execution("email_delivery"),
+        case_extras={
+            cases[0][0]: {"email_check": "email_received"},
+            cases[1][0]: {"email_check": "subject"},
+        },
+        language="bash",
+    )
+    assert (outcome.state, outcome.terminal_reason) == ("completed", None)
+    # 没有任何工作区被准备或释放。
+    assert rig.workspaces.prepared == []
+    assert rig.workspaces.released == []
+    # 静态/安全判定阶段一次都没被调用。
+    assert rig.security.calls == []
+    assert len(delivery.calls) == 1
+    assert delivery.calls[0]["submission"].submission_id
+    assert outcome.runner_invocations == 0
+    assert outcome.case_evidence_written == 2
+    report = rig.orchestrator.read_report(outcome.evaluation_run_id)
+    assert report is not None
+    assert report["execution"] == {
+        "mode": "email_delivery",
+        "invocation_count": 0,
+        "evidence_count": 2,
+    }
+    assert report["static_findings"] == []
+    assert report["security_conclusion"] == {"status": "not_applicable", "findings": []}
+    # 帧与事件不得声称跑过静态/安全/沙箱。
+    frames = _frames(engine, outcome.evaluation_run_id)
+    stages = {frame.stage for frame in frames}
+    assert "static_analysis" not in stages
+    assert "security_check" not in stages
+    started = next(row for row in _outbox_rows(engine, outcome.evaluation_run_id) if row["subject"] == SUBJECT_STARTED)
+    assert started["payload"]["stage"] == "dynamic_execution"
+
+
+def test_email_delivery_dependency_outage_is_an_infrastructure_failure(
+    engine: Engine, tmp_path: Path
+) -> None:
+    """收件依赖不可用（心跳过期/未配置）⇒ `failed + infrastructure_error`，绝不折成学生失败。"""
+    cases = [(str(uuid.uuid4()), 0, 1.0, True)]
+    delivery = _ScriptedDeliveryVerifier(
+        error=DeliveryUnavailableError("mail intake heartbeat is stale")
+    )
+    _, outcome = _run_once(
+        engine,
+        tmp_path,
+        cases=cases,
+        delivery=delivery,
+        execution=_execution("email_delivery"),
+        case_extras={cases[0][0]: {"email_check": "email_received"}},
+        language="bash",
+    )
+    assert (outcome.state, outcome.terminal_reason) == ("failed", "infrastructure_error")
+    assert outcome.score is None and outcome.report is None
+    assert outcome.runner_invocations == 0
+
+
+def test_email_delivery_without_a_configured_verifier_fails_closed(
+    engine: Engine, tmp_path: Path
+) -> None:
+    """依赖没装配时不得静默跳过投递核验（那会把"没验证"变成通过）。"""
+    cases = [(str(uuid.uuid4()), 0, 1.0, True)]
+    _, outcome = _run_once(
+        engine,
+        tmp_path,
+        cases=cases,
+        delivery=None,
+        execution=_execution("email_delivery"),
+        case_extras={cases[0][0]: {"email_check": "email_received"}},
+        language="bash",
+    )
+    assert (outcome.state, outcome.terminal_reason) == ("failed", "infrastructure_error")
+
+
+def test_email_delivery_evidence_shape_mismatch_is_an_internal_defect(
+    engine: Engine, tmp_path: Path
+) -> None:
+    """投递核验证据与 package 用例对不上 ⇒ 内部缺陷，不落成"学生没收到邮件"。"""
+    cases = [(str(uuid.uuid4()), 0, 1.0, True), (str(uuid.uuid4()), 1, 1.0, True)]
+    delivery = _ScriptedDeliveryVerifier(missing_ordinals=(1,))
+    _, outcome = _run_once(
+        engine,
+        tmp_path,
+        cases=cases,
+        delivery=delivery,
+        execution=_execution("email_delivery"),
+        case_extras={
+            cases[0][0]: {"email_check": "email_received"},
+            cases[1][0]: {"email_check": "subject"},
+        },
+        language="bash",
+    )
+    assert (outcome.state, outcome.terminal_reason) == ("failed", "internal_error")
+
+
+def test_email_delivery_verifier_defect_is_an_internal_defect(engine: Engine, tmp_path: Path) -> None:
+    cases = [(str(uuid.uuid4()), 0, 1.0, True)]
+    delivery = _ScriptedDeliveryVerifier(error=DeliveryVerificationDefect("bad evidence"))
+    _, outcome = _run_once(
+        engine,
+        tmp_path,
+        cases=cases,
+        delivery=delivery,
+        execution=_execution("email_delivery"),
+        case_extras={cases[0][0]: {"email_check": "email_received"}},
+        language="bash",
+    )
+    assert (outcome.state, outcome.terminal_reason) == ("failed", "internal_error")
+
+
+# --- 10.7 报告：执行摘要 / 分段 / 文件检查 / not_applicable ---------------------------------
+
+
+def _file_check(path: str = "week6_1.txt", *, matched: bool = True) -> FileCheckResult:
+    return FileCheckResult(
+        path=path,
+        expected_sha256=_digest("expected-file"),
+        actual_sha256=_digest("expected-file") if matched else _digest("actual-file"),
+        expected_mode="0644" if path == "week6_1.txt" else "0744",
+        actual_mode="0644" if matched or path == "week6_1.txt" else "0755",
+        matched=matched,
+    )
+
+
+def test_scoring_accepts_a_file_check_failure_under_an_ignored_stdout_policy() -> None:
+    """`output_mismatch` 也可能是文件检查的结论：不能因为 stdout 比较策略是 ignored 就否认它。
+
+    （第 6 题就是这种形态：`stdout/stderr` 都比较—忽略，判定依据是执行后的文件字节与权限位。）
+    """
+    evidence = (
+        CaseEvidence(
+            case_id=FIXED_VISIBLE_CASE,
+            ordinal=0,
+            weight=1.0,
+            passed=False,
+            failure_category="output_mismatch",
+            input_digest=_digest("file-in"),
+            stdout_digest=_digest("file-out"),
+            stderr_digest=_digest(""),
+            actual_output_excerpt=None,
+            expected_output_excerpt=None,
+            exit_code=0,
+            duration_ms=None,
+            resource_limit_hit=None,
+            sandbox_violations=(),
+            message=None,
+            evidence_digest=_digest("file-ev"),
+            file_checks=(_file_check("week6_2.dat", matched=False),),
+        ),
+    )
+    breakdown = score_run(
+        cases=(CaseDescriptor(case_id=FIXED_VISIBLE_CASE, ordinal=0, weight=1.0),),
+        evidence=evidence,
+        static=_report_inputs().static,
+        security=_clean_decision(),
+        comparison=ComparisonPolicy(stdout="ignored", stderr="ignored"),
+        mode="single_run",
+    )
+    assert breakdown.score == Decimal(0)
+    assert breakdown.awards[0].failure_category == "output_mismatch"
+
+
+def test_report_records_execution_counts_segment_and_file_checks() -> None:
+    """报告把执行次数、分段段号与文件检查明细都如实写出（可复核，不只是"声称检查过"）。"""
+    base = _report_inputs()
+    evidence = (
+        CaseEvidence(
+            case_id=FIXED_VISIBLE_CASE,
+            ordinal=0,
+            weight=6.0,
+            passed=True,
+            failure_category=None,
+            input_digest=_digest("in-0"),
+            stdout_digest=_digest("segment-0"),
+            stderr_digest=_digest(""),
+            actual_output_excerpt="segment content",
+            expected_output_excerpt=None,
+            exit_code=0,
+            duration_ms=3,
+            resource_limit_hit=None,
+            sandbox_violations=(),
+            message=None,
+            evidence_digest=_digest("ev-seg-0"),
+            segment=0,
+            file_checks=(_file_check("week6_1.txt"),),
+        ),
+        CaseEvidence(
+            case_id=FIXED_HIDDEN_CASE,
+            ordinal=1,
+            weight=4.0,
+            passed=False,
+            failure_category="output_mismatch",
+            input_digest=_digest("in-1"),
+            stdout_digest=_digest("segment-1"),
+            stderr_digest=_digest(""),
+            actual_output_excerpt=None,
+            expected_output_excerpt=None,
+            exit_code=None,
+            duration_ms=4,
+            resource_limit_hit=None,
+            sandbox_violations=(),
+            message=None,
+            evidence_digest=_digest("ev-seg-1"),
+            segment=1,
+            file_checks=(_file_check("week6_2.dat", matched=False),),
+        ),
+    )
+    breakdown = score_run(
+        cases=_REPORT_CASES,
+        evidence=evidence,
+        static=base.static,
+        security=base.security,
+        comparison=ComparisonPolicy(stdout="exact"),
+        mode="single_run",
+    )
+    inputs = ReportInputs(
+        evaluation_run_id=base.evaluation_run_id,
+        submission_id=base.submission_id,
+        question_version_id=base.question_version_id,
+        static=base.static,
+        security=base.security,
+        evidence=evidence,
+        breakdown=breakdown,
+        binding=base.binding,
+        execution=ReportExecution(mode="single_run", invocation_count=1, evidence_count=2),
+    )
+    report = build_report(inputs, generated_at=BASE)
+    assert report["execution"] == {
+        "mode": "single_run",
+        "invocation_count": 1,
+        "evidence_count": 2,
+    }
+    segments = {item["ordinal"]: item["segment"] for item in report["case_evidence"]}
+    assert segments == {0: 0, 1: 1}
+    checks = report["case_evidence"][0]["artifacts"]["file_checks"]
+    assert checks == [
+        {
+            "path": "week6_1.txt",
+            "expected_sha256": _digest("expected-file"),
+            "actual_sha256": _digest("expected-file"),
+            "expected_mode": "0644",
+            "actual_mode": "0644",
+            "matched": True,
+        }
+    ]
+    failed_checks = report["case_evidence"][1]["artifacts"]["file_checks"]
+    assert failed_checks[0]["matched"] is False
+    assert report_schema_errors(report) == []
+    # 分段与文件检查参与 result_digest：只改一项匹配结果 ⇒ 摘要不同。
+    changed = dict(report)
+    changed_cases = [dict(item) for item in report["case_evidence"]]
+    changed_cases[1] = dict(changed_cases[1])
+    changed_checks = [dict(item) for item in changed_cases[1]["artifacts"]["file_checks"]]
+    changed_checks[0]["matched"] = True
+    changed_cases[1]["artifacts"] = {**changed_cases[1]["artifacts"], "file_checks": changed_checks}
+    changed["case_evidence"] = changed_cases
+    assert report_digest(changed) != report["result_digest"]
+
+
+def test_report_email_delivery_marks_static_and_security_as_not_applicable() -> None:
+    """email 模式的安全结论写 `not_applicable`（不是 `not_checked`/`not_found`），静态明细为空。"""
+    evidence = (
+        CaseEvidence(
+            case_id=FIXED_VISIBLE_CASE,
+            ordinal=0,
+            weight=1.0,
+            passed=False,
+            failure_category="missing_output",
+            input_digest=_digest("mail-in"),
+            stdout_digest=_digest("mail-check"),
+            stderr_digest=_digest(""),
+            actual_output_excerpt=None,
+            expected_output_excerpt=None,
+            exit_code=None,
+            duration_ms=None,
+            resource_limit_hit=None,
+            sandbox_violations=(),
+            message="no message received",
+            evidence_digest=_digest("mail-ev"),
+        ),
+    )
+    static = StaticAnalysisResult(
+        language="bash",
+        checks=(),
+        findings=(),
+        blocking=False,
+        error_count=0,
+        warning_count=0,
+        info_count=0,
+        result_digest=_digest("static-not-applicable"),
+    )
+    security = SecurityDecision(
+        status="not_found",
+        findings=(),
+        blocking=False,
+        covered=(),
+        unchecked=(),
+        rationale="email_delivery 不执行代码，安全检查不适用。",
+    )
+    breakdown = score_run(
+        cases=(CaseDescriptor(case_id=FIXED_VISIBLE_CASE, ordinal=0, weight=1.0),),
+        evidence=evidence,
+        static=static,
+        security=security,
+        comparison=ComparisonPolicy(stdout="ignored", stderr="ignored"),
+        mode="email_delivery",
+    )
+    report = build_report(
+        ReportInputs(
+            evaluation_run_id=FIXED_RUN,
+            submission_id=FIXED_SUBMISSION,
+            question_version_id=FIXED_QUESTION,
+            static=static,
+            security=security,
+            evidence=evidence,
+            breakdown=breakdown,
+            binding=ReportBinding(
+                submission_digest=DIGEST_SUBMISSION,
+                package_digest=DIGEST_PACKAGE,
+                runner_policy_digest=DIGEST_POLICY,
+                environment_digest=DIGEST_ENV,
+                question_version_binding=DIGEST_QUESTION,
+            ),
+            execution=ReportExecution(mode="email_delivery", invocation_count=0, evidence_count=1),
+            security_not_applicable=True,
+        ),
+        generated_at=BASE,
+    )
+    assert report["static_findings"] == []
+    assert report["security_conclusion"] == {"status": "not_applicable", "findings": []}
+    assert report["execution"]["invocation_count"] == 0
+    assert report_schema_errors(report) == []
+
+
+def test_report_refuses_to_disguise_email_delivery_as_checked() -> None:
+    """把 email 模式写成 `not_checked`/`not_found`（或反之以 not_applicable 冒充普通模式）都必须被拒。"""
+    base = _report_inputs()
+    with pytest.raises(ReportRejected):
+        build_report(
+            ReportInputs(
+                evaluation_run_id=base.evaluation_run_id,
+                submission_id=base.submission_id,
+                question_version_id=base.question_version_id,
+                static=base.static,
+                security=base.security,
+                evidence=base.evidence,
+                breakdown=base.breakdown,
+                binding=base.binding,
+                execution=ReportExecution(mode="email_delivery", invocation_count=0, evidence_count=2),
+                security_not_applicable=False,
+            ),
+            generated_at=BASE,
+        )
+    with pytest.raises(ReportRejected):
+        build_report(
+            ReportInputs(
+                evaluation_run_id=base.evaluation_run_id,
+                submission_id=base.submission_id,
+                question_version_id=base.question_version_id,
+                static=base.static,
+                security=base.security,
+                evidence=base.evidence,
+                breakdown=base.breakdown,
+                binding=base.binding,
+                security_not_applicable=True,
+            ),
+            generated_at=BASE,
+        )
+
+
+def test_report_execution_counts_must_be_truthful() -> None:
+    """`invocation_count` 与模式绑定：批量模式恒 1、email 恒 0、per_case = 证据数。"""
+    base = _report_inputs()
+    for kwargs in (
+        {"mode": "per_case", "invocation_count": 1, "evidence_count": 2},
+        {"mode": "single_run", "invocation_count": 2, "evidence_count": 2},
+        {"mode": "email_delivery", "invocation_count": 1, "evidence_count": 2},
+        {"mode": "single_run", "invocation_count": 1, "evidence_count": 3},
+    ):
+        with pytest.raises(ReportRejected):
+            execution = ReportExecution(**kwargs)
+            build_report(
+                ReportInputs(
+                    evaluation_run_id=base.evaluation_run_id,
+                    submission_id=base.submission_id,
+                    question_version_id=base.question_version_id,
+                    static=base.static,
+                    security=base.security,
+                    evidence=base.evidence,
+                    breakdown=base.breakdown,
+                    binding=base.binding,
+                    execution=execution,
+                ),
+                generated_at=BASE,
+            )
+
+
+def test_student_view_hides_the_expected_side_of_file_checks() -> None:
+    """`file_checks[].expected_sha256/expected_mode` 与摘录同属"期望侧"，学生视图必须裁掉。"""
+    report = _report()
+    visible = report["case_evidence"][0]
+    hidden = report["case_evidence"][1]
+    visible["artifacts"] = {
+        "expected_sha256": None,
+        "actual_sha256": None,
+        "file_checks": [
+            {
+                "path": "week6_1.txt",
+                "expected_sha256": _digest("expected"),
+                "actual_sha256": _digest("expected"),
+                "expected_mode": "0644",
+                "actual_mode": "0644",
+                "matched": True,
+            }
+        ],
+        "created": [],
+        "modified": [],
+        "deleted": [],
+    }
+    hidden["artifacts"] = {
+        "expected_sha256": None,
+        "actual_sha256": None,
+        "file_checks": [
+            {
+                "path": "week6_2.dat",
+                "expected_sha256": _digest("expected-hidden"),
+                "actual_sha256": _digest("actual-hidden"),
+                "expected_mode": "0744",
+                "actual_mode": "0755",
+                "matched": False,
+            }
+        ],
+        "created": [],
+        "modified": [],
+        "deleted": [],
+    }
+    student = for_student(report, visible_case_ids=[FIXED_VISIBLE_CASE])
+    student_checks = student["case_evidence"][0]["artifacts"]["file_checks"]
+    assert student_checks[0]["expected_sha256"] == _digest("expected")
+    hidden_checks = student["case_evidence"][1]["artifacts"]["file_checks"]
+    assert hidden_checks[0]["expected_sha256"] is None
+    assert hidden_checks[0]["expected_mode"] is None
+    # 实际侧与判定结果保留（那是学生自己的文件事实）。
+    assert hidden_checks[0]["actual_sha256"] == _digest("actual-hidden")
+    assert hidden_checks[0]["matched"] is False
+
+
 # --- 11. 契约取值集合一致性 ----------------------------------------------------------------
 
 
@@ -2123,6 +2949,23 @@ def test_value_sets_match_main_contracts() -> None:
     assert set(comparison["stdout"]["enum"]) == set(ports_module.STDOUT_STRATEGIES)
     assert set(comparison["stderr"]["enum"]) == set(ports_module.STDERR_STRATEGIES)
     assert set(package_schema["properties"]["language"]["enum"]) == set(ports_module.LANGUAGES)
+    common = yaml.safe_load((contracts_root / "openapi" / "common.yaml").read_text(encoding="utf-8"))
+    assert set(common["components"]["schemas"]["ExecutionMode"]["enum"]) == set(EXECUTION_MODES)
+    assert set(package_schema["properties"]["execution"]["properties"]["mode"]["enum"]) == set(
+        EXECUTION_MODES
+    )
+    report_schema = load_contract_schema(EVALUATION_REPORT_SCHEMA)
+    assert set(report_schema["properties"]["execution"]["properties"]["mode"]["enum"]) == set(
+        EXECUTION_MODES
+    )
+    assert "not_applicable" in report_schema["properties"]["security_conclusion"]["properties"][
+        "status"
+    ]["enum"]
+    assert "segment" in report_schema["properties"]["case_evidence"]["items"]["properties"]
+    assert (
+        "file_checks"
+        in report_schema["$defs"]["case_artifacts"]["properties"]
+    )
     transitions = openapi["components"]["schemas"]["SubmissionTransitions"]
     assert set(transitions["properties"]["transitions"]["example"]) >= {"queued", "running"}
 
@@ -2155,6 +2998,23 @@ def test_ports_reject_contract_violations() -> None:
             runner_policy_digest=DIGEST_POLICY,
             environment_digest=DIGEST_ENV,
         )
+    # 执行模式视图：未知模式 / 非法分隔行 / 非法摘要都在调用实现之前被拒绝。
+    with pytest.raises(ports_module.PortContractError):
+        ExecutionView(mode="mail_delivery")
+    with pytest.raises(ports_module.PortContractError):
+        ExecutionView(mode="single_run", segment_delimiter="short")
+    with pytest.raises(ports_module.PortContractError):
+        ExecutionView(mode="single_run", segment_delimiter="---SEGMENT--- ")  # 尾随空白
+    with pytest.raises(ports_module.PortContractError):
+        ExecutionView(mode="single_run", execution_digest="not-a-digest")
+    # 缺省 = per_case（旧 package 不必声明 execution）。
+    assert PackageView(
+        package_digest=DIGEST_PACKAGE,
+        language="python",
+        cases=(CaseDescriptor(case_id=str(uuid.uuid4()), ordinal=0, weight=1.0),),
+        runner_policy_digest=DIGEST_POLICY,
+        environment_digest=DIGEST_ENV,
+    ).execution.mode == "per_case"
 
 
 def test_locked_constants_do_not_drift() -> None:

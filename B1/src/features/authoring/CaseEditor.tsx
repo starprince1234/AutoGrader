@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { t } from "../../i18n";
-import { Field, Modal } from "../../ui/components";
-import { autoCaseName, emptyCase, type CaseForm } from "./draft";
+import { Banner, Field, Modal } from "../../ui/components";
+import { autoCaseName, caseExecutionIssues, emptyCase, type CaseForm } from "./draft";
+import type { ExecutionMode } from "./execution";
+import { CaseExecutionFields } from "./CaseExecutionFields";
 
 /**
  * 用例编辑器（`QuestionDraftInput.cases[]`）。
@@ -9,6 +11,10 @@ import { autoCaseName, emptyCase, type CaseForm } from "./draft";
  * 每个用例是契约 `TestCaseInput` 的一份声明：`stdin`/`args`/`expected_stdout`/
  * `expected_stderr`/`expected_exit_code` 全部受保护，从不经公开 DTO 回显——因此这些输入框
  * 的内容在进入页面时一定是空的，**空不是加载失败**，而是"必须由你重新声明"。
+ *
+ * 评分方式决定每个用例多出哪些执行声明（`CaseExecutionFields`）：分段 / 文件校验 /
+ * SSH 判定 / 邮件判定。这里同时把**与后端一致的即时校验**结果显示在卡片里，
+ * 保存时 `draft.ts` 用同一份规则清单阻止发请求。
  *
  * `ordinal` 不在这里编辑：它由数组顺序决定（0 基），拖拽排序就是重新排 `ordinal`，
  * 因此不会出现"序号与顺序不一致"的用例集合。
@@ -20,11 +26,14 @@ import { autoCaseName, emptyCase, type CaseForm } from "./draft";
 export function CaseEditor({
   cases,
   onChange,
+  executionMode,
   focusOrdinal = null,
   onFocusHandled,
 }: {
   cases: CaseForm[];
   onChange: (next: CaseForm[]) => void;
+  /** 版本级评分方式（`ExecutionManifest.mode`）：决定每个用例显示哪些执行声明。 */
+  executionMode: ExecutionMode;
   /**
    * 要定位到的那条用例（0 基序号）。
    *
@@ -40,6 +49,10 @@ export function CaseEditor({
   const [dragIndex, setDragIndex] = useState<number | null>(null);
   const [selectedOrdinal, setSelectedOrdinal] = useState<number | null>(null);
   const cardRefs = useRef<Array<HTMLFieldSetElement | null>>([]);
+
+  // 校验清单只算一次：卡片里的逐用例问题与列表下方的问题共用它。
+  const executionIssues = caseExecutionIssues(cases, executionMode);
+  const setLevelIssues = executionIssues.filter((issue) => issue.ordinal === null);
 
   useEffect(() => {
     if (focusOrdinal === null || focusOrdinal === undefined) return;
@@ -155,6 +168,26 @@ export function CaseEditor({
               />
             </Field>
 
+            {/* 评分方式决定这一段显示什么：分段序号 / 文件校验 / SSH 判定 / 邮件判定。 */}
+            <CaseExecutionFields
+              ordinal={index}
+              mode={executionMode}
+              item={item}
+              onChange={(patch) => update(index, patch)}
+            />
+
+            {executionIssues.some((issue) => issue.ordinal === index) ? (
+              <div className="stack" data-testid={`case-execution-errors-${index}`}>
+                {executionIssues
+                  .filter((issue) => issue.ordinal === index)
+                  .map((issue, position) => (
+                    <p className="field__error" key={`${issue.key}-${position}`} role="alert">
+                      {t(issue.key, issue.params)}
+                    </p>
+                  ))}
+              </div>
+            ) : null}
+
             <div className="inline">
               <label className="inline" htmlFor={`case-visible-${index}`}>
                 <input
@@ -191,6 +224,15 @@ export function CaseEditor({
           {t("authoring.caseAdd")}
         </button>
       </div>
+
+      {/* 整组用例的共同问题（分段集合不完整/重复、判定项重复）：放在列表下方，不硬塞进某张卡片。 */}
+      {setLevelIssues.length > 0 ? (
+        <Banner tone="warn" testId="case-execution-issues">
+          {setLevelIssues.map((issue, position) => (
+            <p key={`${issue.key}-${position}`}>{t(issue.key, issue.params)}</p>
+          ))}
+        </Banner>
+      ) : null}
 
       {confirmIndex !== null ? (
         <Modal

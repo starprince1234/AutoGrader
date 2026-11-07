@@ -17,6 +17,7 @@
 | 产品定位、用户、创新点、非目标 | [requirements/prd.md](requirements/prd.md) | 产品需求文档 | 引用小节 |
 | 系统级功能与非功能需求、状态机、接口要求 | [requirements/srs.md](requirements/srs.md) | 软件需求规格 | 引用小节号 |
 | 架构、模块边界、数据流、失败处理 | [architecture/overview.md](architecture/overview.md) | 上下文/容器/组件视图与技术选型理由 | 引用小节 |
+| Unix 作业评测扩展（执行声明/邮件/SSH/文件/分段） | [architecture/unix-homework-evaluation.md](architecture/unix-homework-evaluation.md) | 评分声明、真实判定链与安全边界基线 | 引用 § |
 | 状态机、时序、实体关系、证据模型、权限模型 | [architecture/models.md](architecture/models.md) | 行为模型的权威位置 | 引用状态名 |
 | 信任边界、STRIDE 威胁、安全门禁 | [architecture/security.md](architecture/security.md) | 安全架构 | 引用 G-SEC 编号 |
 | 内存/CPU/磁盘预算与实测方法 | [architecture/resource-budget.md](architecture/resource-budget.md) | 资源账本 | 引用预算值 |

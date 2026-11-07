@@ -160,6 +160,33 @@ provider_proxy=ok reply_keys=1 tokens=57               # 与 unit 相同的方�
 | 两行都 `ok` 而页面仍不可用 | 客户端缓存或旧标签页：硬刷新；仍不行则不是配置问题 |
 
 
+### Unix 作业评测扩展（`CHG-0031`）
+
+本次发布增加两个**新增式**迁移（B2 `20261107_0020`、B3 `20261107_0007`）：只新增可空列与新表，
+不改既有列，因此正常发布按既有 Alembic 流程应用即可，业务数据保留。本次**不新增环境变量**；
+SSH/文件评测所需的二进制（`nsjail`、`vim/vi`、`ssh`、`sshd`、`ssh-keygen`）与 `/dev/pts` 已是
+2026-11-07 实测存在的宿主条件。
+
+宿主前置条件与边界（2026-11-07 只读实测）：`/etc/subuid` 与 `/etc/subgid` 各只有 **1 个** 分配给
+`autograder` 的 subordinate ID；新 profile 只映射调用者 uid 与这一个 subordinate ID，**不要**再假定
+`subuid+1` 可用。`autograder.service` / `autograder-worker.service` 的 `DelegateSubgroup=payload`、
+`NoNewPrivileges=false` 与 cgroup 委派保持原样；SSH 练习环境与文件准备 profile 全部运行在 nsjail 内，
+不新增宿主 root 服务、不开放宿主 SSH、不使用 `--privileged`。
+
+发布后验证（需要教师授权凭据；先读取目标版本并确认仍是草稿）：
+
+```bash
+# 每个目标版本单独验证；HTTP 200 不等于通过
+POST /api/v1/reference-verifications  {"question_version_id": "<uuid>"}
+```
+
+判定口径：响应必须同时满足 `cases_passed == cases_total` 且 `attestation_id` 非空，才算参考答案
+真实通过；只有 HTTP 200 或只有部分用例通过都不算。第 1 题（`email_delivery`）的参考解验证是
+**合成邮件回执的规则自检**，不等价于真实邮件端到端；真实邮件链路的启用需要 `B2_IMAP_*` 收件配置
+与目标映射，本轮未在生产启用，也不得把该合成结果写成生产邮件验收。第 2 题的 SSH 与第 6 题的
+vi/chmod 只有在上述接口返回全通过并产生存证时，才可称为“参考答案检验通过”；学生端到端提交本轮
+不验证。
+
 ## 3. 空库重建与后续数据
 
 2026-10-20 用户已授权删除当前生产业务数据，并要求后续发布保留新数据。重建由独立的 [`reset-database.sh`](../../deploy/reset-database.sh) 执行，不接入 push 或日常 deploy，也不提供自动清库开关。

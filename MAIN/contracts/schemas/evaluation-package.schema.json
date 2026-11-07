@@ -31,6 +31,47 @@
       "enum": ["python", "bash"],
       "description": "Graded language (RQ-B-0-10). B2 selects interpreter, static checker and sandbox policy from this value; a submission in a different language is rejected with 422."
     },
+    "execution": {
+      "type": "object",
+      "description": "Explicit declaration of how this package's cases are produced from an execution. Absence means the legacy per-case mode (one sandbox execution per case), so packages compiled before this field existed stay valid and byte-identical. Behaviour is never selected by a title, tag, path or magic string: it is this field or nothing.",
+      "required": ["mode"],
+      "properties": {
+        "mode": { "type": "string", "enum": ["per_case", "single_run", "ssh_session", "email_delivery"] },
+        "segment_delimiter": {
+          "type": ["string", "null"],
+          "minLength": 8,
+          "maxLength": 120,
+          "pattern": "^[!-~](?:[ -~]*[!-~])?$",
+          "description": "Required when cases are split out of one run. The marker must occupy an entire output line by itself and must not be a prefix/suffix of other output. Missing, extra or misordered segments fail every segment case; a segment is never re-assigned to another case."
+        },
+        "email": {
+          "type": "object",
+          "description": "email_delivery only: what the received message must satisfy. The receipt itself is recorded by the real IMAP intake, not by this package.",
+          "required": ["attempt"],
+          "properties": {
+            "attempt": { "type": "integer", "minimum": 1, "maximum": 99 },
+            "subject_template": { "type": "string", "maxLength": 200, "default": "{student_number}_{attempt}" },
+            "required_attachment_template": { "type": "string", "maxLength": 200, "default": "{student_number}.txt" }
+          },
+          "additionalProperties": false
+        },
+        "ssh": {
+          "type": "object",
+          "description": "ssh_session only: the real practice service started inside the isolated sandbox. The password is protected content and must never appear in a public DTO, event or log.",
+          "required": ["host", "port", "username", "password"],
+          "properties": {
+            "host": { "const": "127.0.0.1", "description": "The question requires logging in to localhost; any other address would leave the isolated network namespace." },
+            "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "username": { "type": "string", "pattern": "^[a-z_][a-z0-9_-]{0,31}$" },
+            "password": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "login_timeout_seconds": { "type": "number", "exclusiveMinimum": 0, "maximum": 30, "default": 10 },
+            "session_timeout_seconds": { "type": "number", "exclusiveMinimum": 0, "maximum": 30, "default": 10 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "adapter": {
       "type": "object",
       "description": "How the submission is exercised. One shared structure for all three frameworks.",
@@ -104,7 +145,37 @@
           "args": { "type": "array", "items": { "type": "string" } },
           "expected_stdout": { "type": ["string", "null"] },
           "expected_stderr": { "type": ["string", "null"] },
-          "expected_exit_code": { "type": ["integer", "null"] }
+          "expected_exit_code": { "type": ["integer", "null"] },
+          "segment": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "single_run only: which delimiter-separated stdout segment this case compares. The declared segment values must be exactly 0..N-1, one per segment case; a case is only ever compared against its own segment."
+          },
+          "file_checks": {
+            "type": "array",
+            "maxItems": 20,
+            "description": "Assertions the evaluator makes directly on final workspace files after the run (never on the student's stdout). Used by the vi part of a file-editing question: the edited bytes and the permission bits are both checked, so printing a fabricated `stat` line cannot pass.",
+            "items": {
+              "type": "object",
+              "required": ["path"],
+              "properties": {
+                "path": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$", "maxLength": 200 },
+                "content_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$", "description": "PROTECTED. Digest of the expected final bytes; null means content is not asserted." },
+                "mode": { "type": ["string", "null"], "pattern": "^0[0-7]{3}$", "description": "Expected permission bits as canonical four-digit octal text, e.g. \"0744\". Null means permissions are not asserted; the three-digit form is refused because the evaluator formats actual bits in the same canonical form." }
+              },
+              "additionalProperties": false
+            }
+          },
+          "ssh_check": {
+            "type": "string",
+            "enum": ["service_ready", "auth_succeeded", "session_closed"],
+            "description": "ssh_session only: which real server-side fact this case judges. Exactly one of each value may appear in a package."
+          },
+          "email_check": {
+            "type": "string",
+            "enum": ["email_received", "subject", "sender", "attachment"],
+            "description": "email_delivery only: which fact about the actually received message this case judges. Exactly one of each value may appear in a package."
+          }
         },
         "additionalProperties": false
       }

@@ -2,11 +2,15 @@
 
 签名、不变量（I20–I28）与失败语义见
 [docs/architecture/interfaces.md](../../docs/architecture/interfaces.md) 第 5 节。本模块落地：
-`SubmissionRunInput` / `CaseEvidence` / `CaseResource` / `CaseArtifacts` / `CaseRunner` 协议 / 三种失败异常。
+`SubmissionRunInput` / `BatchRunInput`（一次批量执行的输入）/ `CaseEvidence` / `CaseResource` /
+`CaseArtifacts` / `FileCheckResult` / `CaseRunner` 协议 / 三种失败异常。
+
+Unix 作业扩展：`CaseEvidence.segment`（`single_run` 的分段序号）与 `CaseEvidence.file_checks`
+（运行后文件检查明细）均为可选字段（缺省不改变旧证据的字段值与摘要），参与 `evidence_digest`。
 
 关键不可协商项：
 
-- 一次调用执行**一个**用例；逐用例循环由编排层负责；
+- 一次 `run_case` 调用执行**一个**用例；批量模式（`single_run`/`ssh_session`）走 `run_cases`；
 - 学生侧失败（超时/崩溃/输出不符/资源超限）**返回**证据而非抛异常，且不跳过其余用例；
 - **沙箱不可用必须抛 `SandboxUnavailableError`——绝不执行任何未隔离进程**。
 
@@ -27,7 +31,11 @@ from autograder_b2.domain.envelope import EnvelopeFile
 from autograder_b2.domain.security import SecurityFinding
 
 if TYPE_CHECKING:  # pragma: no cover - 仅类型期可见，运行期不导入（实现属 WP-B2-C）
-    from autograder_b2.runner.package import EvaluationPackage, PackageAdapter, PackageCase
+    from autograder_b2.runner.package import (
+        EvaluationPackage,
+        PackageAdapter,
+        PackageCase,
+    )
     from autograder_b2.runner.policy import RunnerPolicy
 
 FailureCategory = Literal[
@@ -96,6 +104,27 @@ class SubmissionRunInput:
 
 
 @dataclass(frozen=True, slots=True)
+class BatchRunInput:
+    """一次**批量**执行的输入（`single_run` / `ssh_session`：一次沙箱执行产生多条用例证据）。
+
+    与 `SubmissionRunInput` 同源：`cases` / `adapter` / `policy` 都是 package 解析结果的**不透明句柄**，
+    `runner.run_cases` 会对它们做与 `run_case` 相同的严格相等校验（package 是唯一权威）。
+
+    批量模式**只有一份工作区**：`single_run` 的全部用例共享同一次程序运行的输出分段/文件状态；
+    `ssh_session` 的全部用例共享同一次 SSH 会话。因此 `per_case` 不适用本输入类型。
+    """
+
+    submission_id: str
+    evaluation_run_id: str
+    correlation_id: str
+    workspace: Path                     # 本次批量唯一工作区
+    files: tuple[EnvelopeFile, ...]
+    cases: tuple[PackageCase, ...]      # 本次批量覆盖的用例（必须全部来自 package）
+    adapter: PackageAdapter
+    policy: RunnerPolicy
+
+
+@dataclass(frozen=True, slots=True)
 class CaseResource:
     """一次用例执行的资源读数（契约 `case_resource`；每个字段独立可空）。
 
@@ -143,6 +172,23 @@ class CaseArtifacts:
 
 
 @dataclass(frozen=True, slots=True)
+class FileCheckResult:
+    """一项 `file_checks` 的检查明细（设计文档 §2/§3.4 的 `case_artifacts.file_checks` 元素）。
+
+    `mode` 一律是**四位八进制文本**（例如 `"0744"`，由 `st_mode & 0o7777` 格式化），与进程 umask
+    无关；比较是逐字文本比较。`expected_*` 是受保护值（期望内容摘要 / 期望权限），只进内部证据，
+    报告层的学生视图由 `evaluation.report` 裁剪。
+    """
+
+    path: str
+    expected_sha256: str | None
+    actual_sha256: str | None
+    expected_mode: str | None
+    actual_mode: str | None
+    matched: bool
+
+
+@dataclass(frozen=True, slots=True)
 class CaseEvidence:
     case_id: str
     ordinal: int
@@ -170,15 +216,22 @@ class CaseEvidence:
     resource: CaseResource | None = field(default=None, kw_only=True)
     #: 文件级结果；`None` 的含义同上。
     artifacts: CaseArtifacts | None = field(default=None, kw_only=True)
-    #: 最后声明：`kw_only` 字段（上面 5 个）不参与"默认值必须在无默认值字段之后"的校验，
+    #: `single_run` 的分段序号（`0..N-1`）；非分段用例为 `None`。参与 `evidence_digest`
+    #: （仅非缺省时进摘要 ⇒ 旧证据摘要不变）。
+    segment: int | None = field(default=None, kw_only=True)
+    #: 用例声明的 `file_checks` 明细（`per_case` 与 `single_run` 都可能出现）；空元组 = 未声明。
+    file_checks: tuple[FileCheckResult, ...] = field(default=(), kw_only=True)
+    #: 最后声明：`kw_only` 字段（上面 7 个）不参与"默认值必须在无默认值字段之后"的校验，
     #: 因此既保留了 `evidence_digest` 必填，又让证据对象保持声明顺序与文档逐字一致。
     evidence_digest: str
 
 
 class CaseRunner(Protocol):
-    """冻结签名的协议形态：调用一次即执行一个用例。
+    """冻结签名的协议形态：`per_case` 一次调用执行一个用例；批量模式走 `run_cases`。
 
     编排层只依赖本协议；生产装配只构造 nsjail 实现（无环境变量开关切换执行后端）。
     """
 
     def run_case(self, package: EvaluationPackage, submission: SubmissionRunInput) -> CaseEvidence: ...
+
+    def run_cases(self, package: EvaluationPackage, batch: BatchRunInput) -> tuple[CaseEvidence, ...]: ...

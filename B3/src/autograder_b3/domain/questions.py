@@ -41,8 +41,17 @@ from sqlalchemy.exc import DBAPIError
 
 from ..auth import Principal, require_course_write
 from ..config import Settings
-from ..compile.manifest import manifest_to_storage, validate_adapter_manifest
+from ..compile.manifest import (
+    execution_from_stored,
+    execution_manifest_to_storage,
+    manifest_to_storage,
+    validate_adapter_manifest,
+    validate_case_execution,
+    validate_case_executions,
+    validate_execution_manifest,
+)
 from ..dto.internal import (
+    ExecutionManifest,
     QuestionDraftInputModel,
     ReferenceAnswerInternal,
     TestCaseInternal,
@@ -106,10 +115,33 @@ def _cases_supplied(payload: QuestionDraftInputModel, supplied: bool | None) -> 
     return supplied
 
 
+def _execution_from_payload(
+    payload: QuestionDraftInputModel, *, supplied: bool | None
+) -> ExecutionManifest | None:
+    """The execution declaration the caller supplied, or ``None`` when omitted.
+
+    "Omitted" and "explicitly null" are different statements and only the transport can tell
+    them apart (``model_fields_set``): omission keeps the version's stored declaration, while
+    an explicit ``null`` resets the version to ``per_case`` -- the only way to express that,
+    because the default has no non-null wire form. ``None`` here therefore means "the caller
+    could not say", and is read strictly from the value, exactly like ``cases``.
+    """
+    if supplied is None:
+        supplied = payload.execution is not None
+    if not supplied:
+        return None
+    return validate_execution_manifest(payload.execution)
+
+
 def _cases_from_payload(
-    payload: QuestionDraftInputModel, question_version_id: uuid.UUID
+    payload: QuestionDraftInputModel, question_version_id: uuid.UUID, *, mode: str
 ) -> tuple[TestCaseInternal, ...]:
-    """Materialize submitted cases with owner-generated UUID v4 identifiers."""
+    """Materialize submitted cases with owner-generated UUID v4 identifiers.
+
+    Each case's execution fields are validated against ``mode`` here, so an author learns
+    immediately that (say) a per-case question cannot carry ``segment`` rather than at
+    publish time.
+    """
     cases: list[TestCaseInternal] = []
     for submitted in payload.cases:
         cases.append(
@@ -125,18 +157,21 @@ def _cases_from_payload(
                 expected_stdout=submitted.expected_stdout,
                 expected_stderr=submitted.expected_stderr,
                 expected_exit_code=submitted.expected_exit_code,
+                execution=validate_case_execution(submitted, mode=mode),
             )
         )
     return tuple(cases)
 
 
-def _cases_for_diff(payload: QuestionDraftInputModel) -> tuple[TestCaseInternal, ...]:
+def _cases_for_diff(
+    payload: QuestionDraftInputModel, *, mode: str
+) -> tuple[TestCaseInternal, ...]:
     """The submitted cases as internal records, for the revision delta only.
 
     The delta reads ordinals, weights and counts - never a case's inputs or expected
     output - so the placeholder identifiers here cannot influence what is stored.
     """
-    return _cases_from_payload(payload, uuid.UUID(int=0))
+    return _cases_from_payload(payload, uuid.UUID(int=0), mode=mode)
 
 
 def _reissue_case(case: TestCaseInternal, question_version_id: uuid.UUID) -> TestCaseInternal:
@@ -346,6 +381,7 @@ def create_question(
     payload: QuestionDraftInputModel,
     revision_note_supplied: bool | None = None,
     cases_supplied: bool | None = None,
+    execution_supplied: bool | None = None,
     generation_id: uuid.UUID | None = None,
     now: datetime,
 ) -> tuple[Question, QuestionVersion]:
@@ -374,6 +410,19 @@ def create_question(
     tags = validate_tags(payload.tags)
     cases_provided = _cases_supplied(payload, cases_supplied)
     _validate_ordinals(payload)
+    # A first version supersedes nothing, so an omitted declaration simply means `per_case`;
+    # a supplied one is validated against the submitted cases before anything is written.
+    declared_execution = _execution_from_payload(payload, supplied=execution_supplied)
+    execution = declared_execution if declared_execution is not None else ExecutionManifest()
+    submitted_cases = _cases_from_payload(
+        payload, uuid.UUID(int=0), mode=execution.mode
+    )
+    validate_case_executions(
+        submitted_cases,
+        execution=execution,
+        adapter_kind=manifest.kind,
+        language=payload.language,
+    )
 
     with database.protected_session() as session:
         bank = QuestionBankRepository(session)
@@ -395,10 +444,11 @@ def create_question(
             adapter_manifest=manifest_to_storage(manifest),
             max_files=payload.max_files,
             max_total_bytes=payload.max_total_bytes,
+            execution_manifest=execution_manifest_to_storage(execution),
             created_by=_actor_id(actor),
             now=now,
         )
-        cases = _cases_from_payload(payload, version.question_version_id)
+        cases = _cases_from_payload(payload, version.question_version_id, mode=execution.mode)
         _write_protected_content(
             ProtectedContentRepository(session),
             version_id=version.question_version_id,
@@ -445,6 +495,7 @@ def update_question(
     as_new_version: bool = False,
     revision_note_supplied: bool | None = None,
     cases_supplied: bool | None = None,
+    execution_supplied: bool | None = None,
     now: datetime,
 ) -> tuple[Question, QuestionVersion]:
     """Edit the current draft, or branch a new draft version (never edit in place).
@@ -459,6 +510,11 @@ def update_question(
     (``CHG-0017``): an omitted set leaves the version's stored cases untouched, so an edit
     that only renames a question or re-tags it never has to carry the hidden cases - or the
     reference answer - out of the bank and back.
+
+    ``execution_supplied`` is the same fact for ``execution``, with one extra case the other
+    fields do not have: an explicit ``null`` means "reset to ``per_case``", while an omitted
+    key means "keep the stored declaration". Either way the effective declaration is validated
+    against the effective case set (supplied or preserved) before anything is written.
     """
     _validate_revision_note(
         payload, supplied=revision_note_supplied, as_new_version=as_new_version
@@ -468,9 +524,11 @@ def update_question(
     tags = validate_tags(payload.tags)
     cases_provided = _cases_supplied(payload, cases_supplied)
     _validate_ordinals(payload)
+    declared_execution = _execution_from_payload(payload, supplied=execution_supplied)
 
     with database.protected_session() as session:
         bank = QuestionBankRepository(session)
+        protected = ProtectedContentRepository(session)
         question = bank.get_question(question_id)
         if question is None or question.deleted_at is not None:
             # The caller may still be outside the course scope; scope wins over
@@ -498,12 +556,30 @@ def update_question(
             # content that a field omitted from this write is inherited from (below).
             previous_content = load_version_content(session, latest)
             inherited = previous_content
+            # An omitted declaration keeps the previous version's; an explicit null resets.
+            execution = (
+                declared_execution
+                if declared_execution is not None
+                else previous_content.execution
+            )
+            submitted_cases = (
+                _cases_for_diff(payload, mode=execution.mode) if cases_provided else None
+            )
+            effective_cases = (
+                submitted_cases if submitted_cases is not None else previous_content.cases
+            )
+            validate_case_executions(
+                effective_cases,
+                execution=execution,
+                adapter_kind=manifest.kind,
+                language=payload.language,
+            )
             revision_diff = _revision_diff_against(
                 previous_content,
                 payload=payload,
                 # `None` says "the caller omitted the set"; the delta then compares the
                 # previous cases against themselves, which is what the new version holds.
-                cases=_cases_for_diff(payload) if cases_provided else None,
+                cases=submitted_cases,
             )
             # An author's own reason wins; the derived note is the fallback so a reader
             # is never shown two versions with no explanation at all.
@@ -520,11 +596,31 @@ def update_question(
                 max_total_bytes=payload.max_total_bytes,
                 revision_diff=revision_diff,
                 revision_note=note,
+                execution_manifest=execution_manifest_to_storage(execution),
                 created_by=_actor_id(actor),
                 now=now,
             )
         else:
             target = latest
+            # In-place edits preserve the stored declaration unless one was supplied; the
+            # effective case set is the stored set when `cases` was omitted, because the
+            # declaration has to be validated against the cases it will actually judge.
+            execution = (
+                declared_execution
+                if declared_execution is not None
+                else execution_from_stored(latest.execution_manifest)
+            )
+            effective_cases = (
+                _cases_from_payload(payload, uuid.UUID(int=0), mode=execution.mode)
+                if cases_provided
+                else tuple(protected.list_cases(latest.question_version_id))
+            )
+            validate_case_executions(
+                effective_cases,
+                execution=execution,
+                adapter_kind=manifest.kind,
+                language=payload.language,
+            )
             bank.update_version_content(
                 target,
                 language=payload.language,
@@ -532,6 +628,7 @@ def update_question(
                 adapter_manifest=manifest_to_storage(manifest),
                 max_files=payload.max_files,
                 max_total_bytes=payload.max_total_bytes,
+                execution_manifest=execution_manifest_to_storage(execution),
                 now=now,
             )
 
@@ -543,9 +640,9 @@ def update_question(
             tags=tags,
             now=now,
         )
-        cases = _cases_from_payload(payload, target.question_version_id)
+        cases = _cases_from_payload(payload, target.question_version_id, mode=execution.mode)
         _write_protected_content(
-            ProtectedContentRepository(session),
+            protected,
             version_id=target.question_version_id,
             payload=payload,
             cases=cases,
