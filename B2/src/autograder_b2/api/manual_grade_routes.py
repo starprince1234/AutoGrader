@@ -53,7 +53,7 @@ MAX_DOWNLOAD_BYTES = 8 * 1024 * 1024
 
 
 def _json_error(instance: str, status: int, title: str, detail: str) -> JSONResponse:
-    return problem_response(Problem(status, slugify(title), title, detail, instance))
+    return problem_response(Problem(status, slugify(title), title, detail), instance)
 
 
 def slugify(title: str) -> str:

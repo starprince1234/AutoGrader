@@ -1740,6 +1740,6 @@ def test_repacked_xlsx_is_still_a_valid_workbook_with_the_same_visible_settings(
     ) + 1
     assert sheet.cell(row=2, column=submitted_at_column).number_format == "yyyy-mm-dd hh:mm:ss"
     # XLSX 的时间单元格是**朴素** UTC（Excel 序列号没有时区），毫秒与对外 RFC 3339 一致
-    assert sheet.cell(row=2, column=12).value == BASE.replace(tzinfo=None)
+    assert sheet.cell(row=2, column=submitted_at_column).value == BASE.replace(tzinfo=None)
     widths = [sheet.column_dimensions[letter].width for letter in ("A", "H", "M")]
     assert all(width is not None and width >= 10 for width in widths)
