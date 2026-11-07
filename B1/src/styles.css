@@ -78,6 +78,9 @@
   --glow-texture: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='220' height='220' filter='url(%23f)' opacity='.5'/%3E%3C/svg%3E");
 
   /* 圆角：4/6/8/12，胶囊只给标签 */
+  /* 顶栏高度：`.app-header` 与「出题向导」左侧导航的 sticky 偏移共用它。 */
+  --app-header-height: 56px;
+
   --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 8px;
@@ -446,7 +449,7 @@ samp {
   display: flex;
   align-items: center;
   gap: var(--space-4);
-  height: 56px;
+  height: var(--app-header-height);
   /* 与 1440px 内容列对齐：超宽屏上产品名不会孤零零贴在视口最左边。 */
   padding: 0 max(var(--space-5), calc((100% - 1440px) / 2 + var(--space-5)));
   background: color-mix(in srgb, var(--color-surface) 88%, transparent);
@@ -3256,9 +3259,16 @@ samp {
   align-items: start;
 }
 
+/* 步骤导航：**停在视口里**，只有右侧内容随页面滚动。
+   原来 `top: 16px` 会让它滑到 `.app-header`（sticky、56px、z-index 20）底下被盖住，
+   看起来就是"跟着页面一起滚走了"。偏移必须从顶栏高度算起。 */
 .wizard__nav {
   position: sticky;
-  top: 16px;
+  top: calc(var(--app-header-height) + var(--space-4));
+  /* 步骤很多时导航自己滚，不越过视口底部；步骤少时这里不出现任何滚动条。 */
+  max-height: calc(100vh - var(--app-header-height) - var(--space-4) - var(--space-5));
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .wizard__steps {
@@ -3477,6 +3487,8 @@ samp {
 
   .wizard__nav {
     position: static;
+    max-height: none;
+    overflow-y: visible;
   }
 }
 
