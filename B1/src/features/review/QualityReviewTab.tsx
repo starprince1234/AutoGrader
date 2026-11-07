@@ -25,20 +25,39 @@ import { DEMO_COURSE, DEMO_VERSION_OPTIONS, demoQualitySummary } from "./demoDat
 import { DemoHint } from "./DemoHint";
 import { Select } from "../../ui/Select";
 
+/** 示例模式只给一门课、两个版本：下拉与"查询"要有值可用，不能停在"请选择"。 */
+const DEMO_COURSE_ID_VALUE = DEMO_COURSE.course_id;
+const DEMO_FIRST_VERSION_ID = DEMO_VERSION_OPTIONS[0]?.questionVersionId ?? "";
+const DEMO_VERSION_IDS = new Set(
+  DEMO_VERSION_OPTIONS.map((option) => option.questionVersionId),
+);
+
+function draftCourse(demo: boolean, urlCourseId: string | null): string {
+  return demo ? DEMO_COURSE_ID_VALUE : (urlCourseId ?? "");
+}
+
 /**
+ * 草稿版本：URL 里的真实版本不属于示例，示例模式一律回落到示例版本——
+ * 否则"从题目详情点进示例"会拿着真实版本去算示例数字，结果还是空的。
+ */
+function draftVersion(demo: boolean, urlVersionId: string | null): string {
+  if (!demo) return urlVersionId ?? "";
+  return urlVersionId !== null && DEMO_VERSION_IDS.has(urlVersionId)
+    ? urlVersionId
+    : DEMO_FIRST_VERSION_ID;
+}
+
+/*
  * P13-B：题目质量标签（去标识化聚合）。
  *
- * 页面边界（任务书点名）：
+ * 这个页面回答**一个**问题：这道题值不值得改。因此交互只有一条主线：
  *
- * - 只读 B2 `GET /evaluation-runs/quality-summary` 的计数；**不**显示学生、提交、源码、
- *   期望输出，也不提供任何个人下钻。
- * - 版本来自 P07 的 `question_version_id`（或课程 → 题目版本选择），不要求教师手填 UUID；
- *   深链时先经 B3 `GET /question-versions/{id}` 取标题/版本（B3 对无权版本 403），
- *   **B3 拒绝就不向 B2 发聚合请求**。
- * - 三态安全结论、`unmeasured_runs`、`infrastructure_error` 各自独立；`null` 不转 0；
- *   `attempt_count = 0` 只说明"没有评测记录"，不给健康/排名结论。
- * - 顶部固定五元计数；正文的"安全检查/资源测量"是**口径说明**，不再重复同一计数
- *   （同一数字画两遍会被读成两个指标）。
+ * - 总览入口（`/review?tab=quality`）：选课程 → 选版本 → 点「查询」才出数字；
+ *   只换下拉不查询时，旧汇总会收起来，避免把上一次的结果当成新条件的结果。
+ * - 题目详情入口（`origin=question`）：直接显示这道题的汇总，并且**没有**课程/版本下拉，
+ *   只能看这道题（时间范围仍可调）。
+ * - 只读 B2 `GET /evaluation-runs/quality-summary` 的计数；不显示学生、提交、源码、期望输出，
+ *   也不提供任何个人下钻。`attempt_count = 0` 只说明"没有评测记录"，不给健康/排名结论。
  */
 
 /** 契约分类是机器词；老师看到的是"为什么错"，不是英文枚举。 */
@@ -156,21 +175,34 @@ function CaseTable({ summary }: { summary: EvaluationQualitySummary }) {
   );
 }
 
+/**
+ * 异常汇总：一行一类，竖着排。
+ *
+ * 用「｜」把五类异常挤成一行时，老师要逐段数着读，最严重的那个反而不显眼；竖排之后
+ * "哪种问题占了多少次"一眼就能对上。
+ */
 function AbnormalSummary({ summary }: { summary: EvaluationQualitySummary }) {
   const parts = summary.failure_categories
     .filter((item) => item.count > 0)
-    .map((item) => `${categoryLabel(item.category)}：${item.count}次`);
+    .map((item) => ({ key: item.category, text: `${categoryLabel(item.category)}：${item.count} 次` }));
   if (summary.security_found > 0) {
-    parts.push(`安全告警：${summary.security_found}次`);
+    parts.push({ key: "security", text: `安全告警：${summary.security_found} 次` });
   }
   if (summary.unmeasured_runs > 0) {
-    parts.push(`资源丢失：${summary.unmeasured_runs}次`);
+    parts.push({ key: "unmeasured", text: `资源用量丢失：${summary.unmeasured_runs} 次` });
   }
   return (
     <div data-testid="review-quality-abnormal">
       <h3>{t("review.quality.abnormal")}</h3>
       {parts.length > 0 ? (
-        <p data-testid="review-quality-abnormal-text">{parts.join(" ｜ ")}</p>
+        <ul
+          data-testid="review-quality-abnormal-text"
+          style={{ margin: 0, paddingLeft: 20, lineHeight: 1.9 }}
+        >
+          {parts.map((part) => (
+            <li key={part.key}>{part.text}</li>
+          ))}
+        </ul>
       ) : (
         <p className="muted" data-testid="review-quality-abnormal-none">
           {t("review.quality.abnormalNone")}
@@ -260,6 +292,7 @@ function SummaryPanel({ summary }: { summary: EvaluationQualitySummary }) {
   );
 }
 
+/** 复核工作区的第二个标签：见文件头部的交互说明（查询后才出数字 / 深链只看这道题）。 */
 export function QualityReviewTab({
   search,
   onChange,
@@ -269,19 +302,32 @@ export function QualityReviewTab({
 }) {
   const session = useSession();
   const demo = search.demo === "1";
+  /**
+   * 从题目详情点进来（`origin=question`）：直接显示这道题的汇总，并且**只**能看这道题——
+   * 课程/版本下拉不再出现，避免老师以为可以在这里换成别的题。
+   */
+  const fromQuestion = search.origin === "question";
   const identity = session.subject ?? session.username ?? "anonymous";
   const filter = readQualityFilter(search);
+
+  // 总览页的三项条件先落草稿：点「查询」之前不写 URL、也不发聚合请求。
+  const [courseDraft, setCourseDraft] = useState(() => draftCourse(demo, filter.courseId));
+  const [versionDraft, setVersionDraft] = useState(() =>
+    draftVersion(demo, filter.questionVersionId),
+  );
   const [fromDraft, setFromDraft] = useState(toLocalInputValue(filter.from));
   const [toDraft, setToDraft] = useState(toLocalInputValue(filter.to));
   // 时间校验的错误位置：结束时间早于开始时间要指到结束时间字段。
   const [issue, setIssue] = useState<"invalidTime" | "endBeforeStart" | null>(null);
 
-  // 深链/外部导航后，输入框必须与 URL 一致（否则显示的筛选与查询用的不是同一套）。
+  // 深链 / 刷新 / 前进后退：草稿跟着 URL 走——URL 里那一份才是"已经查过"的条件。
   useEffect(() => {
+    setCourseDraft(draftCourse(demo, filter.courseId));
+    setVersionDraft(draftVersion(demo, filter.questionVersionId));
     setFromDraft(toLocalInputValue(filter.from));
     setToDraft(toLocalInputValue(filter.to));
     setIssue(null);
-  }, [filter.from, filter.to]);
+  }, [demo, filter.courseId, filter.from, filter.questionVersionId, filter.to]);
 
   // 示例模式不读课程目录：样例自带课程名与版本，没登录、没后端也能完整浏览。
   const courses = useCourses({ enabled: !demo });
@@ -293,45 +339,42 @@ export function QualityReviewTab({
     : loadedCourses(courses.data?.pages).filter(
         (course) => isAdmin || scopeCourseIds.has(course.course_id),
       );
-  const versionOptions = useVersionOptions(demo ? null : filter.courseId);
+  // 版本列表跟着**草稿**里的课程走：先选课再选题，点「查询」之后才取数字。
+  const versionOptions = useVersionOptions(demo || courseDraft === "" ? null : courseDraft);
   const versionChoices = demo ? DEMO_VERSION_OPTIONS : versionOptions.options;
 
-  /** 示例模式只给一门课、两个版本：下拉与"查询"要有值可用，不能停在"请选择"。 */
-  const effectiveCourseId = demo
-    ? (filter.courseId === DEMO_COURSE.course_id ? filter.courseId : DEMO_COURSE.course_id)
-    : filter.courseId;
-  // 从题目详情点进示例时，URL 里是**真实**版本 id：拿它算示例聚合只会得到"暂无评测记录"。
-  // 示例模式只认示例自己的版本，其余一律回落到第一个示例版本。
-  const demoVersionIds = new Set(
-    versionChoices.map((option) => option.questionVersionId),
-  );
-  const effectiveVersionId = demo
-    ? filter.questionVersionId !== null && demoVersionIds.has(filter.questionVersionId)
-      ? filter.questionVersionId
-      : (versionChoices[0]?.questionVersionId ?? null)
-    : filter.questionVersionId;
-
-  const invalidVersion = filter.questionVersionId !== null && !isUuid(filter.questionVersionId);
-  const context = useVersionContext(
-    demo || invalidVersion || filter.questionVersionId === null
+  /** 已经查询过的那一份（URL 是唯一真源）；页面上的数字只属于它。 */
+  const appliedVersionId = filter.questionVersionId;
+  const invalidVersion = appliedVersionId !== null && !isUuid(appliedVersionId);
+  const targetVersionId = fromQuestion
+    ? appliedVersionId
+    : versionDraft === ""
       ? null
-      : filter.questionVersionId,
+      : versionDraft;
+  const targetCourseId = fromQuestion
+    ? filter.courseId
+    : courseDraft === ""
+      ? null
+      : courseDraft;
+  // 选了别的版本却还没点「查询」：把上一次的汇总收起来，避免把旧数字当成新结果读。
+  const selectionChanged =
+    !demo &&
+    !fromQuestion &&
+    (courseDraft !== (filter.courseId ?? "") ||
+      versionDraft !== (filter.questionVersionId ?? ""));
+
+  const context = useVersionContext(
+    demo || invalidVersion || appliedVersionId === null ? null : appliedVersionId,
   );
   // 示例模式不发 B2 聚合请求：数字由 `demoData` 里的记录算出，时间范围真的会过滤。
   const summaryEnabled =
-    !demo && filter.questionVersionId !== null && !invalidVersion && context.version.isSuccess;
-  const summary = useQualitySummary({
-    identity,
-    filter,
-    enabled: summaryEnabled,
-  });
+    !demo && appliedVersionId !== null && !invalidVersion && context.version.isSuccess;
+  const summary = useQualitySummary({ identity, filter, enabled: summaryEnabled });
   const demoSummary =
-    demo && effectiveVersionId !== null
-      ? demoQualitySummary(effectiveVersionId, filter.from, filter.to)
-      : null;
+    demo && versionDraft !== "" ? demoQualitySummary(versionDraft, filter.from, filter.to) : null;
 
   const apply = () => {
-    if (effectiveVersionId === null) return;
+    if (targetVersionId === null) return;
     const fromValue = toContractTimestamp(fromDraft);
     if (fromDraft.trim() !== "" && fromValue === null) {
       setIssue("invalidTime");
@@ -353,8 +396,8 @@ export function QualityReviewTab({
     setIssue(null);
     onChange(
       withQualityFilter(search, {
-        courseId: effectiveCourseId,
-        questionVersionId: effectiveVersionId,
+        courseId: targetCourseId,
+        questionVersionId: targetVersionId,
         from: fromValue,
         to: toValue,
       }),
@@ -367,8 +410,8 @@ export function QualityReviewTab({
     setToDraft("");
     onChange(
       withQualityFilter(search, {
-        courseId: effectiveCourseId,
-        questionVersionId: effectiveVersionId,
+        courseId: targetCourseId,
+        questionVersionId: targetVersionId,
         from: null,
         to: null,
       }),
@@ -393,72 +436,63 @@ export function QualityReviewTab({
 
       <Panel title={t("review.quality.filter")}>
         <div className="stack">
-          <div className="form-grid">
-            <Field label={t("review.quality.course")} htmlFor="review-quality-course">
-              <Select
-                id="review-quality-course"
-                data-testid="review-quality-course"
-                value={effectiveCourseId ?? ""}
-                onChange={(event) => {
-                  const nextCourse = event.target.value === "" ? null : event.target.value;
-                  onChange(
-                    withQualityFilter(search, {
-                      courseId: nextCourse,
-                      // 换课程后旧版本必然不属于新课程；清空而不是留下一个会 403 的版本。
-                      questionVersionId:
-                        nextCourse === effectiveCourseId ? filter.questionVersionId : null,
-                      from: filter.from,
-                      to: filter.to,
-                    }),
-                  );
-                }}
-              >
-                <option value="">{t("common.selectPrompt")}</option>
-                {courseOptions.map((course) => (
-                  <option key={course.course_id} value={course.course_id}>
-                    {formatCourseLabel(course)}
-                  </option>
-                ))}
-              </Select>
-            </Field>
+          {fromQuestion ? (
+            <p className="muted" data-testid="review-quality-locked">
+              {t("review.quality.lockedHint")}：
+              <strong>
+                {context.label ?? appliedVersionId ?? t("review.quality.lockedMissing")}
+              </strong>
+            </p>
+          ) : null}
 
-            <Field label={t("review.quality.version")} htmlFor="review-quality-version">
-              <Select
-                id="review-quality-version"
-                data-testid="review-quality-version"
-                value={effectiveVersionId ?? ""}
-                disabled={!demo && filter.courseId === null}
-                onChange={(event) => {
-                  const next = event.target.value === "" ? null : event.target.value;
-                  onChange(
-                    withQualityFilter(search, {
-                      courseId: effectiveCourseId,
-                      questionVersionId: next,
-                      from: filter.from,
-                      to: filter.to,
-                    }),
-                  );
-                }}
-              >
-                <option value="">{t("common.selectPrompt")}</option>
-                {filter.questionVersionId !== null &&
-                !invalidVersion &&
-                !versionChoices.some(
-                  (option) => option.questionVersionId === filter.questionVersionId,
-                ) ? (
-                  // 深链带来的版本可能不在列表里（未发布/超出当前页）：仍然要显示出来，
-                  // 否则选择器会退成"请选择"，而下面的汇总却已经有数字。
-                  <option value={filter.questionVersionId}>
-                    {context.label ?? filter.questionVersionId}
-                  </option>
-                ) : null}
-                {versionChoices.map((option) => (
-                  <option key={option.questionVersionId} value={option.questionVersionId}>
-                    {option.label}
-                  </option>
-                ))}
-              </Select>
-            </Field>
+          <div className="form-grid">
+            {!fromQuestion ? (
+              <>
+                <Field label={t("review.quality.course")} htmlFor="review-quality-course">
+                  <Select
+                    id="review-quality-course"
+                    data-testid="review-quality-course"
+                    value={courseDraft}
+                    onChange={(event) => {
+                      // 换课程后旧版本必然不属于新课程：草稿里的版本一起清掉，等老师重选。
+                      setCourseDraft(event.target.value);
+                      setVersionDraft("");
+                    }}
+                  >
+                    <option value="">{t("common.selectPrompt")}</option>
+                    {courseOptions.map((course) => (
+                      <option key={course.course_id} value={course.course_id}>
+                        {formatCourseLabel(course)}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+
+                <Field label={t("review.quality.version")} htmlFor="review-quality-version">
+                  <Select
+                    id="review-quality-version"
+                    data-testid="review-quality-version"
+                    value={versionDraft}
+                    disabled={courseDraft === ""}
+                    onChange={(event) => setVersionDraft(event.target.value)}
+                  >
+                    <option value="">{t("common.selectPrompt")}</option>
+                    {versionDraft !== "" &&
+                    !versionChoices.some(
+                      (option) => option.questionVersionId === versionDraft,
+                    ) ? (
+                      // 深链带来的版本可能不在列表里（未发布/超出当前页）：仍然要显示出来。
+                      <option value={versionDraft}>{context.label ?? versionDraft}</option>
+                    ) : null}
+                    {versionChoices.map((option) => (
+                      <option key={option.questionVersionId} value={option.questionVersionId}>
+                        {option.label}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              </>
+            ) : null}
 
             <Field
               label={t("review.quality.from")}
@@ -495,6 +529,7 @@ export function QualityReviewTab({
               className="button"
               data-testid="review-quality-apply"
               onClick={apply}
+              disabled={targetVersionId === null}
             >
               {t("review.quality.apply")}
             </button>
@@ -504,11 +539,12 @@ export function QualityReviewTab({
                 className="button button--ghost"
                 data-testid="review-quality-clear-time"
                 onClick={clearTime}
+                disabled={targetVersionId === null}
               >
                 {t("review.quality.clearTime")}
               </button>
             ) : null}
-            {!demo && versionOptions.query.hasNextPage ? (
+            {!demo && !fromQuestion && versionOptions.query.hasNextPage ? (
               <LoadMoreActions
                 loadedCount={versionOptions.options.length}
                 hasNextPage={versionOptions.query.hasNextPage}
@@ -534,9 +570,15 @@ export function QualityReviewTab({
 
       {demo ? (
         demoSummary ? <SummaryPanel summary={demoSummary} /> : null
-      ) : filter.questionVersionId === null ? (
+      ) : appliedVersionId === null ? (
         <Banner tone="info" testId="review-quality-no-version">
-          {t("review.quality.noVersion")}
+          {fromQuestion
+            ? t("review.quality.deepLinkMissing")
+            : t("review.quality.queryPrompt")}
+        </Banner>
+      ) : selectionChanged ? (
+        <Banner tone="info" testId="review-quality-selection-changed">
+          {t("review.quality.queryAgain")}
         </Banner>
       ) : versionForbidden ? (
         <Banner tone="error" testId="review-quality-forbidden">
@@ -567,8 +609,10 @@ export function QualityReviewTab({
         <SummaryPanel summary={summary.data} />
       ) : null}
 
-      {/* 没有版本 / 没有评测记录是最常见的首次访问：空态要给一条"可以看示例"的路。 */}
-      {!demo && (filter.questionVersionId === null || summary.data?.attempt_count === 0) ? (
+      {/* 还没查过 / 查出来是空的：给一条"可以先看示例"的路（从题目详情进来时不需要）。 */}
+      {!demo &&
+      !fromQuestion &&
+      (appliedVersionId === null || summary.data?.attempt_count === 0) ? (
         <DemoHint
           testId="review-quality-empty-demo"
           onShow={() => onChange({ ...search, demo: "1" })}

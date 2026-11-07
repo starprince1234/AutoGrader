@@ -29,6 +29,7 @@ import {
   enrollmentPublic,
   gradePage,
   gradeRow,
+  intakeQuarantineView,
   questionPublic,
   questionVersionPublic,
   sessionCreated,
@@ -87,11 +88,27 @@ function routes(options: {
   assignments?: { items: unknown[]; nextCursor: string | null }[];
   grades?: unknown[];
   enrollments?: unknown[];
+  /** 待处理的隔离邮件条数（作业页「邮件提交」旁的数字就数它）。 */
+  pendingQuarantines?: number;
 }): StubbedRoute[] {
   const assignmentPages = options.assignments ?? [
     { items: [A1, A2], nextCursor: null },
   ];
   return [
+    {
+      method: "GET",
+      path: "/api/v1/intake/quarantines",
+      respond: ({ url }) => {
+        const limit = Number(url.searchParams.get("limit") ?? "50");
+        const total = options.pendingQuarantines ?? 0;
+        const items = Array.from({ length: Math.min(total, limit) }, (_, index) =>
+          intakeQuarantineView({
+            intake_quarantine_id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+          }),
+        );
+        return jsonResponse({ items, next_cursor: total > limit ? "more" : null });
+      },
+    },
     {
       method: "POST",
       path: "/api/v1/auth/session",
@@ -344,8 +361,34 @@ describe("作业中心（C1：教师侧提交情况）", () => {
     return user;
   }
 
-  it("逐作业统计已提交 / 未提交，复用名单×成绩的连接（未绑定账号不参与判定）", async () => {
-    await openProgress([
+  it("「邮件提交」旁边显示待处理条数，数字随记录数变化", async () => {
+    stub = installFetchStub(routes({ role: "teacher", pendingQuarantines: 3 }));
+    await signIn("teacher1", "pw");
+    renderAt("/", () => <AssignmentsPage />);
+
+    const badge = await screen.findByTestId("assignments-quarantine-badge");
+    await waitFor(() => expect(badge).toHaveTextContent("3"));
+    expect(badge).toHaveAttribute("aria-label", "有 3 条待处理的邮件记录");
+  });
+
+  it("待处理超过一页时显示「100+」（不把一页计数当总数）", async () => {
+    stub = installFetchStub(routes({ role: "teacher", pendingQuarantines: 150 }));
+    await signIn("teacher1", "pw");
+    renderAt("/", () => <AssignmentsPage />);
+
+    const badge = await screen.findByTestId("assignments-quarantine-badge");
+    await waitFor(() => expect(badge).toHaveTextContent("100+"));
+  });
+
+  it("没有待处理记录时不显示数字", async () => {
+    stub = installFetchStub(routes({ role: "teacher", pendingQuarantines: 0 }));
+    await signIn("teacher1", "pw");
+    renderAt("/", () => <AssignmentsPage />);
+    await screen.findByRole("tab", { name: "提交情况" });
+    expect(screen.queryByTestId("assignments-quarantine-badge")).toBeNull();
+  });
+
+  it("逐作业统计已提交 / 未提交，复用名单×成绩的连接（未绑定账号不参与判定）", async () => {    await openProgress([
       // S1 交了 A1 的 V1
       gradeRow({
         submission_id: UUID_D,

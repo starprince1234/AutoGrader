@@ -21,6 +21,7 @@ import {
   UUID_A,
   UUID_B,
   UUID_C,
+  UUID_D,
   coursePage,
   courseSummary,
   evaluationQualitySummary,
@@ -65,7 +66,17 @@ function routesFor(overrides?: {
   versionRespond?: () => Response;
   summaryRespond?: () => Response;
   courses?: ReturnType<typeof courseSummary>[];
+  /** 版本下拉的可选项；默认只有 UUID_C 一个。 */
+  versions?: { question_version_id: string; version: number; published_at: string }[];
 }): StubbedRoute[] {
+  const versions = overrides?.versions ?? [
+    {
+      question_version_id: UUID_C,
+      version: 3,
+      status: "published" as const,
+      published_at: "2026-09-15T07:20:00.000Z",
+    },
+  ];
   return [
     {
       method: "POST",
@@ -91,14 +102,7 @@ function routesFor(overrides?: {
           items: [
             questionPublic({
               course_id: UUID_A,
-              versions: [
-                {
-                  question_version_id: UUID_C,
-                  version: 3,
-                  status: "published",
-                  published_at: "2026-09-15T07:20:00.000Z",
-                },
-              ],
+              versions: versions.map((item) => ({ ...item, status: "published" as const })),
             }),
           ],
           next_cursor: null,
@@ -146,10 +150,10 @@ const QUALITY_PATH: ReviewSearch = {
 };
 
 describe("P13-B 题目质量标签", () => {
-  it("深链版本：自动预填课程/版本并直接展示统计", async () => {
+  it("深链版本（从题目详情进来）：只显示这道题，直接出统计，没有课程/版本下拉", async () => {
     stub = installFetchStub(routesFor());
     await signIn("teacher1", "pw");
-    renderQuality(QUALITY_PATH);
+    renderQuality({ ...QUALITY_PATH, origin: "question" });
 
     expect(await screen.findByTestId("review-quality-answerers-value")).toHaveTextContent("18");
     expect(screen.getByTestId("review-quality-attempts-value")).toHaveTextContent("42");
@@ -164,12 +168,16 @@ describe("P13-B 题目质量标签", () => {
     expect(rows[0]).toHaveTextContent("第 2 个用例");
     expect(rows[0]).toHaveTextContent("74%");
     expect(rows[0]).toHaveTextContent("11 / 31");
-    expect(screen.getByTestId("review-quality-abnormal-text")).toHaveTextContent(
-      "输出结果不一致：11次",
-    );
-    // 深链把课程/版本填进下拉，老师不用再手选。
-    expect(screen.getByTestId("review-quality-course")).toHaveValue(UUID_A);
-    expect(screen.getByTestId("review-quality-version")).toHaveValue(UUID_C);
+    // 异常汇总竖排：每类一行。
+    const abnormal = screen.getByTestId("review-quality-abnormal-text");
+    expect(abnormal.tagName).toBe("UL");
+    expect(abnormal.querySelectorAll("li").length).toBeGreaterThan(1);
+    expect(abnormal).toHaveTextContent("输出结果不一致：11 次");
+
+    // 只能看这道题：下拉不在，题目版本以只读文字出现。
+    expect(screen.queryByTestId("review-quality-course")).toBeNull();
+    expect(screen.queryByTestId("review-quality-version")).toBeNull();
+    expect(screen.getByTestId("review-quality-locked")).toHaveTextContent("统计文件行数");
 
     const summaryRequest = stub!.requests.find(
       (item) => item.method === "GET" && item.url.pathname === SUMMARY,
@@ -177,7 +185,62 @@ describe("P13-B 题目质量标签", () => {
     expect(summaryRequest?.url.searchParams.get("question_version_id")).toBe(UUID_C);
   });
 
-  it("没有版本时不发任何 B3/B2 请求，只提示从题目详情选择", async () => {
+  it("总览页：只选版本不发请求，点「查询」才出现汇总", async () => {
+    const user = userEvent.setup();
+    stub = installFetchStub(routesFor());
+    await signIn("teacher1", "pw");
+    renderQuality({ tab: "quality", course_id: UUID_A });
+
+    // 只选版本（还没查询）：不发聚合请求，也不显示数字。
+    const versionSelect = await screen.findByTestId("review-quality-version");
+    await waitFor(() => {
+      expect(versionSelect.querySelectorAll("option").length).toBeGreaterThan(1);
+    });
+    await user.selectOptions(versionSelect, UUID_C);
+    expect(screen.queryByTestId("review-quality-answerers-value")).toBeNull();
+    expect(screen.getByTestId("review-quality-no-version")).toHaveTextContent("点「查询」");
+    expect(
+      stub!.requests.some((item) => item.url.pathname === SUMMARY),
+    ).toBe(false);
+
+    await user.click(screen.getByTestId("review-quality-apply"));
+    expect(await screen.findByTestId("review-quality-answerers-value")).toHaveTextContent("18");
+    const summaryRequest = stub!.requests.find(
+      (item) => item.method === "GET" && item.url.pathname === SUMMARY,
+    );
+    expect(summaryRequest?.url.searchParams.get("question_version_id")).toBe(UUID_C);
+  });
+
+  it("查询后又换了版本：旧汇总收起来，提示重新查询", async () => {
+    const user = userEvent.setup();
+    stub = installFetchStub(
+      routesFor({
+        versions: [
+          {
+            question_version_id: UUID_C,
+            version: 3,
+            published_at: "2026-09-15T07:20:00.000Z",
+          },
+          {
+            question_version_id: UUID_D,
+            version: 4,
+            published_at: "2026-10-01T07:20:00.000Z",
+          },
+        ],
+      }),
+    );
+    await signIn("teacher1", "pw");
+    renderQuality(QUALITY_PATH);
+
+    expect(await screen.findByTestId("review-quality-answerers-value")).toHaveTextContent("18");
+    await user.selectOptions(screen.getByTestId("review-quality-version"), UUID_D);
+    expect(await screen.findByTestId("review-quality-selection-changed")).toHaveTextContent(
+      "点「查询」",
+    );
+    expect(screen.queryByTestId("review-quality-answerers-value")).toBeNull();
+  });
+
+  it("没有版本时不发任何 B3/B2 请求，提示先查询", async () => {
     stub = installFetchStub([
       {
         method: "POST",
@@ -196,9 +259,9 @@ describe("P13-B 题目质量标签", () => {
     renderQuality({ tab: "quality" });
 
     expect(await screen.findByTestId("review-quality-no-version")).toHaveTextContent(
-      "请选择题目版本。",
+      "点「查询」",
     );
-    // 没有版本时也给一条"看示例"的路，否则首次访问只有一句"请选择"。
+    // 没有版本时也给一条"看示例"的路，否则首次访问只有一句提示。
     expect(screen.getByTestId("review-quality-empty-demo")).toBeInTheDocument();
     expect(
       stub!.requests.some(

@@ -40,6 +40,12 @@ import { AssignmentComposer } from "./AssignmentComposer";
 import { Select } from "../../ui/Select";
 
 /**
+ * 复核入口徽标的取数上限：一行待处理记录很小，100 条足够覆盖日常；
+ * 超过就显示「100+」，因为列表接口没有 total，一页计数不能冒充总数。
+ */
+const PENDING_BADGE_LIMIT = 100;
+
+/**
  * 作业中心（契约 `AssignmentPublic`，CHG-0007）。
  *
  * 为什么需要这一页：题库有上百道题，"从题海里自己找作业"不是可用性，而是缺失的功能。
@@ -472,8 +478,8 @@ function TeacherProgress({
 export function AssignmentsPage() {
   const session = useSession();
   const cohortView = canViewCohortGrades(session);
-  // 复核入口的红点只回答"有没有待处理"，不显示数量：列表接口没有 total，拿一页计数当总数
-  // 会撒谎。limit=1 只判断是否存在。
+  // 复核入口旁的数字：老师要的是"有几封要处理"，不是一个红点。列表接口没有 total，
+  // 因此只数这一页（最多 100）；还有下一页就显示「100+」，不把一页计数当总数。
   const quarantineIdentity = session.subject ?? session.username ?? "anonymous";
   const pendingQuarantine = useQuarantineMail({
     identity: quarantineIdentity,
@@ -485,12 +491,13 @@ export function AssignmentsPage() {
       held: false,
       reasonCode: null,
       cursor: null,
-      limit: 1,
+      limit: PENDING_BADGE_LIMIT,
     },
   });
-  const hasPendingQuarantine =
-    (pendingQuarantine.data?.pages ?? []).some((page) => page.items.length > 0) ||
-    Boolean(pendingQuarantine.data?.pages.at(-1)?.nextCursor);
+  const pendingRows = (pendingQuarantine.data?.pages ?? []).flatMap((page) => page.items);
+  const pendingCount = pendingRows.length;
+  const pendingOverflow = Boolean(pendingQuarantine.data?.pages.at(-1)?.nextCursor);
+  const hasPendingQuarantine = pendingCount > 0;
   // 作用域：学生用会话里的课程/课序（与作答页同一约定）；教师的两个视图都由页面上的
   // 课程/课序选择器决定——列表与提交情况必须看同一个作用域，否则计数与列表对不上。
   const scope = session.scope[0] ?? null;
@@ -628,18 +635,26 @@ export function AssignmentsPage() {
               {t("review.mail.title")}
               {hasPendingQuarantine ? (
                 <span
-                  aria-label={t("review.pendingBadge")}
+                  aria-label={t("review.pendingBadge", { count: pendingCount })}
                   data-testid="assignments-quarantine-badge"
                   style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: "50%",
-                    background: "var(--color-bad)",
-                    display: "inline-block",
+                    minWidth: 18,
+                    height: 18,
+                    padding: "0 5px",
                     marginLeft: 6,
+                    borderRadius: 9,
+                    background: "var(--color-bad)",
+                    color: "#fff",
+                    fontSize: 11,
+                    fontWeight: 600,
+                    lineHeight: "18px",
+                    textAlign: "center",
+                    display: "inline-block",
                     verticalAlign: "middle",
                   }}
-                />
+                >
+                  {pendingOverflow ? `${pendingCount}+` : pendingCount}
+                </span>
               ) : null}
             </Link>
           ) : null}

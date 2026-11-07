@@ -3,7 +3,12 @@ import { createRoot } from "react-dom/client";
 import "../styles.css";
 import { Root } from "../app/Root";
 import { installSessionAuth, restoreSession, signIn } from "../auth/sessionStore";
-import { DEMO_COURSE_ID, DEMO_TEACHER_ID, DEMO_VERSION_V2_ID } from "../features/review/demoData";
+import {
+  DEMO_COURSE,
+  DEMO_COURSE_ID,
+  DEMO_TEACHER_ID,
+  DEMO_VERSION_V2_ID,
+} from "../features/review/demoData";
 
 /**
  * 离线样例页（`/app/demo.html`，**只在开发预览时使用**，不进生产构建）。
@@ -89,7 +94,8 @@ function installDemoApi(empty: boolean): void {
       return problem(401, "示例页没有刷新凭据。");
     }
     if (empty && method === "GET" && url.pathname === "/api/v1/courses") {
-      return json({ items: [], next_cursor: null });
+      // 留一门课，空态看起来才像"真实环境但还没有数据"，而不是"课程都读不到"。
+      return json({ items: [DEMO_COURSE], next_cursor: null });
     }
     if (empty && method === "GET" && url.pathname === "/api/v1/intake/quarantines") {
       return json({ items: [], next_cursor: null });
