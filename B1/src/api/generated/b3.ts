@@ -1854,6 +1854,17 @@ export interface operations {
                 language?: components["schemas"]["Language"];
                 published_only?: boolean;
                 /**
+                 * @description Case-insensitive **substring** search over the question's title and stem
+                 *     (CHG-0030). A fragment taken from the middle of a sentence matches, which is what
+                 *     the teacher-facing search box needs: it is a "find the question that talks about
+                 *     this" box, not an exact-match filter. The LIKE wildcards (percent, underscore and
+                 *     the escape backslash) are matched literally, so typing a percent sign does not
+                 *     widen the match.
+                 *     An absent or blank value means "no search"; the other filters combine with it
+                 *     (all-of), exactly as they combine with each other.
+                 */
+                q?: string;
+                /**
                  * @description Filter by topic tag (CHG-0013). Added because tags became writable in CHG-0008 and
                  *     were then readable but not *retrievable*: a teacher could label 106 questions and
                  *     still have no way to ask for "the process-scheduling ones". Matching is all-of
