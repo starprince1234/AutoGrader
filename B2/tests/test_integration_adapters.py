@@ -17,6 +17,7 @@ from __future__ import annotations
 import contextlib
 import http.server
 import json
+import os
 import pathlib
 import socket
 import threading
@@ -487,6 +488,32 @@ class TestWorkspaceProvider:
             size_bytes=stored.size_bytes,
             storage_ref=stored.storage_path,
         )
+
+    @pytest.mark.skipif(os.name != "posix", reason="POSIX permission bits")
+    def test_case_workspace_is_accessible_without_exposing_its_parent(
+        self, tmp_path: pathlib.Path
+    ) -> None:
+        class Store:
+            root = tmp_path / "cas"
+
+            def read(self, _digest: str) -> bytes:
+                return b"print(1)\n"
+
+        content = b"print(1)\n"
+        file = EnvelopeFile(path="lib/main.py", content_sha256="a" * 64,
+                            size_bytes=len(content), storage_ref="test")
+        provider = CasWorkspaceProvider(store=Store(), workspace_root=tmp_path / "work")
+        old_umask = os.umask(0o077)
+        try:
+            workspace = provider.prepare(submission_id=str(uuid.uuid4()),
+                                         evaluation_run_id=str(uuid.uuid4()),
+                                         case_id=str(uuid.uuid4()), files=(file,))
+        finally:
+            os.umask(old_umask)
+        assert workspace.stat().st_mode & 0o777 == 0o777
+        assert (workspace / "lib").stat().st_mode & 0o777 == 0o777
+        assert (workspace / "lib/main.py").stat().st_mode & 0o777 == 0o644
+        assert workspace.parent.stat().st_mode & 0o077 == 0
 
     @requires_postgres
     def test_prepare_materialises_exact_bytes(

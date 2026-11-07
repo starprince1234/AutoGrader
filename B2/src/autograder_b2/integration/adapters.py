@@ -269,6 +269,10 @@ class CasWorkspaceProvider:
         run_dir = self._root / _as_uuid_text(evaluation_run_id, "evaluation_run_id")
         target = run_dir / ("run" if case_id is None else f"case-{_as_uuid_text(case_id, 'case_id')}")
         target.mkdir(parents=True, exist_ok=True)
+        if case_id is not None:
+            # The jailed UID is a delegated subordinate ID, not the API UID.
+            # Only the mounted case tree is made accessible; its parent stays private.
+            target.chmod(0o777)
         for item in files:
             if not is_allowed_relative_path(item.path):
                 # 二次防线：入口已校验过，但工作区写入是"学生可控字符串 → 文件系统路径"的最后一跳。
@@ -279,6 +283,12 @@ class CasWorkspaceProvider:
             destination = target / item.path
             destination.parent.mkdir(parents=True, exist_ok=True)
             destination.write_bytes(content)
+            if case_id is not None:
+                parent = destination.parent
+                while parent != target:
+                    parent.chmod(0o777)
+                    parent = parent.parent
+                destination.chmod(0o644)
         return target
 
     def release(self, workspace: Path) -> None:
