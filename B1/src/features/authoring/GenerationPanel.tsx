@@ -356,8 +356,7 @@ export function GenerationPanel({
         </Banner>
       ) : null}
 
-      <fieldset className="case-card">
-        <legend className="case-card__legend">{t("authoring.generation.objective")}</legend>
+      <fieldset className="case-card" aria-label={t("authoring.generation.objective")}>
         <Field
           label={t("authoring.generation.objectiveLabel")}
           htmlFor="generation-objective"
@@ -406,16 +405,20 @@ export function GenerationPanel({
           </Field>
         </div>
 
-        <Field label={t("authoring.generation.constraints")} htmlFor="generation-constraints-input">
-          <textarea
-            id="generation-constraints-input"
-            rows={2}
-            placeholder={t("authoring.generation.constraintsPlaceholder")}
-            value={constraints}
-            maxLength={constraintsLimit > 0 ? constraintsLimit : undefined}
-            onChange={(event) => setConstraints(event.target.value)}
-          />
-        </Field>
+        {/* 补充要求折叠起来：绝大多数题用不到，展开后才占版面。默认收起。 */}
+        <details className="generation-advanced" data-testid="generation-advanced">
+          <summary>{t("authoring.generation.advancedConstraints")}</summary>
+          <Field label={t("authoring.generation.constraints")} htmlFor="generation-constraints-input">
+            <textarea
+              id="generation-constraints-input"
+              rows={2}
+              placeholder={t("authoring.generation.constraintsPlaceholder")}
+              value={constraints}
+              maxLength={constraintsLimit > 0 ? constraintsLimit : undefined}
+              onChange={(event) => setConstraints(event.target.value)}
+            />
+          </Field>
+        </details>
       </fieldset>
 
       <div className="inline">

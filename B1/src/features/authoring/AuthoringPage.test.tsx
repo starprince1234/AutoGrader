@@ -2021,3 +2021,34 @@ describe("检验结果里点未通过的用例：直接跳到用例编辑区并�
     expect(document.activeElement).toBe(within(card).getByLabelText("标准输入"));
   });
 });
+
+describe("AI 出题表单：三处文案与折叠改造", () => {
+  it("教学目标上方不再有灰色说明，用例数目改名，补充要求默认收起", async () => {
+    stub = installFetchStub(baseRoutes(aiDraftRoutes()));
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+    await openAi(user);
+    await selectCourseInAiPanel(user);
+
+    // 1) 那句"想让学生学会什么"已删除（输入框占位文字不变）。
+    expect(screen.queryByText("想让学生学会什么")).toBeNull();
+    expect(screen.getByLabelText("教学目标")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText(/统计每个单词出现的次数/)).toBeInTheDocument();
+
+    // 2) 用例数目。
+    expect(screen.getByText("用例数目")).toBeInTheDocument();
+    expect(screen.queryByText("希望几个测试用例（可选）")).toBeNull();
+
+    // 3) 高级补充要求：默认收起，点开才出现输入框；占位提示保留。
+    const details = screen.getByTestId("generation-advanced");
+    // jsdom 不实现 <details> 的折叠渲染，所以断言的是它的 open 状态（真实浏览器据此收起内容）。
+    expect(details).not.toHaveAttribute("open");
+    expect(screen.getByText("高级补充要求")).toBeInTheDocument();
+    // 占位提示仍在（收起状态下浏览器不渲染，但节点保留）。
+    expect(screen.getByPlaceholderText(/只允许使用标准库/)).toBeInTheDocument();
+
+    await user.click(screen.getByText("高级补充要求"));
+    expect(details).toHaveAttribute("open");
+  });
+});
