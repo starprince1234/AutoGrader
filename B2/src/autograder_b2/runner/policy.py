@@ -135,6 +135,7 @@ SECCOMP_ARCH = "x86_64"
 SECCOMP_ALLOW: tuple[str, ...] = (
     "accept4",
     "access",
+    "alarm",
     "arch_prctl",
     "brk",
     "capget",

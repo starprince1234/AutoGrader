@@ -201,7 +201,7 @@ def test_bash_and_socket_denial_in_real_sandbox(tmp_path: Path) -> None:
 
     workspace = tmp_path / "bash"
     workspace.mkdir()
-    program = "printf '42\\n'\n"
+    program = "who -b >/dev/null && printf '42\\n'\n"
     (workspace / "main.sh").write_text(program, encoding="utf-8")
     package = parse_evaluation_package(_package_payload(language="bash"))
     submission = SubmissionRunInput(

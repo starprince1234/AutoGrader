@@ -690,6 +690,7 @@ class TestNsjailConfig:
             "write",
         }
         assert measured <= set(SECCOMP_ALLOW)
+        assert {"alarm", "fadvise64", "getgroups"} <= set(SECCOMP_ALLOW)
         for syscall in ("socket", "connect", "sendto", "ptrace", "mount", "setuid", "unshare"):
             assert syscall in SECCOMP_DENY
             assert syscall not in SECCOMP_ALLOW
