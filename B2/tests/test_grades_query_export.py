@@ -387,6 +387,7 @@ def _normalised(record: dict[str, object]) -> dict[str, object]:
         "score_source": cell("score_source"),
         "submitted_at": _as_timestamp(record[_HEADER["submitted_at"]]),
         "evaluation_run_id": cell("evaluation_run_id"),
+        "security_status": cell("security_status"),
     }
 
 
@@ -1733,7 +1734,11 @@ def test_repacked_xlsx_is_still_a_valid_workbook_with_the_same_visible_settings(
     assert sheet.freeze_panes == "A2"
     assert sheet["A1"].font.bold is True
     assert [cell.value for cell in sheet[1]] == [header for _, header in GRADE_EXPORT_COLUMNS]
-    assert sheet.cell(row=2, column=12).number_format == "yyyy-mm-dd hh:mm:ss"
+    # 列顺序随契约增加（作业ID/评分状态/分数来源），按表头定位而不是写死列号。
+    submitted_at_column = [header for _, header in GRADE_EXPORT_COLUMNS].index(
+        _HEADER["submitted_at"]
+    ) + 1
+    assert sheet.cell(row=2, column=submitted_at_column).number_format == "yyyy-mm-dd hh:mm:ss"
     # XLSX 的时间单元格是**朴素** UTC（Excel 序列号没有时区），毫秒与对外 RFC 3339 一致
     assert sheet.cell(row=2, column=12).value == BASE.replace(tzinfo=None)
     widths = [sheet.column_dimensions[letter].width for letter in ("A", "H", "M")]

@@ -269,6 +269,7 @@ class SubmissionIntakeService:
         )
         audience = self._require_assignment(identity["assignment_id"])
         self._check_assignment_audience(audience, identity)
+        self._check_answer_file_name(audience, identity, prepared)
 
         pairs = tuple((item.path, item.content) for item in prepared)
         envelope = build_submission_envelope(
@@ -572,6 +573,27 @@ class SubmissionIntakeService:
         student_id = str(uuid.UUID(identity["student_id"]))
         if audience.student_ids and student_id not in audience.student_ids:
             raise AuthorizationError("this student is not in the assignment audience")
+
+    @staticmethod
+    def _check_answer_file_name(
+        audience: AssignmentAudience,
+        identity: Mapping[str, str],
+        prepared: Sequence[_PreparedFile],
+    ) -> None:
+        """The web answer file must be `<question ordinal>.txt` (CHG-0032).
+
+        The ordinal is the assignment's 1-based question position, which is exactly the mapping
+        the workspace displays and the mail path uses. Accepting an arbitrary `.txt` name would
+        invite "one file for several questions" and make the teacher's per-question view guess;
+        the server therefore derives the expected name instead of trusting a convention.
+        """
+        expected = f"{audience.answer_ordinal(identity['question_version_id'])}.txt"
+        actual = prepared[0].path if len(prepared) == 1 else None
+        if actual != expected:
+            raise EnvelopeRejected(
+                "file_type_not_allowed",
+                f"the answer file must be named {expected} (the question's position in the assignment)",
+            )
 
     @staticmethod
     def _idempotency_scope(

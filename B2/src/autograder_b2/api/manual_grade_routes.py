@@ -143,7 +143,7 @@ def build_manual_grade_router(runtime: B2Runtime) -> APIRouter:
                 principal=principal,
             )
         except GradingForbidden as error:
-            return problem_response(FORBIDDEN, instance, str(error))
+            return _json_error(instance, 403, "Forbidden", str(error))
         except AuthorizationError:
             return problem_response(FORBIDDEN, instance)
         except ManualNotFound as error:
@@ -182,7 +182,7 @@ def build_manual_grade_router(runtime: B2Runtime) -> APIRouter:
                 engine, submission_id=submission_id, principal=principal_or_response
             )
         except GradingForbidden as error:
-            return problem_response(FORBIDDEN, instance, str(error))
+            return _json_error(instance, 403, "Forbidden", str(error))
         except AuthorizationError:
             return problem_response(FORBIDDEN, instance)
         except ManualNotFound as error:
@@ -211,7 +211,7 @@ def build_manual_grade_router(runtime: B2Runtime) -> APIRouter:
                 engine, submission_id=submission_id, principal=principal_or_response
             )
         except GradingForbidden as error:
-            return problem_response(FORBIDDEN, instance, str(error))
+            return _json_error(instance, 403, "Forbidden", str(error))
         except AuthorizationError:
             return problem_response(FORBIDDEN, instance)
         except ManualNotFound as error:
@@ -243,7 +243,7 @@ def build_manual_grade_router(runtime: B2Runtime) -> APIRouter:
                 engine, submission_id=submission_id, principal=principal_or_response
             )
         except GradingForbidden as error:
-            return problem_response(FORBIDDEN, instance, str(error))
+            return _json_error(instance, 403, "Forbidden", str(error))
         except AuthorizationError:
             return problem_response(FORBIDDEN, instance)
         except ManualNotFound as error:
@@ -290,7 +290,7 @@ def build_manual_grade_router(runtime: B2Runtime) -> APIRouter:
                 principal=principal_or_response,
             )
         except GradingForbidden as error:
-            return problem_response(FORBIDDEN, instance, str(error))
+            return _json_error(instance, 403, "Forbidden", str(error))
         except AuthorizationError:
             return problem_response(FORBIDDEN, instance)
         except ManualNotFound as error:

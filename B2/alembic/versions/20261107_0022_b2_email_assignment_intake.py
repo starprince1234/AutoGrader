@@ -201,6 +201,14 @@ def downgrade() -> None:
     op.drop_constraint(
         "ck_email_verification_challenges_rejection", CHALLENGES, type_="check", schema=SCHEMA
     )
+    # 新原因码在旧结构里没有对应取值：dev-only 有损回滚把它们清回 NULL（约束允许 NULL），
+    # 否则在已产生新拒绝码的库上重建旧 CHECK 会因存量行失败。生产不执行 downgrade。
+    new_codes = tuple(code for code in _REJECTION_CODES if code not in _OLD_REJECTION_CODES)
+    quoted_new = ", ".join(f"'{code}'" for code in new_codes)
+    op.execute(
+        f"UPDATE {SCHEMA}.{CHALLENGES} SET last_rejection_code = NULL"
+        f" WHERE last_rejection_code IN ({quoted_new})"
+    )
     op.create_check_constraint(
         "ck_email_verification_challenges_rejection",
         CHALLENGES,

@@ -159,7 +159,12 @@ class FakeSenderDirectory:
 
 
 class FakeAssignmentDirectory:
-    """`AssignmentDirectory` 的替身：注入的受众就是 B3 internal 端点会返回的事实。"""
+    """`AssignmentDirectory` 的替身：注入的受众就是 B3 internal 端点会返回的事实。
+
+    `audience=None` 表示"作业不存在"（B3 404）；`unavailable=True` 表示目录不可达（B3 5xx/网络）。
+    两者都是**同一对象**上的可变状态，因此测试改的是真正被 `EmailVerificationService`/接收服务
+    使用的那个目录实例，而不是往它身上外挂另一个对象的方法（那会让注入与实际调用点脱节）。
+    """
 
     def __init__(self, audience: AssignmentAudience | None = None) -> None:
         self.audience = audience or assignment_audience()
@@ -170,6 +175,8 @@ class FakeAssignmentDirectory:
         self.calls.append(assignment_id)
         if self.unavailable:
             raise AssignmentUnavailable("assignment directory is down")
+        if self.audience is None:
+            return None
         if str(self.audience.assignment_id) != str(assignment_id):
             return None
         return self.audience
@@ -577,14 +584,11 @@ def test_challenge_audience_checks(harness: Harness) -> None:
 
 
 def test_challenge_requires_an_existing_open_assignment(harness: Harness) -> None:
-    harness.assignments.audience = assignment_audience()
-    harness.assignments.get = lambda _assignment_id: None  # type: ignore[method-assign]
+    harness.assignments.audience = None  # 目录里没有这个作业（B3 404）
     with pytest.raises(ChallengeAssignmentNotFoundError):
         issue(harness)
 
-    harness.assignments.get = FakeAssignmentDirectory(
-        assignment_audience(status="closed")
-    ).get
+    harness.assignments.audience = assignment_audience(status="closed")
     with pytest.raises(ChallengeAssignmentClosedError):
         issue(harness)
     assert table_count(harness.engine, email_verification_challenges) == 0
@@ -735,7 +739,10 @@ def test_multi_attachment_mail_creates_one_submission_per_question(harness: Harn
     mappings = table_rows(harness.engine, email_verification_submissions)
     assert {str(row["question_version_id"]) for row in mappings} == {Q1, Q2}
     assert {row["attachment_name"] for row in mappings} == {"1.txt", "2.txt"}
-    assert {str(row["submission_id"]) for row in mappings} == set(rows)
+    # 映射的 submission_id 必须正好是库里这两条提交（按题映射不是"随便生成了两条"）。
+    assert {str(row["submission_id"]) for row in mappings} == {
+        str(row["submission_id"]) for row in rows.values()
+    }
 
     challenge = only_row(harness.engine, email_verification_challenges)
     assert challenge["consumed_at"] is not None
@@ -1383,20 +1390,31 @@ def test_create_challenge_endpoint_maps_assignment_states(
     token = harness.signer.token(user_id=STUDENT_ID)
     endpoint = "/api/v1/email-verification/challenges"
 
-    harness.assignments.get = lambda _assignment_id: None  # type: ignore[method-assign]
-    assert api_client.post(endpoint, json=_challenge_payload(), headers=_auth(token)).status_code == 404
+    harness.assignments.audience = None  # 不存在 → 404（不是 403/503）
+    assert (
+        api_client.post(endpoint, json=_challenge_payload(), headers=_auth(token)).status_code
+        == 404
+    )
 
-    harness.assignments.get = FakeAssignmentDirectory(assignment_audience(status="archived")).get
-    assert api_client.post(endpoint, json=_challenge_payload(), headers=_auth(token)).status_code == 409
+    harness.assignments.audience = assignment_audience(status="archived")  # 非 open → 409
+    assert (
+        api_client.post(endpoint, json=_challenge_payload(), headers=_auth(token)).status_code
+        == 409
+    )
 
     harness.assignments.audience = assignment_audience(student_ids=(OTHER_STUDENT_ID,))
-    harness.assignments.get = FakeAssignmentDirectory(
-        harness.assignments.audience
-    ).get
-    assert api_client.post(endpoint, json=_challenge_payload(), headers=_auth(token)).status_code == 403
+    assert (
+        api_client.post(endpoint, json=_challenge_payload(), headers=_auth(token)).status_code
+        == 403
+    )
 
+    # 目录不可达是**基础设施**故障，必须 503；此时作业受众本身仍可读，只是目录服务挂了。
+    harness.assignments.audience = assignment_audience()
     harness.assignments.unavailable = True
-    assert api_client.post(endpoint, json=_challenge_payload(), headers=_auth(token)).status_code == 503
+    assert (
+        api_client.post(endpoint, json=_challenge_payload(), headers=_auth(token)).status_code
+        == 503
+    )
 
 
 def test_status_endpoint_is_owner_only_and_lists_per_question_submissions(

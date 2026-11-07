@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 
 #: 正文标签 → 内部字段键。标签是固定的中文字面量（设计 §6.1 冻结的模板）。
@@ -80,9 +81,15 @@ class EmailBody:
 def parse_email_body(text: str | None) -> EmailBody:
     """从正文摘录里解析五行；未知文字忽略，重复标签取**第一次**出现（确定性）。
 
-    **不假设正文有换行**：`attachments._body_excerpt` 把正文空白折叠成单个空格，因此这里在整段
-    文本上按标签正则定位，值 = 冒号后到下一个标签之前（或文本末尾）的子串。带换行的原始正文与
-    折叠后的单行摘录因此解析出同样的五个字段。
+    **两种输入形态都要正确**（`attachments._body_excerpt` 会把正文空白折叠成单个空格，但调用方
+    也可能把带换行的原始正文交进来）：
+
+    - **含换行的正文**：逐行解析，字段值 = 本行冒号后的内容（到行尾），因此下一行的学生附言
+      不会并进上一行的值；
+    - **折叠成单行的摘录**：在整段文本上按标签边界切分，值 = 冒号后到下一个标签之前（或文本末尾）。
+
+    核验码/作业编号/学号是**不含空白的单个 token**：只取标签后的第一个 token，这样即使最后
+    一个标签之后紧跟学生附言（折叠形态）也不会污染取值。
 
     - 空正文 → 五个字段全缺（调用方据此报"缺核验码/缺字段"）；
     - 值可以带前导/尾随空白（会被 strip）；
@@ -93,18 +100,14 @@ def parse_email_body(text: str | None) -> EmailBody:
     """
     values: dict[str, str] = {}
     if isinstance(text, str) and text:
-        matches = list(_LABEL_PATTERN.finditer(text))
-        for index, match in enumerate(matches):
-            key = FIELD_LABELS[match.group("label")]
-            if key in values:
+        for key, value in _iter_label_values(text):
+            if key in values or not value:
                 continue
-            end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
-            value = text[match.end() : end].strip()
             if key in _SINGLE_TOKEN_FIELDS:
-                # 正文摘录被折叠成单行，最后一个标签之后的学生附言会并进"最后一个字段"。
-                # 核验码/作业编号/学号都是**不含空白的单个 token**，取第一个 token 即可，
-                # 既不把附言当成取值，也不改变"存在性"的判定。
-                value = value.split(" ", 1)[0] if value else ""
+                # 单个 token：折叠形态下最后一个标签之后的学生附言会并进该值，取第一个 token
+                # 即可（`split()` 同时处理空格/制表等空白；换行形态已按行切断）。
+                tokens = value.split()
+                value = tokens[0] if tokens else ""
             if value:
                 values[key] = value[:MAX_FIELD_LENGTH]
     resolved: dict[str, str | None] = {key: values.get(key) for key in FIELD_ORDER}
@@ -117,6 +120,19 @@ def parse_email_body(text: str | None) -> EmailBody:
         student_number=resolved["student_number"],
         missing=missing,
     )
+
+
+def _iter_label_values(text: str) -> Iterator[tuple[str, str]]:
+    """按"行优先、行内按标签切分"产出 `(字段键, 原始值)`；值尚未 strip 以外的规范化。"""
+    lines = text.splitlines() if ("\n" in text or "\r" in text) else [text]
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line:
+            continue
+        matches = list(_LABEL_PATTERN.finditer(line))
+        for index, match in enumerate(matches):
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(line)
+            yield FIELD_LABELS[match.group("label")], line[match.end() : end].strip()
 
 
 def normalize_person_text(value: str | None) -> str | None:
