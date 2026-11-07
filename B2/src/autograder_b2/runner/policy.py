@@ -94,6 +94,7 @@ _SCRIPT_SEGMENT = re.compile(r"^[A-Za-z0-9_.-]+$")
 #: - `socketcall`：i386 专属；在 x86_64 上编号 102 是 **getuid**，定义它会把 getuid 当成 socketcall 杀掉。
 SECCOMP_X86_64_DEFINES: tuple[tuple[str, int], ...] = (
     ("clone3", 435),
+    ("fadvise64", 221),
     ("close_range", 436),
     ("faccessat2", 439),
     ("fanotify_init", 300),
@@ -159,6 +160,7 @@ SECCOMP_ALLOW: tuple[str, ...] = (
     "execveat",
     "exit",
     "exit_group",
+    "fadvise64",
     "faccessat",
     "faccessat2",
     "fchdir",
@@ -178,6 +180,7 @@ SECCOMP_ALLOW: tuple[str, ...] = (
     "getegid",
     "geteuid",
     "getgid",
+    "getgroups",
     "getpeername",
     "getpgid",
     "getpgrp",
