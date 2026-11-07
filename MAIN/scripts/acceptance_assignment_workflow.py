@@ -495,7 +495,6 @@ def main() -> int:
             "POST",
             "/api/v1/submissions",
             token=student_two,
-            expect=(403,),
             body=envelope(
                 assignment_id=assignment_two,
                 student_id=str(STUDENT_TWO_ID),
@@ -507,7 +506,10 @@ def main() -> int:
         )
         check(False, "student outside the narrowed assignment audience is refused with 403")
     except HttpError as error:
-        check(error.status == 403, f"student outside the narrowed assignment audience is refused with 403 (got {error.status})")
+        check(
+            error.status == 403,
+            f"student outside the narrowed assignment audience is refused with 403 (got {error.status})",
+        )
     # A version that is not part of the assignment is a data error (422), not a guess.
     other_version = create_published_version(teacher, "验收题三：输出 gamma", "gamma")
     request(
@@ -591,9 +593,16 @@ def main() -> int:
         check(mapped_question_ids == {version_one, version_two}, "mail mapping preserves question identity")
         mail_view = json_request("GET", f"/api/v1/submissions/{sorted(email_submission_ids)[0]}", token=teacher)
         check(mail_view["intake"] == "email", "mail submission is the same record shape with intake=email")
+        # The mapped submission for question 1 owns `1.txt`; picking the lexicographically
+        # first id could point at question 2's `2.txt` and the 404 would be correct.
+        question_one_submission = next(
+            str(item["submission_id"])
+            for item in mapped
+            if str(item["question_version_id"]) == version_one
+        )
         mail_file = request(
             "GET",
-            f"/api/v1/submissions/{sorted(email_submission_ids)[0]}/files",
+            f"/api/v1/submissions/{question_one_submission}/files",
             token=teacher,
             raw_query="path=1.txt",
         )
