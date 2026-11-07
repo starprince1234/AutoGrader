@@ -21,6 +21,7 @@ import {
   useQualitySummary,
 } from "./useReviewQuality";
 import { readQualityFilter, withQualityFilter, type ReviewSearch } from "./search";
+import { DEMO_COURSE, DEMO_VERSION_OPTIONS, demoQualitySummary } from "./demoData";
 import { Select } from "../../ui/Select";
 
 /**
@@ -228,6 +229,36 @@ function QualityBody({ summary }: { summary: EvaluationQualitySummary }) {
   );
 }
 
+/**
+ * 评测汇总面板：真实数据与示例数据走同一段渲染。
+ *
+ * 示例模式的说明只出现在页头那一条横幅里：同一句话在面板里再写一遍，读者会以为自己看漏了什么。
+ */
+function SummaryPanel({ summary }: { summary: EvaluationQualitySummary }) {
+  return (
+    <Panel title={t("review.quality.result")} testId="review-quality-panel">
+      {summary.attempt_count === 0 ? (
+        <Banner tone="info" testId="review-quality-empty">
+          {t("review.quality.empty")}
+        </Banner>
+      ) : (
+        <>
+          {systemFailureCount(summary) > 0 || summary.security_found > 0 ? (
+            <Banner tone="warn" testId="review-quality-hint">
+              {t("review.quality.anomalyHint")}
+            </Banner>
+          ) : summary.answerer_count !== undefined && answererCount(summary) < 5 ? (
+            <Banner tone="warn" testId="review-quality-hint">
+              {t("review.quality.smallSampleHint")}
+            </Banner>
+          ) : null}
+          <QualityBody summary={summary} />
+        </>
+      )}
+    </Panel>
+  );
+}
+
 export function QualityReviewTab({
   search,
   onChange,
@@ -236,6 +267,7 @@ export function QualityReviewTab({
   onChange: (next: ReviewSearch) => void;
 }) {
   const session = useSession();
+  const demo = search.demo === "1";
   const identity = session.subject ?? session.username ?? "anonymous";
   const filter = readQualityFilter(search);
   const [fromDraft, setFromDraft] = useState(toLocalInputValue(filter.from));
@@ -250,29 +282,48 @@ export function QualityReviewTab({
     setIssue(null);
   }, [filter.from, filter.to]);
 
-  const courses = useCourses();
+  // 示例模式不读课程目录：样例自带课程名与版本，没登录、没后端也能完整浏览。
+  const courses = useCourses({ enabled: !demo });
   const isAdmin = session.rolesKnown && session.roles.includes("admin");
   // 与邮件标签同一口径：下拉只展示令牌作用域覆盖的课程；服务端仍会拒绝越权版本。
   const scopeCourseIds = new Set(session.scope.map((entry) => entry.course_id));
-  const courseOptions = loadedCourses(courses.data?.pages).filter(
-    (course) => isAdmin || scopeCourseIds.has(course.course_id),
-  );
-  const versionOptions = useVersionOptions(filter.courseId);
+  const courseOptions = demo
+    ? [DEMO_COURSE]
+    : loadedCourses(courses.data?.pages).filter(
+        (course) => isAdmin || scopeCourseIds.has(course.course_id),
+      );
+  const versionOptions = useVersionOptions(demo ? null : filter.courseId);
+  const versionChoices = demo ? DEMO_VERSION_OPTIONS : versionOptions.options;
+
+  /** 示例模式只给一门课、两个版本：下拉与"查询"要有值可用，不能停在"请选择"。 */
+  const effectiveCourseId = demo
+    ? (filter.courseId ?? DEMO_COURSE.course_id)
+    : filter.courseId;
+  const effectiveVersionId = demo
+    ? (filter.questionVersionId ?? versionChoices[0]?.questionVersionId ?? null)
+    : filter.questionVersionId;
 
   const invalidVersion = filter.questionVersionId !== null && !isUuid(filter.questionVersionId);
   const context = useVersionContext(
-    filter.questionVersionId !== null && !invalidVersion ? filter.questionVersionId : null,
+    demo || invalidVersion || filter.questionVersionId === null
+      ? null
+      : filter.questionVersionId,
   );
+  // 示例模式不发 B2 聚合请求：数字由 `demoData` 里的记录算出，时间范围真的会过滤。
   const summaryEnabled =
-    filter.questionVersionId !== null && !invalidVersion && context.version.isSuccess;
+    !demo && filter.questionVersionId !== null && !invalidVersion && context.version.isSuccess;
   const summary = useQualitySummary({
     identity,
     filter,
     enabled: summaryEnabled,
   });
+  const demoSummary =
+    demo && effectiveVersionId !== null
+      ? demoQualitySummary(effectiveVersionId, filter.from, filter.to)
+      : null;
 
   const apply = () => {
-    if (filter.questionVersionId === null) return;
+    if (effectiveVersionId === null) return;
     const fromValue = toContractTimestamp(fromDraft);
     if (fromDraft.trim() !== "" && fromValue === null) {
       setIssue("invalidTime");
@@ -294,8 +345,8 @@ export function QualityReviewTab({
     setIssue(null);
     onChange(
       withQualityFilter(search, {
-        courseId: filter.courseId,
-        questionVersionId: filter.questionVersionId,
+        courseId: effectiveCourseId,
+        questionVersionId: effectiveVersionId,
         from: fromValue,
         to: toValue,
       }),
@@ -308,8 +359,8 @@ export function QualityReviewTab({
     setToDraft("");
     onChange(
       withQualityFilter(search, {
-        courseId: filter.courseId,
-        questionVersionId: filter.questionVersionId,
+        courseId: effectiveCourseId,
+        questionVersionId: effectiveVersionId,
         from: null,
         to: null,
       }),
@@ -325,6 +376,13 @@ export function QualityReviewTab({
     <div className="stack">
       <h2>{t("review.quality.title")}</h2>
 
+      {demo ? (
+        <Banner tone="info" testId="review-demo-banner">
+          <p>{t("review.demoBanner")}</p>
+          <p className="muted">{t("review.demoQualityNote")}</p>
+        </Banner>
+      ) : null}
+
       <Panel title={t("review.quality.filter")}>
         <div className="stack">
           <div className="form-grid">
@@ -332,14 +390,15 @@ export function QualityReviewTab({
               <Select
                 id="review-quality-course"
                 data-testid="review-quality-course"
-                value={filter.courseId ?? ""}
+                value={effectiveCourseId ?? ""}
                 onChange={(event) => {
                   const nextCourse = event.target.value === "" ? null : event.target.value;
                   onChange(
                     withQualityFilter(search, {
                       courseId: nextCourse,
                       // 换课程后旧版本必然不属于新课程；清空而不是留下一个会 403 的版本。
-                      questionVersionId: null,
+                      questionVersionId:
+                        nextCourse === effectiveCourseId ? filter.questionVersionId : null,
                       from: filter.from,
                       to: filter.to,
                     }),
@@ -359,13 +418,13 @@ export function QualityReviewTab({
               <Select
                 id="review-quality-version"
                 data-testid="review-quality-version"
-                value={filter.questionVersionId ?? ""}
-                disabled={filter.courseId === null}
+                value={effectiveVersionId ?? ""}
+                disabled={!demo && filter.courseId === null}
                 onChange={(event) => {
                   const next = event.target.value === "" ? null : event.target.value;
                   onChange(
                     withQualityFilter(search, {
-                      courseId: filter.courseId,
+                      courseId: effectiveCourseId,
                       questionVersionId: next,
                       from: filter.from,
                       to: filter.to,
@@ -374,18 +433,22 @@ export function QualityReviewTab({
                 }}
               >
                 <option value="">{t("common.selectPrompt")}</option>
-                {filter.questionVersionId !== null && !invalidVersion ? (
+                {filter.questionVersionId !== null &&
+                !invalidVersion &&
+                !versionChoices.some(
+                  (option) => option.questionVersionId === filter.questionVersionId,
+                ) ? (
+                  // 深链带来的版本可能不在列表里（未发布/超出当前页）：仍然要显示出来，
+                  // 否则选择器会退成"请选择"，而下面的汇总却已经有数字。
                   <option value={filter.questionVersionId}>
                     {context.label ?? filter.questionVersionId}
                   </option>
                 ) : null}
-                {versionOptions.options
-                  .filter((option) => option.questionVersionId !== filter.questionVersionId)
-                  .map((option) => (
-                    <option key={option.questionVersionId} value={option.questionVersionId}>
-                      {option.label}
-                    </option>
-                  ))}
+                {versionChoices.map((option) => (
+                  <option key={option.questionVersionId} value={option.questionVersionId}>
+                    {option.label}
+                  </option>
+                ))}
               </Select>
             </Field>
 
@@ -437,7 +500,7 @@ export function QualityReviewTab({
                 {t("review.quality.clearTime")}
               </button>
             ) : null}
-            {versionOptions.query.hasNextPage ? (
+            {!demo && versionOptions.query.hasNextPage ? (
               <LoadMoreActions
                 loadedCount={versionOptions.options.length}
                 hasNextPage={versionOptions.query.hasNextPage}
@@ -461,7 +524,9 @@ export function QualityReviewTab({
         </Banner>
       ) : null}
 
-      {filter.questionVersionId === null ? (
+      {demo ? (
+        demoSummary ? <SummaryPanel summary={demoSummary} /> : null
+      ) : filter.questionVersionId === null ? (
         <Banner tone="info" testId="review-quality-no-version">
           {t("review.quality.noVersion")}
         </Banner>
@@ -491,27 +556,7 @@ export function QualityReviewTab({
       ) : summary.isPending && summaryEnabled ? (
         <Spinner />
       ) : summary.data ? (
-        <Panel title={t("review.quality.result")} testId="review-quality-panel">
-          {summary.data.attempt_count === 0 ? (
-            <Banner tone="info" testId="review-quality-empty">
-              {t("review.quality.empty")}
-            </Banner>
-          ) : (
-            <>
-              {systemFailureCount(summary.data) > 0 || summary.data.security_found > 0 ? (
-                <Banner tone="warn" testId="review-quality-hint">
-                  {t("review.quality.anomalyHint")}
-                </Banner>
-              ) : summary.data.answerer_count !== undefined &&
-                answererCount(summary.data) < 5 ? (
-                <Banner tone="warn" testId="review-quality-hint">
-                  {t("review.quality.smallSampleHint")}
-                </Banner>
-              ) : null}
-              <QualityBody summary={summary.data} />
-            </>
-          )}
-        </Panel>
+        <SummaryPanel summary={summary.data} />
       ) : null}
     </div>
   );

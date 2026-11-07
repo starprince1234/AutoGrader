@@ -140,3 +140,47 @@
 **演示数据**：`B2/scripts/seed_demo_quarantines.py` 可写入 2 条待处理演示记录（需显式
 `--confirm-demo-write`）；生产/联调库中的真实记录仍来自邮件入口。**匹配用户**要求部署配置了
 `B2_IMAP_*`：隔离记录不存附件字节，服务端必须回邮箱取原邮件，取不到时明确 409/503。
+
+## 8. 示例预览（前后端数据都没有时也能评审界面）
+
+老师的验收条件很具体：联调库里没有邮件、没有评测记录，页面就是两个空态，"功能对不对"无从判断。
+本批把示例数据做成**页面的一部分**（不是另一套界面），并顺手修掉了两个"刷新后筛选失效"的 URL 解析缺陷。
+
+1. **入口**：复核页页头「查看示例 / 退出示例」，或直接 `/review?demo=1`。`demo` 标记随标签切换
+   保留（`withTab`/`withMailFilter`/`withQualityFilter` 都带着它），退出后才回到真实数据。
+2. **示例模式与真实数据同形**：邮件标签用 `IntakeQuarantineView` 的 6 条记录（待处理 3、暂存 1、
+   已完成 1、已作废 1），质量标签用「平均分判定」v1（42 次 / 18 人 / 系统故障 11 / 安全风险 1 /
+   待检查 14）与 v2（3 次 / 2 人 / 未执行安全扫描）两个版本。课程（`05 · Python`）、课序（`01 · 2026 秋`）、
+   作业与 4 名候选学生都是示例自带，**不读** B4/B3/B2 目录。
+3. **示例模式不发业务请求**：`useCourses` 在示例下 `enabled:false`，`useSections`/`useAllAssignments`/
+   `useEnrollments`/`useVersionOptions`/`useVersionContext`/`useQualitySummary` 全部关闭；处置按钮
+   （匹配用户 / 暂存 / 标记作废）只改组件内的副本，处置人写成示例教师，界面因此显示"处理人：你"。
+4. **示例数字是算出来的**：`demoQualitySummary(versionId, from, to)` 从 45 条静态运行记录（时间戳、
+   逐用例结果、失败类别、资源丢失标记、三态安全结论）现算聚合，所以**时间范围真的会过滤**，
+   切换版本也会得到不同的样本量（v2 触发"样本较少"提示）。邮件的状态/原因/课序筛选同样在
+   客户端真的过滤。
+5. **修掉的解析缺陷**：路由把查询串按 JSON 解析，`?demo=1`、`?resolved=true`、`?held=true`
+   到手时是数字/布尔而不是字符串，原来只比较字符串——结果是**刷新/直链后筛选悄悄退回默认**
+   （示例标记丢失、邮件列表从「已处理」跳回「待处理」）。`parseReviewSearch` 现在两种形态都接受
+   （`demo` 另测了 `"0"`/`2` 被丢弃）。
+6. **没有登录/后端时**：新增开发预览页 `demo.html` + `src/demo/main.tsx`（**不进生产构建**，
+   Vite 只以 `index.html` 为入口）。它用一个假会话让路由守卫通过，并在 `fetch` 层拦下所有 API
+   （登录接口返回假令牌，其它请求 501 + 打印路径），于是 `/app/demo.html?tab=quality` 这类地址
+   在没有 MAIN/B2/B3/B4 的机器上也能评审同一套组件。可用 `?tab=mail&state=processed|held|all`、
+   `?tab=quality&version=2` 预设状态。
+
+**验证（本机实跑）**：`tsc -b`、`eslint src --max-warnings 0`、`vite build` 通过；Vitest
+**59 文件 / 546 用例全部通过**（复核模块 4 文件 / 40 用例，其中新增 5 个示例用例：邮件示例不发请求、
+切换状态、本地归属，质量示例聚合与版本切换、时间范围真的过滤，以及 URL 布尔/数字解析）。
+无头 Edge 实拍四张：`docs/design/screenshots/review-demo-mail.png`、`review-demo-mail-processed.png`、
+`review-demo-quality.png`、`review-demo-quality-v2.png`（浅色、1920 宽）。
+
+**未验证**：线上 `https://www.91idc.me/app/` 仍是旧构建（本地改动未提交/未部署），因此
+"部署后示例按钮在真实账号下可见"这一步没有执行；B2 邮件入口匹配所需的 `B2_IMAP_*`、
+`B2/scripts/seed_demo_quarantines.py` 的写库路径本轮也未触碰。
+
+**顺手修掉的门禁误报**：本机 `api:check` 曾报 `src/api/generated/b2.ts`、`b3.ts` 与契约漂移，
+但把生成器的输出与 `HEAD` 里的 blob 逐字节比对是完全一致的——原因是 Windows 上
+`core.autocrlf=true` 检出的是 CRLF，而生成器写 LF，纯行尾差异被当成了漂移（Linux/Vercel 不会红，
+所以最难自查）。`scripts/generate-api-types.mjs --check` 现在比较前统一换行；改完
+`--check` 通过，反向验证（手改一个字符）仍然报 `API type drift detected`，生成物本身无变化。

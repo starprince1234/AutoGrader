@@ -504,3 +504,104 @@ describe("P13-A 邮件提交标签", () => {
     });
   });
 });
+
+/**
+ * 示例预览（`?demo=1`）评审的是**同一套界面**：它必须完全不发业务请求，且筛选与处置都在
+ * 本地副本上生效——否则"样例"会变成"另一个页面"，评出来的东西对不上真实实现。
+ */
+describe("P13-A 邮件提交 · 示例预览", () => {
+  const DEMO_SEARCH: ReviewSearch = { tab: "mail", demo: "1" };
+
+  /** 只声明登录边界：任何别的请求都会让 `installFetchStub` 直接抛错。 */
+  function sessionOnly(): StubbedRoute[] {
+    return [
+      {
+        method: "POST",
+        path: SESSION,
+        respond: () =>
+          jsonResponse(
+            sessionCreated({
+              roles: ["teacher"],
+              scope: [
+                {
+                  course_id: "00000000-0000-4000-8000-00000000d007",
+                  section_id: "00000000-0000-4000-8000-00000000d004",
+                },
+              ],
+            }),
+          ),
+      },
+    ];
+  }
+
+  it("不请求课程/名单/隔离区，直接渲染待处理示例；切换状态看得到已处理记录", async () => {
+    const user = userEvent.setup();
+    stub = installFetchStub(sessionOnly());
+    await signIn("teacher1", "pw");
+    renderWithProviders(<Harness initial={DEMO_SEARCH} />);
+
+    expect(await screen.findByTestId("review-demo-banner")).toHaveTextContent("示例预览");
+    const table = await screen.findByTestId("review-mail-table");
+    expect(within(table).getByText("【作业】统计文件行数 - 王一")).toBeInTheDocument();
+    expect(within(table).getByText("请问作业提交格式")).toBeInTheDocument();
+    expect(within(table).queryByText("作业提交 - 李四")).toBeNull();
+
+    // 示例自己给出课程/课序、原因与计数；不是"加载中"也不是"没有权限"。
+    expect(screen.getByTestId("review-mail-course")).toHaveValue(
+      "00000000-0000-4000-8000-00000000d007",
+    );
+    // 默认仍是「全部课序」；示例课序在下拉里可选，而不是从后端目录读来的。
+    const sectionSelect = screen.getByTestId("review-mail-section");
+    expect(sectionSelect).toHaveValue("");
+    expect(
+      sectionSelect.querySelector('option[value="00000000-0000-4000-8000-00000000d004"]')
+        ?.textContent,
+    ).toContain("01 · 2026 秋");
+
+    await user.selectOptions(screen.getByTestId("review-mail-resolved"), "processed");
+    expect(await screen.findByText("作业提交 - 李四")).toBeInTheDocument();
+    // 已处理视图里既有「已完成」也有「已作废」：两行都带处理人/时间。
+    expect(screen.getAllByText(/处理人：/).length).toBeGreaterThan(0);
+
+    const business = stub!.requests.filter(
+      (item) => item.method !== "POST" || item.url.pathname !== SESSION,
+    );
+    expect(business).toHaveLength(0);
+  });
+
+  it("匹配用户只改本地副本：成功后该行离开待处理列表，且不发任何写请求", async () => {
+    const user = userEvent.setup();
+    stub = installFetchStub(sessionOnly());
+    await signIn("teacher1", "pw");
+    renderWithProviders(<Harness initial={DEMO_SEARCH} />);
+
+    const rowId = "00000000-0000-4000-8000-00000000e001";
+    await user.click(await screen.findByTestId(`review-mail-resolve-${rowId}`));
+    const assignment = await screen.findByTestId("review-resolve-assignment");
+    await waitFor(() => {
+      expect(assignment.querySelectorAll("option").length).toBeGreaterThan(1);
+    });
+    const assignmentId = Array.from(assignment.querySelectorAll("option"))[1].value;
+    await user.selectOptions(assignment, assignmentId);
+    await user.selectOptions(
+      screen.getByTestId("review-resolve-student"),
+      "00000000-0000-4000-8000-00000000d002",
+    );
+    await user.click(screen.getByTestId("review-resolve-continue"));
+    await user.click(await screen.findByTestId("review-mail-confirm-submit"));
+
+    expect(await screen.findByTestId("review-mail-resolved-ok")).toHaveTextContent(
+      "已匹配用户并生成提交",
+    );
+    await waitFor(() => {
+      expect(
+        screen.queryByText("【作业】统计文件行数 - 王一"),
+      ).toBeNull();
+    });
+    expect(
+      stub!.requests.filter(
+        (item) => item.method !== "POST" || item.url.pathname !== SESSION,
+      ),
+    ).toHaveLength(0);
+  });
+});

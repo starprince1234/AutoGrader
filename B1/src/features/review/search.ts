@@ -24,6 +24,8 @@ export type ReviewSearch = {
   tab?: ReviewTab;
   /** 从题目详情进入 quality 标签：返回按钮应回题库列表，而不是作业列表。 */
   origin?: "question";
+  /** 示例预览（前端 mock，不请求/不写真实数据）。 */
+  demo?: "1";
   course_id?: string;
   section_id?: string;
   resolved?: "true" | "false" | "all";
@@ -76,6 +78,19 @@ function token(value: unknown): string | undefined {
   return trimmed;
 }
 
+/**
+ * 查询串里的布尔值。
+ *
+ * 路由会先把查询串按 JSON 解析：`?resolved=true` 到手时已经是布尔 `true`，不是字符串
+ * `"true"`。只比较字符串会让"刷新后邮件筛选还在"这件事悄悄失效（默认回到「待处理」），
+ * 因此这里两种形态都接受。
+ */
+function boolValue(value: unknown): boolean | undefined {
+  if (value === true || value === "true") return true;
+  if (value === false || value === "false") return false;
+  return undefined;
+}
+
 /** 未知 tab 归一到 `mail`：不制造第三条未定义页面，也不给旧入口留兼容路由。 */
 export function normalizeReviewTab(value: unknown): ReviewTab {
   return value === "quality" ? "quality" : "mail";
@@ -87,22 +102,28 @@ export function normalizeReviewTab(value: unknown): ReviewTab {
  * - `reason_code` 只接受契约 enum（未知值不成为筛选，也不成为可执行操作）；
  * - 课程/课序/版本是否合法由各标签用 `isUuid` 判定后再决定是否发请求（这样页面能给出
  *   "题目版本格式不正确"这类针对性的说明，而不是静默变成"没有数据"）。
+ *
+ * `demo` 必须同时接受字符串与数字：路由把查询串按 JSON 解析，`?demo=1` 到手时是数字 `1`，
+ * 只比较 `"1"` 会让刷新/直链的示例模式悄悄失效（与导览页 `registered` 同一类坑）。
  */
 export function parseReviewSearch(search: Record<string, unknown>): ReviewSearch {
   const parsed: ReviewSearch = {};
   const tab = normalizeReviewTab(search.tab);
   if (tab === "quality") parsed.tab = "quality";
   if (search.origin === "question") parsed.origin = "question";
+  if (search.demo === "1" || search.demo === 1 || search.demo === true) parsed.demo = "1";
   const course = token(search.course_id);
   if (course) parsed.course_id = course;
   const section = token(search.section_id);
   if (section) parsed.section_id = section;
-  if (search.resolved === "true" || search.resolved === "false" || search.resolved === "all") {
-    parsed.resolved = search.resolved;
+  if (search.resolved === "all") {
+    parsed.resolved = "all";
+  } else {
+    const resolved = boolValue(search.resolved);
+    if (resolved !== undefined) parsed.resolved = resolved ? "true" : "false";
   }
-  if (search.held === "true" || search.held === "false") {
-    parsed.held = search.held;
-  }
+  const held = boolValue(search.held);
+  if (held !== undefined) parsed.held = held ? "true" : "false";
   const reason = token(search.reason_code);
   if (reason && (REASON_CODES as readonly string[]).includes(reason)) {
     parsed.reason_code = reason as ReasonCode;
@@ -120,16 +141,14 @@ export function parseReviewSearch(search: Record<string, unknown>): ReviewSearch
   if (mailCourse) parsed.mail_course_id = mailCourse;
   const mailSection = token(search.mail_section_id);
   if (mailSection) parsed.mail_section_id = mailSection;
-  if (
-    search.mail_resolved === "true" ||
-    search.mail_resolved === "false" ||
-    search.mail_resolved === "all"
-  ) {
-    parsed.mail_resolved = search.mail_resolved;
+  if (search.mail_resolved === "all") {
+    parsed.mail_resolved = "all";
+  } else {
+    const mailResolved = boolValue(search.mail_resolved);
+    if (mailResolved !== undefined) parsed.mail_resolved = mailResolved ? "true" : "false";
   }
-  if (search.mail_held === "true" || search.mail_held === "false") {
-    parsed.mail_held = search.mail_held;
-  }
+  const mailHeld = boolValue(search.mail_held);
+  if (mailHeld !== undefined) parsed.mail_held = mailHeld ? "true" : "false";
   const mailReason = token(search.mail_reason_code);
   if (mailReason && (REASON_CODES as readonly string[]).includes(mailReason)) {
     parsed.mail_reason_code = mailReason as ReasonCode;
@@ -199,6 +218,7 @@ export function withMailFilter(
   return compact({
     tab: "mail",
     origin: search.origin,
+    demo: search.demo,
     course_id: filter.courseId ?? undefined,
     section_id: filter.sectionId ?? undefined,
     resolved: resolvedValue(filter.resolved),
@@ -230,6 +250,7 @@ export function withQualityFilter(
   return compact({
     tab: "quality",
     origin: search.origin,
+    demo: search.demo,
     course_id: filter.courseId ?? undefined,
     question_version_id: filter.questionVersionId ?? undefined,
     from: filter.from ?? undefined,

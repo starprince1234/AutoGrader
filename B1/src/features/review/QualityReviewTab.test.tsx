@@ -31,6 +31,7 @@ import {
 import { signIn } from "../../auth/sessionStore";
 import { resetLoggerForTests } from "../../logging/logger";
 import { QualityReviewTab } from "./QualityReviewTab";
+import { DEMO_COURSE_ID, DEMO_SECTION_ID, DEMO_VERSION_ID, DEMO_VERSION_V2_ID } from "./demoData";
 import type { ReviewSearch } from "./search";
 
 /**
@@ -411,5 +412,92 @@ describe("P13-B 题目质量标签", () => {
       expect(labels.some((label) => label.includes("OS-2026"))).toBe(true);
       expect(labels.some((label) => label.includes("OTHER-1"))).toBe(false);
     });
+  });
+});
+
+/**
+ * 示例预览（`?demo=1`）：评审的是**同一套界面**，因此示例必须完全不发 B3/B2 请求，
+ * 并且切换版本、改时间范围都真的会改变数字——否则样例证明不了筛选逻辑。
+ */
+describe("P13-B 题目质量 · 示例预览", () => {
+  function sessionOnly(): StubbedRoute[] {
+    return [
+      {
+        method: "POST",
+        path: SESSION,
+        respond: () =>
+          jsonResponse(
+            sessionCreated({
+              roles: ["teacher"],
+              scope: [{ course_id: DEMO_COURSE_ID, section_id: DEMO_SECTION_ID }],
+            }),
+          ),
+      },
+    ];
+  }
+
+  it("不发 B3/B2 请求，直接展示示例聚合；切到 v2 看得到样本不足", async () => {
+    const user = userEvent.setup();
+    stub = installFetchStub(sessionOnly());
+    await signIn("teacher1", "pw");
+    renderQuality({ tab: "quality", demo: "1" });
+
+    expect(await screen.findByTestId("review-demo-banner")).toHaveTextContent("示例预览");
+    expect(await screen.findByTestId("review-quality-answerers-value")).toHaveTextContent("18");
+    expect(screen.getByTestId("review-quality-attempts-value")).toHaveTextContent("42");
+    // 系统故障 = 5 次基础设施问题 + 6 次资源用量缺失。
+    expect(screen.getByTestId("review-quality-system-value")).toHaveTextContent("11");
+    expect(screen.getByTestId("review-quality-security-value")).toHaveTextContent("1");
+    expect(screen.getByTestId("review-quality-unchecked-value")).toHaveTextContent("14");
+    expect(screen.getByTestId("review-quality-hint")).toHaveTextContent("存在异常");
+
+    const table = screen.getByTestId("review-quality-cases-table");
+    const rows = table.querySelectorAll("tbody tr");
+    expect(rows[0]).toHaveTextContent("第 2 个用例");
+    expect(rows[0]).toHaveTextContent("74%");
+
+    // 课程与版本由示例自带：不需要课程目录，也不需要 B3 的题目列表。
+    expect(screen.getByTestId("review-quality-course")).toHaveValue(DEMO_COURSE_ID);
+    expect(screen.getByTestId("review-quality-version")).toHaveValue(DEMO_VERSION_ID);
+
+    await user.selectOptions(screen.getByTestId("review-quality-version"), DEMO_VERSION_V2_ID);
+    await waitFor(() => {
+      expect(screen.getByTestId("review-quality-attempts-value")).toHaveTextContent("3");
+    });
+    expect(screen.getByTestId("review-quality-unchecked-value")).toHaveTextContent("3");
+    expect(screen.getByTestId("review-quality-hint")).toHaveTextContent("样本较少");
+
+    const business = stub!.requests.filter(
+      (item) => item.method !== "POST" || item.url.pathname !== SESSION,
+    );
+    expect(business).toHaveLength(0);
+  });
+
+  it("时间范围真的过滤示例记录（不只在请求参数上出现）", async () => {
+    const user = userEvent.setup();
+    stub = installFetchStub(sessionOnly());
+    await signIn("teacher1", "pw");
+    renderQuality({ tab: "quality", demo: "1" });
+    await screen.findByTestId("review-quality-attempts-value");
+
+    fireEvent.change(screen.getByTestId("review-quality-from"), {
+      target: { value: "2026-10-29T00:00" },
+    });
+    fireEvent.change(screen.getByTestId("review-quality-to"), {
+      target: { value: "2026-11-02T00:00" },
+    });
+    await user.click(screen.getByTestId("review-quality-apply"));
+
+    await waitFor(() => {
+      const attempts = Number(
+        screen.getByTestId("review-quality-attempts-value").textContent,
+      );
+      // 区间内外都还有记录：这个断言在任意本地时区下都成立。
+      expect(attempts).toBeGreaterThan(0);
+      expect(attempts).toBeLessThan(42);
+    });
+    expect(
+      stub!.requests.filter((item) => item.url.pathname === SUMMARY),
+    ).toHaveLength(0);
   });
 });

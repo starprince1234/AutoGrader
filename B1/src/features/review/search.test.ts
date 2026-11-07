@@ -53,6 +53,33 @@ describe("复核工作区的 URL 状态", () => {
     expect(readMailFilter(parseReviewSearch({ resolved: "false" })).resolved).toBe(false);
     expect(readMailFilter(parseReviewSearch({ resolved: "true" })).resolved).toBe(true);
     expect(readMailFilter(parseReviewSearch({ resolved: "all" })).resolved).toBeNull();
+    // 路由把查询串按 JSON 解析：`?resolved=true` 到手是布尔值。丢掉它会让刷新后的筛选
+    // 悄悄退回「待处理」，所以两种形态必须等价。
+    expect(readMailFilter(parseReviewSearch({ resolved: true })).resolved).toBe(true);
+    expect(readMailFilter(parseReviewSearch({ resolved: false })).resolved).toBe(false);
+    expect(readMailFilter(parseReviewSearch({ resolved: true, held: true })).held).toBe(true);
+    expect(readMailFilter(parseReviewSearch({ held: true })).held).toBe(true);
+    expect(readMailFilter(parseReviewSearch({ held: false })).held).toBe(false);
+    expect(parseReviewSearch({ resolved: "yes" }).resolved).toBeUndefined();
+  });
+
+  it("demo 同时接受字符串与路由解析出的数字（刷新/直链不能丢示例模式）", () => {
+    // 路由把查询串按 JSON 解析：`?demo=1` 到手时是数字 1，只比较 "1" 会让示例静默失效。
+    expect(parseReviewSearch({ demo: "1" }).demo).toBe("1");
+    expect(parseReviewSearch({ demo: 1 }).demo).toBe("1");
+    expect(parseReviewSearch({ demo: true }).demo).toBe("1");
+    expect(parseReviewSearch({ demo: "0" }).demo).toBeUndefined();
+    expect(parseReviewSearch({ demo: 2 }).demo).toBeUndefined();
+    // 切换标签、改筛选时示例标记必须继续带着走。
+    expect(withTab(parseReviewSearch({ demo: 1 }), "quality").demo).toBe("1");
+    expect(
+      withQualityFilter(parseReviewSearch({ demo: 1 }), {
+        courseId: UUID_A,
+        questionVersionId: UUID_B,
+        from: null,
+        to: null,
+      }).demo,
+    ).toBe("1");
   });
 
   it("改变筛选会丢弃旧游标，并显式写回 resolved", () => {

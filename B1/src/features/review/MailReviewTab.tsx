@@ -2,7 +2,12 @@ import { useMemo, useState } from "react";
 import { t } from "../../i18n";
 import { isApiError } from "../../api/problem";
 import type { IntakeQuarantineView } from "../../api/types";
-import { loadedCourses, useCourses, useSections } from "../../api/directory";
+import {
+  loadedCourses,
+  useCourses,
+  useSections,
+  type SectionOption,
+} from "../../api/directory";
 import { useEnrollments } from "../roster/useEnrollments";
 import { useAllAssignments } from "../assignments/useAssignments";
 import { useSession } from "../../auth/sessionContext";
@@ -28,6 +33,15 @@ import {
   useSetQuarantineHold,
 } from "./useReviewMail";
 import { isAttributableReason, REASON_CODES, reasonHint, reasonLabel } from "./reasonCodes";
+import {
+  DEMO_COURSE,
+  DEMO_SECTION_OPTION,
+  DEMO_STUDENTS,
+  DEMO_SUBMISSION_ID,
+  DEMO_TEACHER_ID,
+  demoAssignment,
+  demoQuarantines,
+} from "./demoData";
 import {
   readMailFilter,
   withMailFilter,
@@ -81,18 +95,27 @@ export function MailReviewTab({
   onChange: (next: ReviewSearch) => void;
 }) {
   const session = useSession();
+  const demo = search.demo === "1";
   const filter = readMailFilter(search);
   const identity = session.subject ?? session.username ?? "anonymous";
   const isAdmin = session.rolesKnown && session.roles.includes("admin");
 
-  const courses = useCourses();
-  const allCourses = loadedCourses(courses.data?.pages);
+  const courses = useCourses({ enabled: !demo });
   // 令牌作用域是浏览器端能拿到的**唯一**授权事实：下拉只展示它覆盖的课程/课序，
   // 越权 URL 不会把别的课程"带进来"（服务端仍会 403，这里是不给它出现在界面里的机会）。
+  // 示例模式完全不读课程/课序目录：样例自己是完整的，没登录、没后端也能看。
+  const courseOptions = useMemo(
+    () =>
+      demo
+        ? [DEMO_COURSE]
+        : loadedCourses(courses.data?.pages).filter(
+            (course) =>
+              isAdmin ||
+              session.scope.some((entry) => entry.course_id === course.course_id),
+          ),
+    [courses.data, demo, isAdmin, session.scope],
+  );
   const scopeCourseIds = new Set(session.scope.map((entry) => entry.course_id));
-  const courseOptions = isAdmin
-    ? allCourses
-    : allCourses.filter((course) => scopeCourseIds.has(course.course_id));
   const courseMap = useMemo(
     () => new Map(courseOptions.map((course) => [course.course_id, course] as const)),
     [courseOptions],
@@ -102,20 +125,23 @@ export function MailReviewTab({
   const requestedCourseId = filter.courseId;
   const requestedAllowed =
     requestedCourseId !== null && (isAdmin || scopeCourseIds.has(requestedCourseId));
-  const effectiveCourseId = isAdmin
-    ? requestedCourseId
-    : requestedAllowed
+  const effectiveCourseId = demo
+    ? DEMO_COURSE.course_id
+    : isAdmin
       ? requestedCourseId
-      : (courseOptions[0]?.course_id ?? null);
-  const sections = useSections(effectiveCourseId);
-  const sectionOptions = useMemo(() => {
+      : requestedAllowed
+        ? requestedCourseId
+        : (courseOptions[0]?.course_id ?? null);
+  const sections = useSections(demo ? null : effectiveCourseId);
+  const sectionOptions = useMemo<SectionOption[]>(() => {
+    if (demo) return [DEMO_SECTION_OPTION];
     const fetched = sections.data ?? [];
     if (isAdmin || effectiveCourseId === null) return fetched;
     const entries = session.scope.filter((entry) => entry.course_id === effectiveCourseId);
     if (entries.some((entry) => entry.section_id === null)) return fetched;
     const allowed = new Set(entries.map((entry) => entry.section_id));
     return fetched.filter((section) => allowed.has(section.sectionId));
-  }, [effectiveCourseId, isAdmin, sections.data, session.scope]);
+  }, [demo, effectiveCourseId, isAdmin, sections.data, session.scope]);
   const sectionMap = useMemo(
     () => new Map(sectionOptions.map((item) => [item.sectionId, item.label] as const)),
     [sectionOptions],
@@ -125,7 +151,7 @@ export function MailReviewTab({
   const listEnabled = isAdmin || session.scope.length > 0;
   const query = useQuarantineMail({
     identity,
-    enabled: listEnabled,
+    enabled: listEnabled && !demo,
     filter: {
       courseId: effectiveCourseId,
       sectionId: filter.sectionId,
@@ -135,7 +161,28 @@ export function MailReviewTab({
       cursor: filter.cursor,
     },
   });
-  const rows = useMemo(() => loadedQuarantines(query.data?.pages), [query.data]);
+  const apiRows = useMemo(() => loadedQuarantines(query.data?.pages), [query.data]);
+  const [demoRows, setDemoRows] = useState<IntakeQuarantineView[]>(() => demoQuarantines());
+  // 示例数据只是本地副本：筛选在客户端做，处置按钮也只改这份副本。
+  const rows = demo
+    ? demoRows.filter(
+        (row) =>
+          (filter.sectionId === null || row.scope_section_id === filter.sectionId) &&
+          (filter.resolved === null || row.resolved === filter.resolved) &&
+          (filter.held === null || row.held === filter.held) &&
+          (filter.reasonCode === null || row.reason_code === filter.reasonCode),
+      )
+    : apiRows;
+  const updateDemoRow = (
+    quarantineId: string,
+    patch: Partial<IntakeQuarantineView>,
+  ) => {
+    setDemoRows((current) =>
+      current.map((row) =>
+        row.intake_quarantine_id === quarantineId ? { ...row, ...patch } : row,
+      ),
+    );
+  };
 
   const [detailTarget, setDetailTarget] = useState<IntakeQuarantineView | null>(null);
   const [resolveTarget, setResolveTarget] = useState<IntakeQuarantineView | null>(null);
@@ -163,19 +210,21 @@ export function MailReviewTab({
   const matchSectionId = resolveTarget?.scope_section_id ?? null;
   const assignments = useAllAssignments(
     { courseId: matchCourseId, sectionId: matchSectionId },
-    { enabled: matchCourseId !== null },
+    { enabled: !demo && matchCourseId !== null },
   );
-  const assignmentOptions = assignments.assignments.filter(
-    (assignment) => matchCourseId === null || assignment.course_id === matchCourseId,
-  );
+  const assignmentOptions = demo
+    ? [demoAssignment(matchCourseId)]
+    : assignments.assignments.filter(
+        (assignment) => matchCourseId === null || assignment.course_id === matchCourseId,
+      );
   const selectedAssignment =
     assignmentOptions.find((assignment) => assignment.assignment_id === matchAssignmentId) ?? null;
   const versionOptions = selectedAssignment?.question_version_ids ?? [];
   const candidateSectionId = selectedAssignment?.section_id ?? matchSectionId;
-  const enrollments = useEnrollments(candidateSectionId);
+  const enrollments = useEnrollments(demo ? null : candidateSectionId);
   const candidates = useMemo(
-    () => (enrollments.data?.pages ?? []).flatMap((page) => page.items),
-    [enrollments.data],
+    () => (demo ? DEMO_STUDENTS : (enrollments.data?.pages ?? []).flatMap((page) => page.items)),
+    [demo, enrollments.data],
   );
   const selectableStudents = candidates.filter((row) => row.student_id !== null);
   const selectedStudent =
@@ -228,6 +277,23 @@ export function MailReviewTab({
 
   const confirm = () => {
     if (!resolveTarget || !selectedAssignment || studentId === "" || matchVersionId === "") return;
+    if (demo) {
+      updateDemoRow(resolveTarget.intake_quarantine_id, {
+        resolved: true,
+        resolution: "completed",
+        resolved_student_id: studentId,
+        resolved_submission_id: DEMO_SUBMISSION_ID,
+        resolved_at: new Date().toISOString(),
+        resolved_by: DEMO_TEACHER_ID,
+        resolution_note: note.trim() === "" ? null : note.trim(),
+        held: false,
+        held_at: null,
+        held_by: null,
+      });
+      setSuccess(t("review.mail.completedOk"));
+      closeResolve();
+      return;
+    }
     complete.mutate(
       {
         quarantineId: resolveTarget.intake_quarantine_id,
@@ -252,6 +318,16 @@ export function MailReviewTab({
   };
 
   const toggleHold = (row: IntakeQuarantineView) => {
+    if (demo) {
+      const held = !row.held;
+      updateDemoRow(row.intake_quarantine_id, {
+        held,
+        held_at: held ? new Date().toISOString() : null,
+        held_by: held ? DEMO_TEACHER_ID : null,
+      });
+      setSuccess(held ? t("review.mail.heldOk") : t("review.mail.resumedOk"));
+      return;
+    }
     hold.mutate(
       { quarantineId: row.intake_quarantine_id, body: { held: !row.held } },
       {
@@ -292,6 +368,23 @@ export function MailReviewTab({
 
   const confirmDismiss = () => {
     if (!dismissTarget) return;
+    if (demo) {
+      updateDemoRow(dismissTarget.intake_quarantine_id, {
+        resolved: true,
+        resolution: "dismissed",
+        resolved_student_id: null,
+        resolved_submission_id: null,
+        resolved_at: new Date().toISOString(),
+        resolved_by: DEMO_TEACHER_ID,
+        resolution_note: dismissNote.trim() === "" ? null : dismissNote.trim(),
+        held: false,
+        held_at: null,
+        held_by: null,
+      });
+      setSuccess(t("review.mail.dismissedOk"));
+      closeDismiss();
+      return;
+    }
     dismiss.mutate(
       {
         quarantineId: dismissTarget.intake_quarantine_id,
@@ -374,6 +467,13 @@ export function MailReviewTab({
     <div className="stack">
       <h2>{t("review.mail.title")}</h2>
 
+      {demo ? (
+        <Banner tone="info" testId="review-demo-banner">
+          <p>{t("review.demoBanner")}</p>
+          <p className="muted">{t("review.demoMailNote")}</p>
+        </Banner>
+      ) : null}
+
       <Panel title={t("review.mail.filter")}>
         <div className="stack">
           <div className="form-grid">
@@ -407,7 +507,7 @@ export function MailReviewTab({
                 onChange={(event) => changeFilter({ sectionId: event.target.value || null })}
               >
                 <option value="">{t("review.mail.allSections")}</option>
-                {(sections.data ?? []).map((section) => (
+                {sectionOptions.map((section) => (
                   <option key={section.sectionId} value={section.sectionId}>
                     {section.label}
                   </option>
@@ -494,15 +594,15 @@ export function MailReviewTab({
           />
         }
       >
-        {!listEnabled ? (
+        {!listEnabled && !demo ? (
           <EmptyState>{t("review.mail.needCourse")}</EmptyState>
-        ) : query.isPending ? (
+        ) : !demo && query.isPending ? (
           <Spinner />
-        ) : forbidden ? (
+        ) : !demo && forbidden ? (
           <Banner tone="error" testId="review-mail-forbidden">
             {t("review.mail.forbidden")}
           </Banner>
-        ) : query.isError ? (
+        ) : !demo && query.isError ? (
           <ErrorState error={query.error} testId="review-mail-error" />
         ) : rows.length === 0 ? (
           <div data-testid="review-mail-empty">

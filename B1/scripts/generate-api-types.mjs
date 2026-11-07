@@ -38,6 +38,15 @@ const header = (source) =>
   ` * Any hand edit is reported as contract drift by \`pnpm api:check\`.\n` +
   ` */\n\n`;
 
+/**
+ * 比较前统一换行。
+ *
+ * 生成器总是写 LF，而 Windows 上 `core.autocrlf=true` 的工作区检出是 CRLF：直接逐字节比较
+ * 会把"其实没有漂移"报成漂移（Vercel/Linux 上是 LF，所以只有本机红，最难排查）。
+ * 行尾不是契约内容，`* text=auto` 提交时本来也会归一化成 LF。
+ */
+const normalizeEol = (value) => value.replace(/\r\n/g, "\n");
+
 await mkdir(outDir, { recursive: true });
 
 const drift = [];
@@ -51,7 +60,9 @@ for (const target of targets) {
 
   if (checkOnly) {
     const current = await readFile(outPath, "utf8").catch(() => null);
-    if (current !== next) drift.push(path.relative(projectRoot, outPath));
+    if (current === null || normalizeEol(current) !== normalizeEol(next)) {
+      drift.push(path.relative(projectRoot, outPath));
+    }
     continue;
   }
   await writeFile(outPath, next, "utf8");
