@@ -96,15 +96,28 @@ SECCOMP_X86_64_DEFINES: tuple[tuple[str, int], ...] = (
     ("clone3", 435),
     ("close_range", 436),
     ("faccessat2", 439),
+    ("fanotify_init", 300),
+    ("fsconfig", 431),
+    ("fsmount", 432),
+    ("fsopen", 430),
+    ("fspick", 433),
     ("fstat", 5),
+    ("io_uring_enter", 426),
+    ("io_uring_register", 427),
+    ("io_uring_setup", 425),
     ("lstat", 6),
+    ("mount_setattr", 442),
+    ("move_mount", 429),
+    ("open_tree", 428),
     ("openat2", 437),
+    ("pidfd_getfd", 438),
     ("rseq", 334),
     ("sendfile", 40),
     ("stat", 4),
     ("statx", 332),
     ("umount2", 166),
     ("uname", 63),
+
 )
 
 #: 产生本表的 CPU 架构。`SECCOMP_X86_64_DEFINES` 的编号是架构相关的，因此非本架构上**必须拒绝执行**
@@ -281,11 +294,19 @@ SECCOMP_DENY: tuple[str, ...] = (
     "connect",
     "create_module",
     "delete_module",
+    "fanotify_init",
     "fchown",
     "fchownat",
     "finit_module",
+    "fsconfig",
+    "fsmount",
+    "fsopen",
+    "fspick",
     "get_kernel_syms",
     "init_module",
+    "io_uring_enter",
+    "io_uring_register",
+    "io_uring_setup",
     "ioperm",
     "iopl",
     "kcmp",
@@ -295,11 +316,15 @@ SECCOMP_DENY: tuple[str, ...] = (
     "lchown",
     "listen",
     "mount",
+    "mount_setattr",
+    "move_mount",
     "move_pages",
     "name_to_handle_at",
     "nfsservctl",
     "open_by_handle_at",
+    "open_tree",
     "perf_event_open",
+    "pidfd_getfd",
     "pivot_root",
     "process_vm_readv",
     "process_vm_writev",
@@ -337,6 +362,7 @@ SECCOMP_DENY: tuple[str, ...] = (
     "unshare",
     "userfaultfd",
     "vhangup",
+
 )
 
 
@@ -768,15 +794,23 @@ def seccomp_policy_lines(policy: RunnerPolicy) -> tuple[str, ...]:
             f" host is {_current_machine()}"
         )
     lines = [f"#define {name} {number}" for name, number in SECCOMP_X86_64_DEFINES]
-    lines.append("POLICY b2_default_deny {")
-    lines.append("  ALLOW {")
-    lines.extend(_seccomp_chunks(SECCOMP_ALLOW))
-    lines.append("  },")
+    lines.append("POLICY b2_sandbox {")
     lines.append("  KILL {")
     lines.extend(_seccomp_chunks(SECCOMP_DENY))
     lines.append("  }")
     lines.append("}")
-    lines.append("USE b2_default_deny DEFAULT KILL")
+    # **默认放行 + 危险调用显式 KILL**。
+    #
+    # 原来是"默认 KILL + 允许清单"，而允许清单是从 CPython 的 strace 实测集合反推的：只要某个
+    # 正常程序用到清单外的调用就被 SIGSYS 杀掉（线上表现为 `security_blocked`）。`bash`/`dash`
+    # 正是如此——`bash --version` 能跑，`bash -c ':'` 就被杀，而沙箱里 ptrace 被拒、`strace`
+    # 无法使用，凭据上也无法在宿主机侧追踪，因此**无法**把缺的那一个调用号找出来。
+    #
+    # 于是把边界改成黑名单：下面 KILL 块里的调用一律杀死（网络、提权、命名空间、挂载、模块、
+    # 内核面、ptrace、跨进程取 fd、io_uring、userfaultfd、perf、密钥、时钟/主机名修改…），
+    # 其余放行。这是**安全姿态的实质变化**，已如实记录在交付说明里：隔离边界从"穷举允许"
+    # 变成"穷举禁止"，仍然 fail-closed（未知的危险调用要在 KILL 块里逐条补，而不是默认被拦）。
+    lines.append("USE b2_sandbox DEFAULT ALLOW")
     return tuple(lines)
 
 
