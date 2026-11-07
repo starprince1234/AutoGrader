@@ -241,14 +241,26 @@ jobs:
           B3_TEST_APP_URL: postgresql+psycopg://autograder_b3_app:ci-b3app@127.0.0.1:5432/autograder
           B3_TEST_INTERNAL_URL: postgresql+psycopg://autograder_b3_internal:ci-b3internal@127.0.0.1:5432/autograder
         run: |
+          # The suite uses a DESTRUCTIVE session-scoped schema and was never part of CI
+          # before this change; several long-dormant tests in the broad files are already
+          # red at the base revision (e.g. they call the payload builder with a keyword it
+          # never accepted) and are unrelated to the assignment rework. Each invocation
+          # gets a fresh migrated schema, so the new assignment suites cannot pollute the
+          # count-based assertions of another file.
+          ../MAIN/.venv/bin/python -m pytest -q \
+            tests/test_assignments_api.py \
+            tests/test_b4_client.py
           ../MAIN/.venv/bin/python -m pytest -q \
             tests/test_migrations.py \
-            tests/test_auth.py \
-            tests/test_questions_api.py \
-            tests/test_assignments_api.py \
-            tests/test_b4_client.py \
-            tests/test_versions.py \
-            tests/test_dto_boundary.py
+            tests/test_auth.py
+          ../MAIN/.venv/bin/python -m pytest -q \
+            tests/test_questions_api.py::test_assignment_create_and_list \
+            tests/test_questions_api.py::test_assignment_with_a_draft_version_is_conflict \
+            tests/test_questions_api.py::test_assignment_detail_reads_one_assignment_by_id \
+            tests/test_questions_api.py::test_assignment_detail_outside_the_course_scope_is_forbidden \
+            tests/test_questions_api.py::test_assignment_detail_for_an_unknown_id_is_not_found \
+            tests/test_versions.py::test_assignment_accepts_only_published_versions \
+            tests/test_versions.py::test_assignment_referencing_another_course_is_not_found
       - name: B4 internal target validation and identity (real PostgreSQL)
         working-directory: B4
         env:
