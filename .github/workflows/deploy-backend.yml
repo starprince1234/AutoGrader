@@ -314,6 +314,8 @@ jobs:
       - name: Acceptance — migrate the composed host schemas
         env:
           DATABASE_URL: postgresql+psycopg://autograder_platform:ci-platform-password@127.0.0.1:5432/autograder
+          B4_ADMIN_DATABASE_URL: postgresql+psycopg://autograder_platform:ci-platform-password@127.0.0.1:5432/autograder
+          B4_DB_PASSWORD: ci-b4
         run: |
           for module in B2 B3 B4; do
             ( cd "$module" && DATABASE_URL="$DATABASE_URL" ../MAIN/.venv/bin/python -m alembic upgrade head )
