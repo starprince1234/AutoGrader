@@ -642,6 +642,38 @@ def test_attestation_for_an_unknown_version_is_404(client):
     assert response.status_code == 404
 
 
+def test_listing_with_course_id_returns_only_that_course(client, auth_headers):
+    """课程筛选必须真的过滤（管理员也一样）。
+
+    `_read_scope` 对管理员只**校验** `course_id`（可读集合为 `None` = 不限制），所以原来
+    这个参数根本没落到查询上：列表返回全校题目，而旁边的知识点覆盖只统计选中的那门课。
+    """
+    mine = client.post(
+        "/api/v1/questions",
+        params={"course_id": str(COURSE_A)},
+        json=draft_payload(title="in course A"),
+        headers=auth_headers("teacher-a"),
+    )
+    assert mine.status_code == 201, mine.text
+    other = client.post(
+        "/api/v1/questions",
+        params={"course_id": str(COURSE_B)},
+        json=draft_payload(title="in course B"),
+        headers=auth_headers("teacher-b"),
+    )
+    assert other.status_code == 201, other.text
+
+    listed = client.get(
+        "/api/v1/questions",
+        params={"course_id": str(COURSE_A), "published_only": "false"},
+        headers=auth_headers("admin"),
+    )
+    assert listed.status_code == 200, listed.text
+    course_ids = {item["course_id"] for item in listed.json()["items"]}
+    assert course_ids == {str(COURSE_A)}
+    assert {item["title"] for item in listed.json()["items"]} == {"in course A"}
+
+
 # --- tag write path (CHG-0008) ------------------------------------------
 
 

@@ -131,7 +131,10 @@ describe("三个数怎么读", () => {
     await screen.findByTestId("coverage-body");
     // 夹具里 9 + 9 + 3 = 21 > 总数 16：把它当成"题目数"会得出一个不成立的数字。
     expect(screen.getByTestId("question-coverage").textContent ?? "").not.toContain("21");
-    expect(screen.getByTestId("coverage-overlap-note")).toHaveTextContent("不能相加");
+    // 那句灰色提示已经删掉：页面上只剩数字与条形图，不再解释"不能相加"。
+    expect(screen.queryByTestId("coverage-overlap-note")).toBeNull();
+    // 三张卡片下面的灰色说明也一并删掉，只剩标签与数字。
+    expect(screen.getByTestId("coverage-total").querySelector("p.muted")).toBeNull();
     const table = screen.getByTestId("coverage-tag-table");
     expect(within(table).getAllByRole("columnheader")).toHaveLength(3);
     expect(within(table).getAllByRole("row")).toHaveLength(4);

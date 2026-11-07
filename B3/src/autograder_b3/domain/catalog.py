@@ -93,6 +93,13 @@ def list_questions(
     scoped, published_only = _read_scope(
         principal, course_id=course_id, published_only=published_only
     )
+    # `_read_scope` only *validates* `course_id` for an admin (whose readable-course set is
+    # `None` = "no restriction"), so narrowing it there left the filter unapplied and the
+    # list came back with every course while the coverage panel next to it counted only the
+    # selected one. Apply the requested course here, for everyone: the caller asked for one
+    # course and already passed the read check for it.
+    if course_id is not None:
+        scoped = frozenset({course_id})
     with database.app_session() as session:
         bank = QuestionBankRepository(session)
         rows, has_more = bank.list_questions(

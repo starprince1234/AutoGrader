@@ -14,23 +14,21 @@ import { useQuestionCoverage } from "./useQuestions";
 function CoverageCount({
   label,
   value,
-  hint,
   testId,
   tone = "idle",
 }: {
   label: string;
   value: number;
-  hint: string;
   testId: string;
   tone?: "ok" | "warn" | "bad" | "idle";
 }) {
+  // 只留标签和数字：卡片下面的灰色说明（"与你当前筛选的范围一致"等）已经删掉。
   return (
     <div className="count-card" data-testid={testId}>
       <StatusPill tone={tone}>{label}</StatusPill>
       <p className="count-card__value" data-testid={`${testId}-value`}>
         {value}
       </p>
-      <p className="muted">{hint}</p>
     </div>
   );
 }
@@ -126,27 +124,20 @@ function CoverageBody({
         <CoverageCount
           label={t("questions.coverageTotal")}
           value={coverage.total_questions}
-          hint={t("questions.coverageTotalHint")}
           testId="coverage-total"
         />
         <CoverageCount
           label={t("questions.coverageTagged")}
           value={coverage.tagged_questions}
-          hint={t("questions.coverageTaggedHint")}
           testId="coverage-tagged"
         />
         <CoverageCount
           label={t("questions.coverageUntagged")}
           value={coverage.untagged_questions}
-          hint={t("questions.coverageUntaggedHint")}
           testId="coverage-untagged"
           tone="warn"
         />
       </div>
-
-      <p className="muted" data-testid="coverage-overlap-note">
-        {t("questions.coverageOverlapNote")}
-      </p>
 
       <CoverageTags coverage={coverage} onSelectTag={onSelectTag} />
     </div>

@@ -482,12 +482,8 @@ export const messages = {
     // 因此 `sum(tags[].question_count)` ≠ `total_questions`。页面上不得出现"标签合计"。
 "questions.coverageTitle": "知识点覆盖",
 "questions.coverageTotal": "题目总数",
-"questions.coverageTotalHint": "与你当前筛选的范围一致。",
 "questions.coverageTagged": "已打标签",
-"questions.coverageTaggedHint": "至少有一个标签的题目。",
 "questions.coverageUntagged": "还没打标签",
-"questions.coverageUntaggedHint": "补上标签后，按知识点找题会更容易。",
-"questions.coverageOverlapNote": "同一道题可以有多个标签，所以各标签的题数不能相加。",
 "questions.coverageTags": "各标签的题数",
 "questions.coverageQuestionCount": "题目数",
 "questions.coverageBar": "相对多少",

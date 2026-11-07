@@ -189,6 +189,31 @@ describe("题目列表的游标分页", () => {
     });
   });
 
+  it("选课程后只显示这门课的题（服务端若仍返回其它课程，前端也不显示）", async () => {
+    stub = installFetchStub(
+      routes({
+        "": {
+          items: [
+            // UUID_A = 课程下拉里选中的那门（courseSummary）
+            questionPublic({ question_id: "q-mine", course_id: UUID_A }),
+            // UUID_B = 另一门课：即使服务端没按 course_id 过滤，也不该出现在列表里
+            questionPublic({ question_id: "q-other", course_id: UUID_B }),
+          ],
+          next_cursor: null,
+        },
+      }),
+    );
+    const user = await open(userEvent.setup());
+
+    await user.selectOptions(await screen.findByLabelText("课程"), UUID_A);
+
+    const table = screen.getByTestId("question-table");
+    await waitFor(() => expect(within(table).getAllByRole("row")).toHaveLength(2)); // 表头 + 1 行
+    expect(within(table).getByTestId("delete-q-mine")).toBeInTheDocument();
+    expect(within(table).queryByTestId("delete-q-other")).toBeNull();
+    expect(screen.getByText(/已加载 1 道/)).toBeInTheDocument();
+  });
+
   it("发布状态下拉：默认「已发布」，切到「草稿」只留下草稿", async () => {
     stub = installFetchStub(
       routes({

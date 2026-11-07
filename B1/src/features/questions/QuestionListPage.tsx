@@ -274,13 +274,16 @@ export function QuestionListPage() {
   }, [loadedRows, publishedState]);
 
   const query = stemQuery.trim().toLowerCase();
-  const rows = useMemo(
-    () =>
+  const rows = useMemo(() => {
+    const matched =
       query === ""
         ? statusRows
-        : statusRows.filter((row) => row.stem_markdown.toLowerCase().includes(query)),
-    [statusRows, query],
-  );
+        : statusRows.filter((row) => row.stem_markdown.toLowerCase().includes(query));
+    // 选了课程就只留这门课的题：`course_id` 已经随请求发给服务端，这里再兜一层，
+    // 为的是"筛选器选了什么，列表就只显示什么"不依赖某一次部署是否已经修好。
+    if (courseId === "") return matched;
+    return matched.filter((row) => row.course_id === courseId);
+  }, [statusRows, query, courseId]);
 
   /**
    * 课程名只来自**课程分类里真实配置过的课程**；查不到就是 `null`，不再编一个「—」。
