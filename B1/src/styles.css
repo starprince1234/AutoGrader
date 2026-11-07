@@ -3771,3 +3771,39 @@ samp {
   margin-right: var(--space-3);
   color: var(--color-text-faint);
 }
+
+/* 检验结果：未通过的用例。
+   - 序号是一条可点的红字按钮（键盘入口）；
+   - 整行可点（由 Table 的 onRowClick 提供），hover 时给一点红底提示"这里能点"；
+   - 序号本身就是表格里的"用例标识"：契约的逐用例结论只有 ordinal/passed/failure_category，
+     没有用例名，所以红字落在序号上。 */
+tr.is-failing .verify-case-open {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: var(--color-danger);
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+
+tr.is-failing .verify-case-open:hover {
+  text-decoration: underline solid;
+}
+
+tr.is-failing[data-clickable="true"] {
+  cursor: pointer;
+}
+
+tr.is-failing[data-clickable="true"]:hover > td {
+  background: color-mix(in srgb, var(--color-danger) 7%, transparent);
+}
+
+/* 用例编辑区里被定位到的那一条：和表格里的红字呼应，但用描边而不是红底，
+   免得看起来像"这条也有错"。 */
+.case-card--selected {
+  border: 1px solid var(--color-danger);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-danger) 14%, transparent);
+}

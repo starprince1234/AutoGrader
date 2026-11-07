@@ -363,6 +363,8 @@ export function Table<T>({
   caption,
   label,
   testId,
+  rowClassName,
+  onRowClick,
 }: {
   columns: Column<T>[];
   rows: T[];
@@ -371,6 +373,15 @@ export function Table<T>({
   /** 表格的可访问名称（`aria-label`）：表头本身读不出"这是哪张表"。 */
   label?: string;
   testId?: string;
+  /** 整行的附加类名（默认无）。用于"这一行需要突出"的表格，例如未通过的用例。 */
+  rowClassName?: (row: T) => string | undefined;
+  /**
+   * 整行可点。
+   *
+   * 只在调用方确实需要"点行做一件事"时传；`<tr>` 本身不可聚焦，键盘入口由行内的按钮提供，
+   * 所以这里不给行加 `tabIndex`。
+   */
+  onRowClick?: (row: T) => void;
 }) {
   return (
     <div className="table__wrap">
@@ -392,7 +403,12 @@ export function Table<T>({
         </thead>
         <tbody>
           {rows.map((row, index) => (
-            <tr key={getRowKey(row, index)}>
+            <tr
+              key={getRowKey(row, index)}
+              className={rowClassName?.(row)}
+              data-clickable={onRowClick ? "true" : undefined}
+              onClick={onRowClick ? () => onRowClick(row) : undefined}
+            >
               {columns.map((column) => (
                 <td key={column.key} className={column.align === "right" ? "is-right" : undefined}>
                   {column.render(row, index)}

@@ -762,6 +762,8 @@ export const messages = {
 "authoring.verify.digestUnknown": "这道题还不能检验：参考答案或用例还没填完。",
 "authoring.verify.cases": "逐个用例",
 "authoring.verify.ordinal": "用例序号",
+"authoring.verify.openCase": "这一条没通过，点它去改用例",
+"authoring.verify.openCaseLabel": "第 {ordinal} 条用例未通过，打开用例编辑",
 "authoring.verify.outcome": "结果",
 "authoring.verify.passed": "通过",
 "authoring.verify.notPassed": "未通过",

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { t } from "../../i18n";
 import { Field, Modal } from "../../ui/components";
 import { autoCaseName, emptyCase, type CaseForm } from "./draft";
@@ -20,12 +20,39 @@ import { autoCaseName, emptyCase, type CaseForm } from "./draft";
 export function CaseEditor({
   cases,
   onChange,
+  focusOrdinal = null,
+  onFocusHandled,
 }: {
   cases: CaseForm[];
   onChange: (next: CaseForm[]) => void;
+  /**
+   * 要定位到的那条用例（0 基序号）。
+   *
+   * 从「检验并发布」点未通过的用例跳过来时由页面给：滚到卡片、把它标记为选中、
+   * 光标放进它的输入框，老师不必在一屏用例里自己找。定位只发生一次（上方回调把它清掉），
+   * 之后继续编辑不会再被拉回去。
+   */
+  focusOrdinal?: number | null;
+  /** 定位完成后通知页面把 `focusOrdinal` 清空。 */
+  onFocusHandled?: () => void;
 }) {
   const [confirmIndex, setConfirmIndex] = useState<number | null>(null);
   const [dragIndex, setDragIndex] = useState<number | null>(null);
+  const [selectedOrdinal, setSelectedOrdinal] = useState<number | null>(null);
+  const cardRefs = useRef<Array<HTMLFieldSetElement | null>>([]);
+
+  useEffect(() => {
+    if (focusOrdinal === null || focusOrdinal === undefined) return;
+    const card = cardRefs.current[focusOrdinal];
+    if (!card) return;
+    setSelectedOrdinal(focusOrdinal);
+    // `scrollIntoView` 在 jsdom 里不存在：没有就只做选中与聚焦，不假装滚动过。
+    card.scrollIntoView?.({ block: "center", behavior: "smooth" });
+    const stdin = card.querySelector<HTMLTextAreaElement>(`#case-stdin-${focusOrdinal}`);
+    const name = card.querySelector<HTMLInputElement>(`#case-name-${focusOrdinal}`);
+    (stdin ?? name ?? card).focus();
+    onFocusHandled?.();
+  }, [focusOrdinal, onFocusHandled]);
 
   const update = (index: number, patch: Partial<CaseForm>) => {
     onChange(cases.map((item, position) => (position === index ? { ...item, ...patch } : item)));
@@ -49,9 +76,16 @@ export function CaseEditor({
       {cases.map((item, index) => {
         return (
           <fieldset
-            className="case-card"
+            className={
+              selectedOrdinal === index ? "case-card case-card--selected" : "case-card"
+            }
             key={index}
             data-testid={`case-${index}`}
+            data-selected={selectedOrdinal === index ? "true" : undefined}
+            ref={(element) => {
+              cardRefs.current[index] = element;
+            }}
+            onFocus={() => setSelectedOrdinal(index)}
             onDragOver={(event) => {
               // 允许放置：HTML5 拖拽只有在 dragover 里阻止默认行为才会触发 drop。
               if (dragIndex !== null) event.preventDefault();

@@ -408,3 +408,71 @@ describe("结论不跨版本（结构性质，不靠清理代码）", () => {
     active.restore();
   });
 });
+
+describe("未通过的用例：红字序号 + 点击跳到用例编辑区", () => {
+  const mixed = () =>
+    jsonResponse(
+      referenceVerification({
+        cases_total: 3,
+        cases_passed: 1,
+        cases: [
+          { ordinal: 0, passed: false, failure_category: "output_mismatch" },
+          { ordinal: 1, passed: true, failure_category: null },
+          { ordinal: 2, passed: false, failure_category: "crash" },
+        ],
+        attestation_id: null,
+      }),
+    );
+
+  it("只有未通过的序号是红色可点按钮，通过的保持原样", async () => {
+    const active = installFetchStub(routes({ verify: mixed }));
+    await signIn("teacher1", "pw");
+    renderWithProviders(
+      <ReferenceVerificationPanel version={draftVersion()} questionId={UUID_A} onOpenCase={() => {}} />,
+    );
+    await verify(userEvent.setup());
+
+    const failed = await screen.findByTestId("reference-case-open-0");
+    expect(failed).toHaveClass("verify-case-open");
+    expect(screen.getByTestId("reference-case-open-2")).toHaveClass("verify-case-open");
+    // 通过的那一条仍是普通文字，没有按钮、也不可点。
+    expect(screen.queryByTestId("reference-case-open-1")).toBeNull();
+    expect(screen.getByTestId("reference-case-ordinal-1")).toHaveTextContent("1");
+
+    // 未通过的行带 is-failing（CSS 用它做红字与 hover 提示），通过的行没有。
+    const failedRow = failed.closest("tr");
+    expect(failedRow).toHaveClass("is-failing");
+    expect(screen.getByTestId("reference-case-ordinal-1").closest("tr")).not.toHaveClass(
+      "is-failing",
+    );
+    expect(verificationRequests(active)).toHaveLength(1);
+  });
+
+  it("点序号与点整行都会跳到那条用例，通过的用例点了没反应", async () => {
+    const opened: number[] = [];
+    stub = installFetchStub(routes({ verify: mixed }));
+    await signIn("teacher1", "pw");
+    renderWithProviders(
+      <ReferenceVerificationPanel
+        version={draftVersion()}
+        questionId={UUID_A}
+        onOpenCase={(ordinal) => opened.push(ordinal)}
+      />,
+    );
+    const user = userEvent.setup();
+    await verify(user);
+
+    await user.click(await screen.findByTestId("reference-case-open-0"));
+    expect(opened).toEqual([0]);
+
+    // 点整行（序号以外的格子）同样跳转，且不会因为按钮冒泡而记两次。
+    const row2 = screen.getByTestId("reference-case-open-2").closest("tr") as HTMLElement;
+    await user.click(within(row2).getByTestId("reference-case-outcome-2"));
+    expect(opened).toEqual([0, 2]);
+
+    // 通过的用例：行不可点，点了不改结论。
+    const passedRow = screen.getByTestId("reference-case-ordinal-1").closest("tr") as HTMLElement;
+    await user.click(within(passedRow).getByTestId("reference-case-outcome-1"));
+    expect(opened).toEqual([0, 2]);
+  });
+});

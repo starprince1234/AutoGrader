@@ -19,8 +19,6 @@ import {
   type FetchStub,
 } from "../../testing/httpBoundary";
 import {
-  SHA_A,
-  UUID_A,
   authoringAssistance,
   comparisonDiagnostics,
   coursePage,
@@ -29,7 +27,10 @@ import {
   questionDraftGeneration,
   questionPublic,
   questionVersionPublic,
+  referenceVerification,
   sessionCreated,
+  SHA_A,
+  UUID_A,
   UUID_C,
 } from "../../testing/contractFixtures";
 import { signIn } from "../../auth/sessionStore";
@@ -1935,5 +1936,88 @@ describe("另存为新版本：从原题完整内容开始（不是一张空白�
     expect(cases[1].stdin).toBe("7\n");
     expect(cases[1].expected_stdout).toBe("14\n");
     expect(cases[1].expected_exit_code).toBe(0);
+  });
+});
+
+describe("检验结果里点未通过的用例：直接跳到用例编辑区并定位", () => {
+  it("点红色序号后切到用例步骤，该用例被选中且光标落在它的输入框", async () => {
+    stub = installFetchStub(
+      baseRoutes([
+        {
+          path: `/api/v1/questions/${QUESTION_ID}`,
+          method: "GET",
+          respond: () => jsonResponse(draftQuestion()),
+        },
+        {
+          path: `/api/v1/question-versions/${DRAFT_VERSION}`,
+          method: "GET",
+          respond: () =>
+            jsonResponse(
+              questionVersionPublic({
+                question_version_id: DRAFT_VERSION,
+                version: 1,
+                status: "draft",
+                content_digest: SHA_A,
+              }),
+            ),
+        },
+        {
+          path: `/api/v1/question-versions/${DRAFT_VERSION}/draft-content`,
+          method: "GET",
+          respond: () =>
+            jsonResponse({
+              reference_answer: "print(1)",
+              cases: [0, 1, 2].map((ordinal) => ({
+                name: `用例${ordinal + 1}`,
+                ordinal,
+                weight: 1,
+                visible_to_student: ordinal === 0,
+                stdin: `${ordinal}\n`,
+                args: [],
+                expected_stdout: `${ordinal}\n`,
+                expected_stderr: null,
+                expected_exit_code: 0,
+              })),
+            }),
+        },
+        {
+          method: "POST",
+          path: "/api/v1/reference-verifications",
+          respond: () =>
+            jsonResponse(
+              referenceVerification({
+                cases_total: 3,
+                cases_passed: 2,
+                cases: [
+                  { ordinal: 0, passed: true, failure_category: null },
+                  { ordinal: 1, passed: false, failure_category: "output_mismatch" },
+                  { ordinal: 2, passed: true, failure_category: null },
+                ],
+                attestation_id: null,
+              }),
+            ),
+        },
+      ]),
+    );
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(QUESTION_ID);
+
+    // 检验在最后一步（对比设置）下面。
+    await goToStep(user, "comparison");
+    await user.click(await screen.findByTestId("reference-verify"));
+
+    // 第 2 条（ordinal 1）未通过：序号是红色按钮。
+    const failed = await screen.findByTestId("reference-case-open-1");
+    expect(failed).toHaveClass("verify-case-open");
+    await user.click(failed);
+
+    // 切到用例步骤，并定位到那一条。
+    const casesPanel = await screen.findByTestId("step-cases");
+    const card = within(casesPanel).getByTestId("case-1");
+    expect(card).toHaveAttribute("data-selected", "true");
+    expect(card).toHaveClass("case-card--selected");
+    // 光标在它的标准输入里，可以直接改。
+    expect(document.activeElement).toBe(within(card).getByLabelText("标准输入"));
   });
 });

@@ -59,18 +59,52 @@ function digestState(
   return current === verification.content_digest ? "same" : "stale";
 }
 
-function CaseTable({ cases }: { cases: ReferenceVerificationCase[] }) {
+function CaseTable({
+  cases,
+  onOpenCase,
+}: {
+  cases: ReferenceVerificationCase[];
+  /** 点未通过的用例：跳到用例编辑区并定位到它。通过的用例不参与。 */
+  onOpenCase?: (ordinal: number) => void;
+}) {
+  // 先把这个可选回调收敛成本地常量：`onOpenCase` 在闭包里是 `undefined | fn`，
+  // 直接调用会让类型检查要求再做一次判空。
+  const open = onOpenCase;
+  const openable = (row: ReferenceVerificationCase) => !row.passed && open !== undefined;
   return (
     <Table<ReferenceVerificationCase>
       testId="reference-verification-cases"
       label={t("authoring.verify.cases")}
       rows={cases}
       getRowKey={(row) => String(row.ordinal)}
+      rowClassName={(row) => (row.passed ? undefined : "is-failing")}
+      onRowClick={(row) => {
+        if (openable(row) && open) open(row.ordinal);
+      }}
       columns={[
         {
           key: "ordinal",
           header: t("authoring.verify.ordinal"),
-          render: (row) => row.ordinal,
+          // 未通过的序号：红字 + 可点。它既是"哪一条错了"的视觉锚点，也是键盘入口。
+          render: (row) =>
+            row.passed || onOpenCase === undefined ? (
+              <span data-testid={`reference-case-ordinal-${row.ordinal}`}>{row.ordinal}</span>
+            ) : (
+              <button
+                type="button"
+                className="verify-case-open"
+                data-testid={`reference-case-open-${row.ordinal}`}
+                title={t("authoring.verify.openCase")}
+                aria-label={t("authoring.verify.openCaseLabel", { ordinal: row.ordinal })}
+                onClick={(event) => {
+                  // 行本身也可点：按钮那一下不要再冒泡成第二次跳转。
+                  event.stopPropagation();
+                  open?.(row.ordinal);
+                }}
+              >
+                {row.ordinal}
+              </button>
+            ),
         },
         {
           key: "outcome",
@@ -106,10 +140,13 @@ function CaseTable({ cases }: { cases: ReferenceVerificationCase[] }) {
 export function ReferenceVerificationPanel({
   version,
   questionId,
+  onOpenCase,
 }: {
   version: QuestionVersionPublic;
   /** 发布成功后要失效题目缓存（`versions[]` 里的状态也变了）。 */
   questionId: string | null;
+  /** 点未通过的用例，跳到用例编辑区并定位到那一条（跳转与滚动由页面负责）。 */
+  onOpenCase?: (ordinal: number) => void;
 }) {
   // 已发布的版本已经过了那道门：不再提供任何动作（这是门的语义，不是隐藏失败）。
   // 这一层刻意**不调用任何 hook**，因此这个提前返回不涉及 hooks 规则。
@@ -123,6 +160,7 @@ export function ReferenceVerificationPanel({
       key={version.question_version_id}
       version={version}
       questionId={questionId}
+      onOpenCase={onOpenCase}
     />
   );
 }
@@ -130,9 +168,11 @@ export function ReferenceVerificationPanel({
 function VerificationBody({
   version,
   questionId,
+  onOpenCase,
 }: {
   version: QuestionVersionPublic;
   questionId: string | null;
+  onOpenCase?: (ordinal: number) => void;
 }) {
   const verification = useVerifyReferenceAnswer();
   const publish = usePublishQuestionVersion();
@@ -271,7 +311,7 @@ function VerificationBody({
           {data.cases.length > 0 ? (
             <>
               <h3>{t("authoring.verify.cases")}</h3>
-              <CaseTable cases={data.cases} />
+              <CaseTable cases={data.cases} onOpenCase={onOpenCase} />
             </>
           ) : (
             <Banner tone="info" testId="reference-cases-empty">

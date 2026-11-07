@@ -110,6 +110,8 @@ export function AuthoringPage({
   const [savedVersionId, setSavedVersionId] = useState<string | null>(null);
   const [leaveConfirm, setLeaveConfirm] = useState(false);
   const [step, setStep] = useState<StepId>("basic");
+  /** 从「检验并发布」跳过来时要定位的用例序号（一次性）。 */
+  const [focusCaseOrdinal, setFocusCaseOrdinal] = useState<number | null>(null);
   // 一条红色提示（2.0：原本常驻在顶部白框里的提示改成屏幕中间一闪而过）。`key` 让同一句话
   // 再次触发时重新计时，而不是"看起来没反应"。
   const [toast, setToast] = useState<{ key: number; message: string } | null>(null);
@@ -630,6 +632,8 @@ export function AuthoringPage({
                 onChange={(cases) => {
                   setForm({ ...form, cases });
                 }}
+                focusOrdinal={focusCaseOrdinal}
+                onFocusHandled={() => setFocusCaseOrdinal(null)}
               />
               {/* 编辑时提交用例 = 整体替换一份本页读不到的集合。必须由人显式确认一次。 */}
               {questionId !== null && newestVersionStatus === "draft" && !protectedSeeded ? (
@@ -896,6 +900,11 @@ export function AuthoringPage({
                 <ReferenceVerificationPanel
                   version={publishVersion}
                   questionId={targetQuestionId}
+                  onOpenCase={(ordinal) => {
+                    // 跳到用例步骤并让编辑器定位到那一条；检验结论本身不重跑、不清空。
+                    setFocusCaseOrdinal(ordinal);
+                    setStep("cases");
+                  }}
                 />
               ) : null}
             </Panel>
