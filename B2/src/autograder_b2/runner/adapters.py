@@ -202,13 +202,18 @@ def build_batch_execution_plan(
 def render_workspace_prepare_program() -> str:
     """渲染 `workspace_prep` 准备程序源码（固定内容；提交侧无法替换）。
 
-    职责（设计文档 §3.4）：把工作区条目 chown 给被囚 uid、目录 chmod 0777、文件 chmod 0644，
-    然后 `setgroups([])/setgid/setuid` 降权并 exec 学生脚本。安全约束：
+    职责（设计文档 §3.4）：先以命名空间内 root 把目录 chmod 0777、文件 chmod 0644，然后
+    `setgroups([])/setgid/setuid` 降权到被囚 uid，再以被囚 uid **重建**每个普通文件（读取原
+    字节后写回新 inode，保留权限位），最后 exec 学生脚本。安全约束：
 
     - 从 argv 读取的 `jailed_uid`/`jailed_gid` **必须等于 65534**（固定被囚身份），其他值直接失败；
     - 只处理 `realpath` 后仍在 `/workspace` 内的路径，符号链接一律跳过（`lstat` 判断），
-      绝不对工作区之外的路径 chown/chmod；
+      绝不对工作区之外的路径 chmod/重建；
     - 不接受任何学生输入参数：脚本路径与解释器都由 B2 从 package/策略生成。
+
+    为什么不是直接 `chown`：宿主工作区位于宿主文件系统（其 user namespace 是初始 userns），
+    非 root 服务账号在用户命名空间内没有该文件系统的 CAP_CHOWN，`chown` 实测 EPERM；只能由
+    被囚身份自己创建 inode 来取得所有权（见 `adapters.py` 模板内说明）。
     """
     return _PREPARE_PROGRAM_TEMPLATE
 
@@ -483,9 +488,14 @@ if __name__ == "__main__":
 
 _PREPARE_PROGRAM_TEMPLATE = '''"""B2 workspace_prep 准备程序（服务端固定生成；提交侧不得提供或替换同名文件）。
 
-在 nsjail 的用户命名空间内以 root 运行：把工作区条目 chown 给被囚 uid、目录设为可写，
-然后 setgroups([])/setgid/setuid 降权到被囚身份并 exec 学生脚本。学生代码始终以 subordinate
-uid 运行；本程序是 B2 自有代码，不接受任何学生输入参数。
+在 nsjail 的用户命名空间内以 root 运行：先把工作区目录改到可写可遍历、文件改到属主可读写，
+然后 setgroups([])/setgid/setuid 降权到被囚身份，再以被囚身份**重建**每个普通文件（保留字节
+与权限位），最后 exec 学生脚本。
+
+为什么不是 chown：工作区位于宿主文件系统（其 user namespace 是初始 userns），用户命名空间内
+的 CAP_CHOWN 不能改变宿主属主（Linux 实测 EPERM），所以"把文件交给被囚 uid"只能由被囚身份
+自己创建新 inode 完成。学生代码始终以 subordinate uid 运行；本程序是 B2 自有代码，不接受任何
+学生输入参数。
 
 argv: <jailed_uid> <jailed_gid> <interpreter> <script> [package args...]
 """
@@ -493,6 +503,7 @@ argv: <jailed_uid> <jailed_gid> <interpreter> <script> [package args...]
 from __future__ import annotations
 
 import os
+import stat
 import sys
 
 WORKSPACE = "/workspace"
@@ -516,34 +527,74 @@ def _inside_workspace(path: str) -> bool:
     return resolved == WORKSPACE or resolved.startswith(WORKSPACE + "/")
 
 
-def _prepare_entries() -> None:
+def _chmod_entries() -> None:
+    """阶段一（userns root）：目录置为可写可遍历，文件置为属主可读写、其他只读。
+
+    只做 chmod：宿主文件系统属于初始 userns，userns 内的 CAP_CHOWN 不能改变宿主属主，
+    所以这里不尝试 chown。
+    """
     for root, dirnames, filenames in os.walk(WORKSPACE, topdown=False, followlinks=False):
-        for name in filenames:
-            path = os.path.join(root, name)
-            if os.path.islink(path) or not _inside_workspace(path):
-                # 符号链接一律跳过：不允许借链接把 chown/chmod 作用到工作区之外。
-                continue
-            if not os.path.isfile(path):
-                continue
-            try:
-                os.chown(path, JAILED_UID, JAILED_GID)
-                os.chmod(path, 0o644)
-            except OSError as error:
-                _fail("file preparation failed: " + type(error).__name__)
         for name in dirnames:
             path = os.path.join(root, name)
             if os.path.islink(path) or not _inside_workspace(path):
                 continue
             try:
-                os.chown(path, JAILED_UID, JAILED_GID)
                 os.chmod(path, 0o777)
             except OSError as error:
                 _fail("directory preparation failed: " + type(error).__name__)
+        for name in filenames:
+            path = os.path.join(root, name)
+            if os.path.islink(path) or not _inside_workspace(path):
+                continue
+            if not os.path.isfile(path):
+                continue
+            try:
+                os.chmod(path, 0o644)
+            except OSError as error:
+                _fail("file preparation failed: " + type(error).__name__)
     try:
-        os.chown(WORKSPACE, JAILED_UID, JAILED_GID)
         os.chmod(WORKSPACE, 0o777)
     except OSError as error:
         _fail("workspace root preparation failed: " + type(error).__name__)
+
+
+def _claim_file(path: str) -> None:
+    """以被囚身份把文件重建为自己的 inode（保留字节与权限位）。"""
+    mode = (stat.S_IMODE(os.lstat(path).st_mode) & 0o777) | 0o600
+    temporary = path + ".b2claim-" + str(os.getpid())
+    try:
+        with open(path, "rb") as source:
+            with open(temporary, "xb") as destination:
+                while True:
+                    chunk = source.read(65536)
+                    if not chunk:
+                        break
+                    destination.write(chunk)
+        os.chmod(temporary, mode)
+        os.replace(temporary, path)
+    finally:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+
+
+def _claim_entries() -> None:
+    """阶段二（被囚身份）：逐题重建普通文件，使其所有者变成被囚 uid。
+
+    学生在工作区里要能 `vi` 改文件、`chmod` 改权限，这些操作都要求文件属于自己。
+    """
+    for root, _dirnames, filenames in os.walk(WORKSPACE, topdown=True, followlinks=False):
+        for name in filenames:
+            path = os.path.join(root, name)
+            if os.path.islink(path) or not _inside_workspace(path):
+                continue
+            if not os.path.isfile(path):
+                continue
+            try:
+                _claim_file(path)
+            except OSError as error:
+                _fail("file ownership claim failed: " + type(error).__name__)
 
 
 def main(argv: list[str]) -> int:
@@ -562,13 +613,14 @@ def main(argv: list[str]) -> int:
     extra = argv[5:]
     if not interpreter.startswith("/") or not script.startswith("/workspace/"):
         _fail("interpreter/script path rejected")
-    _prepare_entries()
+    _chmod_entries()
     try:
         os.setgroups([])
         os.setgid(jailed_gid)
         os.setuid(jailed_uid)
     except OSError as error:
         _fail("privilege drop failed: " + type(error).__name__)
+    _claim_entries()
     try:
         os.execv(interpreter, [interpreter, script] + extra)
     except OSError as error:

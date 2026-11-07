@@ -77,7 +77,7 @@ NSJAIL_SANDBOX_GID = "65534"
 #:
 #: - `default`：现有普通题行为（jailed uid 65534、keep_caps false、无 lo、基础 seccomp）；
 #: - `workspace_prep`：声明了 `file_checks` 的用例使用（jailed uid 0-in-userns + keep_caps，
-#:   由 B2 固定准备程序 chown 工作区后降权到 65534 再执行学生脚本）；
+#:   由 B2 固定准备程序把工作区交还给被囚身份（重建文件 inode）后降权到 65534 再执行学生脚本）；
 #: - `ssh_session`：SSH 练习环境（jailed uid 0-in-userns + keep_caps + lo + SSH 专项 seccomp，
 #:   由 B2 固定驱动起真实 sshd）。
 SANDBOX_PROFILE_DEFAULT = "default"
@@ -838,13 +838,11 @@ def _seccomp_chunks(names: Sequence[str], per_line: int = 6) -> list[str]:
 
 #: `workspace_prep` profile 在基础允许清单之外新增的系统调用。
 #:
-#: 只有准备程序需要、且**学生脚本执行前**就已完成的特权操作：把工作区条目 chown 给被囚 uid、
-#: 以及把自身降权到被囚身份（setgroups/setgid/setuid）。它们**不**加入普通题清单；准备程序降权后
-#: 这些调用也再不可用（capability 随 setuid 清空），学生代码拿不到提权面。
+#: 只有准备程序需要、且**学生脚本执行前**就已完成的身份切换：`setgroups/setgid/setuid` 把
+#: 准备程序降权到被囚 uid。文件所有权**不**靠 `chown` 取得（宿主文件系统属于初始 userns，
+#: 用户命名空间内 `chown` 实测 EPERM）：准备程序降权后以被囚身份重建普通文件，因此 `chown`
+#: 仍留在默认拒绝清单里。降权后 setuid 能力随 capability 清空，学生代码拿不到提权面。
 WORKSPACE_PREP_SECCOMP_ALLOW_EXTRA: tuple[str, ...] = (
-    "chown",
-    "fchown",
-    "fchownat",
     "setgid",
     "setgroups",
     "setuid",

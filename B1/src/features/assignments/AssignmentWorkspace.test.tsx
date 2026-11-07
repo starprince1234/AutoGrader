@@ -243,8 +243,13 @@ describe("学生作业工作区（CHG-0032）", () => {
     await openWorkspace();
 
     await screen.findByTestId("workspace-question-1");
-    expect(screen.getByTestId("workspace-question-1")).toHaveTextContent("进程与线程");
-    expect(screen.getByTestId("workspace-question-2")).toHaveTextContent("文件与目录");
+    // 题目标题是版本读回后再取题目 DTO 的（N+1），因此要等标题就位再断言。
+    await waitFor(() =>
+      expect(screen.getByTestId("workspace-question-1")).toHaveTextContent("进程与线程"),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("workspace-question-2")).toHaveTextContent("文件与目录"),
+    );
     expect(await screen.findByTestId("stem-markdown")).toHaveTextContent("第一题说明");
     expect(screen.getByTestId("workspace-file-mapping")).toHaveTextContent(
       "第 1 题提交为 1.txt",
@@ -412,7 +417,10 @@ describe("学生作业工作区（CHG-0032）", () => {
   });
 
   it("系统故障（503）显示可重试文案，不显示 0 分/未交", async () => {
+    // 成绩行故意还没返回：此时页面不得以任何方式推出"未交"；再加上提交 503，
+    // 也不得把系统故障渲染成 0 分。两者共同验证"未取全不下结论 + 故障不是分数"。
     await openWorkspace({
+      delayedGrades: true,
       submit: () =>
         problemResponse({
           status: 503,
@@ -428,8 +436,10 @@ describe("学生作业工作区（CHG-0032）", () => {
     expect(await screen.findByTestId("workspace-submit-error")).toHaveTextContent(
       "系统未完成本次提交",
     );
-    // 系统故障不是分数结论：页面上不出现 0 分，也不把这次失败写成未交。
-    expect(screen.queryByText(/0 分/)).toBeNull();
+    // 系统故障不是分数结论：没有当前结果区，也没有"未交"判定。
+    expect(screen.queryByTestId("workspace-current-result")).toBeNull();
+    expect(screen.queryByText("未交")).toBeNull();
+    expect(screen.getByTestId("workspace-progress-loading")).toBeInTheDocument();
   });
 
   it("邮件提交面板：正文五行自动填充、N.txt 映射、申请核验码与收到后的逐题结果入口", async () => {

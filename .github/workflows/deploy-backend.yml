@@ -197,13 +197,17 @@ jobs:
           PGUSER: autograder_platform
           PGPASSWORD: ci-platform-password
           PGDATABASE: autograder
-          POSTGRES_USER: autograder_platform
-          POSTGRES_DB: autograder
           AUTOGRADER_B2_DB_PASSWORD: ci-b2
           AUTOGRADER_B3_APP_DB_PASSWORD: ci-b3app
           AUTOGRADER_B3_INTERNAL_DB_PASSWORD: ci-b3internal
           AUTOGRADER_B4_DB_PASSWORD: ci-b4
-        run: bash MAIN/infra/postgres/initialize-db.sh
+        run: |
+          psql --username "$PGUSER" --dbname "$PGDATABASE" --set ON_ERROR_STOP=1 \
+            -v b2_password="$AUTOGRADER_B2_DB_PASSWORD" \
+            -v b3_app_password="$AUTOGRADER_B3_APP_DB_PASSWORD" \
+            -v b3_internal_password="$AUTOGRADER_B3_INTERNAL_DB_PASSWORD" \
+            -v b4_password="$AUTOGRADER_B4_DB_PASSWORD" \
+            -f MAIN/infra/postgres/init.sql
       - name: Migrate and provision B4
         working-directory: B4
         env:

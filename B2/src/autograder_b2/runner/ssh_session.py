@@ -247,13 +247,22 @@ def render_ssh_nss_files(username: str, password: str) -> tuple[str, str, str]:
     两条入口都映射到同一个被囚 uid 65534（subuid 只有一个，见 `policy.profile_id_maps`）：
     练习账号会先出现，使客户端在未显式指定用户时把本地用户名解析为练习账号；`sshd` 账号供
     privileged-separation 子进程使用（其 uid 与练习账号相同，实测 setuid 成功）。
+
+    `root`（uid 0）条目是必需的：驱动在用户命名空间内以 uid 0 起 sshd，而 OpenSSH 的
+    `ssh-keygen` 会用 `getpwuid(getuid())` 解析当前用户，缺少 uid 0 的 passwd 条目时直接
+    `fatal("No user exists for uid 0")`（退出码 255）——生产环境实测的 sshd 起不来根因。
     """
     passwd = (
         f"{username}:x:65534:65534:Practice Account:/home/{username}:/bin/bash\n"
         "sshd:x:65534:65534:Privilege separation user:/usr/share/empty.sshd:/usr/sbin/nologin\n"
+        "root:x:0:0:namespace root:/root:/bin/bash\n"
     )
-    group = f"{username}:x:65534:\nsshd:x:65534:\n"
-    shadow = f"{username}:{_shadow_hash(password)}:19000:0:99999:7:::\nsshd:!*:19000:0:99999:7:::\n"
+    group = f"{username}:x:65534:\nsshd:x:65534:\nroot:x:0:\n"
+    shadow = (
+        f"{username}:{_shadow_hash(password)}:19000:0:99999:7:::\n"
+        "sshd:!*:19000:0:99999:7:::\n"
+        "root:!*:19000:0:99999:7:::\n"
+    )
     return passwd, group, shadow
 
 

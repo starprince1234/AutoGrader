@@ -295,6 +295,10 @@ describe("新建作业（CHG-0032）", () => {
     const user = userEvent.setup();
 
     const courseSelect = await screen.findByLabelText("课程");
+    // 课程目录是异步加载的：等两个选项都进入原生 select 再断言（否则读到的是空列表）。
+    await waitFor(() =>
+      expect(within(courseSelect).getAllByRole("option")).toHaveLength(2),
+    );
     const optionLabels = within(courseSelect)
       .getAllByRole("option")
       .map((option) => option.textContent ?? "");

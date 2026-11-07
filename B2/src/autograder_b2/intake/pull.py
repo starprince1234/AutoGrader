@@ -27,12 +27,12 @@ import os
 import sys
 import time
 
-from ..logging import get_logger, log_event
+from ..logging import build_logger, log_event
 from ..runtime import build_b2_runtime
 
 DEFAULT_IDLE_SECONDS = 60.0
 
-logger = get_logger("intake.pull")
+logger = build_logger("intake.pull")
 
 
 def main(argv: list[str] | None = None) -> int:

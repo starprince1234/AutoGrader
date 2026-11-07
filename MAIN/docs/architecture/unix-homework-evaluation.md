@@ -130,8 +130,13 @@ NSS 使用的 passwd/shadow 是每次运行生成的临时文件；远端会话�
 服务账号，而被囚学生身份是 subordinate uid，没有写权限也无法 `chmod`（`chmod` 要求文件所有者）。
 因此当某个 package 的用例声明了 `file_checks` 时，runner 使用 **受控准备 profile**：
 nsjail 内以“用户命名空间内的 root”（宿主 uid 仍是服务账号，不是宿主 root）启动 B2 固定的准备程序，
-它把工作区条目 `chown` 给被囚 uid、目录置为可写，然后 `setgroups/setgid/setuid` 降权，再 `exec`
-解释器执行学生脚本。学生代码始终以 subordinate uid 运行；准备程序是 B2 自有代码，不由学生输入驱动。
+先把目录 `chmod` 0777、文件 `chmod` 0644，然后 `setgroups/setgid/setuid` 降权，再以被囚 uid 把每个
+普通文件**重建**成自己的 inode（读取原字节写回新文件并保留权限位），最后 `exec` 解释器执行学生脚本。
+学生代码始终以 subordinate uid 运行；准备程序是 B2 自有代码，不由学生输入驱动。
+**为什么不直接 `chown`**：宿主工作区位于宿主文件系统（其 user namespace 是初始 userns），非 root
+服务账号在用户命名空间内没有该文件系统的 `CAP_CHOWN`，`chown` 实测 `EPERM`（2026-11-07 生产实测；
+旧说法的"属主可 chown 自有文件"在初始 userns 的 inode 上不成立）。重建 inode 是同一隔离边界内
+取得所有权的唯一方式，`chown` 因此继续留在默认拒绝清单。
 该 profile 必须保留 seccomp、cgroup 限额、只读根与网络隔离，并只由显式的 `file_checks` 声明触发；
 普通题 profile 逐字节不变。
 

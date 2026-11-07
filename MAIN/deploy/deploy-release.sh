@@ -16,6 +16,10 @@ export HTTP_PROXY=http://127.0.0.1:7893 HTTPS_PROXY=http://127.0.0.1:7893
 export http_proxy="$HTTP_PROXY" https_proxy="$HTTPS_PROXY"
 export NO_PROXY=localhost,127.0.0.1,::1 no_proxy=localhost,127.0.0.1,::1
 install -d -m 0755 "$root/releases"
+# nsjail 的 default / workspace_prep profile 把工作区 bind 到沙箱内 `/workspace`，而沙箱根是宿主
+# `/` 的只读 bind：服务账号在用户命名空间里无法在只读根上创建挂载点，因此宿主 `/workspace`
+# 必须预先存在（空目录即可；沙箱内会被本次运行的工作区覆盖）。
+install -d -m 0755 /workspace
 mv "$stage" "$release"
 chown -R autograder:autograder "$release"
 runuser -u autograder -- env HOME=/var/lib/autograder \

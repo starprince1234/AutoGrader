@@ -55,6 +55,7 @@ from autograder_b2.runner.policy import (
     SANDBOX_PROFILE_SSH,
     SANDBOX_PROFILE_WORKSPACE_PREP,
     WORKSPACE_PREP_GID,
+    WORKSPACE_PREP_SECCOMP_ALLOW_EXTRA,
     WORKSPACE_PREP_UID,
     RunnerPolicy,
     SandboxAvailability,
@@ -86,6 +87,7 @@ from autograder_b2.runner.ssh_session import (
     parse_student_ssh_command,
     render_ssh_client_argv,
     render_ssh_driver_program,
+    render_ssh_nss_files,
     ssh_check_passed,
 )
 
@@ -1356,6 +1358,22 @@ class TestSshEvidence:
         assert config["password"] == SSH_PASSWORD
         assert json.dumps(config)  # 只作为 stdin 内容；不写进 argv/环境（见 run_cases）
 
+    def test_nss_files_resolve_namespace_root_and_the_practice_account(self) -> None:
+        """uid 0 必须有 passwd 条目：`ssh-keygen` 以 userns root 运行时用 `getpwuid(0)`。
+
+        缺条目时 ssh-keygen 直接 `fatal("No user exists for uid 0")`（退出码 255），
+        sshd 起不来——这是生产环境 `host_key_generation_failed` 的根因。
+        """
+        passwd, group, shadow = render_ssh_nss_files("user01", SSH_PASSWORD)
+        assert "root:x:0:0:" in passwd
+        assert "root:x:0:" in group
+        assert "root:!*:" in shadow
+        # 练习账号仍是 uid 65534 的第一条：客户端未显式指定用户时解析成练习账号。
+        assert passwd.index("user01:") < passwd.index("sshd:")
+        assert "user01:x:65534:" in passwd
+        for text in (passwd, group, shadow):
+            assert SSH_PASSWORD not in text, "NSS 文件不得含口令明文"
+
 
 # =============================================================================================
 # 10. workspace_prep
@@ -1374,6 +1392,9 @@ class TestWorkspacePrep:
         assert "os.setgroups([])" in source
         assert "os.setuid" in source and "os.execv" in source
         assert "sys.argv" in source
+        # 所有权靠"被囚身份重建文件 inode"取得，而不是 chown（userns 内 chown 宿主文件 EPERM）。
+        assert "os.chown" not in source
+        assert "os.replace" in source and "_claim_entries()" in source
 
     def test_prep_profile_config_differs_only_in_the_expected_places(self, tmp_path: Path) -> None:
         workspace = tmp_path / "case"
@@ -1388,11 +1409,12 @@ class TestWorkspacePrep:
         assert prep.index('inside_id: "0"') < prep.index('inside_id: "65534"')
         assert prep.count("gidmap {") == 1
         assert 'inside_id: "0"\n  inside_id: "0"' not in prep
-        # prep seccomp 允许降权调用，但网络仍然拒绝。
+        # prep seccomp 只允许多出的降权调用；chown 不在允许清单（仍走默认拒绝）。
+        assert WORKSPACE_PREP_SECCOMP_ALLOW_EXTRA == ("setgid", "setgroups", "setuid")
         prep_seccomp = "\n".join(workspace_prep_seccomp_policy_lines(
             replace(RunnerPolicy(), sandbox_profile=SANDBOX_PROFILE_WORKSPACE_PREP)
         ))
-        for name in ("setgroups", "setgid", "setuid", "chown"):
+        for name in WORKSPACE_PREP_SECCOMP_ALLOW_EXTRA:
             assert name in prep_seccomp
         assert 'seccomp_string: "  ERRNO(1) { socket },"' in prep
 

@@ -173,6 +173,11 @@ SSH/文件评测所需的二进制（`nsjail`、`vim/vi`、`ssh`、`sshd`、`ssh
 `NoNewPrivileges=false` 与 cgroup 委派保持原样；SSH 练习环境与文件准备 profile 全部运行在 nsjail 内，
 不新增宿主 root 服务、不开放宿主 SSH、不使用 `--privileged`。
 
+宿主还必须存在空目录 `/workspace`：普通题 profile 的沙箱根是宿主 `/` 的只读 bind，工作区要 bind 到
+沙箱内 `/workspace`；非 root 服务账号无法在只读根上创建挂载点，缺目录时 nsjail 以
+`Couldn't mount '/workspace'` 失败（表现为 503 / infrastructure_error，而不是学生答错）。
+`deploy-release.sh` 以 root 运行 `install -d -m 0755 /workspace`；新主机不需要手工处理。
+
 发布后验证（需要教师授权凭据；先读取目标版本并确认仍是草稿）：
 
 ```bash
