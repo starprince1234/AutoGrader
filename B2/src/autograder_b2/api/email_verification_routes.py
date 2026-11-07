@@ -28,6 +28,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
+from starlette.concurrency import run_in_threadpool
 
 from autograder_b2.api.errors import (
     FORBIDDEN,
@@ -89,7 +90,11 @@ def build_router(service: EmailVerificationService | None) -> APIRouter:
             return _unprocessable(instance, "missing fields: " + ", ".join(missing))
 
         try:
-            issued = service.issue_challenge(
+            # The service calls B3's internal assignment endpoint synchronously. Offload it:
+            # in the composed host this process also serves that endpoint, so a blocking call
+            # inside the event loop would deadlock until the client times out.
+            issued = await run_in_threadpool(
+                service.issue_challenge,
                 principal,
                 course_id=payload["course_id"],
                 section_id=payload["section_id"],
@@ -174,7 +179,7 @@ def build_router(service: EmailVerificationService | None) -> APIRouter:
             return problem_response(UNAUTHORIZED, instance)
 
         try:
-            status = service.get_challenge_status(principal, challenge_id)
+            status = await run_in_threadpool(service.get_challenge_status, principal, challenge_id)
         except ChallengeNotFoundError:
             return problem_response(
                 Problem(

@@ -26,6 +26,7 @@ from typing import Any
 from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
+from starlette.concurrency import run_in_threadpool
 
 from autograder_b2.api.errors import (
     FORBIDDEN,
@@ -173,7 +174,13 @@ def build_router(runtime: IntakeRuntime) -> APIRouter:
             stage="reception",
         ):
             try:
-                result = runtime.service.accept(
+                # The accept path is synchronous and calls B3's internal assignment endpoint
+                # over HTTP. In the composed host (all modules in one process) a blocking call
+                # from an async handler would deadlock the event loop until the client times
+                # out: the handler waits for B3 while B3 waits for the loop the handler holds.
+                # Offload it; the thread copies the logging context (request/correlation id).
+                result = await run_in_threadpool(
+                    runtime.service.accept,
                     payload,
                     principal=principal,
                     correlation_id=correlation_id,
@@ -609,7 +616,10 @@ def build_router(runtime: IntakeRuntime) -> APIRouter:
             return _unprocessable(instance, "missing fields: " + ", ".join(missing))
 
         try:
-            view = runtime.quarantines.complete(
+            # Same reason as `create_submission`: this path calls B3's assignment endpoint
+            # synchronously, and the composed host serves both ends of that call.
+            view = await run_in_threadpool(
+                runtime.quarantines.complete,
                 principal=principal,
                 intake_quarantine_id=intake_quarantine_id,
                 student_id=payload["student_id"],
