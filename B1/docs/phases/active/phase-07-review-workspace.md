@@ -167,16 +167,25 @@
    Vite 只以 `index.html` 为入口）。它用一个假会话让路由守卫通过，并在 `fetch` 层拦下所有 API
    （登录接口返回假令牌，其它请求 501 + 打印路径），于是 `/app/demo.html?tab=quality` 这类地址
    在没有 MAIN/B2/B3/B4 的机器上也能评审同一套组件。可用 `?tab=mail&state=processed|held|all`、
-   `?tab=quality&version=2` 预设状态。
+   `?tab=quality&version=2`、`?tab=mail&empty=1` 预设状态。
+7. **空态也要指路**（后补）：首次进入时页面只有「没有待处理记录 / 请选择题目版本」，页头的
+   ghost 按钮容易被当成"返回"而不是"看样例"。两个标签的空态现在多一行「想先看看这个页面在有
+   数据时长什么样？查看示例」，点它等同于点页头「查看示例」（同一段 `demo=1` 逻辑，不复制界面）。
+8. **示例只认示例自己的作用域**（后补）：从筛了课程/课序的页面、或从题目详情带着真实
+   `question_version_id` 点进示例时，原来会拿**真实** id 去筛示例数据，结果仍是 0 条——看起来
+   就是"点了查看示例没有任何变化"。现在邮件示例只接受示例课序、质量示例只接受两个示例版本，
+   其它 id 一律回落到示例课程/版本；另有测试按住这两条。
 
 **验证（本机实跑）**：`tsc -b`、`eslint src --max-warnings 0`、`vite build` 通过；Vitest
-**59 文件 / 546 用例全部通过**（复核模块 4 文件 / 40 用例，其中新增 5 个示例用例：邮件示例不发请求、
-切换状态、本地归属，质量示例聚合与版本切换、时间范围真的过滤，以及 URL 布尔/数字解析）。
-无头 Edge 实拍四张：`docs/design/screenshots/review-demo-mail.png`、`review-demo-mail-processed.png`、
-`review-demo-quality.png`、`review-demo-quality-v2.png`（浅色、1920 宽）。
+**59 文件 / 550 用例全部通过**（复核模块 4 文件 / 44 用例：邮件示例不发请求、状态切换、本地归属、
+URL 带真实课程/课序仍显示示例，质量示例聚合与版本切换、真实版本 id 回落、时间范围真的过滤，
+URL 布尔/数字解析，以及"点查看示例 → 走一次 validateSearch → 两个标签都拿到 demo=1"的整链）。
+无头 Edge 实拍六张：`docs/design/screenshots/review-demo-mail.png`、`review-demo-mail-processed.png`、
+`review-demo-quality.png`、`review-demo-quality-v2.png`、`review-demo-empty-mail.png`、
+`review-demo-empty-quality.png`（浅色、1920 宽）。
 
-**未验证**：线上 `https://www.91idc.me/app/` 仍是旧构建（本地改动未提交/未部署），因此
-"部署后示例按钮在真实账号下可见"这一步没有执行；B2 邮件入口匹配所需的 `B2_IMAP_*`、
+**未验证**：上一次提交已部署（线上页头能点到「查看示例」），但登录态下点开后的实际渲染我这边
+没有账号可复现，只能由老师实点确认；B2 邮件入口匹配所需的 `B2_IMAP_*`、
 `B2/scripts/seed_demo_quarantines.py` 的写库路径本轮也未触碰。
 
 **顺手修掉的门禁误报**：本机 `api:check` 曾报 `src/api/generated/b2.ts`、`b3.ts` 与契约漂移，

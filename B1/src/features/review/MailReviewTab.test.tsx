@@ -234,7 +234,8 @@ describe("P13-A 邮件提交标签", () => {
     expect(screen.queryByTestId("review-mail-empty")).toBeNull();
   });
 
-  it("未处理为空时给出明确的空状态（不是错误）", async () => {
+  it("未处理为空时给出明确的空状态（不是错误），并给一条通往示例的入口", async () => {
+    const user = userEvent.setup();
     stub = installFetchStub(routesFor({ rows: [] }));
     await signIn("teacher1", "pw");
     renderWithProviders(<Harness initial={MAIL_PATH} />);
@@ -243,6 +244,11 @@ describe("P13-A 邮件提交标签", () => {
       "没有待处理记录。",
     );
     expect(screen.getByText(/无法确认课程的邮件只有管理员能看到/)).toBeInTheDocument();
+
+    // 空态里的示例入口直接切到 demo 模式：不发请求，但立刻能看到样例记录。
+    await user.click(screen.getByTestId("review-mail-empty-demo-action"));
+    expect(await screen.findByTestId("review-demo-banner")).toHaveTextContent("示例预览");
+    expect(await screen.findByTestId("review-mail-table")).toBeInTheDocument();
   });
 
   it("详情只显示老师需要的信息，不堆 Message-ID/UID 等接口字段", async () => {
@@ -569,8 +575,23 @@ describe("P13-A 邮件提交 · 示例预览", () => {
     expect(business).toHaveLength(0);
   });
 
-  it("匹配用户只改本地副本：成功后该行离开待处理列表，且不发任何写请求", async () => {
-    const user = userEvent.setup();
+  it("URL 里带着真实课程/课序时，示例仍然显示示例自己的记录", async () => {
+    // 真实场景：老师在筛了课程/课序的页面上点「查看示例」。用真实 section_id 去筛示例只会
+    // 得到 0 条（看起来像"示例没生效"），所以示例模式必须只认示例自己的课序。
+    stub = installFetchStub(sessionOnly());
+    await signIn("teacher1", "pw");
+    renderWithProviders(
+      <Harness
+        initial={{ tab: "mail", demo: "1", course_id: UUID_A, section_id: UUID_B }}
+      />,
+    );
+
+    const table = await screen.findByTestId("review-mail-table");
+    expect(within(table).getByText("【作业】统计文件行数 - 王一")).toBeInTheDocument();
+    expect(screen.getByTestId("review-demo-banner")).toBeInTheDocument();
+  });
+
+  it("匹配用户只改本地副本：成功后该行离开待处理列表，且不发任何写请求", async () => {    const user = userEvent.setup();
     stub = installFetchStub(sessionOnly());
     await signIn("teacher1", "pw");
     renderWithProviders(<Harness initial={DEMO_SEARCH} />);
