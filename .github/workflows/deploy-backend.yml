@@ -89,6 +89,7 @@ jobs:
             tests/test_runner_core.py::TestNoDegradation \
             tests/test_runner_core.py::TestBuildArgv::test_launcher_passes_list_argv_and_no_shell \
             tests/test_integration_adapters.py::TestWorkspaceProvider::test_case_workspace_is_accessible_without_exposing_its_parent \
+            tests/test_runner_core.py::TestAdapters::test_single_submission_uses_the_declared_entry \
             tests/test_runner_core.py::TestNsjailConfig::test_unprivileged_maps_use_delegated_ids_and_helpers \
             tests/test_runner_core.py::TestNsjailConfig::test_kafel_policy_uses_file_level_default_action \
             tests/test_runner_core.py::TestNsjailConfig::test_seccomp_covers_measured_cpython_syscalls \

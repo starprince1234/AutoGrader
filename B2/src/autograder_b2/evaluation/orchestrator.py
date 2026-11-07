@@ -35,7 +35,7 @@ rejected, failed}`。允许 `queued` 直达终态，因为静态/安全阻断发
   做严格相等校验，自造一个"更严"的策略副本会被判为内部缺陷——收紧策略的能力属于 runner 变更，
   编排层不实现、也不假装实现。
 - **每个用例一份 `SubmissionRunInput` 与一份独立工作区**（服务端生成，绝不复用上一个用例的工作区）；
-  工作区里的入口脚本名由 runner 侧的固定执行约定给出（`main.py` / `main.sh`，callable harness 为
+  单文件提交执行其声明路径；多文件入口为 `main.py` / `main.sh`，callable harness 为
   `__b2_harness__.py`），编排层不重复定义、也不得覆盖已存在的同名资产。
 - 用例级 **fixture 缺失或摘要不符**在 runner 侧返回 `failure_category=infrastructure_error` 的**证据**
   （不是异常），因为那不是学生的问题：编排层据此把运行落到 `failed`（技术故障），绝不记成学生失败。

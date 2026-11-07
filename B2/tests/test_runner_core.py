@@ -253,7 +253,8 @@ def make_submission(
         evaluation_run_id="55555555-5555-4555-8555-555555555555",
         correlation_id="66666666-6666-4666-8666-666666666666",
         workspace=Path(workspace),
-        files=make_files("main.py") if files is None else files,
+        files=make_files("main.py" if package.language == "python" else "main.sh")
+        if files is None else files,
         case=package.tests[0],
         adapter=package.adapter,
         policy=package.security_policy,
@@ -2220,6 +2221,19 @@ class TestEvidence:
 
 
 class TestAdapters:
+    @pytest.mark.parametrize(
+        ("language", "filename"), [("python", "solution.py"), ("bash", "2020141440777.txt")]
+    )
+    def test_single_submission_uses_the_declared_entry(
+        self, tmp_path: Path, language: str, filename: str
+    ) -> None:
+        package = load_package(language=language)
+        workspace = prepare_workspace(tmp_path / language, language=language)
+        (workspace / filename).write_text("content\n", encoding="utf-8")
+        evidence, launcher = run(package, workspace, files=make_files(filename))
+        assert evidence.passed
+        assert f"/workspace/{filename}" in launcher.argv
+
     def test_stdin_adapter_passes_stdin_and_arguments(self, tmp_path: Path) -> None:
         package = load_package(
             adapter={"args": ["--mode", "fast"], "stdin": "from-adapter\n"},

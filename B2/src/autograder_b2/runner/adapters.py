@@ -9,8 +9,8 @@
 - `callable`：B2 **自有固定 harness**（`__b2_harness__.py`）按 package 声明的点分模块名 import
   后调用目标属性；**绝不**从绝对路径或网络加载（模块名在解析期已拒绝路径分隔符与 `..`）。
 
-B2 拥有的执行约定（契约未声明、由 B2 定死，改动需同步文档）：入口脚本名
-`main.py` / `main.sh`；callable harness 文件名与解析失败退出码见下方常量。
+B2 的单文件提交直接执行声明的文件；多文件提交使用 `main.py` / `main.sh` 作为入口。
+callable harness 文件名与解析失败退出码见下方常量。
 """
 
 from __future__ import annotations
@@ -122,10 +122,10 @@ def render_callable_harness(entry_module: str, entry_attribute: str, arguments_j
 
 
 def build_execution_plan(*, adapter: PackageAdapter, case: PackageCase, policy: RunnerPolicy,
-                         language: str) -> ExecutionPlan:
+                         language: str, submitted_entry: str | None = None) -> ExecutionPlan:
     """把 package 声明翻译成执行计划（有效值优先级：用例声明 → adapter 声明 → 无）。
 
-    解释器与入口路径**只来自策略**，`arguments` 来自 package 且逐元素原样传递（不进入 shell）。
+    解释器来自策略，入口是已声明的提交文件，参数来自 package 且逐元素原样传递。
     """
     if adapter.kind == "callable":
         if adapter.callable is None:
@@ -134,7 +134,7 @@ def build_execution_plan(*, adapter: PackageAdapter, case: PackageCase, policy: 
         script = sandbox_script_path(policy, entry_name)
         harness_name: str | None = HARNESS_FILENAME
     else:
-        entry_name = entry_name_for(language)
+        entry_name = submitted_entry if submitted_entry is not None else entry_name_for(language)
         script = sandbox_script_path(policy, entry_name)
         harness_name = None
     return ExecutionPlan(

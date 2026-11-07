@@ -171,7 +171,7 @@ class WorkspaceProvider(Protocol):
     非空表示该用例专用的沙箱工作区——runner 的 `SubmissionRunInput.workspace` 必须指向后者，
     绝不复用上一个用例的工作区（冻结签名把 `workspace` 定义为"本用例独立工作区"）。
 
-    工作区内的入口脚本名是 B2 定死的执行约定（契约未声明）：`main.py`（python）/ `main.sh`（bash），
+    单文件提交执行其声明的文件；多文件提交使用 `main.py`（python）/ `main.sh`（bash）入口，
     callable 适配器的 harness 文件名为 `__b2_harness__.py`——命名只在 runner 侧定义一次，
     本层只负责提供干净的工作区，不另立一套名字。
     """

@@ -818,7 +818,8 @@ def run_case(
         adapter = resolve_adapter(package, submission)
         policy = resolve_policy(package, submission)
         plan = build_execution_plan(
-            adapter=adapter, case=case, policy=policy, language=package.language
+            adapter=adapter, case=case, policy=policy, language=package.language,
+            submitted_entry=submission.files[0].path if len(submission.files) == 1 else None,
         )
         digest_input = input_digest_of(package, submission, case, adapter, plan, policy)
         probe_function = probe_sandbox if probe is None else probe
