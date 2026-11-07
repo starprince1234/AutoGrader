@@ -646,7 +646,6 @@ export const messages = {
     // 两条轨道刻意分开：这里产出**候选字段**（可编辑），`AuthoringAssistancePanel` 只给建议，
     // `ComparisonDiagnosticsPanel` 只报确定性规则命中。三者不混成一段聊天记录。
 "authoring.generation.title": "让 AI 帮你出题",
-"authoring.generation.needCourse": "选好课程后就可以生成草稿。",
 "authoring.generation.constraintNote": "这道题将按 {language} · {adapter} 出题。",
 "authoring.generation.budget": "还可以生成 {remaining} 次",
 "authoring.generation.objective": "想让学生学会什么",
@@ -1688,7 +1687,7 @@ export const messages = {
 "authoring.generation.notReadyPill": "AI 出题暂不可用",
 "authoring.generation.pickCoursePill": "待选择课程",
 "authoring.generation.checkingPill": "正在确认…",
-"authoring.generation.courseField": "这道题出给哪门课",
+"authoring.generation.courseField": "课程选择",
 "authoring.generation.noPermission": "当前账号没有出题权限。",
 "authoring.generation.notEnabled": "AI 出题暂未开通",
 "authoring.generation.notEnabledHint": "AI 出题暂未开通，你仍然可以手动填写题目。",

@@ -340,7 +340,6 @@ export function GenerationPanel({
               ))}
             </Select>
           </Field>
-          <p className="muted">{t("authoring.generation.needCourse")}</p>
         </div>
       ) : forbidden ? (
         <Banner tone="warn" testId="generation-forbidden">

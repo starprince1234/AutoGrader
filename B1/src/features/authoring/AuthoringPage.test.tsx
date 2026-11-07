@@ -192,7 +192,7 @@ async function setAdapterExitCode(user: ReturnType<typeof userEvent.setup>, valu
 }
 
 async function selectCourseInAiPanel(user: ReturnType<typeof userEvent.setup>) {
-  const panelSelect = await screen.findByLabelText("这道题出给哪门课");
+  const panelSelect = await screen.findByLabelText("课程选择");
   await waitFor(() =>
     expect(within(panelSelect).getAllByRole("option").length).toBeGreaterThan(1),
   );
@@ -1440,7 +1440,7 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
     await user.type(screen.getByLabelText("教学目标"), "统计每个单词出现的次数");
     expect(screen.getByTestId("generation-generate")).toBeEnabled();
     // 选完课程后，面板里的"选课"下拉换成了生成表单（同一份状态，不是两份）。
-    expect(screen.queryByLabelText("这道题出给哪门课")).toBeNull();
+    expect(screen.queryByLabelText("课程选择")).toBeNull();
   });
 
   it("AI 入口就在标题栏：还没选课程也能看到，点开后有按钮并说明先选课程", async () => {
@@ -2050,5 +2050,21 @@ describe("AI 出题表单：三处文案与折叠改造", () => {
 
     await user.click(screen.getByText("高级补充要求"));
     expect(details).toHaveAttribute("open");
+  });
+});
+
+describe("AI 出题页课程选择区域", () => {
+  it("标签是「课程选择」，且下方不再有那句提示", async () => {
+    stub = installFetchStub(baseRoutes(aiDraftRoutes()));
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+    await openAi(user);
+
+    // 标签改名（用新名字仍能找到下拉）。
+    expect(await screen.findByLabelText("课程选择")).toBeInTheDocument();
+    expect(screen.queryByLabelText("这道题出给哪门课")).toBeNull();
+    // 旧提示已删除。
+    expect(screen.queryByText("选好课程后就可以生成草稿。")).toBeNull();
   });
 });
