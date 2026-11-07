@@ -1152,6 +1152,7 @@ class TestBuildArgv:
         assert recorded_argv == argv
         assert kwargs["shell"] is False
         assert kwargs["start_new_session"] is True
+        assert kwargs["umask"] == 0o022
         assert kwargs["cwd"] == str(workspace)
         assert (tmp_path / "in.txt").read_text(encoding="utf-8") == "42\n"
 

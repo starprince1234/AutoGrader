@@ -314,6 +314,9 @@ class PosixNsjailLauncher:
                 stdout=output_handle.fileno(),
                 stderr=error_handle.fileno(),
                 start_new_session=True,
+                # Student processes use a conventional shell umask; the API's
+                # private umask still applies to its own files and workspaces.
+                umask=0o022,
                 shell=False,
                 close_fds=True,
             )
