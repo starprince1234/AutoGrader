@@ -674,6 +674,78 @@ def test_listing_with_course_id_returns_only_that_course(client, auth_headers):
     assert {item["title"] for item in listed.json()["items"]} == {"in course A"}
 
 
+def test_stem_search_matches_a_fragment_in_the_middle(client, auth_headers):
+    """`q` 是**片段**检索：题干中间的一小段也要能命中（CHG-0030）。
+
+    首页的搜索框原本只在"已加载的那一页"里做客户端匹配，只加载一道题时搜什么都搜不到——
+    看起来像"必须从头完整匹配"。
+    """
+    payload = draft_payload(
+        title="统计单词出现次数",
+        stem_markdown="从标准输入读入若干行文本，统计每个单词出现的次数。",
+    )
+    created = client.post(
+        "/api/v1/questions",
+        params={"course_id": str(COURSE_A)},
+        json=payload,
+        headers=auth_headers("teacher-a"),
+    )
+    assert created.status_code == 201, created.text
+    other = client.post(
+        "/api/v1/questions",
+        params={"course_id": str(COURSE_A)},
+        json=draft_payload(title="两数相加", stem_markdown="读入两个整数，输出它们的和。"),
+        headers=auth_headers("teacher-a"),
+    )
+    assert other.status_code == 201, other.text
+
+    # 题干中间的片段 + 大小写不敏感
+    found = client.get(
+        "/api/v1/questions",
+        params={"course_id": str(COURSE_A), "published_only": "false", "q": "单词出现"},
+        headers=auth_headers("admin"),
+    )
+    assert found.status_code == 200, found.text
+    assert {item["title"] for item in found.json()["items"]} == {"统计单词出现次数"}
+
+    # 与其它筛选是"与"关系：同一片段换一门课就查不到
+    elsewhere = client.get(
+        "/api/v1/questions",
+        params={"course_id": str(COURSE_B), "published_only": "false", "q": "单词出现"},
+        headers=auth_headers("admin"),
+    )
+    assert elsewhere.status_code == 200
+    assert elsewhere.json()["items"] == []
+
+
+def test_stem_search_treats_like_wildcards_literally(client, auth_headers):
+    """输入 `%` 不能变成"匹配整库"：通配符按字面量处理。"""
+    created = client.post(
+        "/api/v1/questions",
+        params={"course_id": str(COURSE_A)},
+        json=draft_payload(title="百分比题", stem_markdown="输出 50% 的数值。"),
+        headers=auth_headers("teacher-a"),
+    )
+    assert created.status_code == 201, created.text
+
+    wildcard = client.get(
+        "/api/v1/questions",
+        params={"course_id": str(COURSE_A), "published_only": "false", "q": "%"},
+        headers=auth_headers("admin"),
+    )
+    assert wildcard.status_code == 200
+    titles = {item["title"] for item in wildcard.json()["items"]}
+    assert titles == {"百分比题"}, titles
+
+    # 超长的查询被拒绝，而不是打一条超长 LIKE 到数据库
+    too_long = client.get(
+        "/api/v1/questions",
+        params={"published_only": "false", "q": "x" * 201},
+        headers=auth_headers("admin"),
+    )
+    assert too_long.status_code == 422
+
+
 # --- tag write path (CHG-0008) ------------------------------------------
 
 

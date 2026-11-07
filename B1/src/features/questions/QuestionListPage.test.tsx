@@ -667,3 +667,103 @@ describe("分组标识：只认课程分类里真实存在的课程", () => {
     expect(screen.getByText(/已加载 1 道/)).toBeInTheDocument();
   });
 });
+
+describe("筛选区：全部课程 + 实时片段检索", () => {
+  it("课程下拉首项是「全部课程」，选中它不带 course_id（显示所有课程的题）", async () => {
+    stub = installFetchStub(
+      routes({
+        "": {
+          items: [
+            questionPublic({ question_id: "q-a", course_id: UUID_A }),
+            questionPublic({ question_id: "q-b", course_id: UUID_B }),
+          ],
+          next_cursor: null,
+        },
+      }),
+    );
+    const user = await open(userEvent.setup());
+
+    const courseSelect = (await screen.findByLabelText("课程")) as HTMLSelectElement;
+    expect(courseSelect.options[0].textContent).toBe("全部课程");
+    expect(courseSelect.value).toBe("");
+
+    // 两门课各自成组、各有一张表：行数 = 两个表头 + 两行题。
+    const table = screen.getByTestId("question-table");
+    expect(within(table).getAllByRole("row")).toHaveLength(4);
+    expect(within(table).getByTestId("delete-q-a")).toBeInTheDocument();
+    expect(within(table).getByTestId("delete-q-b")).toBeInTheDocument();
+
+    // 选一门课再回到「全部课程」：组合条件里不再带 course_id。
+    await user.selectOptions(courseSelect, UUID_A);
+    await waitFor(() => {
+      const last = stub?.requests
+        .filter((request) => request.url.pathname === "/api/v1/questions")
+        .at(-1);
+      expect(last?.url.searchParams.get("course_id")).toBe(UUID_A);
+    });
+
+    await user.selectOptions(screen.getByLabelText("课程"), "");
+    await waitFor(() => {
+      const last = stub?.requests
+        .filter((request) => request.url.pathname === "/api/v1/questions")
+        .at(-1);
+      expect(last?.url.searchParams.get("course_id")).toBeNull();
+    });
+  });
+
+  it("输入题干片段即实时检索：不发额外请求按钮，片段发给服务端且与其它筛选组合", async () => {
+    stub = installFetchStub(routes({ "": pageOf(["q-1"], null) }));
+    const user = await open(userEvent.setup());
+
+    await user.selectOptions(await screen.findByLabelText("课程"), UUID_A);
+    await user.selectOptions(screen.getByLabelText("标签"), "unix");
+    await user.selectOptions(screen.getByLabelText("发布状态"), "draft");
+
+    // 题干中间的一小段，不带任何"搜索"按钮。
+    await user.type(screen.getByLabelText("搜索题干"), "读入");
+
+    await waitFor(() => {
+      const last = stub?.requests
+        .filter((request) => request.url.pathname === "/api/v1/questions")
+        .at(-1);
+      const params = last?.url.searchParams;
+      expect(params?.get("q")).toBe("读入");
+      // 组合条件同时生效。
+      expect(params?.get("course_id")).toBe(UUID_A);
+      expect(params?.getAll("tags")).toEqual(["unix"]);
+      expect(params?.get("published_only")).toBe("false");
+    });
+  });
+
+  it("片段出现在题干中间也能命中（本地兜底过滤与服务端同口径）", async () => {
+    stub = installFetchStub(
+      routes({
+        "": {
+          items: [
+            questionPublic({
+              question_id: "q-hit",
+              title: "统计单词出现次数",
+              stem_markdown: "从标准输入读入若干行文本，统计每个单词出现的次数。",
+            }),
+            questionPublic({
+              question_id: "q-miss",
+              title: "两数相加",
+              stem_markdown: "读入两个整数，输出它们的和。",
+            }),
+          ],
+          next_cursor: null,
+        },
+      }),
+    );
+    const user = await open(userEvent.setup());
+
+    await user.type(screen.getByLabelText("搜索题干"), "单词出现");
+
+    await waitFor(() => {
+      const table = screen.getByTestId("question-table");
+      expect(within(table).getAllByRole("row")).toHaveLength(2); // 表头 + 命中的那一道
+      expect(within(table).getByText("统计单词出现次数")).toBeInTheDocument();
+      expect(within(table).queryByText("两数相加")).toBeNull();
+    });
+  });
+});

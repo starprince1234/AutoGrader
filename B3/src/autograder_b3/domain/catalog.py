@@ -89,6 +89,7 @@ def list_questions(
     limit: int,
     after: tuple[datetime, uuid.UUID] | None = None,
     tags: tuple[str, ...] = (),
+    query: str | None = None,
 ) -> tuple[list[Question], bool]:
     scoped, published_only = _read_scope(
         principal, course_id=course_id, published_only=published_only
@@ -110,6 +111,7 @@ def list_questions(
             limit=limit,
             after=after,
             tags=tags,
+            query=query,
         )
         for row in rows:
             require_course_read(principal, row.course_id)

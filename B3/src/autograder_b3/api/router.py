@@ -125,11 +125,17 @@ def list_questions_endpoint(
     language: str | None = None,
     published_only: bool = True,
     tags: Annotated[list[str] | None, Query()] = None,
+    q: str | None = None,
 ) -> dict:
     context = _context(request)
     dependencies = _dependencies(request)
     if language is not None and language not in ("python", "bash"):
         raise UnprocessableEntity("`language` must be 'python' or 'bash'")
+    # 片段检索（CHG-0030）：空白等于"不搜索"，超长则拒绝——不能让一个超长 LIKE 打到库里。
+    search = (q or "").strip()
+    if len(search) > 200:
+        raise UnprocessableEntity("`q` accepts at most 200 characters")
+    search = search or None
     # Validated with the same rule the write path uses (CHG-0013): a malformed query tag
     # would otherwise select nothing and look like "no question carries this tag".
     requested_tags = validate_tags(tags)
@@ -144,6 +150,7 @@ def list_questions_endpoint(
         limit=resolved_limit,
         after=after,
         tags=requested_tags,
+        query=search,
     )
     items = []
     for row in rows:

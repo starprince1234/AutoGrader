@@ -467,7 +467,7 @@ export const messages = {
 "questions.newVersion": "另存为新版本",
 "questions.staffOnly": "题库仅供教师使用",
 "questions.staffOnlyHint": "学生从作业进入题目，不浏览整个题库。请到「作业」里打开被布置的题目。",
-"questions.selectCourse": "选择课程",
+"questions.selectCourse": "全部课程",
 "questions.selectCourseFirst": "先选择课程：题库按课程维护，一次只显示一个课程的题目。",
 "questions.listError": "题库暂时无法读取，请重试。",
 "questions.emptyBank": "题库为空，创建第一道题。",

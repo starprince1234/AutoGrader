@@ -28,6 +28,7 @@ import { QuestionCoveragePanel } from "./QuestionCoveragePanel";
 import {
   useBatchQuestionVersions,
   useDeleteQuestionVersion,
+  useDebouncedValue,
   useQuestionList,
   useTagUniverse,
 } from "./useQuestions";
@@ -232,12 +233,17 @@ export function QuestionListPage() {
   const [toast, setToast] = useState<{ key: number; message: string } | null>(null);
   const notify = (message: string) => setToast({ key: Date.now(), message });
 
+  // 输入即检索：输入框的值防抖 250ms 后同时用于（a）发给服务端的 `q`，（b）本地兜底过滤。
+  // 250ms 是"打字过程中列表跟着刷新"与"每个按键都打一次请求"之间的取舍。
+  const debouncedStemQuery = useDebouncedValue(stemQuery, 250);
+
   const questions = useQuestionList(
     author ? (courseId === "" ? null : courseId) : null,
     {
       // 契约只有 published_only 布尔量：只有"已发布"这一档能在请求上表达。
       publishedOnly: publishedState === "published",
       tags: tagValue === "" ? [] : [tagValue],
+      query: debouncedStemQuery.trim(),
     },
     // 非出题角色连请求都不发（不是"发了再藏起来"）。
     { enabled: author },
@@ -285,12 +291,17 @@ export function QuestionListPage() {
     return loadedRows;
   }, [loadedRows, publishedState]);
 
-  const query = stemQuery.trim().toLowerCase();
+  const query = debouncedStemQuery.trim().toLowerCase();
   const rows = useMemo(() => {
+    // 本地兜底过滤与服务端同口径：标题**或**题干包含该片段（子串，不分大小写）。
     const matched =
       query === ""
         ? statusRows
-        : statusRows.filter((row) => row.stem_markdown.toLowerCase().includes(query));
+        : statusRows.filter(
+            (row) =>
+              row.stem_markdown.toLowerCase().includes(query) ||
+              row.title.toLowerCase().includes(query),
+          );
     // 选了课程就只留这门课的题：`course_id` 已经随请求发给服务端，这里再兜一层，
     // 为的是"筛选器选了什么，列表就只显示什么"不依赖某一次部署是否已经修好。
     if (courseId === "") return matched;
