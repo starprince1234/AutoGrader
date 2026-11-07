@@ -798,19 +798,13 @@ def seccomp_policy_lines(policy: RunnerPolicy) -> tuple[str, ...]:
     lines.append("  ALLOW {")
     lines.extend(_seccomp_chunks(SECCOMP_ALLOW))
     lines.append("  },")
+    # libc/NSS may probe an unavailable socket during interpreter startup. Deny
+    # creation with EPERM so normal programs can handle the unavailable service.
+    lines.append("  ERRNO(1) { socket },")
     lines.append("  KILL {")
-    lines.extend(_seccomp_chunks(SECCOMP_DENY))
+    lines.extend(_seccomp_chunks(tuple(name for name in SECCOMP_DENY if name != "socket")))
     lines.append("  }")
     lines.append("}")
-    # **默认拒绝 + 允许清单**（fail-closed）。
-    #
-    # 曾经把默认动作改成 `ALLOW`（只保留 KILL 黑名单）作为一次实验，因为允许清单是从 CPython 的
-    # strace 集合反推的、`bash` 一进入执行路径就被 SIGSYS 杀掉。实验结果：默认放行**确实生效**
-    # （`personality`/`getpriority`/`sched_setscheduler`/`setsid` 这类原本不在清单里的调用被放行，
-    # `socket` 仍被 KILL），但 `bash -c ':'` **依旧** `rc=-31`（SIGSYS），`bash --version` 能正常
-    # 打印。也就是说杀死 shell 的那个调用不在我们这份策略的允许集合里、也不在我们能枚举的范围之外
-    # ——沙箱内 `ptrace` 被拒（`strace` 无法使用），宿主机又不在可操作范围内，无法定位。
-    # 既然默认放行既没解决问题、又实际削弱了隔离，这里**回退**成默认拒绝；新增的允许项与拒绝项保留。
     lines.append("USE b2_sandbox DEFAULT KILL")
     return tuple(lines)
 

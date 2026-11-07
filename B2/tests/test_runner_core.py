@@ -645,10 +645,11 @@ class TestNsjailConfig:
         config = render_nsjail_config(ledger_policy(), Path("/tmp/b2-workspace"))
         assert 'seccomp_string: "POLICY b2_sandbox {"' in config
         assert 'seccomp_string: "  KILL {"' in config
+        assert 'seccomp_string: "  ERRNO(1) { socket },"' in config
         assert 'seccomp_string: "USE b2_sandbox DEFAULT KILL"' in config
         assert 'seccomp_string: "  DEFAULT KILL"' not in config
         assert 'seccomp_string: "USE b2_sandbox DEFAULT"' not in config
-        # 危险的调用的确在 KILL 块里（抽查几条，防止有人把整块删掉还绿着）
+        # socket returns EPERM; the remaining dangerous calls remain in the kill list.
         for name in ("socket", "connect", "ptrace", "mount", "io_uring_setup", "mount_setattr"):
             assert name in SECCOMP_DENY
 

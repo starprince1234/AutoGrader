@@ -192,6 +192,34 @@ def test_i2_legal_submission_passes_inside_the_real_sandbox(tmp_path: Path) -> N
     assert package.security_policy.max_wall_seconds == 5  # 策略确实来自 package
 
 
+def test_bash_and_socket_denial_in_real_sandbox(tmp_path: Path) -> None:
+    """Bash can execute while creating a socket remains forbidden."""
+    from autograder_b2.domain.envelope import EnvelopeFile
+    from autograder_b2.domain.evidence import SubmissionRunInput
+    from autograder_b2.runner.package import parse_evaluation_package
+    from autograder_b2.runner.run_case import run_case
+
+    workspace = tmp_path / "bash"
+    workspace.mkdir()
+    program = "printf '42\\n'\n"
+    (workspace / "main.sh").write_text(program, encoding="utf-8")
+    package = parse_evaluation_package(_package_payload(language="bash"))
+    submission = SubmissionRunInput(
+        submission_id=str(uuid.uuid4()), evaluation_run_id=str(uuid.uuid4()),
+        correlation_id=str(uuid.uuid4()), workspace=workspace,
+        files=(EnvelopeFile(path="main.sh", content_sha256=DIGEST,
+                            size_bytes=len(program), storage_ref="main.sh"),),
+        case=package.tests[0], adapter=package.adapter, policy=package.security_policy,
+    )
+    evidence = run_case(package, submission)
+    assert evidence.passed and evidence.exit_code == 0
+
+    _package, network = _run_program(NETWORK_PROGRAM, workspace=tmp_path / "network-denied")
+    assert network.actual_output_excerpt is not None
+    assert "BLOCKED" in network.actual_output_excerpt
+    assert "CONNECTED" not in network.actual_output_excerpt
+
+
 def test_i3_limit_and_hostile_samples_are_classified(tmp_path: Path) -> None:
     """② 禁网/超时/fork bomb/内存/输出超限样本：被拦截并**归类**到可辨的限制项或失败类别。"""
     observations: dict[str, tuple[object, object, object]] = {}
