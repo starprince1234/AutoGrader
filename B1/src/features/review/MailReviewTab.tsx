@@ -25,6 +25,7 @@ import {
   Table,
 } from "../../ui/components";
 import { formatDateTime, shortenId } from "../../ui/format";
+import { DemoHint } from "./DemoHint";
 import {
   loadedQuarantines,
   useCompleteQuarantine,
@@ -35,6 +36,7 @@ import {
 import { isAttributableReason, REASON_CODES, reasonHint, reasonLabel } from "./reasonCodes";
 import {
   DEMO_COURSE,
+  DEMO_SECTION_ID,
   DEMO_SECTION_OPTION,
   DEMO_STUDENTS,
   DEMO_SUBMISSION_ID,
@@ -163,11 +165,13 @@ export function MailReviewTab({
   });
   const apiRows = useMemo(() => loadedQuarantines(query.data?.pages), [query.data]);
   const [demoRows, setDemoRows] = useState<IntakeQuarantineView[]>(() => demoQuarantines());
-  // 示例数据只是本地副本：筛选在客户端做，处置按钮也只改这份副本。
+  // 示例只有一门课一个课序：URL 里带过来的是**真实**课程/课序 id，用它筛示例只会筛出 0 条
+  // （"从有筛选的页面点查看示例，结果还是空的"）。示例模式只认示例自己的课序。
+  const demoSectionId = filter.sectionId === DEMO_SECTION_ID ? filter.sectionId : null;
   const rows = demo
     ? demoRows.filter(
         (row) =>
-          (filter.sectionId === null || row.scope_section_id === filter.sectionId) &&
+          (demoSectionId === null || row.scope_section_id === demoSectionId) &&
           (filter.resolved === null || row.resolved === filter.resolved) &&
           (filter.held === null || row.held === filter.held) &&
           (filter.reasonCode === null || row.reason_code === filter.reasonCode),
@@ -612,6 +616,12 @@ export function MailReviewTab({
                 : t("review.mail.emptyFiltered")}
             </p>
             {!isAdmin ? <p className="muted">{t("review.mail.emptyStaffHint")}</p> : null}
+            {!demo ? (
+              <DemoHint
+                testId="review-mail-empty-demo"
+                onShow={() => onChange({ ...search, demo: "1" })}
+              />
+            ) : null}
           </div>
         ) : (
           <Table<IntakeQuarantineView>

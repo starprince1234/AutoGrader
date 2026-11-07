@@ -67,7 +67,8 @@ pnpm api:generate  # 重新生成 src/api/generated/*.ts（禁止手改生成物
 2. **没有后端/登录时看**（开发服务器）：`pnpm dev` 后打开
    `http://127.0.0.1:5173/app/demo.html`。它用一个假会话让路由守卫通过，并在 `fetch` 层拦下所有
    API（登录接口返回假令牌，其它请求一律 501 并打印路径），因此可以完全离线评审。
-   可选预设：`?tab=quality&version=2`（样本不足的新版本）、`?tab=mail&state=processed|held|all`。
+   可选预设：`?tab=quality&version=2`（样本不足的新版本）、`?tab=mail&state=processed|held|all`、
+   `?tab=mail&empty=1`（真实环境的空态，用来看空态里的示例入口）。
 
 示例数字由静态记录现算（时间范围会真的过滤），不是写死的响应；示例页只是预览工具，
 **不进生产构建**（Vite 只以 `index.html` 为入口），也不连数据库、不写库。

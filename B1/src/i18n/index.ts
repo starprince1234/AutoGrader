@@ -1484,6 +1484,7 @@ export const messages = {
 "review.demoEnter": "查看示例",
 "review.demoExit": "退出示例",
 "review.demoBanner": "示例预览：下面的数据是前端 mock，不会读写真实记录。",
+"review.demoEmptyHint": "想先看看这个页面在有数据时长什么样？",
 "review.demoMailNote": "示例包含待处理、暂存、已完成、已作废四种状态：用「处理状态」切换查看；「匹配用户 / 暂存 / 标记作废」只改本地副本。",
 "review.demoQualityNote": "示例用「平均分判定」的两个版本：v1 已积累 42 次评测（含系统故障与安全告警），v2 只有 3 次（样本不足、安全扫描未执行）。数字由示例记录现算，起止时间会真的过滤。",
 "review.pendingBadge": "有待处理的邮件记录",

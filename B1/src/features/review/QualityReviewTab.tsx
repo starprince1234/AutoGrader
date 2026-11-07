@@ -22,6 +22,7 @@ import {
 } from "./useReviewQuality";
 import { readQualityFilter, withQualityFilter, type ReviewSearch } from "./search";
 import { DEMO_COURSE, DEMO_VERSION_OPTIONS, demoQualitySummary } from "./demoData";
+import { DemoHint } from "./DemoHint";
 import { Select } from "../../ui/Select";
 
 /**
@@ -297,10 +298,17 @@ export function QualityReviewTab({
 
   /** 示例模式只给一门课、两个版本：下拉与"查询"要有值可用，不能停在"请选择"。 */
   const effectiveCourseId = demo
-    ? (filter.courseId ?? DEMO_COURSE.course_id)
+    ? (filter.courseId === DEMO_COURSE.course_id ? filter.courseId : DEMO_COURSE.course_id)
     : filter.courseId;
+  // 从题目详情点进示例时，URL 里是**真实**版本 id：拿它算示例聚合只会得到"暂无评测记录"。
+  // 示例模式只认示例自己的版本，其余一律回落到第一个示例版本。
+  const demoVersionIds = new Set(
+    versionChoices.map((option) => option.questionVersionId),
+  );
   const effectiveVersionId = demo
-    ? (filter.questionVersionId ?? versionChoices[0]?.questionVersionId ?? null)
+    ? filter.questionVersionId !== null && demoVersionIds.has(filter.questionVersionId)
+      ? filter.questionVersionId
+      : (versionChoices[0]?.questionVersionId ?? null)
     : filter.questionVersionId;
 
   const invalidVersion = filter.questionVersionId !== null && !isUuid(filter.questionVersionId);
@@ -557,6 +565,14 @@ export function QualityReviewTab({
         <Spinner />
       ) : summary.data ? (
         <SummaryPanel summary={summary.data} />
+      ) : null}
+
+      {/* 没有版本 / 没有评测记录是最常见的首次访问：空态要给一条"可以看示例"的路。 */}
+      {!demo && (filter.questionVersionId === null || summary.data?.attempt_count === 0) ? (
+        <DemoHint
+          testId="review-quality-empty-demo"
+          onShow={() => onChange({ ...search, demo: "1" })}
+        />
       ) : null}
     </div>
   );

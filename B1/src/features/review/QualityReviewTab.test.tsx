@@ -198,6 +198,8 @@ describe("P13-B 题目质量标签", () => {
     expect(await screen.findByTestId("review-quality-no-version")).toHaveTextContent(
       "请选择题目版本。",
     );
+    // 没有版本时也给一条"看示例"的路，否则首次访问只有一句"请选择"。
+    expect(screen.getByTestId("review-quality-empty-demo")).toBeInTheDocument();
     expect(
       stub!.requests.some(
         (item) =>
@@ -473,8 +475,23 @@ describe("P13-B 题目质量 · 示例预览", () => {
     expect(business).toHaveLength(0);
   });
 
-  it("时间范围真的过滤示例记录（不只在请求参数上出现）", async () => {
-    const user = userEvent.setup();
+  it("从题目详情带着真实版本进入示例时，回落到示例版本而不是空汇总", async () => {
+    // 真实场景：在某个题目详情点「查看题目质量」得到真实 question_version_id，再点「查看示例」。
+    // 用真实版本去查示例聚合只能得到"暂无评测记录"，所以示例只认示例自己的版本。
+    stub = installFetchStub(sessionOnly());
+    await signIn("teacher1", "pw");
+    renderQuality({
+      tab: "quality",
+      demo: "1",
+      course_id: UUID_A,
+      question_version_id: UUID_C,
+    });
+
+    expect(await screen.findByTestId("review-quality-answerers-value")).toHaveTextContent("18");
+    expect(screen.getByTestId("review-quality-version")).toHaveValue(DEMO_VERSION_ID);
+  });
+
+  it("时间范围真的过滤示例记录（不只在请求参数上出现）", async () => {    const user = userEvent.setup();
     stub = installFetchStub(sessionOnly());
     await signIn("teacher1", "pw");
     renderQuality({ tab: "quality", demo: "1" });
