@@ -170,7 +170,7 @@ _NETWORK_CALL_PY = (
 
 #: bash 侧网络客户端。
 _NETWORK_CLIENT_BASH = (
-    r"\b(?:curl|wget|nc|ncat|netcat|telnet|ssh|scp|sftp|rsync|ping|dig|nslookup|socat|traceroute)\s"
+    r"\b(?:curl|wget|nc|ncat|netcat|telnet|scp|sftp|rsync|ping|dig|nslookup|socat|traceroute)\s"
 )
 
 #: 访问宿主容器守护进程套接字（沙箱逃逸面）。

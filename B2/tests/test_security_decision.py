@@ -316,6 +316,12 @@ class TestRuleTable:
     def test_rule_table_has_no_problems(self) -> None:
         assert rule_table_problems() == ()
 
+    def test_ssh_is_not_statically_blocked_but_external_clients_remain_blocked(self) -> None:
+        ssh = decide_static({"main.sh": "ssh user01@127.0.0.1\nexit\n"}, language="bash")
+        assert not ssh.blocking
+        curl = decide_static({"main.sh": "curl https://example.com\n"}, language="bash")
+        assert curl.blocking
+
     def test_every_rule_has_id_category_severity_and_chinese_description(self) -> None:
         for rule in RULES_BY_ID.values():
             assert rule.rule_id.startswith("SEC-")
