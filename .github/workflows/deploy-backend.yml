@@ -110,6 +110,10 @@ jobs:
         env:
           DATABASE_URL: ""
           B2_TEST_DATABASE_URL: ""
+          # The platform SDK locates MAIN/contracts through B4's deployment-root variable;
+          # in CI the module is imported from site-packages, so the source-tree fallback
+          # cannot work. The contract tests need the real checkout root.
+          B4_MODULE_ROOT: ${{ github.workspace }}
         run: |
           # CHG-0031: these suites are intentionally database-free so they can run in the
           # verify job before any service exists. The Linux nsjail acceptance suite is NOT
