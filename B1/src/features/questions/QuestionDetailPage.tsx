@@ -151,6 +151,8 @@ export function QuestionDetailPage({
             search={{
               tab: "quality",
               origin: "question",
+              // 复核页的「返回该题」要靠它回到这一道题，而不是让老师回题库自己再找一遍。
+              question_id: questionId,
               course_id: shown.course_id,
               question_version_id: effectiveId,
             }}

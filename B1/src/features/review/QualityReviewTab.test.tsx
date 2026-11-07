@@ -260,20 +260,25 @@ describe("P13-B 题目质量标签", () => {
     expect(screen.queryByTestId("review-quality-clear-all")).toBeNull();
   });
 
-  it("深链页「清除全部」后不再锁定那道题", async () => {
+  it("锁定视图只留「清除时间」：没有「清除全部」（那样等于换题）", async () => {
     const user = userEvent.setup();
     stub = installFetchStub(routesFor());
     await signIn("teacher1", "pw");
     renderQuality({ ...QUALITY_PATH, origin: "question" });
-    expect(await screen.findByTestId("review-quality-locked")).toBeInTheDocument();
+    await screen.findByTestId("review-quality-answerers-value");
 
-    await user.click(screen.getByTestId("review-quality-clear-all"));
+    // 还没设时间范围：只有「查询」。
+    expect(screen.queryByTestId("review-quality-clear-time")).toBeNull();
+    expect(screen.queryByTestId("review-quality-clear-all")).toBeNull();
 
-    await waitFor(() => {
-      expect(screen.queryByTestId("review-quality-locked")).toBeNull();
+    fireEvent.change(screen.getByTestId("review-quality-from"), {
+      target: { value: "2026-09-01T00:00" },
     });
-    expect(screen.getByTestId("review-quality-no-version")).toHaveTextContent("点「查询」");
-    expect(screen.getByTestId("review-quality-course")).toHaveValue("");
+    await user.click(screen.getByTestId("review-quality-apply"));
+
+    expect(await screen.findByTestId("review-quality-clear-time")).toBeInTheDocument();
+    // 锁定页始终不给「清除全部」：要换题请回题目详情重新进。
+    expect(screen.queryByTestId("review-quality-clear-all")).toBeNull();
   });
 
   it("没有版本时不发任何 B3/B2 请求，提示先查询", async () => {
@@ -601,6 +606,8 @@ describe("P13-B 题目质量 · 示例预览", () => {
     expect(locked).toHaveTextContent("示例数据");
     expect(screen.queryByTestId("review-quality-course")).toBeNull();
     expect(screen.queryByTestId("review-quality-version")).toBeNull();
+    // 锁定视图没有「清除全部」：示例也一样，只能看这道题。
+    expect(screen.queryByTestId("review-quality-clear-all")).toBeNull();
 
     // 锁定视图按"直接看到"处理，不需要再点查询。
     expect(await screen.findByTestId("review-quality-attempts-value")).toHaveTextContent("42");

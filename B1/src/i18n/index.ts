@@ -1482,6 +1482,7 @@ export const messages = {
 "review.mail.countLoaded": "邮件记录（当前显示 {count} 条）",
 "review.backToAssignments": "返回作业列表",
 "review.backToQuestions": "返回题库列表",
+"review.backToQuestion": "返回该题",
 "review.demoEnter": "查看示例",
 "review.demoExit": "退出示例",
 "review.demoBanner": "示例预览：下面的数据是为了演示页面而编的，不会读写真实记录。",

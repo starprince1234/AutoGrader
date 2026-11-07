@@ -1,4 +1,4 @@
-﻿import { REASON_CODES, type ReasonCode } from "./reasonCodes";
+import { REASON_CODES, type ReasonCode } from "./reasonCodes";
 
 /**
  * P13 复核工作区的 URL 状态（`/review?tab=mail|quality`）。
@@ -22,8 +22,10 @@ export type ReviewTab = "mail" | "quality";
 /** 路由查询串（扁平结构：TanStack Router 的 `validateSearch` 与 `navigate` 共用）。 */
 export type ReviewSearch = {
   tab?: ReviewTab;
-  /** 从题目详情进入 quality 标签：返回按钮应回题库列表，而不是作业列表。 */
+  /** 从题目详情进入 quality 标签：返回按钮回那道题，而不是作业列表。 */
   origin?: "question";
+  /** 来源题目：从题目详情进来时带上，右上角「返回这个题」直接回那道题。 */
+  question_id?: string;
   /** 示例预览（前端 mock，不请求/不写真实数据）。 */
   demo?: "1";
   /** 质量标签已经按当前条件查询过一次（地址栏能恢复结果，但不会自动"选好就出数字"）。 */
@@ -113,6 +115,8 @@ export function parseReviewSearch(search: Record<string, unknown>): ReviewSearch
   const tab = normalizeReviewTab(search.tab);
   if (tab === "quality") parsed.tab = "quality";
   if (search.origin === "question") parsed.origin = "question";
+  const questionId = token(search.question_id);
+  if (questionId) parsed.question_id = questionId;
   if (search.demo === "1" || search.demo === 1 || search.demo === true) parsed.demo = "1";
   if (search.q === "1" || search.q === 1 || search.q === true) parsed.q = "1";
   const course = token(search.course_id);
@@ -221,6 +225,7 @@ export function withMailFilter(
   return compact({
     tab: "mail",
     origin: search.origin,
+    question_id: search.question_id,
     demo: search.demo,
     q: search.q,
     course_id: filter.courseId ?? undefined,
@@ -254,6 +259,7 @@ export function withQualityFilter(
   return compact({
     tab: "quality",
     origin: search.origin,
+    question_id: search.question_id,
     demo: search.demo,
     q: search.q,
     course_id: filter.courseId ?? undefined,
@@ -283,7 +289,10 @@ export function withTab(search: ReviewSearch, tab: ReviewTab): ReviewSearch {
     tab === "quality"
       ? withQualityFilter(search, readQualityFilter(search))
       : withMailFilter(search, readMailFilter(search));
-  return next.origin === undefined ? next : { ...next, origin: undefined };
+  // 换过标签就不再"从某道题进来"：锁定视图与"返回这个题"一起退出。
+  return next.origin === undefined
+    ? next
+    : { ...next, origin: undefined, question_id: undefined };
 }
 
 /** 去掉值为 `undefined` 的键（路由 search 类型不接受 `undefined` 值之外的占位）。 */

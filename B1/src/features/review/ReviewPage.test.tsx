@@ -49,6 +49,8 @@ function renderReview(initial: ReviewSearch) {
   const router = createRouter({
     routeTree: rootRoute.addChildren([
       createRoute({ getParentRoute: () => rootRoute, path: "/questions" }),
+      // 「返回该题」指向 `/questions/{id}`：注册带参数的动态路由，链接才解析得出来。
+      createRoute({ getParentRoute: () => rootRoute, path: "/questions/$questionId" }),
       createRoute({ getParentRoute: () => rootRoute, path: "/assignments" }),
     ]),
     history: createMemoryHistory({ initialEntries: ["/review"] }),
@@ -93,7 +95,22 @@ afterEach(() => {
 });
 
 describe("复核页的返回入口与标签独立状态", () => {
-  it("从题目详情进入质量标签时返回题库列表", async () => {
+  it("从题目详情进入质量标签：返回那道题（没有题目 id 时才回题库列表）", async () => {
+    renderReview({
+      tab: "quality",
+      origin: "question",
+      question_id: UUID_A,
+      course_id: UUID_C,
+      question_version_id: UUID_C,
+    });
+    const back = await screen.findByTestId("review-back");
+    expect(back).toHaveTextContent("返回该题");
+    // 带上当前版本，回到题目详情时还停在同一版本上。
+    expect(back).toHaveAttribute("href", `/questions/${UUID_A}?version=${UUID_C}`);
+    expect(screen.getByTestId("quality-tab-stub")).toBeInTheDocument();
+  });
+
+  it("旧链接没有 question_id 时退回题库列表（不拼坏链接）", async () => {
     renderReview({
       tab: "quality",
       origin: "question",
@@ -103,7 +120,6 @@ describe("复核页的返回入口与标签独立状态", () => {
     const back = await screen.findByTestId("review-back");
     expect(back).toHaveTextContent("返回题库列表");
     expect(back).toHaveAttribute("href", "/questions");
-    expect(screen.getByTestId("quality-tab-stub")).toBeInTheDocument();
   });
 
   it("直接打开复核页时返回作业列表", async () => {

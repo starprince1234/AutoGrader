@@ -619,7 +619,9 @@ export function QualityReviewTab({
                 {t("review.quality.clearTime")}
               </button>
             ) : null}
-            {hasAnySelection ? (
+            {/* 锁定视图不给「清除全部」：这一页只能看这道题，清空条件等于换题，
+                老师要从题目详情重新进。只保留"清除时间"这一种局部清理。 */}
+            {!fromQuestion && hasAnySelection ? (
               <button
                 type="button"
                 className="button button--ghost"

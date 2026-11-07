@@ -29,6 +29,9 @@ export function ReviewPage({
 }) {
   const tab: ReviewTab = normalizeReviewTab(search.tab);
   const fromQuestion = tab === "quality" && search.origin === "question";
+  // 从某道题进来时，"返回"应该回到**那道题**，而不是回题库列表让老师自己再找一遍。
+  // 题目 id 由 P07 的入口带进 URL；老链接没有它时退回题库列表（至少不是坏的链接）。
+  const questionId = search.question_id;
   return (
     <div className="stack">
       <div className="panel__head">
@@ -43,9 +46,26 @@ export function ReviewPage({
             {search.demo === "1" ? t("review.demoExit") : t("review.demoEnter")}
           </Link>
           {fromQuestion ? (
-            <Link className="button button--ghost" to="/questions" data-testid="review-back">
-              {t("review.backToQuestions")}
-            </Link>
+            questionId ? (
+              <Link
+                className="button button--ghost"
+                to="/questions/$questionId"
+                params={{ questionId }}
+                search={{
+                  version:
+                    search.question_version_id === undefined
+                      ? undefined
+                      : search.question_version_id,
+                }}
+                data-testid="review-back"
+              >
+                {t("review.backToQuestion")}
+              </Link>
+            ) : (
+              <Link className="button button--ghost" to="/questions" data-testid="review-back">
+                {t("review.backToQuestions")}
+              </Link>
+            )
           ) : (
             <Link className="button button--ghost" to="/assignments" data-testid="review-back">
               {t("review.backToAssignments")}
