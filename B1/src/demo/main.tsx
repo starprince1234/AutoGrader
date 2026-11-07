@@ -137,6 +137,12 @@ async function boot(): Promise<void> {
   if (tab === "quality" && params.get("version") === "2") {
     search.set("question_version_id", DEMO_VERSION_V2_ID);
   }
+  // `origin=question`：模拟"从某道题点进来"的锁定视图（示例同样只显示这一道题）。
+  if (tab === "quality" && params.get("origin") === "question") {
+    search.set("origin", "question");
+    search.set("course_id", DEMO_COURSE_ID);
+    search.set("question_version_id", DEMO_VERSION_ID);
+  }
   if (tab === "mail") {
     const state = params.get("state");
     if (state === "processed") search.set("resolved", "true");

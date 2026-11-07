@@ -1578,6 +1578,7 @@ export const messages = {
 "review.quality.queryAgain": "筛选改过了，点「查询」按新条件重新统计。",
 "review.quality.lockedWithTitle": "正在看这道题：{title}",
 "review.quality.lockedNoTitle": "正在看这道题（题目信息暂时读不到）",
+"review.quality.lockedDemo": "正在看这道题（下面是示例数据，不是这道题的真实汇总）",
 "review.quality.scopeAll": "统计范围：全部时间",
 "review.quality.scopeRange": "统计范围：{from} — {to}",
 "review.quality.scopeOpenStart": "不限起始",

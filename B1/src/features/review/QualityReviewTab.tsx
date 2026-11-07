@@ -327,10 +327,10 @@ export function QualityReviewTab({
    * 从题目详情点进来（`origin=question`）：直接显示这道题的汇总，并且**只**能看这道题——
    * 课程/版本下拉不再出现，避免老师以为可以在这里换成别的题。
    *
-   * 示例模式例外：示例里的数字是编的，不能顶着某个真实题目说"正在看这道题"，因此示例
-   * 一律走总览视图（可换示例版本），并且同样要点「查询」。
+   * 示例模式也遵守这条：从某道题点进示例，看到的同样是"这道题"的锁定视图（数字仍是示例
+   * 数据，横幅与锁定标签都会写明），不会退化成能换题的示例总览。
    */
-  const fromQuestion = search.origin === "question" && !demo;
+  const fromQuestion = search.origin === "question";
   const identity = session.subject ?? session.username ?? "anonymous";
   const filter = readQualityFilter(search);
 
@@ -378,14 +378,9 @@ export function QualityReviewTab({
    * 只在两种情况下算"查过了"：地址栏明确带着一次查询（`q=1`，刷新/分享仍有效），
    * 或者是从题目详情点进来的那一次（`origin=question`，契约要求的"直接看到"）。
    * 只是在下拉里选好条件不算——那是这一页之前的问题：选一下就把数字放出来了。
-   *
-   * 示例模式额外要求版本必须是示例自带的：从题目详情带着真实版本点「查看示例」时，
-   * 不能再拿真实版本去算示例数字（只会得到空汇总），而是退回"没查过"并让人占查询。
    */
   const queried =
-    appliedVersionId !== null &&
-    (fromQuestion || search.q === "1") &&
-    (!demo || DEMO_VERSION_IDS.has(appliedVersionId));
+    appliedVersionId !== null && (fromQuestion || search.q === "1");
   const targetVersionId = fromQuestion
     ? appliedVersionId
     : versionDraft === ""
@@ -406,11 +401,17 @@ export function QualityReviewTab({
     demo || invalidVersion || appliedVersionId === null ? null : appliedVersionId,
   );
   // 示例模式不发 B2 聚合请求：数字由 `demoData` 里的记录算出，时间范围真的会过滤。
+  // 从真实题目点进示例时，URL 里是真实版本 id，示例数据里没有它——按第一个示例版本算，
+  // 锁定标签会写明这是示例数据。
+  const demoVersionId =
+    appliedVersionId !== null && DEMO_VERSION_IDS.has(appliedVersionId)
+      ? appliedVersionId
+      : DEMO_FIRST_VERSION_ID;
   const summaryEnabled =
     !demo && queried && !invalidVersion && context.version.isSuccess;
   const summary = useQualitySummary({ identity, filter, enabled: summaryEnabled });
   const demoSummary =
-    demo && queried ? demoQualitySummary(appliedVersionId as string, filter.from, filter.to) : null;
+    demo && queried ? demoQualitySummary(demoVersionId, filter.from, filter.to) : null;
 
   const apply = () => {
     if (targetVersionId === null) return;
@@ -511,9 +512,11 @@ export function QualityReviewTab({
         <div className="stack">
           {fromQuestion ? (
             <p className="muted" data-testid="review-quality-locked">
-              {context.label
-                ? t("review.quality.lockedWithTitle", { title: context.label })
-                : t("review.quality.lockedNoTitle")}
+              {demo
+                ? t("review.quality.lockedDemo")
+                : context.label
+                  ? t("review.quality.lockedWithTitle", { title: context.label })
+                  : t("review.quality.lockedNoTitle")}
             </p>
           ) : null}
 

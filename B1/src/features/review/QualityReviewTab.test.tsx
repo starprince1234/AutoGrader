@@ -584,10 +584,9 @@ describe("P13-B 题目质量 · 示例预览", () => {
     expect(business).toHaveLength(0);
   });
 
-  it("示例里从题目详情进来也不冒充那道题：没有锁定标签，查询后给示例数据", async () => {
+  it("示例里从题目详情进来也只显示这道题：锁定标签在、没有课程/版本下拉、直接出示例数字", async () => {
     // 真实场景：在某个题目详情点「查看题目质量」得到真实版本，再点「查看示例」。
-    // 示例数字是编的，不能顶着那个真实题目说"正在看这道题"，因此走总览视图。
-    const user = userEvent.setup();
+    // 示例数字是编的，但视图必须和真实入口一致——只能看这道题，不能在这里换题。
     stub = installFetchStub(sessionOnly());
     await signIn("teacher1", "pw");
     renderQuality({
@@ -598,14 +597,14 @@ describe("P13-B 题目质量 · 示例预览", () => {
       question_version_id: UUID_C,
     });
 
-    // 等页面挂载完成（路由是异步装载的），再断言"没有锁定标签、没有数字"。
-    expect(await screen.findByTestId("review-quality-version")).toHaveValue(DEMO_VERSION_ID);
-    expect(screen.queryByTestId("review-quality-locked")).toBeNull();
-    expect(screen.queryByTestId("review-quality-answerers-value")).toBeNull();
-    expect(screen.getByTestId("review-quality-no-version")).toHaveTextContent("点「查询」");
+    const locked = await screen.findByTestId("review-quality-locked");
+    expect(locked).toHaveTextContent("示例数据");
+    expect(screen.queryByTestId("review-quality-course")).toBeNull();
+    expect(screen.queryByTestId("review-quality-version")).toBeNull();
 
-    await user.click(screen.getByTestId("review-quality-apply"));
+    // 锁定视图按"直接看到"处理，不需要再点查询。
     expect(await screen.findByTestId("review-quality-attempts-value")).toHaveTextContent("42");
+    expect(screen.getByTestId("review-quality-scope")).toHaveTextContent("全部时间");
   });
 
   it("示例里「清除全部」也不会把示例条件又填回来", async () => {
