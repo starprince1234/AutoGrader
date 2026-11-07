@@ -343,15 +343,19 @@ export function QualityReviewTab({
   const [toDraft, setToDraft] = useState(toLocalInputValue(filter.to));
   // 时间校验的错误位置：结束时间早于开始时间要指到结束时间字段。
   const [issue, setIssue] = useState<"invalidTime" | "endBeforeStart" | null>(null);
+  // 「清除全部」之后不再自动回填示例课程/版本：老师要的是回到空白页，不是回到预填页。
+  const [cleared, setCleared] = useState(false);
 
   // 深链 / 刷新 / 前进后退：草稿跟着 URL 走——URL 里那一份才是"已经查过"的条件。
   useEffect(() => {
-    setCourseDraft(draftCourse(demo, filter.courseId));
-    setVersionDraft(draftVersion(demo, filter.questionVersionId));
+    setCourseDraft(cleared ? (filter.courseId ?? "") : draftCourse(demo, filter.courseId));
+    setVersionDraft(
+      cleared ? (filter.questionVersionId ?? "") : draftVersion(demo, filter.questionVersionId),
+    );
     setFromDraft(toLocalInputValue(filter.from));
     setToDraft(toLocalInputValue(filter.to));
     setIssue(null);
-  }, [demo, filter.courseId, filter.from, filter.questionVersionId, filter.to]);
+  }, [cleared, demo, filter.courseId, filter.from, filter.questionVersionId, filter.to]);
 
   // 示例模式不读课程目录：样例自带课程名与版本，没登录、没后端也能完整浏览。
   const courses = useCourses({ enabled: !demo });
@@ -454,6 +458,38 @@ export function QualityReviewTab({
       q: "1",
     });
   };
+
+  /** 回到"还没查过"的空白页：课程、版本、时间一起清掉，地址栏里的查询也不再保留。 */
+  const clearAll = () => {
+    setCleared(true);
+    setCourseDraft("");
+    setVersionDraft("");
+    setFromDraft("");
+    setToDraft("");
+    setIssue(null);
+    onChange({
+      ...withQualityFilter(search, {
+        courseId: null,
+        questionVersionId: null,
+        from: null,
+        to: null,
+      }),
+      q: undefined,
+      // 从题目详情进来时，"全部清掉"也意味着不再锁定那道题。
+      origin: undefined,
+    });
+  };
+
+  const hasAnySelection =
+    fromQuestion ||
+    courseDraft !== "" ||
+    versionDraft !== "" ||
+    fromDraft !== "" ||
+    toDraft !== "" ||
+    filter.courseId !== null ||
+    filter.questionVersionId !== null ||
+    filter.from !== null ||
+    filter.to !== null;
 
   const versionError = context.version.error;
   const versionForbidden = isApiError(versionError) && versionError.isForbidden;
@@ -578,6 +614,16 @@ export function QualityReviewTab({
                 disabled={targetVersionId === null}
               >
                 {t("review.quality.clearTime")}
+              </button>
+            ) : null}
+            {hasAnySelection ? (
+              <button
+                type="button"
+                className="button button--ghost"
+                data-testid="review-quality-clear-all"
+                onClick={clearAll}
+              >
+                {t("review.quality.clearAll")}
               </button>
             ) : null}
             {!demo && !fromQuestion && versionOptions.query.hasNextPage ? (

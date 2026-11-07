@@ -242,6 +242,40 @@ describe("P13-B 题目质量标签", () => {
     expect(screen.queryByTestId("review-quality-answerers-value")).toBeNull();
   });
 
+  it("「清除全部」回到空白页：下拉与时间一起清掉，提示重新查询", async () => {
+    const user = userEvent.setup();
+    stub = installFetchStub(routesFor());
+    await signIn("teacher1", "pw");
+    renderQuality(QUALITY_PATH);
+
+    expect(await screen.findByTestId("review-quality-answerers-value")).toHaveTextContent("18");
+    await user.click(screen.getByTestId("review-quality-clear-all"));
+
+    expect(await screen.findByTestId("review-quality-no-version")).toHaveTextContent("点「查询」");
+    expect(screen.queryByTestId("review-quality-answerers-value")).toBeNull();
+    expect(screen.getByTestId("review-quality-course")).toHaveValue("");
+    expect(screen.getByTestId("review-quality-version")).toHaveValue("");
+    expect(screen.getByTestId("review-quality-from")).toHaveValue("");
+    // 清空之后没有可清的东西，按钮自己也不见了。
+    expect(screen.queryByTestId("review-quality-clear-all")).toBeNull();
+  });
+
+  it("深链页「清除全部」后不再锁定那道题", async () => {
+    const user = userEvent.setup();
+    stub = installFetchStub(routesFor());
+    await signIn("teacher1", "pw");
+    renderQuality({ ...QUALITY_PATH, origin: "question" });
+    expect(await screen.findByTestId("review-quality-locked")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("review-quality-clear-all"));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("review-quality-locked")).toBeNull();
+    });
+    expect(screen.getByTestId("review-quality-no-version")).toHaveTextContent("点「查询」");
+    expect(screen.getByTestId("review-quality-course")).toHaveValue("");
+  });
+
   it("没有版本时不发任何 B3/B2 请求，提示先查询", async () => {
     stub = installFetchStub([
       {
@@ -572,6 +606,24 @@ describe("P13-B 题目质量 · 示例预览", () => {
 
     await user.click(screen.getByTestId("review-quality-apply"));
     expect(await screen.findByTestId("review-quality-attempts-value")).toHaveTextContent("42");
+  });
+
+  it("示例里「清除全部」也不会把示例条件又填回来", async () => {
+    const user = userEvent.setup();
+    stub = installFetchStub(sessionOnly());
+    await signIn("teacher1", "pw");
+    renderQuality({ tab: "quality", demo: "1" });
+
+    await user.click(await screen.findByTestId("review-quality-apply"));
+    expect(await screen.findByTestId("review-quality-attempts-value")).toHaveTextContent("42");
+
+    await user.click(screen.getByTestId("review-quality-clear-all"));
+    await waitFor(() => {
+      expect(screen.queryByTestId("review-quality-attempts-value")).toBeNull();
+    });
+    expect(screen.getByTestId("review-quality-course")).toHaveValue("");
+    expect(screen.getByTestId("review-quality-version")).toHaveValue("");
+    expect(screen.getByTestId("review-quality-no-version")).toHaveTextContent("点「查询」");
   });
 
   it("时间范围真的过滤示例记录，并在汇总里写明统计范围", async () => {

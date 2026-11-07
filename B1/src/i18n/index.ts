@@ -1572,6 +1572,7 @@ export const messages = {
 "review.quality.to": "结束时间",
 "review.quality.apply": "查询",
 "review.quality.clearTime": "清除时间",
+"review.quality.clearAll": "清除全部",
 "review.quality.rangeNote": "查询条件会留在地址栏，刷新或分享后仍然有效。",
 "review.quality.queryPrompt": "选好课程与题目版本后点「查询」，这里会显示这道题的评测汇总。",
 "review.quality.queryAgain": "筛选改过了，点「查询」按新条件重新统计。",
