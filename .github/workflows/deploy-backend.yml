@@ -272,6 +272,7 @@ jobs:
           B4_TEST_ADMIN_DATABASE_URL: postgresql+psycopg://autograder_platform:ci-platform-password@127.0.0.1:5432/autograder
           B4_TEST_NATS_URL: nats://127.0.0.1:4222
           JWT_PRIVATE_KEY_FILE: ${{ runner.temp }}/jwt-ed25519.pem
+          B4_MODULE_ROOT: ${{ github.workspace }}
         run: |
           ../MAIN/.venv/bin/python -m pytest -q \
             tests/test_internal_course_targets.py \
