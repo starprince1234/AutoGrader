@@ -255,12 +255,22 @@ class QuestionStatisticsPublic(BaseModel):
 
 
 class AssignmentPublic(BaseModel):
+    """A homework set for one course and 1..N target sections.
+
+    ``section_ids`` is the target set and ``student_ids`` is the optional narrowing list
+    (empty means "every student in the target sections"). Both are part of the public
+    shape because a client that cannot see who an assignment is for cannot render the
+    workspace or the teacher's matrix. ``question_version_ids`` is ordered: array position
+    is the item ordinal, and answer files are named by the 1-based position (``1.txt``).
+    """
+
     model_config = _PUBLIC_CONFIG
 
     assignment_id: UUID
     course_id: UUID
-    section_id: UUID
-    title: str
+    section_ids: tuple[UUID, ...] = Field(min_length=1, max_length=50)
+    student_ids: tuple[UUID, ...] = ()
+    title: str = Field(min_length=1, max_length=200)
     status: AssignmentStatus
     due_at: datetime | None = None
     question_version_ids: tuple[UUID, ...] = ()

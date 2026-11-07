@@ -18,7 +18,7 @@ from autograder_b3.auth import Principal
 from autograder_b3.dto.internal import QuestionDraftInputModel
 from autograder_b3.infra.models import Question, QuestionVersion
 
-from .conftest import COURSE_A, SECTION_A, TEACHER_ID
+from .conftest import COURSE_A, SECTION_A, STUDENT_A, TEACHER_ID
 
 
 def teacher_principal(
@@ -26,23 +26,38 @@ def teacher_principal(
     subject: str = TEACHER_ID,
     course_ids: tuple[uuid.UUID, ...] = (COURSE_A,),
     section_ids: tuple[uuid.UUID, ...] = (SECTION_A,),
+    course_wide: tuple[uuid.UUID, ...] = (),
 ) -> Principal:
+    """A teacher test principal with the same scope pairing a real token produces.
+
+    ``scope_pairs``/``course_wide`` were previously left empty here while the production
+    principal fills them from the token scope. The section-scoped checks therefore refused
+    every one of these principals, which made the fixtures lie about what a teacher token
+    grants. Pairing is ``zip(course_ids, section_ids)``: a token's scope is a list of
+    ``(course, section)`` entries, not two independent sets.
+    """
     return Principal(
         subject=subject,
         roles=frozenset({"teacher"}),
         course_ids=frozenset(course_ids),
         section_ids=frozenset(section_ids),
+        scope_pairs=frozenset(zip(course_ids, section_ids, strict=True)),
+        course_wide=frozenset(course_wide),
     )
 
 
 def student_principal(
-    *, course_ids: tuple[uuid.UUID, ...] = (COURSE_A,), section_ids: tuple[uuid.UUID, ...] = (SECTION_A,)
+    *,
+    subject: str = str(STUDENT_A),
+    course_ids: tuple[uuid.UUID, ...] = (COURSE_A,),
+    section_ids: tuple[uuid.UUID, ...] = (SECTION_A,),
 ) -> Principal:
     return Principal(
-        subject=str(uuid.uuid4()),
+        subject=subject,
         roles=frozenset({"student"}),
         course_ids=frozenset(course_ids),
         section_ids=frozenset(section_ids),
+        scope_pairs=frozenset(zip(course_ids, section_ids, strict=True)),
     )
 
 
@@ -175,15 +190,23 @@ TEACHER_A_HEADERS = {"Authorization": "Bearer teacher-a"}
 SERVICE_HEADERS = {"Authorization": "Bearer test-service-token"}
 
 
-def http_attestation(client, question_version_id: uuid.UUID, *, cases: int = 2) -> dict:
+def http_attestation(
+    client,
+    question_version_id: uuid.UUID,
+    *,
+    cases: int = 2,
+    headers: dict[str, str] | None = None,
+) -> dict:
     """Read the version's digest over HTTP, then record a matching attestation.
 
     Used by the HTTP publish tests: the digest has to come from the API because the
     verifier is an external process, and the case count has to match because the
-    recorder cross-checks it.
+    recorder cross-checks it. ``headers`` selects the teacher whose course scope the
+    version belongs to (``teacher-a`` by default).
     """
+    reader_headers = headers or TEACHER_A_HEADERS
     detail = client.get(
-        f"/api/v1/question-versions/{question_version_id}", headers=TEACHER_A_HEADERS
+        f"/api/v1/question-versions/{question_version_id}", headers=reader_headers
     )
     assert detail.status_code == 200, detail.text
     response = client.post(
@@ -200,12 +223,18 @@ def http_attestation(client, question_version_id: uuid.UUID, *, cases: int = 2) 
     return response.json()
 
 
-def http_publish(client, question_version_id: uuid.UUID, *, cases: int = 2):
+def http_publish(
+    client,
+    question_version_id: uuid.UUID,
+    *,
+    cases: int = 2,
+    headers: dict[str, str] | None = None,
+):
     """Record an attestation, then publish - the two steps a real caller performs."""
-    http_attestation(client, question_version_id, cases=cases)
+    http_attestation(client, question_version_id, cases=cases, headers=headers)
     return client.post(
         f"/api/v1/question-versions/{question_version_id}/publish",
-        headers=TEACHER_A_HEADERS,
+        headers=headers or TEACHER_A_HEADERS,
     )
 
 

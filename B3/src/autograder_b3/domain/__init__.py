@@ -7,7 +7,12 @@ the reverse.
 
 from __future__ import annotations
 
-from .assignments import create_assignment, get_assignment_detail, list_assignment_versions
+from .assignments import (
+    AssignmentView,
+    create_assignment,
+    get_assignment_detail,
+    list_assignment_versions,
+)
 from .assets import delete_fixture, upload_fixture, upload_stem_asset
 from .assistance import authoring_assistance
 from .attestations import record_reference_attestation
@@ -46,6 +51,7 @@ from .versions import (
 )
 
 __all__ = [
+    "AssignmentView",
     "DrainReport",
     "GenerationCapabilities",
     "LearningContext",

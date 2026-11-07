@@ -24,8 +24,15 @@ export interface paths {
          *     stores content by digest. Repeating a request with the same idempotency key
          *     returns the same submission_id and does not start a second evaluation.
          *
-         *     On success emits `autograder.v1.submission.accepted`; the event never carries
-         *     source code.
+         *     One request is one assignment question (CHG-0032). The envelope carries
+         *     `assignment_id`; the server asks B3 for the assignment audience and refuses the
+         *     request when the question does not belong to the assignment (`422`) or when the
+         *     student/section is outside its audience (`403`). Exactly one `.txt` answer file is
+         *     accepted, named after the question's 1-based position in the assignment
+         *     (`1.txt`, `2.txt`, ...).
+         *
+         *     On success emits `autograder.v1.submission.accepted` (including `assignment_id`);
+         *     the event never carries source code.
          */
         post: operations["createSubmission"];
         delete?: never;
@@ -449,13 +456,14 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Match the quarantined message to a student and create that student's submission
+         * Match the quarantined message to a student and create that student's submissions
          * @description "Match user" closes the loop that `resolveIntakeQuarantine` deliberately left open: the
          *     server re-reads the **original message** from the mailbox position stored on the row
-         *     (`mailbox`/`uidvalidity`/`uid`), re-runs the attachment gates, and persists a normal
-         *     submission for the explicitly chosen `student_id`/`course_id`/`section_id`/
-         *     `question_version_id`. The quarantine row becomes `resolution=completed` and carries the
-         *     new `resolved_submission_id`; `email_checkpoints` moves from `quarantined` to `processed`
+         *     (`mailbox`/`uidvalidity`/`uid`), re-runs the attachment gates, maps each attachment to
+         *     its question by the `<n>.txt` name, and persists a normal submission per mapped question
+         *     for the explicitly chosen `student_id`/`course_id`/`section_id`/`assignment_id`. The
+         *     quarantine row becomes `resolution=completed` and carries the first created submission
+         *     as `resolved_submission_id`; `email_checkpoints` moves from `quarantined` to `processed`
          *     in the same submission transaction.
          *
          *     Preconditions and refusals:
@@ -463,14 +471,18 @@ export interface paths {
          *     * the row must be visible and processable under the same row-level scope rules as the
          *       other intake operations; for a scoped row the chosen course/section must equal the
          *       record's proven scope (`422` otherwise), and staff must hold the target scope (`403`);
+         *     * the chosen student must be in the assignment's audience and the assignment must belong
+         *       to the chosen course (`403`/`422`);
          *     * a resolved row returns `409`; a row whose message is gone (UIDVALIDITY changed, deleted,
          *       fetch failed) returns `409` -- the platform does not store attachment bytes, so it cannot
          *       invent them;
-         *     * the original message must still pass the current attachment gates (`422` otherwise);
+         *     * the original message must still pass the current attachment gates (`422` otherwise); a
+         *       message whose attachments cannot be mapped to the assignment (`<n>.txt`, n within the
+         *       question list) is `422`;
          *     * if email intake is not configured in this deployment the operation returns `503`:
          *       there is no cached copy to fall back to.
          *
-         *     The operation writes a normal submission (same persist path as the automatic flow), so
+         *     The operation writes normal submissions (same persist path as the automatic flow), so
          *     evaluation/outbox behaviour is exactly that of a submission created at intake time.
          */
         post: operations["completeIntakeQuarantine"];
@@ -667,11 +679,15 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Download one file of a submission (teacher review)
+         * Download one file of a submission (student owner or authorized teacher)
          * @description Students must be able to see how their work is judged, and teachers must be able to read
-         *     what was actually submitted — including attachments that arrived by mail. Content is
+         *     what was actually submitted — including answers that arrived by mail. Read authority is
+         *     three-layered (CHG-0032): a recognized role, a token whose course/section scope covers
+         *     the submission, and ownership/staff authority — a student may read only their own
+         *     submission, a teacher/admin may read submissions in their course scope. Content is
          *     served from the content-addressed store; the response never includes other files, and
-         *     every download is audited as `submission.file_downloaded`.
+         *     every download is audited as `submission.file_downloaded`. Source code and message
+         *     bodies are never written to logs.
          */
         get: operations["downloadSubmissionFile"];
         put?: never;
@@ -761,16 +777,20 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Issue a one-time e-mail verification code for a question version (student)
-         * @description Starts the ownership proof behind an `email_delivery` question. The student is
-         *     authenticated; the code is returned **once**, bound to `(student, course, section,
-         *     question version)`, stored only as a SHA-256 digest, and expires after 30 minutes.
+         * Issue a one-time e-mail verification code for an assignment (student)
+         * @description Starts the ownership proof for submitting one assignment by mail (CHG-0032). The
+         *     student is authenticated; the code is returned **once**, bound to `(student, course,
+         *     section, assignment)`, stored only as a SHA-256 digest, and expires after 30 minutes.
          *
          *     Why a code: a `From` header is forgeable, so matching on the sender address alone would
          *     let anyone submit mail as another account. The code travels only through this
          *     authenticated response and must appear in the message; the receiving intake then
          *     requires the sending account to be the challenge owner. That is what makes the link
          *     between a real message and a verified account email a fact rather than a guess.
+         *
+         *     The message may carry **one `.txt` answer file per question**; the file name is the
+         *     question's 1-based position in the assignment (`1.txt`, `2.txt`, ...). No fixed
+         *     deploy-time target or sender rule table is involved.
          *
          *     A new code may be requested at any time; each code is single-use, so an old one is not a
          *     replay vector. Issuing a code does not create a submission and does not change any grade.
@@ -793,13 +813,13 @@ export interface paths {
         };
         /**
          * Read the state of a student's e-mail verification code
-         * @description The student-visible feedback channel for `email_delivery`: it distinguishes "message not
-         *     received yet", "message received and bound to a submission", "message received but
-         *     rejected (with a stable reason code)" and "code expired". The same distinction keeps a
-         *     mail-intake outage from reading as a student answer mistake: `reason_code =
-         *     intake_unavailable` belongs to the platform, not the answer. Only the challenge owner can
-         *     read it; the response never contains the code, the sender address, the subject or any
-         *     message body.
+         * @description The student-visible feedback channel for the mail path: it distinguishes "message not
+         *     received yet", "message received and mapped to per-question submissions", "message
+         *     received but rejected (with a stable reason code)" and "code expired". The same
+         *     distinction keeps a mail-intake outage from reading as a student answer mistake:
+         *     `reason_code = intake_unavailable` belongs to the platform, not the answer. Only the
+         *     challenge owner can read it; the response never contains the code, the sender address,
+         *     the subject or any message body.
          */
         get: operations["getEmailVerificationChallengeStatus"];
         put?: never;
@@ -905,6 +925,13 @@ export interface components {
         };
         SubmissionView: {
             submission_id: components["schemas"]["Uuid"];
+            /**
+             * @description The assignment this submission answers. Null only for submissions accepted before
+             *     assignments were threaded through the intake (CHG-0032): those rows are preserved
+             *     as-is, never attributed to an assignment by guesswork, and never appear in an
+             *     assignment-scoped query.
+             */
+            assignment_id: components["schemas"]["Uuid"] | null;
             student_id?: components["schemas"]["Uuid"];
             course_id?: components["schemas"]["Uuid"];
             section_id?: components["schemas"]["Uuid"];
@@ -978,7 +1005,7 @@ export interface components {
              *     `email_checkpoints` outcome, not an `intake_quarantines.reason_code`.
              * @enum {string}
              */
-            reason_code: "not_uniquely_matched" | "ambiguous_match" | "malformed_message" | "missing_message_id" | "no_attachments" | "too_many_attachments" | "message_too_large" | "attachment_name_not_allowed" | "duplicate_attachment_name" | "unsupported_attachment_encoding" | "malformed_attachment" | "attachment_too_large" | "attachment_total_too_large" | "unsupported_attachment_type" | "nested_message_attachment" | "executable_attachment" | "archive_bomb" | "archive_attachment" | "not_plain_text";
+            reason_code: "not_uniquely_matched" | "ambiguous_match" | "malformed_message" | "missing_message_id" | "no_attachments" | "too_many_attachments" | "message_too_large" | "attachment_name_not_allowed" | "duplicate_attachment_name" | "unsupported_attachment_encoding" | "malformed_attachment" | "attachment_too_large" | "attachment_total_too_large" | "unsupported_attachment_type" | "nested_message_attachment" | "executable_attachment" | "archive_bomb" | "archive_attachment" | "not_plain_text" | "email_verification_rejected" | "email_sender_mismatch" | "email_verification_expired" | "email_body_missing_field" | "email_body_mismatch" | "attachment_mapping_invalid";
             /**
              * @description Already redacted when recorded; bounded here as a backstop.
              *     **`1000`, not `500`** (`CHG-0021` §2.4): the database CHECK is
@@ -1340,6 +1367,8 @@ export interface components {
             display_name?: string | null;
             course_id?: components["schemas"]["Uuid"];
             section_id?: components["schemas"]["Uuid"];
+            /** @description The assignment a submission answers (CHG-0032). Null only for historical rows accepted before the field existed; they are never guessed into an assignment. */
+            assignment_id?: components["schemas"]["Uuid"] | null;
             question_version_id: components["schemas"]["Uuid"];
             /** @enum {string} */
             state: "received" | "validated" | "queued" | "running" | "completed" | "rejected" | "failed";
@@ -1408,11 +1437,11 @@ export interface components {
             /** @description Normative labels that must be displayed with the steps: model-generated, not part of the score, no complete answer. */
             disclaimers: string[];
         };
-        /** @description Which assignment the student is about to prove ownership of an e-mail address for. */
+        /** @description Which assignment the student is about to prove ownership of an e-mail address for (CHG-0032: a challenge is assignment-scoped, because one message may carry one .txt answer per question). */
         EmailVerificationChallengeRequest: {
             course_id: components["schemas"]["Uuid"];
             section_id: components["schemas"]["Uuid"];
-            question_version_id: components["schemas"]["Uuid"];
+            assignment_id: components["schemas"]["Uuid"];
         };
         /**
          * @description The one-time code, returned once at creation. The server stores only its SHA-256, so a
@@ -1420,16 +1449,17 @@ export interface components {
          */
         EmailVerificationChallenge: {
             challenge_id: components["schemas"]["Uuid"];
+            assignment_id: components["schemas"]["Uuid"];
             /** @description Single-use ownership proof the student puts in the message body. */
             code: string;
             expires_at: components["schemas"]["Timestamp"];
         };
         /**
          * @description Student-visible state of the ownership proof. `pending` means no message carrying this
-         *     code has been read yet; `received` means a real IMAP message was bound and a submission
-         *     was created; `rejected` carries a stable reason code; `expired` means the code can no
-         *     longer bind a message. The response never echoes the code, the address, the subject or
-         *     any message body.
+         *     code has been read yet; `received` means a real IMAP message was bound and the mapped
+         *     per-question submissions were created; `rejected` carries a stable reason code; `expired`
+         *     means the code can no longer bind a message. The response never echoes the code, the
+         *     address, the subject or any message body.
          */
         EmailVerificationChallengeStatus: {
             challenge_id: components["schemas"]["Uuid"];
@@ -1437,20 +1467,32 @@ export interface components {
             state: "pending" | "received" | "rejected" | "expired";
             /**
              * @description Stable machine code; null unless state is rejected. `intake_unavailable` is a
-             *     platform condition, not a student mistake. `subject_mismatch` and
-             *     `attachment_missing` are reserved for an intake-side check that needs the
-             *     question's subject/attachment templates (they only exist in the evaluation
-             *     package); until such a check is wired they are never produced, and the
-             *     per-case evaluation reports the corresponding mismatch instead.
+             *     platform condition, not a student mistake. `email_body_missing_field` and
+             *     `email_body_mismatch` mean the message body lacked a required labelled field or its
+             *     assignment/student identity disagreed with the authenticated challenge;
+             *     `attachment_mapping_invalid` means the attachments could not be mapped to the
+             *     assignment's questions (name must be `<n>.txt` with n a 1-based question position).
+             *     `subject_mismatch` and `attachment_missing` are reserved legacy values and are no
+             *     longer produced by intake; the per-case evaluation reports the corresponding mismatch.
              * @enum {string|null}
              */
-            reason_code?: "subject_mismatch" | "attachment_missing" | "email_sender_mismatch" | "email_verification_rejected" | "email_verification_expired" | "intake_unavailable" | null;
+            reason_code?: "subject_mismatch" | "attachment_missing" | "email_sender_mismatch" | "email_verification_rejected" | "email_verification_expired" | "email_body_missing_field" | "email_body_mismatch" | "attachment_mapping_invalid" | "intake_unavailable" | null;
             expires_at: components["schemas"]["Timestamp"];
             verified_at?: components["schemas"]["Timestamp"] | null;
-            /** @description Present when state=received: the submission the message became. */
-            submission_id?: components["schemas"]["Uuid"] | null;
+            /**
+             * @description The submissions this message created, one per mapped question (CHG-0032). Empty
+             *     while pending or when the message did not become a submission. The order is the
+             *     assignment's question order.
+             */
+            submissions?: {
+                question_version_id: components["schemas"]["Uuid"];
+                submission_id: components["schemas"]["Uuid"];
+            }[];
+            /** @description The assignment this challenge belongs to; null only for historical challenges issued before CHG-0032. */
+            assignment_id?: components["schemas"]["Uuid"] | null;
         };
         file: {
+            /** @description Single-segment .txt answer file. In an assignment, the file name is the 1-based question ordinal: 1.txt, 2.txt, ... */
             path: string;
             content_sha256: string;
             content_base64: string;
@@ -1459,6 +1501,8 @@ export interface components {
             /** Format: uuid */
             submission_id: string;
             /** Format: uuid */
+            assignment_id: string;
+            /** Format: uuid */
             student_id: string;
             /** Format: uuid */
             course_id: string;
@@ -1466,10 +1510,12 @@ export interface components {
             section_id: string;
             /** Format: uuid */
             question_version_id: string;
+            /** @description One submission is one assignment question and accepts exactly one .txt answer file (CHG-0032). */
             files: components["schemas"]["file"][];
             idempotency_key: string;
             $defs: {
                 file: {
+                    /** @description Single-segment .txt answer file. In an assignment, the file name is the 1-based question ordinal: 1.txt, 2.txt, ... */
                     path: string;
                     content_sha256: string;
                     content_base64: string;
@@ -2233,7 +2279,7 @@ export interface operations {
                     student_id: components["schemas"]["Uuid"];
                     course_id: components["schemas"]["Uuid"];
                     section_id: components["schemas"]["Uuid"];
-                    question_version_id: components["schemas"]["Uuid"];
+                    assignment_id: components["schemas"]["Uuid"];
                     note?: string | null;
                 };
             };
@@ -2454,8 +2500,9 @@ export interface operations {
         parameters: {
             query: {
                 /**
-                 * @description The submission-relative path recorded in `submission_files.path` (for the Unix
-                 *     homework this is the attachment name, e.g. `2024141460192.txt`). It is a path
+                 * @description The submission-relative path recorded in `submission_files.path`. A submission is one
+                 *     assignment question and carries exactly one `.txt` answer file named after the
+                 *     question's 1-based position in the assignment (`1.txt`, `2.txt`, ...). It is a path
                  *     rather than an id because that table is keyed by `(submission_id, path)`.
                  */
                 path: string;
@@ -2515,6 +2562,8 @@ export interface operations {
                 course_id: components["schemas"]["Uuid"];
                 section_id?: components["schemas"]["Uuid"];
                 question_version_id?: components["schemas"]["Uuid"];
+                /** @description Narrow the page to one assignment (CHG-0032). Rows accepted before assignment_id existed have no assignment and are therefore returned by no assignment-scoped query. */
+                assignment_id?: components["schemas"]["Uuid"];
                 student_id?: components["schemas"]["Uuid"];
                 /** @description Inclusive lower bound on the submission time (RFC 3339, UTC). Same semantics as the export filter. */
                 from?: components["schemas"]["Timestamp"];
@@ -2550,6 +2599,8 @@ export interface operations {
             query: {
                 course_id: components["schemas"]["Uuid"];
                 section_id?: components["schemas"]["Uuid"];
+                /** @description Same assignment filter as `listGrades` (CHG-0032). */
+                assignment_id?: components["schemas"]["Uuid"];
                 question_version_id?: components["schemas"]["Uuid"];
                 student_id?: components["schemas"]["Uuid"];
                 /** @description Same inclusive lower bound as `listGrades`: the exported rows are exactly the rows the page showed. */

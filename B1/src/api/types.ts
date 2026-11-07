@@ -63,6 +63,16 @@ export type SetRosterMappingRequest =
 export type CreateCourseSessionRequest =
   B4Operations["createSession"]["requestBody"]["content"]["application/json"];
 
+/**
+ * 调用者**本人**的账号资料（`GET /api/v1/me`，CHG-0032）。
+ *
+ * 为什么需要它：邮件提交的正文必须写明 `姓名`/`学号`，而 B2 的核验逻辑会与 B4 的
+ * `display_name`/`student_number` 精确比较。契约原先没有"当前用户资料"端点，学生因此无法
+ * 在界面上看到这两个值，只能靠手输——一旦输错，整封邮件会被判为身份不符（
+ * `email_body_mismatch`）。该端点只返回调用者自己，且不含邮箱。
+ */
+export type CurrentUser = B4Schemas["CurrentUser"];
+
 /** 游标页（`common.yaml` 的 `CursorPage`）与具体行的组合，来自契约的 `allOf`。 */
 export type UserPage = JsonBody<B4Operations["listUsers"], 200>;
 export type CoursePage = JsonBody<B4Operations["listCourses"], 200>;
@@ -333,6 +343,27 @@ export type ReferenceVerificationFailure = NonNullable<
 >;
 export type ReferenceVerificationRequest =
   B2Operations["verifyReferenceAnswer"]["requestBody"]["content"]["application/json"];
+
+/* ------------------------------------------- B2（作业邮件提交核验码，CHG-0032） */
+
+/**
+ * 一次性核验码挑战（`POST /api/v1/email-verification/challenges`）。
+ *
+ * 一个作业只需要一个码：一封邮件可以带 N 个 `N.txt` 附件，按题序号映射成 N 条提交。
+ * `code` 只在创建响应里出现一次（服务端只存 SHA-256）。
+ */
+export type EmailVerificationChallenge = B2Schemas["EmailVerificationChallenge"];
+export type EmailVerificationChallengeRequest =
+  B2Operations["createEmailVerificationChallenge"]["requestBody"]["content"]["application/json"];
+export type EmailVerificationChallengeStatus =
+  B2Schemas["EmailVerificationChallengeStatus"];
+export type EmailVerificationState = EmailVerificationChallengeStatus["state"];
+export type EmailVerificationReasonCode = NonNullable<
+  EmailVerificationChallengeStatus["reason_code"]
+>;
+export type EmailVerifiedSubmission = NonNullable<
+  EmailVerificationChallengeStatus["submissions"]
+>[number];
 
 /** 状态枚举直接取自契约，避免在组件里手写字符串字面量。 */
 export type SubmissionState = GradeRow["state"];

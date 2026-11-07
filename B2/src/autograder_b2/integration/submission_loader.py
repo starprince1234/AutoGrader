@@ -57,6 +57,7 @@ from autograder_b2.storage.paths import InvalidDigestError, storage_path_for
 #: 装载信封所需的**全部**提交列（多取一列就等于把"库里有什么"重新定义一遍，少取一列就装不出类型）。
 _SUBMISSION_COLUMNS = (
     submissions.c.submission_id,
+    submissions.c.assignment_id,
     submissions.c.student_id,
     submissions.c.course_id,
     submissions.c.section_id,
@@ -125,6 +126,9 @@ def load_submission_envelope(connection: Connection, submission_id: str) -> Subm
 
     return SubmissionEnvelope(
         submission_id=str(row.submission_id),
+        # 历史提交（`assignment_id` 列出现之前接收的）保持 NULL：不猜测归属、不回填。评测只需要
+        # `question_version_id`，因此这些行照样可装载、可评测；作业级视图不包含它们。
+        assignment_id=None if row.assignment_id is None else str(row.assignment_id),
         student_id=str(row.student_id),
         course_id=str(row.course_id),
         section_id=str(row.section_id),

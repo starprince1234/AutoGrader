@@ -43,6 +43,12 @@ export const REASON_LABELS: Record<ReasonCode, string> = {
   archive_bomb: "压缩炸弹",
   archive_attachment: "压缩包附件",
   not_plain_text: "非纯文本",
+  email_verification_rejected: "邮件核验失败",
+  email_sender_mismatch: "发件邮箱与账号不匹配",
+  email_verification_expired: "核验码已过期",
+  email_body_missing_field: "邮件正文缺字段",
+  email_body_mismatch: "邮件正文身份不符",
+  attachment_mapping_invalid: "附件题号映射无效",
 };
 
 /** 原因码筛选下拉的取值顺序（与词表声明顺序一致，便于与契约对照）。 */
@@ -77,6 +83,12 @@ const REASON_HINTS: Record<ReasonCode, string> = {
   archive_bomb: "压缩包解压后体积异常，安全策略拒绝。",
   archive_attachment: "压缩包不能作为提交。",
   not_plain_text: "附件不是纯文本，无法安全读取。",
+  email_verification_rejected: "邮件没有携带可用的一次性核验码，或核验码已被使用。",
+  email_sender_mismatch: "发件邮箱与提出核验码的账号不一致。",
+  email_verification_expired: "核验码已过期，需要学生重新申请。",
+  email_body_missing_field: "邮件正文缺少核验码/作业编号/课序/姓名/学号中的必填项。",
+  email_body_mismatch: "邮件正文里的作业编号、姓名或学号与账号记录不一致。",
+  attachment_mapping_invalid: "附件名不是 1.txt、2.txt 这类按题号命名的文件，无法映射到作业题目。",
 };
 
 export function reasonHint(reasonCode: string): string {

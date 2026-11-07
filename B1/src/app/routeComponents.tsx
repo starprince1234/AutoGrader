@@ -7,7 +7,6 @@ import { ReviewPage } from "../features/review/ReviewPage";
 import { QuestionDetailPage } from "../features/questions/QuestionDetailPage";
 import { QuestionListPage } from "../features/questions/QuestionListPage";
 import { RosterPage } from "../features/roster/RosterPage";
-import { SubmitPage } from "../features/submission/SubmitPage";
 import { AdminUsersPage } from "../features/admin/AdminUsersPage";
 import { normalizeAdminTab } from "../features/admin/tab";
 import { RequireAuth, RequirePermission } from "../auth/guards";
@@ -15,7 +14,6 @@ import {
   canAuthorQuestions,
   canManageUsers,
   canReviewQuarantine,
-  canSubmitAnswer,
   canViewRoster,
 } from "../auth/visibility";
 
@@ -108,50 +106,6 @@ export function AuthoringEditRoute() {
   );
 }
 
-export function SubmitRoute() {
-  const { questionVersionId } = useParams({ from: "/submit/$questionVersionId" });
-  const { submission_id, evaluation_run_id } = useSearch({ from: "/submit/$questionVersionId" });
-  const navigate = useNavigate();
-  return (
-    <RequireAuth>
-      <RequirePermission allow={canSubmitAnswer} allowedRoles={["student"]}>
-        <SubmitPage
-          questionVersionId={questionVersionId}
-          initialSubmissionId={submission_id ?? null}
-          initialRunId={evaluation_run_id ?? null}
-          onSubmitted={(ids) => {
-            void navigate({
-              to: "/submit/$questionVersionId",
-              params: { questionVersionId },
-              search: {
-                submission_id: ids.submissionId,
-                evaluation_run_id: ids.evaluationRunId ?? undefined,
-              },
-              replace: true,
-            });
-          }}
-          onOpenResult={(runId) => {
-            void navigate({ to: "/grades", search: { evaluation_run_id: runId } });
-          }}
-          onOpenGrades={() => {
-            void navigate({ to: "/grades", search: {} });
-          }}
-          onOpenQuestion={(questionId, versionId) => {
-            void navigate({
-              to: "/questions/$questionId",
-              params: { questionId },
-              search: { version: versionId },
-            });
-          }}
-          onBackToAssignments={() => {
-            void navigate({ to: "/assignments" });
-          }}
-        />
-      </RequirePermission>
-    </RequireAuth>
-  );
-}
-
 export function GradesRoute() {
   const { evaluation_run_id } = useSearch({ from: "/grades" });
   const navigate = useNavigate();
@@ -173,11 +127,22 @@ export function AssignmentsRoute() {
   );
 }
 
+/**
+ * 作业详情/工作区（`/assignments/{assignment_id}`）。
+ *
+ * 角色分流在页面内完成（学生 → 工作区；教师/管理员 → 详情），因此这里只用 `RequireAuth`：
+ * 页面会原样展示服务端的 403/404，而不是用前端守卫把它变成"页面不存在"。
+ * `?question=` 是学生从列表「继续作答」进入时的预选题目。
+ */
 export function AssignmentDetailRoute() {
   const { assignmentId } = useParams({ from: "/assignments/$assignmentId" });
+  const { question } = useSearch({ from: "/assignments/$assignmentId" });
   return (
     <RequireAuth>
-      <AssignmentDetailPage assignmentId={assignmentId} />
+      <AssignmentDetailPage
+        assignmentId={assignmentId}
+        initialQuestionVersionId={question ?? null}
+      />
     </RequireAuth>
   );
 }

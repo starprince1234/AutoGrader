@@ -56,6 +56,7 @@ BUSINESS_TABLES = {
     "email_checkpoints",
     "email_sender_bindings",
     "email_verification_challenges",
+    "email_verification_submissions",
     "email_verifications",
     "evaluation_commentaries",
     "evaluation_learning_hints",
@@ -81,6 +82,8 @@ BUSINESS_TABLES = {
 COMPOSITE_PRIMARY_KEYS = {
     "submission_files": ["submission_id", "path"],
     "inbox_events": ["consumer", "event_id"],
+    # 迁移 0022：一封邮件 × 一道题 → 一份提交。
+    "email_verification_submissions": ["verification_id", "question_version_id"],
 }
 
 #: 迁移 `20260915_0011`（0012 的整改对象）时**已经存在**的业务表。
@@ -94,6 +97,7 @@ TABLES_AT_0011 = BUSINESS_TABLES - {
     "email_verifications",  # 0020
     "email_sender_bindings",  # 0020
     "intake_state",  # 0020
+    "email_verification_submissions",  # 0022
 }
 
 pytestmark = requires_postgres
@@ -258,6 +262,8 @@ def test_created_constraints_exist(empty_database_url: str) -> None:
         "ck_email_verification_challenges_attempts",
         "ck_email_verification_challenges_consumption",
         "ck_email_verification_challenges_rejection",
+        # 迁移 0022（CHG-0032）：核验码以作业为目标时，题目列可空，但两者至少有一个。
+        "ck_email_verification_challenges_target",
         "fk_email_verification_challenges_consumed_verification_id",
         "pk_email_verifications",
         "uq_email_verifications_challenge_id",
@@ -266,6 +272,10 @@ def test_created_constraints_exist(empty_database_url: str) -> None:
         "fk_email_verifications_challenge_id",
         "fk_email_verifications_submission_id",
         "ck_email_verifications_attachment_names",
+        # 迁移 0022：一封邮件 × 一道题 → 一份提交的映射。
+        "pk_email_verification_submissions",
+        "uq_email_verification_submissions_submission_id",
+        "ck_email_verification_submissions_attachment_name",
         "pk_email_sender_bindings",
         "uq_email_sender_bindings_scope",
         "ck_email_sender_bindings_sender",
@@ -285,6 +295,7 @@ def test_indexes_and_unique_keys_exist(empty_database_url: str) -> None:
         "ix_submissions_course_id_section_id",
         "ix_submissions_question_version_id",
         "ix_submissions_state",
+        "ix_submissions_assignment_id",
         "ix_submission_files_artifact_id",
         "uq_email_checkpoints_mailbox_message_id",
         "ix_intake_quarantines_created_at",
@@ -305,6 +316,9 @@ def test_indexes_and_unique_keys_exist(empty_database_url: str) -> None:
         "uq_email_verifications_mailbox_uidvalidity_uid",
         "ix_email_verifications_student_id",
         "uq_email_sender_bindings_scope",
+        # 迁移 0022：映射表的两条唯一约束/索引。
+        "uq_email_verification_submissions_submission_id",
+        "ix_email_verification_submissions_question_version_id",
     ):
         assert expected in indexes, f"索引/唯一键缺失: {expected}"
 
@@ -485,20 +499,23 @@ def _insert_submission(
     key: str | None = None,
     scope: str | None = None,
     state: str = "received",
+    assignment_id: str | None = None,
 ) -> None:
     """插入一条合法提交；key/scope 缺省自动取唯一值（同一测试库被多个用例共用）。
 
     列清单含迁移 0008 新增的 `correlation_id` 与 `request_id`：`intake='api'` 的行必须
     "有 request_id、无邮件身份"（`ck_submissions_provenance_shape`），否则插进去的就不是
     一份与冻结信封一致的行，而测试会以 NotNullViolation/CHECK 失败——那是夹具的问题，不是约束的问题。
+    `assignment_id` 缺省为 NULL（历史行形态，迁移 0021 明确允许且不回填）。
     """
     _exec(
         url,
         "INSERT INTO b2.submissions (submission_id, student_id, course_id, section_id,"
         " question_version_id, intake, idempotency_key, idempotency_scope, submission_digest,"
-        " state, created_at, updated_at, correlation_id, request_id)"
+        " state, created_at, updated_at, correlation_id, request_id, assignment_id)"
         " VALUES (:sid, gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), gen_random_uuid(),"
-        " 'api', :key, :scope, :digest, :state, now(), now(), gen_random_uuid(), :request_id)",
+        " 'api', :key, :scope, :digest, :state, now(), now(), gen_random_uuid(), :request_id,"
+        " :assignment_id)",
         {
             "sid": submission_id,
             "key": key if key is not None else f"key-{uuid.uuid4().hex}",
@@ -506,6 +523,7 @@ def _insert_submission(
             "digest": "b" * 64,
             "state": state,
             "request_id": f"req-{uuid.uuid4().hex}",
+            "assignment_id": None if assignment_id is None else assignment_id,
         },
     )
 
@@ -577,7 +595,11 @@ def test_artifact_dedup_and_storage_path_guards(empty_database_url: str) -> None
 
 
 def test_email_checkpoint_outcome_constraint_enforced(empty_database_url: str) -> None:
-    """processed 必须带 submission_id；quarantined/rejected 必须带原因且不得带提交。"""
+    """processed 带不带 submission_id 都合法（一封多题）；其余两态必须带原因且不得带提交。
+
+    迁移 0022（CHG-0032）放宽了 processed 的要求：一封邮件可以产生多份提交，checkpoint 因此
+    **不**指向单份提交；"这封邮件变成了哪些提交"由 `email_verification_submissions` 表达。
+    """
     _alembic(empty_database_url, "upgrade", "head")
     submission_id = str(uuid.uuid4())
     _insert_submission(empty_database_url, submission_id)
@@ -599,14 +621,16 @@ def test_email_checkpoint_outcome_constraint_enforced(empty_database_url: str) -
         )
 
     insert_checkpoint("processed", submission_id, None, 1)
-    insert_checkpoint("quarantined", None, "no_unique_match", 2)
-    insert_checkpoint("rejected", None, "archive_bomb", 3)
-    with pytest.raises(IntegrityError):
-        insert_checkpoint("processed", None, None, 4)
-    with pytest.raises(IntegrityError):
-        insert_checkpoint("quarantined", submission_id, "no_unique_match", 5)
-    with pytest.raises(IntegrityError):
-        insert_checkpoint("rejected", None, None, 6)
+    # 迁移 0022：一邮件多提交 ⇒ checkpoint 不指向单份提交，processed 允许 submission_id 为 NULL。
+    insert_checkpoint("processed", None, None, 2)
+    insert_checkpoint("quarantined", None, "no_unique_match", 3)
+    insert_checkpoint("rejected", None, "archive_bomb", 4)
+    with pytest.raises(IntegrityError):  # processed 不得带原因
+        insert_checkpoint("processed", None, "no_unique_match", 5)
+    with pytest.raises(IntegrityError):  # quarantined 必须不带提交
+        insert_checkpoint("quarantined", submission_id, "no_unique_match", 6)
+    with pytest.raises(IntegrityError):  # rejected 必须带原因
+        insert_checkpoint("rejected", None, None, 7)
 
 
 def test_email_checkpoint_uid_and_message_id_uniqueness(empty_database_url: str) -> None:
@@ -632,6 +656,150 @@ def test_email_checkpoint_uid_and_message_id_uniqueness(empty_database_url: str)
         insert(10, "<a@example>", uidvalidity=2)
     insert(12, None)  # 无 Message-ID 时不受部分唯一索引约束
     insert(13, None)
+
+
+def test_assignment_id_is_nullable_and_historical_rows_are_not_backfilled(
+    empty_database_url: str,
+) -> None:
+    """迁移 0021：`submissions.assignment_id` 可空；历史行保持 NULL（不猜测归属、不回填）。"""
+    _alembic(empty_database_url, "upgrade", "head")
+    engine = create_engine(empty_database_url)
+    try:
+        with engine.connect() as connection:
+            nullable = connection.execute(
+                text(
+                    "SELECT is_nullable FROM information_schema.columns"
+                    " WHERE table_schema = 'b2' AND table_name = 'submissions'"
+                    "   AND column_name = 'assignment_id'"
+                )
+            ).scalar_one()
+    finally:
+        engine.dispose()
+    assert nullable == "YES", "历史提交没有作业归属 ⇒ 该列必须可空（不能为了'结构完整'编造值）"
+
+    historical = str(uuid.uuid4())
+    modern = str(uuid.uuid4())
+    assignment = str(uuid.uuid4())
+    _insert_submission(empty_database_url, historical)  # assignment_id NULL
+    _insert_submission(empty_database_url, modern, assignment_id=assignment)
+    engine = create_engine(empty_database_url)
+    try:
+        with engine.connect() as connection:
+            stored = {
+                str(row[0]): None if row[1] is None else str(row[1])
+                for row in connection.execute(
+                    text(
+                        "SELECT submission_id, assignment_id FROM b2.submissions"
+                        " WHERE submission_id IN (:historical, :modern)"
+                    ),
+                    {
+                        "historical": uuid.UUID(historical),
+                        "modern": uuid.UUID(modern),
+                    },
+                ).fetchall()
+            }
+    finally:
+        engine.dispose()
+    assert stored == {historical: None, modern: assignment}
+
+
+def _insert_challenge(
+    url: str,
+    *,
+    assignment_id: str | None,
+    question_version_id: str | None,
+    last_rejection_code: str | None = None,
+) -> None:
+    _exec(
+        url,
+        "INSERT INTO b2.email_verification_challenges (challenge_id, student_id, course_id,"
+        " section_id, question_version_id, code_sha256, created_at, expires_at,"
+        " last_rejection_code, attempts, assignment_id)"
+        " VALUES (gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), gen_random_uuid(),"
+        " :qv, :code, date_trunc('milliseconds', now()),"
+        " date_trunc('milliseconds', now()) + interval '30 minutes', :rejection, 0, :assignment)",
+        {
+            "qv": None if question_version_id is None else question_version_id,
+            "code": f"{uuid.uuid4().hex}{uuid.uuid4().hex}"[:64],
+            "rejection": last_rejection_code,
+            "assignment": assignment_id,
+        },
+    )
+
+
+def test_email_challenge_target_and_rejection_constraints_are_enforced(
+    empty_database_url: str,
+) -> None:
+    """迁移 0022：核验码目标至少一个（作业或历史题目），拒绝原因枚举扩到六值。"""
+    _alembic(empty_database_url, "upgrade", "head")
+    # 新形态：作业目标；历史形态：题目目标。两者都合法。
+    _insert_challenge(
+        empty_database_url,
+        assignment_id=str(uuid.uuid4()),
+        question_version_id=None,
+        last_rejection_code="attachment_mapping_invalid",
+    )
+    _insert_challenge(
+        empty_database_url,
+        assignment_id=None,
+        question_version_id=str(uuid.uuid4()),
+        last_rejection_code="email_body_missing_field",
+    )
+    with pytest.raises(IntegrityError):  # 两个目标都为空
+        _insert_challenge(
+            empty_database_url, assignment_id=None, question_version_id=None
+        )
+    with pytest.raises(IntegrityError):  # 拒绝原因不在六值枚举内
+        _insert_challenge(
+            empty_database_url,
+            assignment_id=str(uuid.uuid4()),
+            question_version_id=None,
+            last_rejection_code="nonsense_reason",
+        )
+
+
+def test_email_verification_submission_mapping_is_unique_and_bounded(
+    empty_database_url: str,
+) -> None:
+    """迁移 0022：一封邮件 × 一道题唯一；一份提交只能映射一次；附件名长度受限。"""
+    _alembic(empty_database_url, "upgrade", "head")
+    verification, question, submission = (
+        str(uuid.uuid4()),
+        str(uuid.uuid4()),
+        str(uuid.uuid4()),
+    )
+
+    def insert(
+        *,
+        verification_id: str = verification,
+        question_version_id: str = question,
+        submission_id: str = submission,
+        attachment_name: str = "1.txt",
+    ) -> None:
+        _exec(
+            empty_database_url,
+            "INSERT INTO b2.email_verification_submissions (verification_id,"
+            " question_version_id, submission_id, attachment_name, created_at)"
+            " VALUES (:verification, :question, :submission, :name, now())",
+            {
+                "verification": verification_id,
+                "question": question_version_id,
+                "submission": submission_id,
+                "name": attachment_name,
+            },
+        )
+
+    insert()
+    with pytest.raises(IntegrityError):  # 同一 (verification, question) 不能重复映射
+        insert(submission_id=str(uuid.uuid4()))
+    with pytest.raises(IntegrityError):  # 同一份提交不能被两行映射
+        insert(question_version_id=str(uuid.uuid4()), attachment_name="2.txt")
+    with pytest.raises(IntegrityError):  # 空附件名
+        insert(
+            question_version_id=str(uuid.uuid4()),
+            submission_id=str(uuid.uuid4()),
+            attachment_name="",
+        )
 
 
 # --- 验收 3：表标准（RQ-B-4-30 / 缺陷 E16）-------------------------------------------------
@@ -721,6 +889,9 @@ def test_every_timestamp_column_has_millisecond_precision(empty_database_url: st
         "manual_grade_history.recorded_at",
         "intake_messages.received_at",
         "intake_messages.created_at",
+        # 迁移 0022（CHG-0032）：邮件处理完成时刻与一邮件多题的映射行。
+        "email_verifications.processed_at",
+        "email_verification_submissions.created_at",
     }
     assert {f"{row[0]}.{row[1]}" for row in rows} == expected
 

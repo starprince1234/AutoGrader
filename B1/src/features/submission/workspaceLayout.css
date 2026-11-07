@@ -1,0 +1,89 @@
+/* 作业工作区（学生）的页面私有布局：左侧题目列表 + 右侧题干/答题区。 */
+
+.assignment-workspace {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.assignment-workspace__questions {
+  position: sticky;
+  top: 16px;
+}
+
+.workspace-question-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.workspace-question {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 2px 8px;
+  width: 100%;
+  padding: 10px 12px;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: inherit;
+  cursor: pointer;
+}
+
+.workspace-question:hover {
+  background: var(--color-surface-2);
+}
+
+.workspace-question--active {
+  background: var(--color-surface-2);
+  border-color: var(--color-border-strong);
+}
+
+.workspace-question__ordinal {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-faint);
+}
+
+.workspace-question__title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-question__status {
+  grid-column: 2;
+}
+
+.workspace-answer__textarea {
+  width: 100%;
+  min-height: 320px;
+  resize: vertical;
+  font-family: var(--font-mono);
+  line-height: 1.5;
+}
+
+.workspace-answer__file-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.workspace-answer__mapping {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 860px) {
+  .assignment-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .assignment-workspace__questions {
+    position: static;
+  }
+}

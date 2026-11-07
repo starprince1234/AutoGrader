@@ -320,7 +320,7 @@ def import_file(
         body={
             "title": label,
             "course_id": course_id,
-            "section_id": section_id,
+            "section_ids": [section_id],
             "question_version_ids": version_ids,
         },
         tolerate=(409,),

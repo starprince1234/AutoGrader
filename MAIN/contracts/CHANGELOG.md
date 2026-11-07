@@ -12,6 +12,58 @@
 
 ---
 
+## 0.31.0 — 作业目标模型、assignment_id 全链路与多题 .txt 网页/邮件提交（CHG-0032）
+
+- **类型**：P2 语义扩展 + 少量字段删除（多课序/指定学生目标模型、提交与成绩强制 `assignment_id`、
+  邮件核验码改为作业维度、`email_delivery` 的附件模板删除）
+- **状态**：有效
+- **背景**：作业此前只能挂到单个课序，且 B2 的提交/成绩/幂等完全没有 `assignment_id`：同一题目
+  版本用于两个作业时，提交、状态与成绩会互相串联；教师无法看到一个作业按「未交/部分提交/
+  全部提交/评测中/失败」的准确分布，也无法逐学生逐题查看答案。学生端只有单题提交页，没有作业
+  维度多题工作区，邮件也只能靠部署期固定目标或匹配规则表把整封邮件绑到一个题目版本。本轮把
+  「作业」变成提交、邮件、成绩与 UI 的显式一等对象。
+- **变更**：
+  - `schemas/submission-envelope.schema.json`：`assignment_id` 必填；`files` 改为 1..1 且路径必须是
+    单段 `.txt`（作业内第 N 题 = `N.txt`）。
+  - `schemas/evaluation-package.schema.json`：`execution.email` 删除 `required_attachment_template`
+    （附件映射由作业题号统一决定；`attachment` 检查语义改为"该题有映射答案文件"）。
+  - `openapi/b2.yaml`：`SubmissionView`/`GradeRow` 增加 `assignment_id`（历史行为 null）；`listGrades`
+    与 `grades/export` 增加 `assignment_id` 过滤；提交信封与文件端点描述更新（学生可读本人答案）；
+    邮件核验码请求改为 `{course_id, section_id, assignment_id}`、响应增加 `assignment_id`、状态响应
+    `submission_id` 改为按题 `submissions[]` 并新增 `email_body_missing_field`/`email_body_mismatch`/
+    `attachment_mapping_invalid` 原因码；隔离复核 `complete` 请求改为 `assignment_id` 并按 `<n>.txt`
+    映射逐题创建提交；隔离原因码词表补齐邮件核验相关取值。
+  - `openapi/b3.yaml`：`AssignmentPublic` 的 `section_id` 改为 `section_ids`，新增 `student_ids`
+    （空 = 所选课序全体）、`question_version_ids` 顺序即作业顺序；创建请求改为
+    `{course_id, section_ids, student_ids?, title, due_at?, question_version_ids}`；新增 internal
+    `getInternalAssignment`（`GET /api/v1/assignment-audiences/{assignment_id}`，serviceToken）。
+    `ExecutionEmail` 删除附件模板。
+  - `openapi/b4.yaml`：新增 internal `validateCourseTargets`
+    （`POST /api/v1/internal/course-targets/validate`，serviceToken），供 B3 在创建作业时校验目标
+    课序/学生；新增 `CourseTargetValidationRequest`/`CourseTargetValidation`。
+  - `openapi/common.yaml`、`openapi/b5.yaml`、`asyncapi/events.yaml`：版本同步；
+    `submission.accepted` 示例与说明加入可选 `assignment_id`（旧 outbox 事件仍必须可投递）。
+  - 签名与数据：B2 迁移 `20261107_0021`（`submissions.assignment_id`）、`20261107_0022`
+    （作业维度邮件核验/验证/按题映射表与 checkpoint 约束）；B3 迁移 `20261107_0008`
+    （`assignments` 删除 `section_id`，新增 `assignment_sections`/`assignment_students`）。
+    历史提交保留 `assignment_id = NULL`，**不回填、不猜测**，也不进入作业级过滤。
+- **受影响模块**：
+  - **B3**：多课序/指定学生目标模型与校验（B4 internal）、读授权、列表分页修复、internal 作业 audience。
+  - **B4**：内部目标校验端点（只读，无迁移）。
+  - **B2**：`assignment_id` 贯通接收/持久化/幂等/事件/成绩/提交视图/文件读授权；多题 `.txt` 邮件
+    收件（核验码绑作业、正文格式、按题映射、幂等 resume、可解释隔离、人工隔离复核按题创建）；
+    `email_delivery` 投递核验改为映射存在；删除固定目标/匹配规则路径。
+  - **B1**：作业工作区（多题、粘贴/.txt 上传、草稿 v2、逐题状态、邮件格式与映射展示）与教师作业
+    详情（汇总计数、逐人逐题矩阵、查看答案）；作业创建支持多课序与指定学生；删除单题提交页。
+- **兼容性**：故意的破坏性变更：提交信封新增必填字段、作业创建/响应字段改名、邮件核验码请求
+  字段替换、`email_delivery` 附件模板删除。没有别名、双写或兼容层。唯一的历史数据例外是
+  `assignment_id = NULL` 的旧提交（保留、可评测、不属于任何作业）。
+- **验证**：远端 CI 与隔离 Linux/真实 PostgreSQL 验收（见 `MAIN/docs/architecture/assignment-workflow.md`
+  §9）；本地不运行项目测试/数据库。
+- **摘要**：见五份 `contracts.lock`（按 `MAIN/contracts` 逐文件字节计算，工具生成）。
+
+---
+
 ## 0.30.0 — Unix 作业评测：显式执行声明、邮件核验、SSH 练习环境、文件与分段评分（CHG-0031）
 
 - **类型**：P2 语义扩展（新增可选字段 + 2 个学生端点 + 1 个 internal 只读端点；无字段删除、无别名、无双写）

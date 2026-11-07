@@ -105,6 +105,7 @@ def _envelope(sid: uuid.UUID, qid: uuid.UUID, contents: Mapping[str, bytes]) -> 
     correlation = str(uuid.uuid5(uuid.NAMESPACE_URL, f"recheck:{sid}"))
     return SubmissionEnvelope(
         submission_id=str(sid),
+        assignment_id=str(uuid.uuid4()),
         student_id=str(uuid.uuid4()),
         course_id=str(uuid.uuid4()),
         section_id=str(uuid.uuid4()),

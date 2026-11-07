@@ -1,18 +1,21 @@
-"""冻结信封**可往返**的验收：装载器 + 迁移 0008 的 provenance 列与形状约束。
+"""冻结信封**可往返**的验收：装载器 + 迁移 0008 的 provenance 列与迁移 0021 的作业归属。
 
 为什么这个文件存在：`SubmissionEnvelope` 是 API 与邮件两条入口归一化后的唯一内部形态，而评测编排器
 发事件时必须带 `submission.correlation_id`。因此"能把这行重新装成同一个冻结信封"是评测阶段的
-**生产级输入路径**，不是可选功能。本文件用真实 PostgreSQL 证明三件事：
+**生产级输入路径**，不是可选功能。本文件用真实 PostgreSQL 证明四件事：
 
-1. 写进去的信封能逐字段读回来（provenance 两种形态、correlation_id、文件清单与顺序）；
-2. 装载器的自校验真的抓得住人为篡改（摘要与库里的值不符、存储引用与摘要的派生关系被破坏）；
-3. 数据库 CHECK 真的拦得住"与 intake 不符的 provenance 形状"，不是只声明存在。
+1. 写进去的信封能逐字段读回来（provenance 两种形态、correlation_id、assignment_id、文件清单）；
+2. 历史行（`assignment_id IS NULL`、可带多个任意路径文件）仍能装载——它们是**如实的历史数据**，
+   不猜测归属、不回填，也不因为作业模型的出现而变得不可评测；
+3. 装载器的自校验真的抓得住人为篡改（摘要与库里的值不符、存储引用与摘要的派生关系被破坏）；
+4. 数据库 CHECK 真的拦得住"与 intake 不符的 provenance 形状"，不是只声明存在。
 
 真实数据库来自 `tests/conftest.py` 的共享夹具（临时库 + 迁移到 head），不使用 SQLite。
 """
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import uuid
 from collections.abc import Callable
@@ -24,6 +27,7 @@ from sqlalchemy import Connection, Engine
 from sqlalchemy.exc import IntegrityError
 
 from autograder_b2.db.schema import artifacts, submission_files, submissions
+from autograder_b2.domain.clock import sha256_hex
 from autograder_b2.domain.envelope import ApiProvenance, EmailProvenance, SubmissionEnvelope
 from autograder_b2.intake.service import (
     IntakeLimits,
@@ -43,10 +47,9 @@ pytestmark = requires_postgres
 
 LIMITS = IntakeLimits(max_files=4, max_file_bytes=64 * 1024, max_total_bytes=128 * 1024)
 
-#: 路径顺序与 `sorted(paths)` 一致——用于"逐字段相等"的严格往返断言。
-FILES_SORTED = (("main.py", b"print('main')\n"), ("src/util.py", b"print('util')\n"))
-#: 路径顺序与 `sorted(paths)` **相反**——用于证明装载顺序由确定规则派生，而不是沿用写入顺序。
-FILES_UNSORTED = (("src/util.py", b"print('util')\n"), ("main.py", b"print('main')\n"))
+#: 作业模型下一次提交恰好一个单段 `.txt` 答案文件（`1.txt` = 作业第 1 题）。
+ANSWER_FILE = "1.txt"
+FILES = ((ANSWER_FILE, b"print('answer')\n"),)
 
 _INSERT_CHECKPOINT = (
     "INSERT INTO b2.email_checkpoints (email_checkpoint_id, mailbox, uidvalidity, uid, message_id,"
@@ -69,6 +72,7 @@ def service(engine: Engine, store: ContentAddressedStore) -> SubmissionIntakeSer
 def _identity() -> dict[str, str]:
     return {
         "submission_id": str(uuid.uuid4()),
+        "assignment_id": str(uuid.uuid4()),
         "student_id": str(uuid.uuid4()),
         "course_id": str(uuid.uuid4()),
         "section_id": str(uuid.uuid4()),
@@ -77,7 +81,7 @@ def _identity() -> dict[str, str]:
     }
 
 
-def _api_envelope(files: tuple[tuple[str, bytes], ...] = FILES_SORTED) -> SubmissionEnvelope:
+def _api_envelope(files: tuple[tuple[str, bytes], ...] = FILES) -> SubmissionEnvelope:
     """API 入口形态的信封（`request_id` 与 `correlation_id` 同值，与 `service.accept` 一致）。"""
     correlation_id = str(uuid.uuid4())
     return build_submission_envelope(
@@ -90,7 +94,7 @@ def _api_envelope(files: tuple[tuple[str, bytes], ...] = FILES_SORTED) -> Submis
 
 
 def _email_envelope(
-    files: tuple[tuple[str, bytes], ...] = FILES_SORTED,
+    files: tuple[tuple[str, bytes], ...] = FILES,
 ) -> SubmissionEnvelope:
     """邮件入口形态的信封（provenance 四要素来自邮件身份，与 `intake/imap.py` 的构造一致）。"""
     return build_submission_envelope(
@@ -127,6 +131,7 @@ def _row(engine: Engine, submission_id: str) -> sa.Row:
     with engine.connect() as connection:
         row = connection.execute(
             sa.select(
+                submissions.c.assignment_id,
                 submissions.c.correlation_id,
                 submissions.c.request_id,
                 submissions.c.mailbox,
@@ -138,7 +143,7 @@ def _row(engine: Engine, submission_id: str) -> sa.Row:
     return row
 
 
-# --- 概念 1：信封可往返（两种 provenance 形态） -------------------------------------------
+# --- 概念 1：信封可往返（两种 provenance 形态 + 作业归属） ---------------------------------
 
 
 def test_api_envelope_round_trips_field_by_field(
@@ -146,16 +151,18 @@ def test_api_envelope_round_trips_field_by_field(
 ) -> None:
     """API 来源：装载出的信封与写入的信封**逐字段相等**（冻结 dataclass 的相等即全部字段）。"""
     envelope = _api_envelope()
-    _persist(service, envelope, FILES_SORTED)
+    _persist(service, envelope, FILES)
 
     loaded = _load(engine, envelope.submission_id)
 
-    assert loaded == envelope, "装载出的信封必须与写入的信封完全相同（含 files 顺序）"
+    assert loaded == envelope, "装载出的信封必须与写入的信封完全相同"
+    assert loaded.assignment_id == envelope.assignment_id, "作业归属必须逐字段往返"
     assert loaded.correlation_id == envelope.correlation_id
     assert isinstance(loaded.provenance, ApiProvenance)
     assert loaded.provenance.request_id == envelope.correlation_id
     # 库里落的是显式列，不是"只有 API 行才有的空列"：
     api_row = _row(engine, envelope.submission_id)
+    assert str(api_row.assignment_id) == envelope.assignment_id
     assert str(api_row.correlation_id) == envelope.correlation_id
     assert api_row.request_id == envelope.correlation_id
     assert (api_row.mailbox, api_row.uidvalidity, api_row.uid, api_row.message_id) == (
@@ -172,7 +179,7 @@ def test_email_envelope_round_trips_field_by_field(
     """邮件来源：provenance 四要素（mailbox/uidvalidity/uid/message_id）忠实往返。"""
     envelope = _email_envelope()
     assert isinstance(envelope.provenance, EmailProvenance)
-    _persist(service, envelope, FILES_SORTED)
+    _persist(service, envelope, FILES)
 
     loaded = _load(engine, envelope.submission_id)
 
@@ -208,7 +215,7 @@ def test_email_provenance_is_backed_by_a_processed_checkpoint(
             },
         )
 
-    _persist(service, envelope, FILES_SORTED, on_persist=on_persist)
+    _persist(service, envelope, FILES, on_persist=on_persist)
 
     with engine.connect() as connection:
         checkpoint = connection.execute(
@@ -233,22 +240,16 @@ def test_email_provenance_is_backed_by_a_processed_checkpoint(
     )
 
 
-def test_received_at_is_created_at_and_files_are_path_sorted(
-    engine: Engine, service: SubmissionIntakeService
-) -> None:
-    """装载顺序由确定规则派生（path 升序），`received_at` 与 `created_at` 是同一个事实。"""
-    envelope = _email_envelope(files=FILES_UNSORTED)
-    _persist(service, envelope, FILES_UNSORTED)
-    assert [item.path for item in envelope.files] == ["src/util.py", "main.py"]
+def test_received_at_is_created_at(engine: Engine, service: SubmissionIntakeService) -> None:
+    """`received_at` 与 `created_at` 是**同一个事实**（接收路径以同一时刻写该列，不是别名）。"""
+    envelope = _email_envelope()
+    _persist(service, envelope, FILES)
 
     first = _load(engine, envelope.submission_id)
     second = _load(engine, envelope.submission_id)
 
-    assert [item.path for item in first.files] == ["main.py", "src/util.py"]
     assert first.files == second.files, "同一行数据必须每次装出同一个信封（可重放）"
-    assert first.submission_digest == envelope.submission_digest, (
-        "摘要与文件顺序无关：改了写入顺序，摘要必须不变"
-    )
+    assert first.submission_digest == envelope.submission_digest
     with engine.connect() as connection:
         created_at = connection.execute(
             sa.select(submissions.c.created_at).where(
@@ -256,6 +257,91 @@ def test_received_at_is_created_at_and_files_are_path_sorted(
             )
         ).scalar_one()
     assert first.received_at == created_at == envelope.received_at
+
+
+# --- 概念 1b：历史行（迁移 0021 之前）仍可装载 ---------------------------------------------
+
+
+def test_historical_row_without_assignment_id_loads_with_none(
+    engine: Engine, service: SubmissionIntakeService
+) -> None:
+    """历史提交 `assignment_id IS NULL`：装载出 `None`，不猜测归属、不因缺作业而失败。
+
+    这是**如实**处理而不是兼容层：这些行确实没有作业归属；评测只需要 `question_version_id`，
+    因此它们继续可评测、可查成绩，只是不出现在任何作业级过滤/视图里。
+    """
+    envelope = _api_envelope()
+    _persist(service, envelope, FILES)
+    with engine.begin() as connection:
+        connection.execute(
+            sa.update(submissions)
+            .where(submissions.c.submission_id == uuid.UUID(envelope.submission_id))
+            .values(assignment_id=None)
+        )
+
+    loaded = _load(engine, envelope.submission_id)
+
+    assert loaded.assignment_id is None
+    assert loaded.question_version_id == envelope.question_version_id
+    # 除作业归属外逐字段等于当初写入的信封：历史行不缺任何"信封可往返"的字段。
+    assert loaded == dataclasses.replace(envelope, assignment_id=None)
+
+
+def test_historical_row_may_still_carry_several_files_in_any_path(
+    engine: Engine, store: ContentAddressedStore
+) -> None:
+    """历史行（作业模型之前）可以带多个任意路径文件；装载器按 `path` 升序重建。
+
+    "一次提交 = 一道题 = 一个 `.txt`"只约束**新写入**（入口/persist）。历史行是既成事实：不回填、
+    不删除，装载它们必须仍然成功，否则那些提交就再也不能被评测。
+    """
+    submission_id = uuid.uuid4()
+    historical_files = (("main.py", b"print('main')\n"), ("src/util.py", b"print('util')\n"))
+    stored = [(path, store.put(content)) for path, content in historical_files]
+    digest = sha256_hex(
+        "\n".join(
+            f"{path} {artifact.content_sha256}" for path, artifact in sorted(stored)
+        ).encode("utf-8")
+    )
+    with engine.begin() as connection:
+        connection.execute(
+            sa.insert(submissions).values(
+                submission_id=submission_id,
+                # 历史行：没有作业归属。
+                assignment_id=None,
+                student_id=uuid.uuid4(),
+                course_id=uuid.uuid4(),
+                section_id=uuid.uuid4(),
+                question_version_id=uuid.uuid4(),
+                intake="api",
+                idempotency_key=f"key-{uuid.uuid4().hex}",
+                idempotency_scope=f"scope-{uuid.uuid4().hex}",
+                submission_digest=digest,
+                state="validated",
+                created_at=sa.func.now(),
+                updated_at=sa.func.now(),
+                correlation_id=uuid.uuid4(),
+                request_id="req-historical",
+            )
+        )
+        for path, artifact in stored:
+            connection.execute(
+                sa.insert(submission_files).values(
+                    submission_id=submission_id,
+                    path=path,
+                    artifact_id=uuid.UUID(str(artifact.artifact_id)),
+                    created_at=sa.func.now(),
+                )
+            )
+
+    loaded = _load(engine, str(submission_id))
+
+    assert loaded.assignment_id is None
+    assert [item.path for item in loaded.files] == ["main.py", "src/util.py"], (
+        "装载顺序由确定规则派生（path 升序），与插入顺序无关"
+    )
+    assert loaded.files[0].content_sha256 == stored[0][1].content_sha256
+    assert loaded.files[1].content_sha256 == stored[1][1].content_sha256
 
 
 # --- 概念 2：装载器的自校验真的抓得住篡改 -------------------------------------------------
@@ -266,7 +352,7 @@ def test_tampered_submission_digest_is_caught(
 ) -> None:
     """库里摘要被改成别的值：装载必须失败，而不是"装出一个看起来能评测的信封"。"""
     envelope = _api_envelope()
-    _persist(service, envelope, FILES_SORTED)
+    _persist(service, envelope, FILES)
     with engine.begin() as connection:
         connection.execute(
             sa.update(submissions)
@@ -283,7 +369,7 @@ def test_extra_file_row_is_caught_by_the_digest_check(
 ) -> None:
     """文件清单被塞进一行：摘要重算必然不符（"同输入同分"的前提是文件清单不被悄悄改动）。"""
     envelope = _api_envelope()
-    _persist(service, envelope, FILES_SORTED)
+    _persist(service, envelope, FILES)
     extra = store.put(b"print('extra')\n")
     with engine.begin() as connection:
         connection.execute(
@@ -304,8 +390,8 @@ def test_storage_reference_not_derived_from_digest_is_caught(
 ) -> None:
     """`artifacts.storage_path` 与 `content_sha256` 的派生关系被破坏：装载必须失败。"""
     envelope = _api_envelope()
-    _persist(service, envelope, FILES_SORTED)
-    digest = hashlib.sha256(FILES_SORTED[0][1]).hexdigest()
+    _persist(service, envelope, FILES)
+    digest = hashlib.sha256(FILES[0][1]).hexdigest()
     with engine.begin() as connection:
         connection.execute(
             sa.update(artifacts)
@@ -412,12 +498,13 @@ def test_missing_correlation_id_is_rejected(engine: Engine) -> None:
 
 
 def test_correctly_shaped_rows_are_accepted(engine: Engine) -> None:
-    """两种合法形状都能插入（否则约束就是过严而非精准）。"""
+    """两种合法形状都能插入（否则约束就是过严而非精准）；`assignment_id` 可空（历史行）。"""
     _insert_submission(engine)
     _insert_submission(
         engine,
         intake="email",
         request_id=None,
+        assignment_id=uuid.uuid4(),
         mailbox="grader-inbox",
         uidvalidity=1,
         uid=1,

@@ -860,12 +860,22 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List assignments (作业集合) in the caller's course scope */
+        /**
+         * List assignments (作业集合) in the caller's course scope
+         * @description Teachers see assignments in the courses they are staff on. Students see only
+         *     assignments whose target sections include their course section and, when the
+         *     assignment narrows its audience to named students, whose student list contains them
+         *     (CHG-0032). The list is keyset-paginated by `(created_at, assignment_id)`.
+         */
         get: operations["listAssignments"];
         put?: never;
         /**
          * Create an assignment from published question versions
-         * @description Only published versions may be referenced; a draft reference returns 409.
+         * @description Only published versions may be referenced; a draft reference returns 409. The assignment
+         *     must target at least one section of `course_id`; `student_ids` optionally narrows the
+         *     audience to named students inside those sections (empty means the whole sections).
+         *     Sections and students are validated against B4 server-side; invalid targets are 422 and
+         *     are never silently narrowed.
          */
         post: operations["createAssignment"];
         delete?: never;
@@ -891,6 +901,34 @@ export interface paths {
          *     scope are `403` (the caller may not learn whether the id exists).
          */
         get: operations["getAssignment"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/assignment-audiences/{assignment_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                assignment_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Read an assignment's audience for submission admission (service-to-service)
+         * @description Consumed by B2 when accepting a web or mail submission (CHG-0032). Being internal is not a
+         *     substitute for authorization: the caller must present the pre-shared `serviceToken`, not a
+         *     student or teacher access token. The response is the minimum needed for admission:
+         *     identity, status, target sections/students and the ordered question list. A missing
+         *     assignment is `404`; missing/wrong credentials are `401`; a deployment with no service
+         *     credential configured refuses the endpoint with `503` instead of treating it as open
+         *     (an unconfigured internal channel must fail closed, not degrade).
+         */
+        get: operations["getInternalAssignment"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1593,16 +1631,18 @@ export interface components {
             verified_at?: components["schemas"]["Timestamp"] | null;
         };
         /**
-         * @description A homework set that groups published question versions for one section.
-         *     Recorded by CHG-0007: the operation previously returned an undocumented body
-         *     ("Page of assignments."), so a client could not tell what an assignment even
-         *     contains — while the platform had already created eight of them. The shape below
-         *     is what B3 in fact returns and what the live API was measured to return.
+         * @description A homework set that groups published question versions for one course and one or more
+         *     target sections, optionally narrowed to named students (CHG-0032). `question_version_ids`
+         *     is in assignment order (item ordinal 0..n-1); answer files are named by 1-based position
+         *     (`1.txt`, `2.txt`, ...). `student_ids` empty means "every student in the target
+         *     sections"; non-empty means exactly those students.
          */
         AssignmentPublic: {
             assignment_id: components["schemas"]["Uuid"];
             course_id: components["schemas"]["Uuid"];
-            section_id: components["schemas"]["Uuid"];
+            section_ids: components["schemas"]["Uuid"][];
+            /** @description Optional audience narrowing. Empty = all students in the target sections. */
+            student_ids: components["schemas"]["Uuid"][];
             title: string;
             /** @enum {string} */
             status: "open" | "archived";
@@ -1610,6 +1650,22 @@ export interface components {
             question_version_ids: components["schemas"]["Uuid"][];
             created_at?: components["schemas"]["Timestamp"] | null;
             updated_at?: components["schemas"]["Timestamp"] | null;
+        };
+        /**
+         * @description The assignment audience served to B2 over the internal channel (serviceToken only). It
+         *     is the minimum B2 needs to admit or refuse a submission: identity, target sections and
+         *     students, and the ordered question list. Timestamps are not needed for admission and are
+         *     therefore not exposed here.
+         */
+        AssignmentInternal: {
+            assignment_id: components["schemas"]["Uuid"];
+            course_id: components["schemas"]["Uuid"];
+            section_ids: components["schemas"]["Uuid"][];
+            student_ids: components["schemas"]["Uuid"][];
+            title: string;
+            /** @enum {string} */
+            status: "open" | "archived";
+            question_version_ids: components["schemas"]["Uuid"][];
         };
         /**
          * @description Aggregate statistics derived solely from de-identified
@@ -1671,14 +1727,16 @@ export interface components {
         };
         /**
          * @description PROTECTED requirements for `email_delivery`. The receipt itself is produced by the real
-         *     IMAP intake; this object only says what the message must satisfy.
+         *     IMAP intake; this object only says what the message subject must satisfy. From CHG-0032
+         *     the answer attachment is not templated per question any more: a submission is one
+         *     assignment question and its answer file is named by the question's 1-based position in
+         *     the assignment (`1.txt`, `2.txt`, ...), so the `attachment` check means "the message
+         *     mapped an answer file to this question".
          */
         ExecutionEmail: {
             attempt: number;
             /** @default {student_number}_{attempt} */
             subject_template: string;
-            /** @default {student_number}.txt */
-            required_attachment_template: string;
         };
         /**
          * @description PROTECTED practice-service configuration for `ssh_session`. `password` is protected
@@ -1822,13 +1880,11 @@ export interface components {
                 mode: "per_case" | "single_run" | "ssh_session" | "email_delivery";
                 /** @description Required when cases are split out of one run. The marker must occupy an entire output line by itself and must not be a prefix/suffix of other output. Missing, extra or misordered segments fail every segment case; a segment is never re-assigned to another case. */
                 segment_delimiter?: string | null;
-                /** @description email_delivery only: what the received message must satisfy. The receipt itself is recorded by the real IMAP intake, not by this package. */
+                /** @description email_delivery only: what the received message subject must satisfy. The receipt itself is recorded by the real IMAP intake, not by this package. From CHG-0032 the answer file is not templated per question: a submission is one assignment question and its file is named by the question's 1-based position in the assignment. */
                 email?: {
                     attempt: number;
                     /** @default {student_number}_{attempt} */
                     subject_template: string;
-                    /** @default {student_number}.txt */
-                    required_attachment_template: string;
                 };
                 /** @description ssh_session only: the real practice service started inside the isolated sandbox. The password is protected content and must never appear in a public DTO, event or log. */
                 ssh?: {
@@ -2030,6 +2086,15 @@ export interface components {
         };
         /** @description File, aggregate or attachment size limit exceeded. */
         PayloadTooLarge: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["ProblemDetails"];
+            };
+        };
+        /** @description A required dependency is unavailable; the response names the dependency. */
+        ServiceUnavailable: {
             headers: {
                 [name: string]: unknown;
             };
@@ -2834,6 +2899,7 @@ export interface operations {
                 cursor?: components["parameters"]["Cursor"];
                 limit?: components["parameters"]["Limit"];
                 course_id?: components["schemas"]["Uuid"];
+                /** @description Only assignments whose target sections include this section. */
                 section_id?: components["schemas"]["Uuid"];
             };
             header?: never;
@@ -2868,9 +2934,16 @@ export interface operations {
             content: {
                 "application/json": {
                     course_id: components["schemas"]["Uuid"];
-                    section_id: components["schemas"]["Uuid"];
+                    /** @description Target sections of this course (1-based class ordinals are per course). */
+                    section_ids: components["schemas"]["Uuid"][];
+                    /**
+                     * @description Optional narrowing: exactly these students (each validated as actively enrolled in one of `section_ids`). Empty means every student in the target sections.
+                     * @default []
+                     */
+                    student_ids?: components["schemas"]["Uuid"][];
                     title: string;
                     due_at?: components["schemas"]["Timestamp"];
+                    /** @description Assignment order: item ordinal equals array position (0-based). Answer files are named by 1-based position (`1.txt`, ...). */
                     question_version_ids: components["schemas"]["Uuid"][];
                 };
             };
@@ -2889,6 +2962,7 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             409: components["responses"]["Conflict"];
             422: components["responses"]["UnprocessableEntity"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     getAssignment: {
@@ -2914,6 +2988,31 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    getInternalAssignment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                assignment_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The assignment audience. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssignmentInternal"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
 }

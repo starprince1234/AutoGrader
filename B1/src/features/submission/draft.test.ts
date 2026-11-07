@@ -6,112 +6,126 @@ import {
   loadDraft,
   parseDraft,
   saveDraft,
+  type Draft,
 } from "./draft";
 
+const ASSIGNMENT = "00000000-0000-4000-8000-0000000000a1";
+const OTHER_ASSIGNMENT = "00000000-0000-4000-8000-0000000000a2";
 const VERSION = "00000000-0000-4000-8000-0000000000c3";
 const STUDENT = "00000000-0000-4000-8000-0000000000d4";
 const OTHER_STUDENT = "00000000-0000-4000-8000-0000000000e5";
 
-function draft(overrides: Partial<Parameters<typeof saveDraft>[0]> = {}) {
+function draft(overrides: Partial<Draft> = {}): Draft {
   return {
     ownerId: STUDENT,
+    assignmentId: ASSIGNMENT,
     questionVersionId: VERSION,
-    language: "python" as const,
-    files: [{ path: "solution.py", content: "print(1)" }],
-    savedAt: "2026-09-15T08:00:00.000Z",
+    content: "第一行\n第二行\n",
+    updatedAt: "2026-09-15T08:00:00.000Z",
     ...overrides,
   };
 }
 
-describe("本地未提交草稿（RQ-B-1-50 验收 4）", () => {
+describe("本地未提交草稿 v2（CHG-0032）", () => {
   beforeEach(() => {
     localStorage.clear();
   });
 
-  it("保存后可读回，草稿键同时按用户与 question_version_id 隔离", () => {
+  it("保存后可读回，键同时按用户、作业与题目版本隔离", () => {
     saveDraft(draft());
 
-    expect(draftKey(STUDENT, VERSION)).toBe(`b1.draft.v1.${STUDENT}.${VERSION}`);
-    const restored = loadDraft(STUDENT, VERSION);
-    expect(restored?.files).toEqual([{ path: "solution.py", content: "print(1)" }]);
-    expect(loadDraft(STUDENT, "00000000-0000-4000-8000-0000000000ff")).toBeNull();
+    expect(draftKey(STUDENT, ASSIGNMENT, VERSION)).toBe(
+      `b1.draft.v2.${STUDENT}.${ASSIGNMENT}.${VERSION}`,
+    );
+    expect(loadDraft(STUDENT, ASSIGNMENT, VERSION)?.content).toBe("第一行\n第二行\n");
+    // 同一道题在另一个作业里不是同一份草稿（题号/答案文件名按作业确定）。
+    expect(loadDraft(STUDENT, OTHER_ASSIGNMENT, VERSION)).toBeNull();
   });
 
   it("共用机器：另一个用户读不到前一个人的草稿", () => {
     saveDraft(draft());
 
-    // 同一个 question_version_id、不同的用户 → 必须什么都读不到。
-    expect(loadDraft(OTHER_STUDENT, VERSION)).toBeNull();
-    // 而且键本身就不同：不是"读出来再过滤"，而是根本不在对方的命名空间里。
-    expect(localStorage.getItem(draftKey(OTHER_STUDENT, VERSION))).toBeNull();
-    expect(localStorage.getItem(draftKey(STUDENT, VERSION))).not.toBeNull();
+    expect(loadDraft(OTHER_STUDENT, ASSIGNMENT, VERSION)).toBeNull();
+    // 键本身不同：不是"读出来再过滤"，而是根本不在对方的命名空间里。
+    expect(
+      localStorage.getItem(draftKey(OTHER_STUDENT, ASSIGNMENT, VERSION)),
+    ).toBeNull();
+    expect(localStorage.getItem(draftKey(STUDENT, ASSIGNMENT, VERSION))).not.toBeNull();
   });
 
-  it("归属不符的草稿被丢弃，不做尽力恢复", () => {
-    const raw = JSON.stringify({
-      ownerId: OTHER_STUDENT,
-      questionVersionId: VERSION,
-      language: "python",
-      files: [{ path: "solution.py", content: "print(1)" }],
-      savedAt: "2026-09-15T08:00:00.000Z",
-    });
-    expect(parseDraft(raw, STUDENT, VERSION)).toBeNull();
+  it("归属/作业/版本不符或内容不是字符串的草稿被丢弃，不做尽力恢复", () => {
+    expect(
+      parseDraft(
+        JSON.stringify({
+          ownerId: OTHER_STUDENT,
+          assignmentId: ASSIGNMENT,
+          questionVersionId: VERSION,
+          content: "x",
+        }),
+        STUDENT,
+        ASSIGNMENT,
+        VERSION,
+      ),
+    ).toBeNull();
+    expect(
+      parseDraft(
+        JSON.stringify({
+          ownerId: STUDENT,
+          assignmentId: OTHER_ASSIGNMENT,
+          questionVersionId: VERSION,
+          content: "x",
+        }),
+        STUDENT,
+        ASSIGNMENT,
+        VERSION,
+      ),
+    ).toBeNull();
+    expect(
+      parseDraft(
+        JSON.stringify({
+          ownerId: STUDENT,
+          assignmentId: ASSIGNMENT,
+          questionVersionId: VERSION,
+          content: 42,
+        }),
+        STUDENT,
+        ASSIGNMENT,
+        VERSION,
+      ),
+    ).toBeNull();
+    expect(parseDraft("{not json", STUDENT, ASSIGNMENT, VERSION)).toBeNull();
   });
 
   it("清除后不再恢复（提交成功必须清草稿）", () => {
-    saveDraft(draft({ language: "bash", files: [{ path: "a.sh", content: "echo 1" }] }));
-    clearDraft(STUDENT, VERSION);
-    expect(loadDraft(STUDENT, VERSION)).toBeNull();
+    saveDraft(draft());
+    clearDraft(STUDENT, ASSIGNMENT, VERSION);
+    expect(loadDraft(STUDENT, ASSIGNMENT, VERSION)).toBeNull();
   });
 
-  it("退出登录清空本浏览器全部草稿（换人使用同一台机器）", () => {
+  it("退出登录清空全部 v2 草稿，并清理被取代的 v1 键（不迁移内容）", () => {
     saveDraft(draft());
     saveDraft(draft({ questionVersionId: "00000000-0000-4000-8000-0000000000aa" }));
     saveDraft(draft({ ownerId: OTHER_STUDENT }));
-    // 非草稿键不能被误删
+    // 被删除的单题作答页留下的旧键：登出时一并清掉，但不会读进新草稿。
+    localStorage.setItem(`b1.draft.v1.${STUDENT}.${VERSION}`, "legacy");
+    // 非草稿键不能被误删。
     localStorage.setItem("b1.ui.theme", "dark");
 
     clearAllDrafts();
 
-    expect(loadDraft(STUDENT, VERSION)).toBeNull();
-    expect(loadDraft(STUDENT, "00000000-0000-4000-8000-0000000000aa")).toBeNull();
-    expect(loadDraft(OTHER_STUDENT, VERSION)).toBeNull();
+    expect(loadDraft(STUDENT, ASSIGNMENT, VERSION)).toBeNull();
+    expect(loadDraft(STUDENT, ASSIGNMENT, "00000000-0000-4000-8000-0000000000aa")).toBeNull();
+    expect(loadDraft(OTHER_STUDENT, ASSIGNMENT, VERSION)).toBeNull();
+    expect(localStorage.getItem(`b1.draft.v1.${STUDENT}.${VERSION}`)).toBeNull();
     expect(localStorage.getItem("b1.ui.theme")).toBe("dark");
     expect(localStorage.length).toBe(1);
   });
 
-  it("损坏或版本不匹配的草稿被丢弃，不做尽力恢复", () => {
-    expect(parseDraft("{not json", STUDENT, VERSION)).toBeNull();
-    expect(parseDraft(JSON.stringify({ questionVersionId: "other" }), STUDENT, VERSION)).toBeNull();
-    expect(
-      parseDraft(
-        JSON.stringify({
-          ownerId: STUDENT,
-          questionVersionId: VERSION,
-          language: "python",
-          files: "nope",
-        }),
-        STUDENT,
-        VERSION,
-      ),
-    ).toBeNull();
-    expect(
-      parseDraft(
-        JSON.stringify({
-          ownerId: STUDENT,
-          questionVersionId: VERSION,
-          language: "ruby",
-          files: [{ path: "a", content: "b" }],
-        }),
-        STUDENT,
-        VERSION,
-      ),
-    ).toBeNull();
-  });
-
-  it("草稿内容不含令牌或敏感字段（键名层面可核对）", () => {
+  it("草稿内容不含令牌或敏感字段（键名与值层面的可核对项）", () => {
     saveDraft(draft());
-    const raw = localStorage.getItem(draftKey(STUDENT, VERSION)) ?? "";
-    expect(raw).not.toMatch(/token|refresh|credential|answer/i);
+    const raw = localStorage.getItem(draftKey(STUDENT, ASSIGNMENT, VERSION)) ?? "";
+    expect(raw).not.toMatch(/token|refresh|credential/i);
+    // 值与读取回来的一致（答案文本不被二次编码）
+    expect((JSON.parse(raw) as Draft).content).toBe("第一行\n第二行\n");
   });
 });

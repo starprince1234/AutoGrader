@@ -4,7 +4,7 @@
     "stem_markdown": "第1题\n\n向 linuxos_assignment@163.com 发送一封电子邮件。\n\n要求邮件主题为：学号_第几次作业。注意学号用半角阿拉伯数字，下划线为半角下划线，题号使用阿拉伯数字表示。本次邮件的发件人邮件地址，将固定作为以后提交作业的邮件发件地址。需要先提交第一次作业答案后才能提交后续作业答案，提交后续作业答案使用的邮件地址需要与提交第一次作业答案的邮件地址相同。\n\n例：学号为 2020141440777 的同学提交的第一次作业电子邮件的标题应为：2020141440777_1\n\n### 本平台的邮件核验流程\n\n1. 在课程页面打开本题，点击「获取邮件核验码」，平台会给出一次性核验码（形如 `AG-XXXXXXXXXXXX`）和有效期。\n2. 把核验码写在邮件正文的第一行。核验码是证明「这个邮箱属于你」的一次性凭据：只发给你已登录的账号，用过一次即失效。\n3. 发送邮件后回到课程页面，可以随时查看核验状态：pending（尚未收到）/ received（已收到并创建提交）/ rejected（附稳定原因码）/ expired（核验码过期）。平台收到合格邮件后会自动创建提交并触发评测。\n4. 平台会核对邮件主题、发件地址是否与账号已核验的邮箱一致、首次发件地址绑定和附件名。伪造发件人、重复使用核验码或使用其他同学的核验码都会被拒绝。\n\n### 作业提交要求\n\n1. 邮件标题：`学号_第几次作业`。学号用半角阿拉伯数字，下划线为半角下划线，题号用阿拉伯数字表示。\n   例：学号为 2020141440777 的同学提交第 2 次作业，邮件标题为 `2020141440777_2`。\n   首次提交作业所使用的发件人地址，即为之后所有作业的发件地址，后续作业必须用同一地址发送。\n2. 附件文件名：`学号.txt`。例：学号为 2020141440777 的同学提交的附件文件名为 `2020141440777.txt`。\n3. 附件里只能包含 linux 命令、命令选项以及参数，每行只能写入一条命令。\n4. 附件文本文件使用「记事本」「TextEdit」软件编辑，并使用 ANSI/ASCII 编码格式保存后提交。\n",
     "language": "bash",
     "publish": false,
-    "reference_answer": "{\"account_email\": \"student@example.edu\", \"account_email_verified\": true, \"attachment_names\": [\"2020141440777.txt\"], \"received\": true, \"sender\": \"student@example.edu\", \"sender_binding_matches\": true, \"student_number\": \"2020141440777\", \"subject\": \"2020141440777_1\"}\n",
+    "reference_answer": "{\"account_email\": \"student@example.edu\", \"account_email_verified\": true, \"answer_attachment_name\": \"1.txt\", \"received\": true, \"sender\": \"student@example.edu\", \"sender_binding_matches\": true, \"student_number\": \"2020141440777\", \"subject\": \"2020141440777_1\"}\n",
     "adapter": {
       "kind": "stdin",
       "args": [],

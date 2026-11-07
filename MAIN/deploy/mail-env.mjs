@@ -114,7 +114,6 @@ const IMAP_ALIASES = {
   B2_IMAP_MAILBOX: ["B2_IMAP_MAILBOX", "IMAP_MAILBOX"],
   B2_IMAP_USE_SSL: ["B2_IMAP_USE_SSL", "IMAP_USE_SSL", "IMAP_TLS_MODE"],
   B2_IMAP_PROCESSED_MAILBOX: ["B2_IMAP_PROCESSED_MAILBOX", "IMAP_PROCESSED_MAILBOX"],
-  B2_IMAP_MATCHING_JSON: ["B2_IMAP_MATCHING_JSON", "IMAP_MATCHING_JSON"],
 };
 
 const IMAP_REQUIRED = ["B2_IMAP_HOST", "B2_IMAP_USERNAME", "B2_IMAP_PASSWORD"];
@@ -165,21 +164,16 @@ export function imapEnvEntries(env) {
       "the IMAP intake is half-configured; missing " + missing.join(", "),
     );
   }
-  // 收信入口只有在能路由邮件时才值得打开：B2 的 intake 没有 matching 规则会判 unavailable，
-  // 而 unavailable 会把整个 /health/ready 拉成 false。所以缺规则 = 保持关闭（not-configured），
-  // 并在部署日志里说清楚，而不是写一份"看起来配好了"的半配置。
-  // "能路由邮件"有两种合法来源：显式规则表，或按发件人查账号（B2_IDENTITY_* + 目标作业）。
-  // 只认规则表会让"已配好身份查询"的部署被误判成不可用，于是收信永远打不开。
-  const hasMatching =
-    (resolved.B2_IMAP_MATCHING_JSON ?? "").trim() !== "" ||
-    (env.B2_IMAP_TARGET_JSON ?? "").trim() !== "";
-  if (!hasMatching) {
-    console.warn(
-      "IMAP intake skipped: no routing source. Set either B2_IMAP_MATCHING_JSON " +
-        "(per-sender rules) or B2_IMAP_TARGET_JSON (this assignment's course/section/" +
-        "question-version, with the sender resolved by B4). Without one the mailbox " +
-        "stays disabled rather than reporting an unusable intake.",
-    );
+  // CHG-0032: the only way an inbound message is attributed is the one-time challenge code
+  // (assignment-scoped), whose sender is resolved through B4's authenticated identity directory.
+  // A deployment without that directory cannot route any mail, so the intake stays disabled
+  // instead of opening a "configured but unusable" channel. The old fixed-target / matching-rule
+  // routes were removed with the feature that used them.
+  const hasIdentityDirectory =
+    (env.B2_IDENTITY_URL ?? "").trim() !== "" &&
+    (env.B2_IDENTITY_AUTHORIZATION ?? "").trim() !== "";
+  if (!hasIdentityDirectory) {
+    console.warn("IMAP intake skipped: no authenticated identity directory.");
     return {};
   }
 
@@ -195,25 +189,28 @@ export function imapEnvEntries(env) {
 /**
  * 邮件收信所需的身份查询配置。
  *
- * 三项必须成套：缺任何一项，B2 的收信入口就应当保持关闭（而不是退化成"任何邮件都收"）。
- * `B2_IMAP_TARGET_JSON` 由运维给出（本次作业的课程/课序/题目版本），其余两项在这里派生：
- * B4 与本服务同机，URL 固定；服务令牌复用 B2 调 B3 用的那一枚，B4 也认它。
+ * 收信一旦启用，就必须能回答"发件地址属于哪个账号"：B2 通过 B4 的内部身份目录完成核验码
+ * 与发件人的绑定，没有这份配置的收信入口无法路由任何邮件。URL 与本服务同机（固定 127.0.0.1），
+ * 服务令牌复用 B2 调 B3 用的那一枚（B4 也认它）。
+ *
+ * `B2_IMAP_TARGET_JSON` / 匹配规则表在 CHG-0032 整体删除：作业由核验码携带的 assignment 决定，
+ * 不再有部署期的固定目标。
  */
 export function intakeEnvEntries(env) {
-  const target = (env.B2_IMAP_TARGET_JSON ?? "").trim();
-  if (!target) {
+  const hasImap = Boolean((env.IMAP_HOST ?? env.B2_IMAP_HOST ?? "").trim());
+  if (!hasImap) {
     return {};
   }
+  const explicitAuthorization = (env.B2_IDENTITY_AUTHORIZATION ?? "").trim();
   const token = (env.B2_B4_SERVICE_TOKEN ?? env.B2_B3_SERVICE_TOKEN ?? "").trim();
-  if (!token) {
+  if (!explicitAuthorization && !token) {
     throw new Error(
-      "B2_IMAP_TARGET_JSON is set but no service token is available " +
+      "mail identity lookup needs a service token " +
         "(set B2_B4_SERVICE_TOKEN or B2_B3_SERVICE_TOKEN)",
     );
   }
   return {
-    B2_IDENTITY_URL: (env.B2_IDENTITY_URL ?? "http://127.0.0.1:18000").trim(),
-    B2_IDENTITY_AUTHORIZATION: "Bearer " + token,
-    B2_IMAP_TARGET_JSON: target,
+    B2_IDENTITY_URL: (env.B2_IDENTITY_URL ?? "").trim() || "http://127.0.0.1:18000",
+    B2_IDENTITY_AUTHORIZATION: explicitAuthorization || "Bearer " + token,
   };
 }

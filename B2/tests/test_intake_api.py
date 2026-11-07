@@ -36,6 +36,7 @@ from autograder_b2.intake.api import build_router
 from autograder_b2.intake.imap import QuarantineStore
 from autograder_b2.intake.matching import ScopeContext
 from autograder_b2.intake.runtime import IntakeRuntime, build_runtime
+from autograder_b2.integration.assignments import AssignmentAudience, AssignmentUnavailable
 from tests.conftest import requires_postgres, run_alembic
 
 pytestmark = requires_postgres
@@ -43,7 +44,62 @@ pytestmark = requires_postgres
 ISSUER = "autograder-b4"
 AUDIENCE = "autograder"
 SOURCE = b"print('hello')\n"
+#: 作业模型下答案文件名是题目在作业中的 1 基序号：`1.txt`。
+ANSWER_FILE = "1.txt"
 ENDPOINT = "/api/v1/submissions"
+
+
+class _AssignmentDirectory:
+    """测试用作业目录（端口替身）：只回答本用例显式登记的作业。
+
+    生产实现是 `integration.assignments.B3AssignmentDirectory`（HTTP + 服务令牌，不可达时抛
+    `AssignmentUnavailable` → 503）。这里替换的只是**传输**：`accept` 的校验顺序与 422/403/503
+    语义走真实服务代码。
+    """
+
+    def __init__(self) -> None:
+        self.audiences: dict[str, AssignmentAudience] = {}
+        self.unavailable = False
+
+    def register(
+        self,
+        assignment_id: str,
+        *,
+        course_id: str,
+        section_id: str,
+        question_version_id: str = "",
+        question_version_ids: tuple[str, ...] | None = None,
+        section_ids: tuple[str, ...] | None = None,
+        student_ids: tuple[str, ...] = (),
+        status: str = "open",
+    ) -> None:
+        questions = (
+            question_version_ids
+            if question_version_ids is not None
+            else (question_version_id,)
+        )
+        sections = section_ids if section_ids is not None else (section_id,)
+        self.audiences[str(uuid.UUID(assignment_id))] = AssignmentAudience(
+            assignment_id=str(uuid.UUID(assignment_id)),
+            course_id=str(uuid.UUID(course_id)),
+            title="作业",
+            status=status,
+            section_ids=tuple(str(uuid.UUID(item)) for item in sections),
+            student_ids=tuple(str(uuid.UUID(item)) for item in student_ids),
+            question_version_ids=tuple(str(uuid.UUID(item)) for item in questions),
+        )
+
+    def get(self, assignment_id: str) -> AssignmentAudience | None:
+        if self.unavailable:
+            raise AssignmentUnavailable("assignment directory is unreachable")
+        try:
+            return self.audiences.get(str(uuid.UUID(assignment_id)))
+        except (AttributeError, TypeError, ValueError):
+            return None
+
+
+#: 当前用例的作业目录（`_envelope` 用它登记受众；`directory` 夹具每用例重置）。
+_DIRECTORY: _AssignmentDirectory | None = None
 
 
 def _b64url(data: bytes) -> str:
@@ -111,7 +167,7 @@ def runtime(
     upgraded_database_url: str, tmp_path_factory: pytest.TempPathFactory, signer: _Signer
 ) -> IntakeRuntime:
     root = tmp_path_factory.mktemp("artifacts")
-    return build_runtime(
+    instance = build_runtime(
         {
             "DATABASE_URL": upgraded_database_url,
             "B2_ARTIFACT_ROOT": str(root),
@@ -120,6 +176,25 @@ def runtime(
             "B4_JWT_AUDIENCE": AUDIENCE,
         }
     )
+    assert instance.service is not None
+    return instance
+
+
+@pytest.fixture(autouse=True)
+def directory(runtime: IntakeRuntime) -> Iterator[_AssignmentDirectory]:
+    """每个用例一套作业目录（并注入接收入口）。
+
+    `accept` 现在必须能回答"这个作业存在吗、受众是谁"（规格 §5.2）。生产装配是把
+    `B3AssignmentDirectory` 放进 `IntakeRuntime`；测试替换的是**传输**，校验语义走真实服务代码。
+    """
+    global _DIRECTORY
+    fresh = _AssignmentDirectory()
+    runtime.assignment_directory = fresh
+    assert runtime.service is not None
+    runtime.service.assignment_directory = fresh
+    _DIRECTORY = fresh
+    yield fresh
+    _DIRECTORY = None
 
 
 @pytest.fixture()
@@ -144,18 +219,29 @@ def _envelope(
     files: list[dict[str, object]] | None = None,
     idempotency_key: str = "key-1",
     submission_id: str | None = None,
+    assignment_id: str | None = None,
     **overrides: object,
 ) -> dict[str, object]:
     user_id, course_id, section_id, question_version_id = student
+    assignment = assignment_id or str(uuid.uuid4())
     payload: dict[str, object] = {
         "submission_id": submission_id or str(uuid.uuid4()),
+        "assignment_id": assignment,
         "student_id": user_id,
         "course_id": course_id,
         "section_id": section_id,
         "question_version_id": question_version_id,
-        "files": files if files is not None else [_file("main.py", SOURCE)],
+        "files": files if files is not None else [_file(ANSWER_FILE, SOURCE)],
         "idempotency_key": idempotency_key,
     }
+    # 默认把该作业登记成"open、单课序、单题、全学生"的受众：合法请求因此能过作业校验。
+    if _DIRECTORY is not None:
+        _DIRECTORY.register(
+            assignment,
+            course_id=course_id,
+            section_id=section_id,
+            question_version_id=question_version_id,
+        )
     payload.update(overrides)
     return payload
 
@@ -261,33 +347,83 @@ def test_illegal_path_is_422_and_writes_nothing(
 ) -> None:
     """路径穿越/非法路径一律 422 且零落库。
 
-    谁拦下的取决于形态：绝对路径与反斜杠被契约 `path` 模式拦下（`schema-invalid`），而 `..`
-    段**能通过契约模式**（见 interfaces.md I2 实测），必须由 B2 白名单拦下（`path-not-allowed`）。
-    两者都发生在写内容之前，故数据库零新增行。
+    作业模型把"答案文件名"收紧为单段 `<n>.txt`（规格 §1.4），所以这些路径在入口的**文件名规则**
+    处就被拒（`file-type-not-allowed`），而不是等到契约 schema 或路径白名单。无论哪一层拦下，都发生
+    在写内容之前，故数据库零新增行；白名单本身仍在信封构造处生效（见本文件末尾的构造器级用例）。
     """
     payload = _envelope(student, files=[_file(bad_path, SOURCE)])
     response = client.post(ENDPOINT, json=payload, headers=_auth(_student_token(signer, student)))
 
     assert response.status_code == 422, response.text
-    assert response.json()["type"].endswith(("path-not-allowed", "schema-invalid"))
+    assert response.json()["type"].endswith(
+        ("file-type-not-allowed", "path-not-allowed", "schema-invalid")
+    )
     assert _counts(engine) == (0, 0, 0, 0)
 
 
-def test_path_traversal_specifically_reports_path_not_allowed(
+def test_path_traversal_is_reported_with_a_stable_reason(
     client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
 ) -> None:
-    """`..` 段必须由 B2 白名单拒绝（契约模式放行它），且理由码精确。"""
-    payload = _envelope(student, files=[_file("../main.py", SOURCE)])
+    """`../1.txt` 属于"不是单段 `.txt`"：返回稳定原因 `file-type-not-allowed`，且零落库。"""
+    payload = _envelope(student, files=[_file("../1.txt", SOURCE)])
     response = client.post(ENDPOINT, json=payload, headers=_auth(_student_token(signer, student)))
     assert response.status_code == 422
-    assert response.json()["type"].endswith("path-not-allowed")
+    assert response.json()["type"].endswith("file-type-not-allowed")
     assert _counts(engine) == (0, 0, 0, 0)
+
+
+def test_envelope_builder_still_enforces_the_path_whitelist() -> None:
+    """信封构造处（唯一构造点、也是邮件路径的落点）仍执行 I2 路径白名单（`path_not_allowed`）。
+
+    入口的"单段 .txt"规则先拦下多段路径；白名单是**第二道**独立防线：它拦的是"看起来是单个名字、
+    但其实是保留段"的路径（`.`/`..`），这类路径不会被 `.txt` 模式放行，却可能来自别的构造方。
+    """
+    from autograder_b2.domain.envelope import ApiProvenance, EnvelopeRejected
+    from autograder_b2.intake.service import build_submission_envelope
+
+    with pytest.raises(EnvelopeRejected) as raised:
+        build_submission_envelope(
+            submission_id=str(uuid.uuid4()),
+            assignment_id=str(uuid.uuid4()),
+            student_id=str(uuid.uuid4()),
+            course_id=str(uuid.uuid4()),
+            section_id=str(uuid.uuid4()),
+            question_version_id=str(uuid.uuid4()),
+            idempotency_key="builder-key",
+            intake="api",
+            provenance=ApiProvenance(request_id=str(uuid.uuid4())),
+            correlation_id=str(uuid.uuid4()),
+            files=(("../1.txt", SOURCE),),
+        )
+    assert raised.value.reason == "path_not_allowed"
+
+
+def test_envelope_builder_rejects_a_non_txt_answer_file() -> None:
+    """信封构造处同样拒绝非 `.txt`（原因码精确；两条入口共用同一条规则）。"""
+    from autograder_b2.domain.envelope import ApiProvenance, EnvelopeRejected
+    from autograder_b2.intake.service import build_submission_envelope
+
+    with pytest.raises(EnvelopeRejected) as raised:
+        build_submission_envelope(
+            submission_id=str(uuid.uuid4()),
+            assignment_id=str(uuid.uuid4()),
+            student_id=str(uuid.uuid4()),
+            course_id=str(uuid.uuid4()),
+            section_id=str(uuid.uuid4()),
+            question_version_id=str(uuid.uuid4()),
+            idempotency_key="builder-key",
+            intake="api",
+            provenance=ApiProvenance(request_id=str(uuid.uuid4())),
+            correlation_id=str(uuid.uuid4()),
+            files=(("main.py", SOURCE),),
+        )
+    assert raised.value.reason == "file_type_not_allowed"
 
 
 def test_digest_mismatch_is_422_and_writes_nothing(
     client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
 ) -> None:
-    forged = _file("main.py", SOURCE)
+    forged = _file(ANSWER_FILE, SOURCE)
     forged["content_sha256"] = hashlib.sha256(b"something else").hexdigest()
     payload = _envelope(student, files=[forged])
     response = client.post(ENDPOINT, json=payload, headers=_auth(_student_token(signer, student)))
@@ -300,7 +436,7 @@ def test_digest_mismatch_is_422_and_writes_nothing(
 def test_invalid_base64_is_422(
     client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
 ) -> None:
-    broken = _file("main.py", SOURCE)
+    broken = _file(ANSWER_FILE, SOURCE)
     broken["content_base64"] = "!!!not-base64!!!"
     response = client.post(
         ENDPOINT,
@@ -320,20 +456,40 @@ def test_non_json_body_is_422(client: TestClient, signer: _Signer, student: tupl
     assert response.status_code == 422
 
 
-# --- 契约：限额 ---------------------------------------------------------------------------
+# --- 契约：答案文件形态与限额 -------------------------------------------------------------
 
 
-def test_too_many_files_is_422(
+def test_more_than_one_answer_file_is_422_with_invalid_file_count(
     client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
 ) -> None:
-    files = [_file(f"f{index}.py", b"x") for index in range(101)]
+    """一次提交 = 一道题 = 恰好一个 `.txt`；两个文件 → `invalid_file_count`（稳定原因码）。"""
+    files = [_file("1.txt", b"first\n"), _file("2.txt", b"second\n")]
     response = client.post(
         ENDPOINT,
         json=_envelope(student, files=files),
         headers=_auth(_student_token(signer, student)),
     )
     assert response.status_code == 422, response.text
-    assert response.json()["type"].endswith("too-many-files")
+    assert response.json()["type"].endswith("invalid-file-count")
+    assert _counts(engine) == (0, 0, 0, 0)
+
+
+@pytest.mark.parametrize("path", ["main.py", "1.TXT", "answer.txt", "1.py", "1.txt.bak"])
+def test_non_answer_file_name_is_422_with_file_type_not_allowed(
+    client: TestClient,
+    engine: Engine,
+    signer: _Signer,
+    student: tuple[str, str, str, str],
+    path: str,
+) -> None:
+    """文件名必须是单段、大小写敏感的 `<n>.txt`（不按附件顺序猜映射）：其余一律 `file_type_not_allowed`。"""
+    response = client.post(
+        ENDPOINT,
+        json=_envelope(student, files=[_file(path, SOURCE)]),
+        headers=_auth(_student_token(signer, student)),
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["type"].endswith("file-type-not-allowed")
     assert _counts(engine) == (0, 0, 0, 0)
 
 
@@ -343,25 +499,10 @@ def test_oversized_single_file_is_413(
     big = b"a" * (1572864 + 1)
     response = client.post(
         ENDPOINT,
-        json=_envelope(student, files=[_file("big.py", big)]),
+        json=_envelope(student, files=[_file(ANSWER_FILE, big)]),
         headers=_auth(_student_token(signer, student)),
     )
     assert response.status_code == 413, response.text
-    assert _counts(engine) == (0, 0, 0, 0)
-
-
-def test_oversized_total_is_413(
-    client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
-) -> None:
-    chunk = b"b" * 1_200_000
-    files = [_file(f"part{index}.py", chunk) for index in range(4)]
-    response = client.post(
-        ENDPOINT,
-        json=_envelope(student, files=files),
-        headers=_auth(_student_token(signer, student)),
-    )
-    assert response.status_code == 413, response.text
-    assert response.json()["type"].endswith("total-too-large")
     assert _counts(engine) == (0, 0, 0, 0)
 
 
@@ -548,8 +689,17 @@ def test_different_idempotency_keys_create_two_submissions(
     client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
 ) -> None:
     token = _student_token(signer, student)
-    first = client.post(ENDPOINT, json=_envelope(student, idempotency_key="k1"), headers=_auth(token))
-    second = client.post(ENDPOINT, json=_envelope(student, idempotency_key="k2"), headers=_auth(token))
+    assignment = str(uuid.uuid4())
+    first = client.post(
+        ENDPOINT,
+        json=_envelope(student, idempotency_key="k1", assignment_id=assignment),
+        headers=_auth(token),
+    )
+    second = client.post(
+        ENDPOINT,
+        json=_envelope(student, idempotency_key="k2", assignment_id=assignment),
+        headers=_auth(token),
+    )
     assert first.status_code == 202 and second.status_code == 202
     assert first.json()["submission_id"] != second.json()["submission_id"]
     # 相同内容按 SHA-256 去重：两条提交、两份文件元数据、但只有一份内容
@@ -562,11 +712,20 @@ def test_reused_submission_id_with_different_key_is_rejected(
     """同一 `submission_id` 配不同幂等键：契约未声明 409，故按业务规则拒绝为 422。"""
     token = _student_token(signer, student)
     shared_id = str(uuid.uuid4())
+    assignment = str(uuid.uuid4())
     first = client.post(
-        ENDPOINT, json=_envelope(student, idempotency_key="a", submission_id=shared_id), headers=_auth(token)
+        ENDPOINT,
+        json=_envelope(
+            student, idempotency_key="a", submission_id=shared_id, assignment_id=assignment
+        ),
+        headers=_auth(token),
     )
     second = client.post(
-        ENDPOINT, json=_envelope(student, idempotency_key="b", submission_id=shared_id), headers=_auth(token)
+        ENDPOINT,
+        json=_envelope(
+            student, idempotency_key="b", submission_id=shared_id, assignment_id=assignment
+        ),
+        headers=_auth(token),
     )
     assert first.status_code == 202
     assert second.status_code == 422, second.text
@@ -591,12 +750,14 @@ def test_submission_accepted_event_has_no_source_code(
     assert producer == "B2"
     assert set(event_payload) == {
         "submission_id",
+        "assignment_id",
         "student_id",
         "course_id",
         "section_id",
         "question_version_id",
         "intake",
     }
+    assert event_payload["assignment_id"] == payload["assignment_id"]
     serialized = json.dumps(event_payload)
     assert "print('hello')" not in serialized, "事件绝不能携带源码"
     assert "content_base64" not in serialized
@@ -626,6 +787,237 @@ def test_files_are_stored_content_addressable(
     assert digest == hashlib.sha256(SOURCE).hexdigest()
     assert path == f"{digest[:2]}/{digest[2:4]}/{digest}", "存储路径必须由摘要派生"
     assert size == len(SOURCE)
+
+
+def test_submission_row_stores_the_assignment(
+    client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
+) -> None:
+    """新提交的作业归属落库：`b2.submissions.assignment_id` 与请求一致（历史行才允许 NULL）。"""
+    payload = _envelope(student)
+    response = client.post(
+        ENDPOINT, json=payload, headers=_auth(_student_token(signer, student))
+    )
+    assert response.status_code == 202, response.text
+    with engine.connect() as connection:
+        stored = connection.execute(
+            sa.select(submissions.c.assignment_id, submissions.c.idempotency_scope)
+        ).one()
+    assert str(stored[0]) == payload["assignment_id"]
+    # 幂等作用域是规范化 UUID 三元组（assignment:student:question），不是旧的二元组。
+    question_version_id = student[3]
+    assert stored[1] == (f"{payload['assignment_id']}:{student[0]}:{question_version_id}")
+
+
+# --- 作业校验（CHG-0032 / 规格 §5.2） ------------------------------------------------------
+
+
+def _rejected(
+    client: TestClient,
+    signer: _Signer,
+    student: tuple[str, str, str, str],
+    payload: dict[str, object],
+) -> Any:
+    return client.post(
+        ENDPOINT, json=payload, headers=_auth(_student_token(signer, student))
+    )
+
+
+def test_unknown_assignment_is_422_assignment_not_found(
+    client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
+) -> None:
+    """作业不存在 → 稳定原因 `assignment-not-found`（422，而不是"接受一份没有归属的提交"）。"""
+    payload = _envelope(student)
+    _DIRECTORY.audiences.clear()  # type: ignore[union-attr]
+    response = _rejected(client, signer, student, payload)
+    assert response.status_code == 422, response.text
+    assert response.json()["type"].endswith("assignment-not-found")
+    assert _counts(engine) == (0, 0, 0, 0)
+
+
+def test_closed_assignment_is_422_assignment_closed(
+    client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
+) -> None:
+    _, course_id, section_id, question_version_id = student
+    assignment = str(uuid.uuid4())
+    payload = _envelope(student, assignment_id=assignment)
+    _DIRECTORY.register(  # type: ignore[union-attr]
+        assignment,
+        course_id=course_id,
+        section_id=section_id,
+        question_version_id=question_version_id,
+        status="closed",
+    )
+    response = _rejected(client, signer, student, payload)
+    assert response.status_code == 422, response.text
+    assert response.json()["type"].endswith("assignment-closed")
+    assert _counts(engine) == (0, 0, 0, 0)
+
+
+def test_course_mismatch_is_422_assignment_mismatch(
+    client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
+) -> None:
+    """作业属于另一门课 → `assignment-mismatch`（422）：内容与作业不匹配，是输入错误。"""
+    _, _, section_id, question_version_id = student
+    assignment = str(uuid.uuid4())
+    payload = _envelope(student, assignment_id=assignment)
+    _DIRECTORY.register(  # type: ignore[union-attr]
+        assignment,
+        course_id=str(uuid.uuid4()),
+        section_id=section_id,
+        question_version_id=question_version_id,
+    )
+    response = _rejected(client, signer, student, payload)
+    assert response.status_code == 422, response.text
+    assert response.json()["type"].endswith("assignment-mismatch")
+    assert _counts(engine) == (0, 0, 0, 0)
+
+
+def test_question_not_in_assignment_is_422_assignment_mismatch(
+    client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
+) -> None:
+    _, course_id, section_id, _question = student
+    assignment = str(uuid.uuid4())
+    payload = _envelope(student, assignment_id=assignment)
+    _DIRECTORY.register(  # type: ignore[union-attr]
+        assignment,
+        course_id=course_id,
+        section_id=section_id,
+        question_version_id=str(uuid.uuid4()),
+    )
+    response = _rejected(client, signer, student, payload)
+    assert response.status_code == 422, response.text
+    assert response.json()["type"].endswith("assignment-mismatch")
+    assert _counts(engine) == (0, 0, 0, 0)
+
+
+def test_section_outside_the_assignment_is_403(
+    client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
+) -> None:
+    """课序不在作业目标里 → `403`（授权问题，不是"内容不匹配"）。"""
+    _, course_id, _section, question_version_id = student
+    assignment = str(uuid.uuid4())
+    payload = _envelope(student, assignment_id=assignment)
+    _DIRECTORY.register(  # type: ignore[union-attr]
+        assignment,
+        course_id=course_id,
+        section_id=str(uuid.uuid4()),
+        question_version_id=question_version_id,
+    )
+    response = _rejected(client, signer, student, payload)
+    assert response.status_code == 403, response.text
+    assert response.json()["type"].endswith("forbidden")
+    assert _counts(engine) == (0, 0, 0, 0)
+
+
+def test_student_outside_a_narrowed_audience_is_403(
+    client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
+) -> None:
+    """作业收窄到指定学生名单时，名单外学生 → `403`（认证与课程作用域都对，但不在受众里）。"""
+    _, course_id, section_id, question_version_id = student
+    assignment = str(uuid.uuid4())
+    payload = _envelope(student, assignment_id=assignment)
+    _DIRECTORY.register(  # type: ignore[union-attr]
+        assignment,
+        course_id=course_id,
+        section_id=section_id,
+        question_version_id=question_version_id,
+        student_ids=(str(uuid.uuid4()),),
+    )
+    response = _rejected(client, signer, student, payload)
+    assert response.status_code == 403, response.text
+    assert response.json()["type"].endswith("forbidden")
+    assert _counts(engine) == (0, 0, 0, 0)
+
+
+def test_assignment_directory_unavailable_is_503_not_422(
+    client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
+) -> None:
+    """B3 不可达 → **503**（基础设施失败），绝不折算成"作业不存在/题目不属于作业"的学生错误。"""
+    payload = _envelope(student)
+    _DIRECTORY.unavailable = True  # type: ignore[union-attr]
+    response = _rejected(client, signer, student, payload)
+    assert response.status_code == 503, response.text
+    assert _counts(engine) == (0, 0, 0, 0)
+
+
+def test_unconfigured_assignment_directory_is_503(
+    client: TestClient,
+    runtime: IntakeRuntime,
+    engine: Engine,
+    signer: _Signer,
+    student: tuple[str, str, str, str],
+) -> None:
+    """目录**未配置**同样是 503：没有作业目录就没有"作业归属"这个事实，不能猜。"""
+    assert runtime.service is not None
+    payload = _envelope(student)
+    saved = runtime.service.assignment_directory
+    runtime.service.assignment_directory = None
+    try:
+        response = _rejected(client, signer, student, payload)
+    finally:
+        runtime.service.assignment_directory = saved
+    assert response.status_code == 503, response.text
+    assert _counts(engine) == (0, 0, 0, 0)
+
+
+def test_idempotency_scope_separates_two_assignments_that_share_one_question(
+    client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
+) -> None:
+    """两个作业引用同一题目版本：同一学生、同一幂等键也是**两份**提交，互不串联。
+
+    旧作用域 `(student, question)` 会把第二个作业的提交当成第一个作业的重放，返回错误的
+    `submission_id`（数据静默错位）。新作用域是 `(assignment, student, question)` 的规范化三元组。
+    """
+    _, course_id, section_id, question_version_id = student
+    token = _student_token(signer, student)
+    first_assignment, second_assignment = str(uuid.uuid4()), str(uuid.uuid4())
+    for assignment in (first_assignment, second_assignment):
+        _DIRECTORY.register(  # type: ignore[union-attr]
+            assignment,
+            course_id=course_id,
+            section_id=section_id,
+            question_version_id=question_version_id,
+        )
+    first = client.post(
+        ENDPOINT,
+        json=_envelope(student, assignment_id=first_assignment, idempotency_key="same-key"),
+        headers=_auth(token),
+    )
+    second = client.post(
+        ENDPOINT,
+        json=_envelope(student, assignment_id=second_assignment, idempotency_key="same-key"),
+        headers=_auth(token),
+    )
+    assert first.status_code == 202, first.text
+    assert second.status_code == 202, second.text
+    assert first.json()["submission_id"] != second.json()["submission_id"]
+    assert first.json()["idempotent_replay"] is False
+    assert second.json()["idempotent_replay"] is False
+    with engine.connect() as connection:
+        stored = {
+            str(row[0]): str(row[1])
+            for row in connection.execute(
+                sa.select(submissions.c.submission_id, submissions.c.assignment_id)
+            ).fetchall()
+        }
+    assert stored == {
+        first.json()["submission_id"]: first_assignment,
+        second.json()["submission_id"]: second_assignment,
+    }
+    # 同一作业 + 同一幂等键：仍然是重放（幂等语义没有被作业维度削弱）。
+    replay = client.post(
+        ENDPOINT,
+        json=_envelope(
+            student,
+            assignment_id=first_assignment,
+            idempotency_key="same-key",
+            submission_id=str(uuid.uuid4()),
+        ),
+        headers=_auth(token),
+    )
+    assert replay.status_code == 202, replay.text
+    assert replay.json()["submission_id"] == first.json()["submission_id"]
+    assert replay.json()["idempotent_replay"] is True
 
 
 # --- 可用性（配置缺失时明确不可用，不静默放行）------------------------------------------
@@ -719,7 +1111,14 @@ def test_plugin_router_serves_the_endpoint(
     # 未注册会得到 404，而这里必须得到 202/401。
     app = FastAPI()
     install_problem_handlers(app)
-    app.include_router(module.router(context))
+    router = module.router(context)
+    # 插件的装配路径会构造 B2Runtime（含接收入口）。作业目录是外部依赖：测试把端口替身接到
+    # 真实装配出来的服务上（生产由 `B2_B3_BASE_URL`/`B2_B3_AUTHORIZATION` 装配 HTTP 客户端）。
+    assert module._runtime is not None
+    assert module._runtime.intake.service is not None
+    module._runtime.intake.assignment_directory = _DIRECTORY
+    module._runtime.intake.service.assignment_directory = _DIRECTORY
+    app.include_router(router)
     with TestClient(app) as plugin_client:
         accepted = plugin_client.post(
             ENDPOINT, json=_envelope(student), headers=_auth(_student_token(signer, student))
@@ -774,8 +1173,9 @@ def test_uppercase_spelling_does_not_bypass_idempotency(
     `idempotency_key`，只有标识写法不同，因此差别只可能来自作用域的比较。
     """
     user_id, _course_id, _section_id, question_version_id = student
-    first = _envelope(student, idempotency_key="same-key")
-    second = _envelope(student, idempotency_key="same-key")
+    assignment_id = str(uuid.uuid4())
+    first = _envelope(student, idempotency_key="same-key", assignment_id=assignment_id)
+    second = _envelope(student, idempotency_key="same-key", assignment_id=assignment_id)
     second["student_id"] = user_id.upper()
     second["question_version_id"] = question_version_id.upper()
 
@@ -800,6 +1200,8 @@ RESOLVE = "/api/v1/intake/quarantines/{quarantine}/resolve"
 DISMISS = "/api/v1/intake/quarantines/{quarantine}/dismiss"
 HOLD = "/api/v1/intake/quarantines/{quarantine}/hold"
 COMPLETE = "/api/v1/intake/quarantines/{quarantine}/complete"
+#: 人工复核选定的作业（隔离 complete 的请求体字段 `assignment_id`；题目由附件映射决定）。
+_COMPLETION_ASSIGNMENT_ID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 #: 只有这两种原因码能被人工归属（见 `intake.quarantine`）。
 MATCH_FAILURES = ("not_uniquely_matched", "ambiguous_match")
 
@@ -1632,7 +2034,7 @@ def test_quarantine_complete_requires_email_and_valid_target(
         "student_id": str(uuid.uuid4()),
         "course_id": student[1],
         "section_id": student[2],
-        "question_version_id": student[3],
+        "assignment_id": _COMPLETION_ASSIGNMENT_ID,
     }
     # 本测试运行时没有配置 IMAP：明确 503，不从客户端/缓存补附件字节。
     unavailable = client.post(
@@ -1654,7 +2056,7 @@ def test_quarantine_complete_requires_email_and_valid_target(
     assert unknown.status_code == 422, unknown.text
     bad_uuid = client.post(
         COMPLETE.format(quarantine=quarantine_id),
-        json={**target, "question_version_id": "not-a-uuid"},
+        json={**target, "assignment_id": "not-a-uuid"},
         headers=token,
     )
     assert bad_uuid.status_code == 422, bad_uuid.text
@@ -1668,21 +2070,51 @@ def test_quarantine_complete_requires_email_and_valid_target(
     assert _resolved_state(engine, quarantine_id) == (False, None, None)
 
 
-class _FakeCompletedEmail:
-    """只验证编排：取原信、按目标生成提交、把 checkpoint 标为 processed。"""
+class _FakeAssignmentDirectory:
+    """隔离复核的作业受众目录替身：返回一个含目标课程的 open 作业。"""
 
-    def __init__(self, submission_id: str) -> None:
+    def __init__(self, audience) -> None:  # type: ignore[no-untyped-def]
+        self.audience = audience
+        self.assignment_id = audience.assignment_id
+
+    def get(self, assignment_id: str):
+        if str(assignment_id) != str(self.assignment_id):
+            return None
+        return self.audience
+
+
+def _completion_directory(student: tuple[str, str, str, str], *, status: str = "open"):
+    from autograder_b2.integration.assignments import AssignmentAudience
+
+    return _FakeAssignmentDirectory(
+        AssignmentAudience(
+            assignment_id=_COMPLETION_ASSIGNMENT_ID,
+            course_id=student[1],
+            title="unix homework",
+            status=status,
+            section_ids=(student[2],),
+            student_ids=(),
+            question_version_ids=(student[3],),
+        )
+    )
+
+
+class _FakeCompletedEmail:
+    """只验证编排：取原信、按目标逐题生成提交、把 checkpoint 标为 processed。"""
+
+    def __init__(self, submission_id: str, directory: object | None = None) -> None:
         self.submission_id = submission_id
         self.target: dict[str, object] | None = None
         self.marked = False
+        self.assignment_directory = directory
 
     def fetch_raw(self, *, uidvalidity: int, uid: int) -> bytes:
         assert (uidvalidity, uid) == (1, 7)
         return b"raw"
 
-    def ingest_raw_for_target(self, **kwargs: object) -> str:
+    def ingest_raw_for_assignment(self, **kwargs: object) -> tuple[str, ...]:
         self.target = kwargs
-        return self.submission_id
+        return (self.submission_id,)
 
     def mark_checkpoint_processed(self, connection: object, **kwargs: object) -> None:
         self.marked = True
@@ -1698,7 +2130,7 @@ def test_quarantine_complete_writes_resolution_and_submission_id(
         engine, scope_course_id=student[1], scope_section_id=student[2]
     )
     submission_id = str(uuid.uuid4())
-    email = _FakeCompletedEmail(submission_id)
+    email = _FakeCompletedEmail(submission_id, directory=_completion_directory(student))
     service = IntakeQuarantineService(engine, email=email)  # type: ignore[arg-type]
     principal = Principal(
         user_id=str(uuid.uuid4()),
@@ -1712,7 +2144,7 @@ def test_quarantine_complete_writes_resolution_and_submission_id(
         student_id=str(uuid.uuid4()),
         course_id=student[1],
         section_id=student[2],
-        question_version_id=student[3],
+        assignment_id=_COMPLETION_ASSIGNMENT_ID,
         note="匹配用户",
     )
     assert view.resolved is True

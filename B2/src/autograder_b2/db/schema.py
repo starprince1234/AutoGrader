@@ -16,7 +16,7 @@ SCHEMA = "b2"
 #: 本代码期望的迁移版本（必须与 `module.yaml: database.migration_head` 和 Alembic head 三者一致）。
 #: 用途：readyness 探测据此判断"库结构与代码是否匹配"——连接得上但版本落后同样是**不可用**，
 #: 否则 health 会谎报健康而受权读请求全线 500。三者一致性由 `tests/test_migrations.py` 断言。
-EXPECTED_SCHEMA_REVISION = "20261107_0020"
+EXPECTED_SCHEMA_REVISION = "20261107_0022"
 
 metadata = sa.MetaData(schema=SCHEMA)
 
@@ -57,6 +57,10 @@ submissions = sa.Table(
     # 迁移 0017：机器判定为 deterministic；awaiting_manual 表示只能人工评分，
     # 这种提交"尚未评分"，不能被读成"未提交"。
     sa.Column("grade_status", sa.Text(), nullable=False),
+    # 迁移 0021（CHG-0032）：该提交回答的作业。可空是**如实**的数据状态——历史提交没有作业归属，
+    # 不猜测、不回填；新写入路径总是带值。列顺序必须与 DDL 的追加顺序一致
+    # （`test_storage_cas.py::test_core_metadata_matches_database` 逐列按 ordinal_position 比对）。
+    sa.Column("assignment_id", sa.Uuid(), nullable=True),
     sa.CheckConstraint(
         "(intake = 'api' AND request_id IS NOT NULL"
         " AND mailbox IS NULL AND uidvalidity IS NULL AND uid IS NULL AND message_id IS NULL)"
@@ -412,17 +416,19 @@ intake_messages = sa.Table(
     sa.UniqueConstraint("submission_id", name="uq_intake_messages_submission_id"),
 )
 
-# 迁移 0020（一次性核验码，设计 §4）。四张内部表：
+# 迁移 0020（一次性核验码，设计 §4）+ 迁移 0022（作业模型，CHG-0032）。五张内部表：
 #
-# 1. `email_verification_challenges`：已认证学生为本题目申请的一次性码。库里**只有摘要**
+# 1. `email_verification_challenges`：已认证学生为**作业**申请的一次性码（迁移 0022：核验码绑定
+#    assignment；历史行仍保留 question_version_id，两个目标至少有一个）。库里**只有摘要**
 #    （`code_sha256`），因此读库无法还原核验码。`attempts`/`last_rejection_code` 记录学生侧
-#    拒绝尝试（供状态查询区分"被拒"与"还没到"；契约 reason_code 里 subject_mismatch /
-#    attachment_missing 属保留值，本表只写收件侧判定得出的三个原因）。
+#    拒绝尝试（供状态查询区分"被拒"与"还没到"）。
 # 2. `email_verifications`：一次真实 IMAP 拉取产生的邮件事实（发件地址、主题、附件名、邮箱位置）
 #    与它变成的提交；`challenge_id` / `submission_id` 唯一，保证"一个挑战只被消费一次、
-#    一份提交只来自一封真实邮件"。
-# 3. `email_sender_bindings`：首次通过验证的发件地址绑定（同一学生同一课程/课序只一行）。
-# 4. `intake_state`：收件拉取心跳（单行）。评测据此区分"邮件没到"（学生侧）与"收件依赖不可用"
+#    一份提交只来自一封真实邮件"。迁移 0022 增加 `assignment_id` 与 `processed_at`
+#    （一封邮件多题：题目在映射表，处理完成是独立于收件的事实）。
+# 3. `email_verification_submissions`（迁移 0022）：一封邮件 × 一道题 → 一份提交的映射。
+# 4. `email_sender_bindings`：首次通过验证的发件地址绑定（同一学生同一课程/课序只一行）。
+# 5. `intake_state`：收件拉取心跳（单行）。评测据此区分"邮件没到"（学生侧）与"收件依赖不可用"
 #    （基础设施错误）。
 email_verification_challenges = sa.Table(
     "email_verification_challenges",
@@ -431,7 +437,7 @@ email_verification_challenges = sa.Table(
     sa.Column("student_id", sa.Uuid(), nullable=False),
     sa.Column("course_id", sa.Uuid(), nullable=False),
     sa.Column("section_id", sa.Uuid(), nullable=False),
-    sa.Column("question_version_id", sa.Uuid(), nullable=False),
+    sa.Column("question_version_id", sa.Uuid(), nullable=True),
     sa.Column("code_sha256", sa.CHAR(64), nullable=False),
     sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
     sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
@@ -439,6 +445,8 @@ email_verification_challenges = sa.Table(
     sa.Column("consumed_verification_id", sa.Uuid(), nullable=True),
     sa.Column("last_rejection_code", sa.Text(), nullable=True),
     sa.Column("attempts", sa.Integer(), nullable=False),
+    # 迁移 0022：作业目标（追加在末尾，与 DDL 顺序一致）。
+    sa.Column("assignment_id", sa.Uuid(), nullable=True),
     sa.UniqueConstraint(
         "code_sha256", name="uq_email_verification_challenges_code_sha256"
     ),
@@ -450,9 +458,14 @@ email_verification_challenges = sa.Table(
         name="ck_email_verification_challenges_consumption",
     ),
     sa.CheckConstraint(
+        "assignment_id IS NOT NULL OR question_version_id IS NOT NULL",
+        name="ck_email_verification_challenges_target",
+    ),
+    sa.CheckConstraint(
         "last_rejection_code IS NULL"
         " OR last_rejection_code IN ('email_verification_rejected',"
-        " 'email_sender_mismatch', 'email_verification_expired')",
+        " 'email_sender_mismatch', 'email_verification_expired',"
+        " 'email_body_missing_field', 'email_body_mismatch', 'attachment_mapping_invalid')",
         name="ck_email_verification_challenges_rejection",
     ),
 )
@@ -465,7 +478,7 @@ email_verifications = sa.Table(
     sa.Column("student_id", sa.Uuid(), nullable=False),
     sa.Column("course_id", sa.Uuid(), nullable=False),
     sa.Column("section_id", sa.Uuid(), nullable=False),
-    sa.Column("question_version_id", sa.Uuid(), nullable=False),
+    sa.Column("question_version_id", sa.Uuid(), nullable=True),
     sa.Column("submission_id", sa.Uuid(), nullable=True),
     sa.Column("sender", sa.Text(), nullable=False),
     sa.Column("subject", sa.Text(), nullable=True),
@@ -477,6 +490,9 @@ email_verifications = sa.Table(
     sa.Column("attachment_names", JSONB(), nullable=False),
     sa.Column("received_at", sa.DateTime(timezone=True), nullable=False),
     sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+    # 迁移 0022：作业归属与"整封邮件处理完成"时刻（追加在末尾，与 DDL 顺序一致）。
+    sa.Column("assignment_id", sa.Uuid(), nullable=True),
+    sa.Column("processed_at", sa.DateTime(timezone=True), nullable=True),
     sa.UniqueConstraint("challenge_id", name="uq_email_verifications_challenge_id"),
     sa.UniqueConstraint("submission_id", name="uq_email_verifications_submission_id"),
     sa.UniqueConstraint(
@@ -488,6 +504,26 @@ email_verifications = sa.Table(
     sa.CheckConstraint(
         "jsonb_typeof(attachment_names) = 'array'",
         name="ck_email_verifications_attachment_names",
+    ),
+)
+
+#: 迁移 0022：一封邮件 × 一道题 → 一份提交的映射（`attachment_name` 是该题的 `<n>.txt`）。
+#: 规格明确**不加外键**：映射行属于收件事实，删除语义由收件链路自己决定，不引入额外级联。
+email_verification_submissions = sa.Table(
+    "email_verification_submissions",
+    metadata,
+    sa.Column("verification_id", sa.Uuid(), nullable=False),
+    sa.Column("question_version_id", sa.Uuid(), nullable=False),
+    sa.Column("submission_id", sa.Uuid(), nullable=False),
+    sa.Column("attachment_name", sa.Text(), nullable=False),
+    sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
+    sa.PrimaryKeyConstraint(
+        "verification_id", "question_version_id", name="pk_email_verification_submissions"
+    ),
+    sa.UniqueConstraint("submission_id", name="uq_email_verification_submissions_submission_id"),
+    sa.CheckConstraint(
+        "char_length(attachment_name) BETWEEN 1 AND 200",
+        name="ck_email_verification_submissions_attachment_name",
     ),
 )
 

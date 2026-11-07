@@ -21,7 +21,6 @@ import {
   QuestionListRoute,
   ReviewRoute,
   RosterRoute,
-  SubmitRoute,
   UsersRoute,
 } from "./routeComponents";
 
@@ -170,33 +169,29 @@ const questionEditRoute = createRoute({
   component: AuthoringEditRoute,
 });
 
-const submitRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/submit/$questionVersionId",
-  // 受理后把真实 `submission_id` / `evaluation_run_id` 写进 URL：刷新能恢复状态与进度，
-  // 也能把“我正在等这次评测”贴给自己。URL 只放对象 id，不放源码、姓名或学号。
-  validateSearch: (search: Record<string, unknown>) => {
-    const result: { submission_id?: string; evaluation_run_id?: string } = {};
-    if (typeof search.submission_id === "string" && search.submission_id !== "") {
-      result.submission_id = search.submission_id;
-    }
-    if (typeof search.evaluation_run_id === "string" && search.evaluation_run_id !== "") {
-      result.evaluation_run_id = search.evaluation_run_id;
-    }
-    return result;
-  },
-  component: SubmitRoute,
-});
-
 const assignmentsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/assignments",
   component: AssignmentsRoute,
 });
 
+/**
+ * 作业详情/工作区：`/assignments/{assignment_id}`（CHG-0032）。
+ *
+ * 旧的单题作答路由 `/submit/{question_version_id}` 与页面已**完整删除**（不保留别名）。
+ * 学生从作业列表「继续作答」进入时用 `?question=<version_id>` 预选题目；该值不是本作业的
+ * 题目时页面忽略它并停在第一题（查询串只承载对象 id，不承载答案内容）。
+ */
 const assignmentDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/assignments/$assignmentId",
+  validateSearch: (search: Record<string, unknown>) => {
+    const result: { question?: string } = {};
+    if (typeof search.question === "string" && search.question !== "") {
+      result.question = search.question;
+    }
+    return result;
+  },
   component: AssignmentDetailRoute,
 });
 
@@ -294,7 +289,6 @@ const routeTree = rootRoute.addChildren([
   questionNewRoute,
   questionDetailRoute,
   questionEditRoute,
-  submitRoute,
   assignmentsRoute,
   assignmentDetailRoute,
   gradesRoute,

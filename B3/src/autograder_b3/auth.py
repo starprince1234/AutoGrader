@@ -112,26 +112,63 @@ def require_course_write(principal: Principal | None, course_id: UUID) -> Princi
     return actor
 
 
-def require_section_write(
-    principal: Principal | None, course_id: UUID, section_id: UUID
+def require_assignment_read(
+    principal: Principal | None,
+    *,
+    course_id: UUID,
+    section_ids: Iterable[UUID],
+    student_ids: Iterable[UUID],
 ) -> Principal:
-    """Require write access to **this class of this course**.
+    """Require that the caller may read **this assignment**, given its audience.
 
-    Authorizing the course alone is not enough: `section_id` is opaque to B3, so a caller
-    authorized for course A could otherwise attach an assignment to a section of course B -- and
-    since section codes repeat as 1/2/3 per course, "the same number" would silently mean a
-    different class.
+    An assignment is visible per audience, not per course alone: a teacher whose token is
+    scoped to particular class sections may read an assignment only when it targets one of
+    them (a whole-course grant covers every section by definition), and a student needs
+    their own ``(course, section)`` pair inside the target sections plus, when the
+    assignment narrows its audience, their own id in that list.
+
+    The assignment's existence is checked by the caller **before** this function runs, so
+    a ``403`` here really means "authenticated but outside the audience" and ``404`` stays
+    reserved for "no such assignment" (``MAIN/docs/api/identifiers.md`` §3).
     """
-    actor = require_course_write(principal, course_id)
-    if actor.is_service:
+    actor = require_authenticated(principal)
+    if actor.is_service or actor.is_admin:
         return actor
-    if actor.is_admin:
+    targets = frozenset(section_ids)
+    if actor.has_role("teacher"):
+        require_course_read(actor, course_id)
+        if course_id in actor.course_wide:
+            return actor
+        granted = {section for (course, section) in actor.scope_pairs if course == course_id}
+        if granted & targets:
+            return actor
+        raise Forbidden(
+            "the assignment's target sections are outside the caller's authorization scope"
+        )
+    if actor.has_role("student"):
+        require_course_read(actor, course_id)
+        granted = {section for (course, section) in actor.scope_pairs if course == course_id}
+        if not granted & targets:
+            raise Forbidden(
+                "the assignment's target sections are outside the caller's authorization scope"
+            )
+        audience = frozenset(student_ids)
+        if audience and not _subject_in_audience(actor.subject, audience):
+            raise Forbidden("the assignment's audience does not include the caller")
         return actor
-    if course_id in actor.course_wide:
-        return actor
-    if (course_id, section_id) not in actor.scope_pairs:
-        raise Forbidden("the requested class is outside the caller's authorization scope")
-    return actor
+    raise Forbidden("the caller's role may not read assignments")
+
+
+def _subject_in_audience(subject: str, student_ids: frozenset[UUID]) -> bool:
+    """Whether the token subject is one of the named students.
+
+    Compared as UUIDs, not as raw text: a token subject written in an accepted-but-different
+    textual form must not silently become "not in the audience".
+    """
+    try:
+        return UUID(subject) in student_ids
+    except (ValueError, AttributeError, TypeError):
+        return False
 
 
 def require_statistics_read(principal: Principal | None, course_id: UUID) -> Principal:

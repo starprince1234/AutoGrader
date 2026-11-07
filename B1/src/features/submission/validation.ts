@@ -10,40 +10,46 @@ import type { SubmissionEnvelope } from "../../api/types";
 export type SubmissionEnvelopeBody = Omit<SubmissionEnvelope, "$defs">;
 
 /**
- * 提交前校验与信封构造（RQ-B-1-50 验收 1/2）。
+ * 作业答案文件的校验与信封构造（CHG-0032 / RQ-B-1-50 验收 1）。
  *
- * 校验规则全部来自契约，不自行发明：
- * - 路径模式：`submission-envelope.schema.json` 的 `^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$`
- * - 文件数：信封 `maxItems: 100` 与题目 `QuestionVersionPublic.max_files`
- * - 单文件 base64 长度上限：信封 `content_base64.maxLength: 2097152`
- * - 合计大小：题目 `QuestionVersionPublic.max_total_bytes`（按内容字节计）
+ * 规则全部来自契约，不自行发明：
+ * - **一次提交 = 一道题、恰好一个 `.txt`**：`files` 的 `minItems/maxItems` 都是 1，
+ *   路径模式 `^[A-Za-z0-9_.-]+\.txt$`；文件名是题目在作业中的 1 基序号（`1.txt`、`2.txt`…）。
+ * - 单文件 base64 长度上限：信封 `content_base64.maxLength: 2097152`。
  *
- * 前端拦截只是**体验**：越权/超限的最终判定仍在 B2（超限返回 413/422）。
+ * 前端拦截只是**体验**：越权/超限/题号不属于作业的最终判定仍在 B2（403/422）。
  */
-
-export type SubmissionFile = { path: string; content: string };
-
-export type ValidationIssue =
-  | { code: "no_files" }
-  | { code: "empty_path"; index: number }
-  | { code: "bad_path"; index: number; path: string }
-  | { code: "duplicate_path"; path: string }
-  | { code: "too_many_files"; count: number; max: number }
-  | { code: "file_too_large"; path: string; bytes: number; max: number }
-  | { code: "total_too_large"; bytes: number; max: number };
-
-export const PATH_PATTERN = /^[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*$/;
-export const ENVELOPE_MAX_FILES = 100;
 export const ENVELOPE_MAX_BASE64_LENGTH = 2_097_152;
 
+/** 单文件上限的**字节**数（契约按 base64 字符限制；页面只展示学生能理解的字节量）。 */
+export const ENVELOPE_MAX_ANSWER_BYTES = Math.floor((ENVELOPE_MAX_BASE64_LENGTH / 4) * 3);
+
+/** 契约的答案文件名规则：1 基题号（不带前导零）+ `.txt`，大小写敏感的 `.txt`。 */
+const ANSWER_PATH_PATTERN = /^[1-9][0-9]*\.txt$/;
+
+export type AnswerValidationIssue =
+  | { code: "empty" }
+  | { code: "not_txt"; fileName: string }
+  | { code: "too_large"; bytes: number; max: number };
+
+/** 第 N 题（1 基）的答案文件名。前端只按这个规则生成路径，不接受学生自定义。 */
+export function answerFileName(ordinal: number): string {
+  return `${ordinal}.txt`;
+}
+
+/** 契约的路径规则（`1.txt`、`2.txt`…）是否成立。 */
+export function isValidAnswerPath(path: string): boolean {
+  return ANSWER_PATH_PATTERN.test(path);
+}
+
 /**
- * B1 的**额外保守检查**：契约的路径模式允许 `..` 段（`[A-Za-z0-9_.-]+` 能匹配 `..`），
- * 而 `RQ-B-2-10` 明确要求"路径不合规（`..`、绝对路径、反斜杠逃逸）返回 422"。
- * 因此 B1 在提交前就把 `.`/`..` 段挡掉，省掉一次注定失败的往返。
- * **B2 仍然是判定方**：这个检查不放宽任何服务端校验。
+ * 上传文件的扩展名判定。
+ *
+ * **大小写敏感**：契约的路径模式要求 `.txt` 小写，`Answer.TXT` 会被服务端 422，因此前端
+ * 直接告诉学生要改成 `.txt`，而不是发一个必然失败的请求。
  */
-export function hasTraversalSegment(path: string): boolean {
-  return path.split("/").some((segment) => segment === "." || segment === "..");
+export function isTxtFileName(fileName: string): boolean {
+  return fileName.endsWith(".txt") && fileName.length > 4;
 }
 
 export function byteLength(content: string): number {
@@ -66,81 +72,61 @@ export async function sha256Hex(content: string): Promise<string> {
     .join("");
 }
 
-export type SubmissionLimits = {
-  maxFiles: number | null;
-  maxTotalBytes: number | null;
-};
-
-export function validateSubmission(
-  files: SubmissionFile[],
-  limits: SubmissionLimits,
-): ValidationIssue[] {
-  const issues: ValidationIssue[] = [];
-  if (files.length === 0) {
-    issues.push({ code: "no_files" });
-    return issues;
+/**
+ * 一道题的答案校验。
+ *
+ * `fileName` 传 `null` 表示内容来自 textarea 粘贴（没有文件名）；只要内容非空即可。
+ * 来自文件选择时必须先通过 `isTxtFileName`，避免把 `.TXT`/`.md` 当成可提交答案。
+ */
+export function validateAnswer(input: {
+  fileName: string | null;
+  content: string;
+}): AnswerValidationIssue[] {
+  const issues: AnswerValidationIssue[] = [];
+  if (input.fileName !== null && !isTxtFileName(input.fileName)) {
+    issues.push({ code: "not_txt", fileName: input.fileName });
   }
-
-  const effectiveMaxFiles = Math.min(limits.maxFiles ?? ENVELOPE_MAX_FILES, ENVELOPE_MAX_FILES);
-  if (files.length > effectiveMaxFiles) {
-    issues.push({ code: "too_many_files", count: files.length, max: effectiveMaxFiles });
+  const bytes = byteLength(input.content);
+  if (input.content.trim() === "") {
+    issues.push({ code: "empty" });
+  } else if (bytes > ENVELOPE_MAX_ANSWER_BYTES) {
+    issues.push({ code: "too_large", bytes, max: ENVELOPE_MAX_ANSWER_BYTES });
   }
-
-  const seen = new Set<string>();
-  let total = 0;
-  files.forEach((file, index) => {
-    if (file.path.trim() === "") {
-      issues.push({ code: "empty_path", index });
-    } else if (!PATH_PATTERN.test(file.path) || hasTraversalSegment(file.path)) {
-      issues.push({ code: "bad_path", index, path: file.path });
-    } else if (seen.has(file.path)) {
-      issues.push({ code: "duplicate_path", path: file.path });
-    } else {
-      seen.add(file.path);
-    }
-
-    const bytes = byteLength(file.content);
-    total += bytes;
-    if (base64Encode(file.content).length > ENVELOPE_MAX_BASE64_LENGTH) {
-      issues.push({
-        code: "file_too_large",
-        path: file.path,
-        bytes,
-        max: ENVELOPE_MAX_BASE64_LENGTH,
-      });
-    }
-  });
-
-  if (limits.maxTotalBytes !== null && total > limits.maxTotalBytes) {
-    issues.push({ code: "total_too_large", bytes: total, max: limits.maxTotalBytes });
-  }
-
   return issues;
 }
 
+/**
+ * 构造一次提交的信封：**一道题一个文件**。
+ *
+ * `submissionId` 与 `idempotencyKey` 由调用方生成：同一份草稿重试时必须复用同一个幂等键，
+ * 成功后才换新的键（见工作区的 `idempotencyKeyRef`）。
+ */
 export async function buildSubmissionEnvelope(input: {
   submissionId: string;
+  assignmentId: string;
   studentId: string;
   courseId: string;
   sectionId: string;
   questionVersionId: string;
+  /** 该题在作业中的 1 基序号（决定 `N.txt`）。 */
+  ordinal: number;
+  content: string;
   idempotencyKey: string;
-  files: SubmissionFile[];
 }): Promise<SubmissionEnvelopeBody> {
-  const files = await Promise.all(
-    input.files.map(async (file) => ({
-      path: file.path,
-      content_sha256: await sha256Hex(file.content),
-      content_base64: base64Encode(file.content),
-    })),
-  );
   return {
     submission_id: input.submissionId,
+    assignment_id: input.assignmentId,
     student_id: input.studentId,
     course_id: input.courseId,
     section_id: input.sectionId,
     question_version_id: input.questionVersionId,
-    files,
+    files: [
+      {
+        path: answerFileName(input.ordinal),
+        content_sha256: await sha256Hex(input.content),
+        content_base64: base64Encode(input.content),
+      },
+    ],
     idempotency_key: input.idempotencyKey,
   };
 }

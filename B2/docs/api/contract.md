@@ -276,3 +276,19 @@ B2 侧的四条纪律（每条都有测试，见 [../testing/cases.md](../testin
   - 姓名/学号/源码/参考答案/隐藏用例均不在响应中；`context_scope` 可审计。
 - 导出身份关联经 B4 `listEnrollments`（转交调用者 token），B2 不读 `b4` schema；未配置/失败/缺行时
   拒绝生成文件（503/409）。
+
+## 0.24.0 与 0.31.0 增量（人工评分字段、作业维度）
+
+- `GradeRow` 补上契约早已声明的两个字段：`grade_status`（`b2.submissions.grade_status`：
+  `deterministic`/`awaiting_manual`/`graded`）与 `score_source`（`manual`/`deterministic`/`null`）。
+  有人工评分行时 `score` 报告教师给的分、`max_score` 为人工评分刻度 100、`is_pass` 为 `null`
+  （人工评分没有通过/不通过结论）；否则分数只在运行 `completed` 且结果已持久化时出现。
+  导出增加「评分状态」「分数来源」两列（可选列），使文件能回答"这个分谁给的"。
+- `GradeRow.assignment_id`（紧跟 `section_id`）与 `listGrades`/`exportGrades` 的 `assignment_id`
+  过滤（CHG-0032）：历史提交的该字段为 `null`（不回填、不猜测），且不出现在任何作业级过滤里。
+- `SubmissionView.assignment_id`（可空，历史行为 `null`）。
+- `GET /submissions/{id}/files` 与 `/intake-message` 的读权限（CHG-0032 / 规格 §1.7）：学生只能读
+  **本人**，教师/管理员在课程（含课序）作用域内可读；评分写端点仍限教师/管理员。
+- 作业模型相关的提交校验（作业存在/open、课程与题目属于作业、section/student 在受众内、恰好一个
+  单段 `<n>.txt`）与稳定拒绝原因见 [../architecture/interfaces.md](../architecture/interfaces.md) §2.4；
+  作业目录未配置/不可达是 `503`，不是学生错误。

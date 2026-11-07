@@ -50,6 +50,7 @@ from tests.test_intake_api import (
     AUDIENCE,
     ENDPOINT,
     ISSUER,
+    _AssignmentDirectory,
     _auth,
     _envelope,
     _Signer,
@@ -305,10 +306,33 @@ def intake_client(intake_runtime: IntakeRuntime, engine: Engine) -> Iterator[Tes
         yield test_client
 
 
+@pytest.fixture()
+def assignments(intake_runtime: IntakeRuntime) -> Iterator[_AssignmentDirectory]:
+    """给接收入口注入作业目录（生产由 `B2_B3_BASE_URL` 装配真实 HTTP 客户端）。"""
+    directory = _AssignmentDirectory()
+    intake_runtime.assignment_directory = directory
+    assert intake_runtime.service is not None
+    intake_runtime.service.assignment_directory = directory
+    yield directory
+
+
+def _register_assignment(directory: _AssignmentDirectory, payload: dict[str, object]) -> None:
+    """把 `_envelope` 生成的作业登记成 open、单课序、单题、全学生的受众。"""
+    directory.register(
+        str(payload["assignment_id"]),
+        course_id=str(payload["course_id"]),
+        section_id=str(payload["section_id"]),
+        question_version_id=str(payload["question_version_id"]),
+    )
+
+
 @db
 @broker
 def test_accepted_submission_is_evaluated_and_published_end_to_end(
-    engine: Engine, intake_client: TestClient, signer: _Signer
+    engine: Engine,
+    intake_client: TestClient,
+    signer: _Signer,
+    assignments: _AssignmentDirectory,
 ) -> None:
     """`POST /api/v1/submissions` → outbox 一行 → worker 一轮 → **真实 broker 读回**同一个事件。
 
@@ -317,6 +341,7 @@ def test_accepted_submission_is_evaluated_and_published_end_to_end(
     """
     student = (str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4()))
     payload = _envelope(student)
+    _register_assignment(assignments, payload)
     accepted = intake_client.post(
         ENDPOINT, json=payload, headers=_auth(_student_token(signer, student))
     )

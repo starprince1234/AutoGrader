@@ -393,7 +393,7 @@ def main(argv: list[str] | None = None) -> int:
         token=teacher,
         json_body={
             "course_id": course_id,
-            "section_id": section_id,
+            "section_ids": [section_id],
             "title": "第一次作业：行数统计",
             "question_version_ids": [version_id],
         },

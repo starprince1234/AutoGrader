@@ -115,7 +115,7 @@ function routesFor(options: {
           assignmentPage([
             assignmentPublic({
               course_id: UUID_A,
-              section_id: UUID_B,
+              section_ids: [UUID_B],
               question_version_ids: [UUID_C],
             }),
           ]),
@@ -323,7 +323,7 @@ describe("P13-A 邮件提交标签", () => {
         student_id: UUID_D,
         course_id: UUID_A,
         section_id: UUID_B,
-        question_version_id: UUID_C,
+        assignment_id: UUID_A,
         note: null,
       });
     });

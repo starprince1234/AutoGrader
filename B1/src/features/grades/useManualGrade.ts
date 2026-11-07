@@ -77,8 +77,7 @@ export function useReleaseManualGrade() {
 /**
  * 来信内容。`null` = 这次提交不是邮件提交（契约对 API 提交返回 404，而不是空对象），
  * 因此调用方能把"没有邮件"和"读失败"区分开。
- */
-export function useIntakeMessage(submissionId: string | null) {
+ */export function useIntakeMessage(submissionId: string | null) {
   return useQuery({
     queryKey: queryKeys.intakeMessage(submissionId ?? ""),
     enabled: Boolean(submissionId),
@@ -101,8 +100,3 @@ export function useIntakeMessage(submissionId: string | null) {
   });
 }
 
-/** 附件的下载地址：仍走带鉴权的请求，不用裸 `<a href>`（否则浏览器不会带 Bearer）。 */
-export function submissionFileUrl(submissionId: string, path: string): string {
-  const query = new URLSearchParams({ path });
-  return `/api/v1/submissions/${submissionId}/files?${query.toString()}`;
-}

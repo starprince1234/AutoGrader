@@ -52,6 +52,7 @@ from autograder_b2.events.outbox import (
     submission_accepted_payload,
 )
 from autograder_b2.events.payload import (
+    OPTIONAL_KEYS,
     PAYLOAD_KEYS,
     QUESTION_VERSION_PUBLISHED,
     REQUIRED_KEYS,
@@ -84,6 +85,7 @@ T0 = "00000000-0000-4000-8000-000000000001"
 DIGEST = "a" * 64
 
 SUBMISSION_ID = "00000000-0000-4000-8000-000000000101"
+ASSIGNMENT_ID = "00000000-0000-4000-8000-000000000106"
 STUDENT_ID = "00000000-0000-4000-8000-000000000102"
 COURSE_ID = "00000000-0000-4000-8000-000000000103"
 SECTION_ID = "00000000-0000-4000-8000-000000000104"
@@ -209,6 +211,7 @@ def canonical_payload(subject: str) -> dict[str, object]:
     if subject == SUBMISSION_ACCEPTED:
         return submission_accepted_payload(
             submission_id=SUBMISSION_ID,
+            assignment_id=ASSIGNMENT_ID,
             student_id=STUDENT_ID,
             course_id=COURSE_ID,
             section_id=SECTION_ID,
@@ -401,6 +404,37 @@ def test_publish_to_real_jetstream_and_read_back(engine: Engine) -> None:
     assert row.attempts == 0
     assert row.last_error is None
     assert row.dead_lettered_at is None
+
+
+@db
+@broker
+def test_legacy_submission_accepted_without_assignment_id_is_still_delivered(
+    engine: Engine,
+) -> None:
+    """升级瞬间 outbox 里的旧事件（没有 `assignment_id`）必须仍能投递（契约 §2.5）。
+
+    这是"把 assignment_id 加进准许键但**不**加进必填键"的机器依据：旧行不是坏数据，它们是
+    升级前真实发生过的业务事件；让派发器把它们判成 `PayloadRejected` 并重试到 DLQ 会把一次字段新增
+    变成一次事件丢失事故。新写入端每次都带该键（`canonical_payload` 覆盖了新形状）。
+    """
+    legacy = {
+        key: value
+        for key, value in canonical_payload(SUBMISSION_ACCEPTED).items()
+        if key != "assignment_id"
+    }
+    event_id = insert_raw_row(engine, subject=SUBMISSION_ACCEPTED, payload=legacy)
+
+    async def scenario() -> tuple[object, list[tuple[dict, dict]]]:
+        async with connected_bus() as bus, ephemeral_stream(bus) as stream:
+            report = await NatsOutboxDispatcher(engine=engine, bus=bus).dispatch(limit=10)
+            received = await read_back(bus, stream, SUBMISSION_ACCEPTED, expect=1)
+            return report, received
+
+    report, received = asyncio.run(scenario())
+
+    assert (report.selected, report.published) == (1, 1)  # type: ignore[attr-defined]
+    assert received[0][0]["event_id"] == event_id
+    assert "assignment_id" not in received[0][0]["payload"]
 
 
 @db
@@ -1098,6 +1132,7 @@ def test_broker_outage_keeps_the_committed_business_transaction(engine: Engine) 
     moment = utc_now()
     payload = submission_accepted_payload(
         submission_id=SUBMISSION_ID,
+        assignment_id=ASSIGNMENT_ID,
         student_id=STUDENT_ID,
         course_id=COURSE_ID,
         section_id=SECTION_ID,
@@ -1297,17 +1332,38 @@ def test_progress_payload_publishes_with_and_without_case_counts() -> None:
 
     # 不变量护栏留在**交付套件**里（不能只活在复核探针里——那个文件复核结束会删）：
     # 1) 每个已发布 subject 都必须登记必填集，否则门会静默退化（fail-open）；
-    # 2) 必填集必须是准许集的子集；3) 除 progress 外两者相等（"必填太松"与"必填太严"都挡住）。
+    # 2) 必填集必须是准许集的子集；3) 除 progress 与 `OPTIONAL_KEYS` 列出的升级期可选键外
+    #    两者相等（"必填太松"与"必填太严"都挡住）。
     for subject in PUBLISHED_SUBJECTS:
         allowed = set(allowed_keys(subject))
         required = set(required_keys(subject))
+        optional = set(OPTIONAL_KEYS.get(subject, ()))
         assert required, f"{subject} 的必填集不得为空"
         assert required <= allowed, f"{subject} 必填集多出准许集之外的键：{required - allowed}"
+        assert optional <= allowed, f"{subject} 可选键不在准许集里：{optional - allowed}"
         if subject != EVALUATION_PROGRESS:
-            assert required == allowed, f"{subject} 必填集应等于准许集（缺 {allowed - required}）"
+            assert required == allowed - optional, (
+                f"{subject} 必填集应等于准许集减去可选键（缺 {allowed - optional - required}）"
+            )
     assert set(REQUIRED_KEYS) == set(PAYLOAD_KEYS) == set(PUBLISHED_SUBJECTS), (
         "REQUIRED_KEYS / PAYLOAD_KEYS / 已发布 subject 三者必须一一对应（漏登记会 fail-open）"
     )
+
+    # CHG-0032：`submission.accepted.assignment_id` **准许但不必填**。这不是宽松：升级瞬间 outbox
+    # 里仍有作业模型之前入队的旧事件（没有这个键），它们必须继续能投递；新写入端每次都写它。
+    assert "assignment_id" in set(allowed_keys(SUBMISSION_ACCEPTED))
+    assert "assignment_id" not in set(required_keys(SUBMISSION_ACCEPTED))
+    legacy = {
+        key: value
+        for key, value in canonical_payload(SUBMISSION_ACCEPTED).items()
+        if key != "assignment_id"
+    }
+    assert payload_rejections(SUBMISSION_ACCEPTED, legacy) == [], (
+        "旧事件（无 assignment_id）必须仍可通过 payload 准入"
+    )
+    assert payload_rejections(
+        SUBMISSION_ACCEPTED, {**legacy, "assignment_id": ASSIGNMENT_ID}
+    ) == []
 
     # 漏登记路径必须 **fail-closed**：假装一个"准许键已登记、必填集没登记"的 subject。
     monkeypatch = pytest.MonkeyPatch()

@@ -104,6 +104,20 @@ class ServiceUnavailable(B3Error):
     slug = "service-unavailable"
 
 
+class AssignmentTargetsUnavailable(ServiceUnavailable):
+    """The target-section/student validator could not be asked, so nothing was created.
+
+    An assignment's sections and enrolled students are owned by the identity/course
+    module, so creating an assignment requires a service-to-service validation call. When
+    that call is unconfigured, unreachable, times out or answers a malformed body, the
+    assignment is **not** created and the caller gets ``503``. Silently accepting the ids
+    would let a teacher publish to another course's class or to a student who is not
+    enrolled, which is the whole failure mode server-side validation exists to prevent.
+    """
+
+    slug = "assignment-targets-unavailable"
+
+
 class TooManyRequests(B3Error):
     """A configured budget for a paid operation is exhausted (AI-FLOW-01A).
 
@@ -275,6 +289,18 @@ class StatisticsWindowTooLarge(UnprocessableEntity):
     """
 
     slug = "statistics-window-too-large"
+
+
+class AssignmentTargetsInvalid(UnprocessableEntity):
+    """A target section or student is not valid for the assignment's course.
+
+    The validation answer comes from the identity/course module, which is the only owner
+    of \"does this section belong to this course\" and \"is this student actively
+    enrolled\". The detail reports **counts only**: naming the rejected students would
+    turn a creation error into a lookup channel for enrollment data.
+    """
+
+    slug = "invalid-assignment-target"
 
 
 # --- Event pipeline signals (never rendered as HTTP) ----------------------

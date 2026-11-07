@@ -1,21 +1,23 @@
-"""`email_delivery` 所有权证明的两条 HTTP 端点（设计 §4.6；契约 `b2.yaml` 0.30.0）。
+"""`email_delivery` 所有权证明的两条 HTTP 端点（设计 `assignment-workflow.md` §6.3；契约 `b2.yaml`）。
 
 | 端点 | 语义 |
 |---|---|
-| `POST /api/v1/email-verification/challenges` | 已认证学生为本题目申请一次性核验码（201，明文码只出现这一次） |
-| `GET /api/v1/email-verification/challenges/{challenge_id}` | 只有**所有者**可读的状态反馈（pending/received/rejected(reason)/expired） |
+| `POST /api/v1/email-verification/challenges` | 已认证学生为**一个作业**申请一次性核验码（201，明文码只出现这一次） |
+| `GET /api/v1/email-verification/challenges/{challenge_id}` | 只有**所有者**可读的状态反馈（pending/received/rejected(reason)/expired + 按题提交） |
 
 分层：本模块只做 HTTP 关注点（认证头、请求体形状、状态码映射、Problem Details、时间序列化）；
 签发/状态查询/消费全部在 `intake.email_verification`，认证复用 `auth.tokens`，授权复用
-`auth.authorization.require_submission_authority`（不新造权限模型）。
+`auth.authorization.require_submission_authority`（不新造权限模型）；作业受众经
+`EmailVerificationService.assignment_directory`（B3 internal 端点）判定。
 
-错误码语义与同模块其它端点一致：未认证 `401`；已认证但越权/非所有者 `403`；请求体不合法 `422`；
-挑战不存在 `404`；依赖不可用（库不可达、核验服务未装配）`503`。**不用 `404` 掩盖 `403`**。
+错误码语义与同模块其它端点一致：未认证 `401`；已认证但越权/非受众/非所有者 `403`；请求体不合法
+`422`；挑战或作业不存在 `404`；作业已不在 open 状态 `409`；依赖不可用（库不可达、核验服务未装配、
+作业目录未配置/B3 不可达）`503`。**不用 `404` 掩盖 `403`**。
 
 ## 不得泄漏的东西
 
 - 明文核验码只在 `201` 响应体里出现一次，**不写日志、不写事件、不写库**（库里只有 SHA-256）；
-- 响应与日志都不含发件地址、主题或正文；状态里只有状态、稳定原因码与时间。
+- 响应与日志都不含发件地址、主题或正文；状态里只有状态、稳定原因码、时间与提交标识。
 """
 
 from __future__ import annotations
@@ -38,18 +40,21 @@ from autograder_b2.api.formatting import rfc3339_millis
 from autograder_b2.auth.authorization import AuthorizationError
 from autograder_b2.auth.tokens import AuthenticationError
 from autograder_b2.intake.email_verification import (
+    ChallengeAssignmentClosedError,
+    ChallengeAssignmentNotFoundError,
     ChallengeNotFoundError,
     ChallengeRequestError,
     ChallengeStatus,
     EmailVerificationService,
 )
+from autograder_b2.integration.assignments import AssignmentUnavailable
 from autograder_b2.logging.logger import log_dependency_unavailable, log_event
 
 #: 路由层 logger（日志名即身份；`logger` 是白名单字段）。
 logger = logging.getLogger("autograder_b2.autograder_b2.api.email_verification")
 
 #: 挑战请求体的字段集合（契约 `EmailVerificationChallengeRequest`，`additionalProperties: false`）。
-_CHALLENGE_REQUEST_FIELDS = ("course_id", "section_id", "question_version_id")
+_CHALLENGE_REQUEST_FIELDS = ("course_id", "section_id", "assignment_id")
 
 
 def build_router(service: EmailVerificationService | None) -> APIRouter:
@@ -88,7 +93,7 @@ def build_router(service: EmailVerificationService | None) -> APIRouter:
                 principal,
                 course_id=payload["course_id"],
                 section_id=payload["section_id"],
-                question_version_id=payload["question_version_id"],
+                assignment_id=payload["assignment_id"],
             )
         except AuthorizationError:
             log_event(
@@ -98,6 +103,34 @@ def build_router(service: EmailVerificationService | None) -> APIRouter:
                 fields={"outcome": "denied", "decision": "forbidden"},
             )
             return problem_response(FORBIDDEN, instance)
+        except ChallengeAssignmentNotFoundError:
+            return problem_response(
+                Problem(
+                    404,
+                    "not-found",
+                    "Not Found",
+                    "The assignment does not exist.",
+                ),
+                instance,
+            )
+        except ChallengeAssignmentClosedError:
+            return problem_response(
+                Problem(
+                    409,
+                    "conflict",
+                    "Conflict",
+                    "The assignment is not open for submissions.",
+                ),
+                instance,
+            )
+        except AssignmentUnavailable as error:
+            log_dependency_unavailable(
+                logger,
+                dependency="b3-assignments",
+                error=error,
+                stage="email verification challenge",
+            )
+            return problem_response(SERVICE_UNAVAILABLE, instance)
         except ChallengeRequestError as error:
             return _unprocessable(instance, str(error))
         except SQLAlchemyError as error:
@@ -121,6 +154,7 @@ def build_router(service: EmailVerificationService | None) -> APIRouter:
                 "challenge_id": issued.challenge_id,
                 "code": issued.code,
                 "expires_at": rfc3339_millis(issued.expires_at),
+                "assignment_id": issued.assignment_id,
             },
         )
 
@@ -174,7 +208,11 @@ def build_router(service: EmailVerificationService | None) -> APIRouter:
 
 
 def _status_body(status: ChallengeStatus) -> dict[str, Any]:
-    """契约 `EmailVerificationChallengeStatus` 的 JSON 形状（`additionalProperties: false`）。"""
+    """契约 `EmailVerificationChallengeStatus` 的 JSON 形状（`additionalProperties: false`）。
+
+    `submissions` 是该邮件已生成、按题映射的提交（未收到为空数组）；契约不再有单一的
+    `submission_id`——一封多附件的邮件会产生 N 条提交（设计 §1.1/§2.2）。
+    """
     return {
         "challenge_id": status.challenge_id,
         "state": status.state,
@@ -183,7 +221,14 @@ def _status_body(status: ChallengeStatus) -> dict[str, Any]:
         "verified_at": (
             None if status.verified_at is None else rfc3339_millis(status.verified_at)
         ),
-        "submission_id": status.submission_id,
+        "submissions": [
+            {
+                "question_version_id": item.question_version_id,
+                "submission_id": item.submission_id,
+            }
+            for item in status.submissions
+        ],
+        "assignment_id": status.assignment_id,
     }
 
 

@@ -100,11 +100,17 @@ jobs:
             tests/test_runner_core.py::TestEvidence::test_failed_case_does_not_log_student_stderr \
             tests/test_reference_verification.py::test_cgroup_launch_failure_reaches_reference_api_without_attestation \
             tests/test_case_evidence_details.py::test_canary_does_not_report_cgroup_initialization_failure_as_blocked
+          ../MAIN/.venv/bin/python -m pytest -q tests/test_intake_directory_matcher.py
+          ../MAIN/.venv/bin/python -m pytest -q tests/test_email_intake.py::test_mail_puller_uses_b2_scoped_database_configuration
       - name: Check deployment shell syntax
         run: |
           for script in MAIN/deploy/*.sh MAIN/deploy/autograder-deployctl MAIN/scripts/production-*.sh .github/scripts/deploy-ssh.sh; do
             bash -n "$script"
           done
+      - name: Check mail configuration
+        run: node --test MAIN/deploy/mail-env.test.mjs
+      - name: Check contract lock and version declarations
+        run: uv run --project MAIN --locked python MAIN/scripts/relock_contracts.py --check
       - name: Check execution modes, contract lock and e-mail rules (no database)
         working-directory: B2
         env:
@@ -115,17 +121,147 @@ jobs:
           # cannot work. The contract tests need the real checkout root.
           B4_MODULE_ROOT: ${{ github.workspace }}
         run: |
-          # CHG-0031: these suites are intentionally database-free so they can run in the
+          # CHG-0031/0032: these suites are intentionally database-free so they can run in the
           # verify job before any service exists. The Linux nsjail acceptance suite is NOT
           # here: it needs a privileged Linux sandbox and is run separately.
           ../MAIN/.venv/bin/python -m pytest -q \
             tests/test_runner_batch.py \
             tests/test_email_verification_rules.py \
-            tests/test_contract_conformance.py
+            tests/test_contract_conformance.py \
+            tests/test_frozen_interfaces.py \
+            tests/test_intake_directory_matcher.py
+          ../MAIN/.venv/bin/python -m pytest -q tests/test_email_intake.py::test_mail_puller_uses_b2_scoped_database_configuration
+
+  verify-frontend:
+    if: github.event_name == 'push' || inputs.operation == 'deploy'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
+        with:
+          version: 10
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: B1/pnpm-lock.yaml
+      - name: Check the assignment workspace and teacher views
+        working-directory: B1
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm lint
+          pnpm api:check
+          pnpm typecheck
+          pnpm test
+
+  verify-database:
+    # Real PostgreSQL + NATS on an isolated Linux runner (CHG-0032 acceptance). The API
+    # process itself is not started here: these suites drive the real modules against the
+    # real schema, and the mail path uses the repository's real TCP IMAP fixture.
+    if: github.event_name == 'push' || inputs.operation == 'deploy'
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_DB: autograder
+          POSTGRES_USER: autograder_platform
+          POSTGRES_PASSWORD: ci-platform-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U autograder_platform -d autograder"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 30
+      nats:
+        image: nats:2.10-alpine
+        ports:
+          - 4222:4222
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884
+        with:
+          version: 0.13.1
+          enable-cache: true
+          cache-dependency-glob: MAIN/uv.lock
+      - name: Install the backend workspace
+        run: uv sync --project MAIN --all-groups --extra modules --locked
+      - name: Install the PostgreSQL client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq postgresql-client
+      - name: Create the least-privilege roles and schemas
+        env:
+          PGHOST: 127.0.0.1
+          PGUSER: autograder_platform
+          PGPASSWORD: ci-platform-password
+          PGDATABASE: autograder
+          POSTGRES_USER: autograder_platform
+          POSTGRES_DB: autograder
+          AUTOGRADER_B2_DB_PASSWORD: ci-b2
+          AUTOGRADER_B3_APP_DB_PASSWORD: ci-b3app
+          AUTOGRADER_B3_INTERNAL_DB_PASSWORD: ci-b3internal
+          AUTOGRADER_B4_DB_PASSWORD: ci-b4
+        run: bash MAIN/infra/postgres/initialize-db.sh
+      - name: Migrate and provision B4
+        working-directory: B4
+        env:
+          DATABASE_URL: postgresql+psycopg://autograder_platform:ci-platform-password@127.0.0.1:5432/autograder
+          B4_ADMIN_DATABASE_URL: postgresql+psycopg://autograder_platform:ci-platform-password@127.0.0.1:5432/autograder
+        run: |
+          ../MAIN/.venv/bin/python -m alembic upgrade head
+          ../MAIN/.venv/bin/python -m autograder_b4.ops.provision
+      - name: B2 submission, grades, email and migrations (real PostgreSQL)
+        working-directory: B2
+        env:
+          B2_TEST_DATABASE_URL: postgresql+psycopg://autograder_platform:ci-platform-password@127.0.0.1:5432/autograder
+          B4_MODULE_ROOT: ${{ github.workspace }}
+        run: |
+          ../MAIN/.venv/bin/python -m pytest -q \
+            tests/test_migrations.py \
+            tests/test_storage_cas.py \
+            tests/test_submission_loader.py \
+            tests/test_submission_query.py \
+            tests/test_grades_query_export.py \
+            tests/test_intake_api.py \
+            tests/test_b2_routes.py \
+            tests/test_worker.py \
+            tests/test_email_intake_acceptance.py \
+            tests/test_email_verification_flow.py
+      - name: B3 assignment, version and authorization (real PostgreSQL)
+        working-directory: B3
+        env:
+          B3_TEST_OWNER_URL: postgresql+psycopg://autograder_platform:ci-platform-password@127.0.0.1:5432/autograder
+          B3_TEST_APP_URL: postgresql+psycopg://autograder_b3_app:ci-b3app@127.0.0.1:5432/autograder
+          B3_TEST_INTERNAL_URL: postgresql+psycopg://autograder_b3_internal:ci-b3internal@127.0.0.1:5432/autograder
+        run: |
+          ../MAIN/.venv/bin/python -m pytest -q \
+            tests/test_migrations.py \
+            tests/test_auth.py \
+            tests/test_questions_api.py \
+            tests/test_assignments_api.py \
+            tests/test_b4_client.py \
+            tests/test_versions.py \
+            tests/test_dto_boundary.py
+      - name: B4 internal target validation and identity (real PostgreSQL)
+        working-directory: B4
+        env:
+          B4_TEST_DATABASE_URL: postgresql+psycopg://autograder_b4:ci-b4@127.0.0.1:5432/autograder
+          B4_TEST_ADMIN_DATABASE_URL: postgresql+psycopg://autograder_platform:ci-platform-password@127.0.0.1:5432/autograder
+          B4_TEST_NATS_URL: nats://127.0.0.1:4222
+        run: |
+          ../MAIN/.venv/bin/python -m pytest -q \
+            tests/test_internal_course_targets.py \
+            tests/test_internal_identities.py \
+            tests/test_current_user.py \
+            tests/test_authorization.py \
+            tests/test_auth.py \
+            tests/test_users_courses.py
 
   deploy:
-    needs: verify
-    if: ${{ always() && github.ref == 'refs/heads/main' && (needs.verify.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.operation != 'deploy')) }}
+    needs: [verify, verify-frontend, verify-database]
+    if: ${{ always() && github.ref == 'refs/heads/main' && ((needs.verify.result == 'success' && needs.verify-frontend.result == 'success' && needs.verify-database.result == 'success') || (github.event_name == 'workflow_dispatch' && inputs.operation != 'deploy')) }}
     concurrency:
       group: autograder-production
       cancel-in-progress: false
@@ -394,10 +530,10 @@ jobs:
           IMAP_USER: ${{ steps.doppler.outputs.IMAP_USER }}
           IMAP_PASS: ${{ steps.doppler.outputs.IMAP_PASS }}
           IMAP_TLS_MODE: ${{ steps.doppler.outputs.IMAP_TLS_MODE }}
-          # 收信身份查询：本次作业目标由运维给出，服务令牌复用 B2→B3 的那一枚。
-          B2_IMAP_TARGET_JSON: ${{ steps.doppler.outputs.B2_IMAP_TARGET_JSON }}
+          # 收信身份查询：CHG-0032 起收件路由只来自一次性核验码 + B4 身份目录，
+          # 不再有部署期固定作业目标/匹配规则表。服务令牌复用 B2→B3 的那一枚。
           B2_IDENTITY_URL: ${{ steps.doppler.outputs.B2_IDENTITY_URL }}
-          B2_B3_SERVICE_TOKEN: ${{ secrets.B2_B3_SERVICE_TOKEN }}
+          B2_B3_SERVICE_TOKEN: ${{ steps.doppler.outputs.B2_B3_SERVICE_TOKEN }}
         run: node MAIN/deploy/write-mail-env.mjs "$RUNNER_TEMP/mail.env"
 
       - name: Install mail channel variables on the host
@@ -439,10 +575,14 @@ jobs:
             --target /etc/autograder/runtime.env --fragment "$staging/mail.env"
           rm -f -- "$staging/mail.env" "$staging/merge-env-keys.py"
           rmdir -- "$staging"
+          if systemctl cat autograder-worker.service >/dev/null 2>&1; then
+            systemctl stop autograder-worker.service
+          fi
           systemctl restart autograder.service
           for attempt in $(seq 1 30); do
             if curl -fsS --max-time 5 http://127.0.0.1:18000/health/ready 2>/dev/null \
               | grep -q '"ready": *true'; then
+              systemctl start autograder-worker.service
               printf 'service ready after %s attempt(s)\n' "$attempt"
               exit 0
             fi

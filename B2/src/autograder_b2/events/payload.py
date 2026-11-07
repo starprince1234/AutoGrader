@@ -144,6 +144,9 @@ def _enum(*values: str) -> KeyRule:
 PAYLOAD_KEYS: Mapping[str, Mapping[str, KeyRule]] = {
     SUBMISSION_ACCEPTED: {
         "submission_id": _UID,
+        # CHG-0032：新事件总携带作业标识；**可选**（见 `OPTIONAL_KEYS`），因为升级瞬间 outbox 里
+        # 仍可能有作业模型之前入队的旧事件，它们没有这个键且必须继续能投递。
+        "assignment_id": _UID,
         "student_id": _UID,
         "course_id": _UID,
         "section_id": _UID,
@@ -197,6 +200,16 @@ PAYLOAD_KEY_SOURCES: Mapping[str, str] = {
     EVALUATION_FAILED: "asyncapi 无示例；取 docs/api/events.md 第 1 节语义摘要（失败类别，脱敏）",
 }
 
+#: 每个发布 subject 的**可选**键：准许出现、但缺了不算拒绝。
+#:
+#: 唯一来源是 CHG-0032：`submission.accepted.assignment_id` 对**新事件**恒在，但对升级瞬间仍在
+#: outbox 里的旧事件不存在。把它列进必填会让派发器把那些旧事件判成 `PayloadRejected`、重试到上限后
+#: 进 DLQ——一次字段新增就会让已经发生的业务事件永远发不出去。因此"可选"在这里是**升级语义**，
+#: 不是宽松：新写入端每次都写它（`events.outbox.submission_accepted_payload`）。
+OPTIONAL_KEYS: Mapping[str, tuple[str, ...]] = {
+    SUBMISSION_ACCEPTED: ("assignment_id",),
+}
+
 #: 每个发布 subject 的**必填**键（缺一个即拒；其余准许键按语义可选）。
 #:
 #: 为什么必须有它：契约里 payload 只是 `{"type": "object"}`（`event-envelope.schema.json`），
@@ -205,9 +218,10 @@ PAYLOAD_KEY_SOURCES: Mapping[str, str] = {
 #: 而消费者（B3 统计）拿到的是缺字段的事件。
 #:
 #: 取值口径是"**这个键在该 subject 的每一次真实发布里都存在吗**"，不是"示例里出现过"：
-#: - 4 个 subject 的必填集 = 其准许键全集。依据：`MAIN/contracts/asyncapi/events.yaml` 的官方示例
-#:   给的是完整键集（`submissionAccepted` / `evaluationCompleted` 两例逐一核对），另两个无示例的
-#:   subject 取本模块生产写入端的实际键集（复核探针逐调用点核对）。
+#: - 除 `EVALUATION_PROGRESS` 与 `OPTIONAL_KEYS` 列出的键外，必填集 = 其准许键全集。依据：
+#:   `MAIN/contracts/asyncapi/events.yaml` 的官方示例给的是完整键集（`submissionAccepted` /
+#:   `evaluationCompleted` 两例逐一核对），另两个无示例的 subject 取本模块生产写入端的实际键集
+#:   （复核探针逐调用点核对）。
 #: - `EVALUATION_PROGRESS` 例外：`cases_total` / `cases_done` 是**按阶段可缺**的计数——
 #:   写入端在"还不知道总数"的阶段（`_enter_stage(..., cases_total=None)`）会**有意省略**这两个键
 #:   （`evaluation/orchestrator.py`）。若把它们也列为必填，该形状会过不了门 ⇒ 事件永不投递、重试到
@@ -215,8 +229,10 @@ PAYLOAD_KEY_SOURCES: Mapping[str, str] = {
 #:   `evaluation_run_id` / `sequence` / `stage` 这三个**恒在**的键，计数按语义可选；
 #:   两种形状（带计数 5 键 / 不带计数 3 键）都必须过门，且缺任一恒在键都必须被拒
 #:   （用例 T-EVT-021）。
+#: - `submission.accepted.assignment_id` 例外：见 `OPTIONAL_KEYS`（升级期旧事件可投递）。
 REQUIRED_KEYS: Mapping[str, tuple[str, ...]] = {
-    subject: tuple(sorted(rules)) for subject, rules in PAYLOAD_KEYS.items()
+    subject: tuple(sorted(set(rules) - set(OPTIONAL_KEYS.get(subject, ()))))
+    for subject, rules in PAYLOAD_KEYS.items()
 } | {
     EVALUATION_PROGRESS: ("evaluation_run_id", "sequence", "stage"),
 }

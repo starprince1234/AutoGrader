@@ -626,13 +626,11 @@ class Assignment(Base):
         CheckConstraint("length(title) BETWEEN 1 AND 200", name="ck_assignments_title_length"),
         CheckConstraint("status IN ('open', 'archived')", name="ck_assignments_status"),
         Index("ix_assignments_course_id", "course_id"),
-        Index("ix_assignments_section_id", "section_id"),
         {"schema": SCHEMA},
     )
 
     assignment_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
     course_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
-    section_id: Mapped[uuid.UUID] = mapped_column(Uuid, nullable=False)
     title: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="open")
     due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -668,6 +666,62 @@ class AssignmentItem(Base):
         nullable=False,
     )
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AssignmentSection(Base):
+    """One target section of an assignment (1..N rows per assignment).
+
+    The composite primary key is the uniqueness rule: a section is either a target once
+    or not at all. ``section_id`` is a plain UUID -- the identity/course module owns
+    sections, so no cross-schema foreign key is introduced (same rule as
+    ``assignments.course_id``). Read by the ordinary role, written by the internal role
+    (the create path runs there, in the same transaction as the assignment row).
+    """
+
+    __tablename__ = "assignment_sections"
+    __table_args__ = (
+        Index("ix_assignment_sections_section_id", "section_id"),
+        {"schema": SCHEMA},
+    )
+
+    assignment_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey(
+            "b3.assignments.assignment_id",
+            name="fk_assignment_sections_assignment_id",
+        ),
+        primary_key=True,
+    )
+    section_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AssignmentStudent(Base):
+    """One student in an assignment's optional narrowing list.
+
+    **No row means "the whole target sections"**, so "not narrowed" and "narrowed to
+    nobody" cannot be confused: only a non-empty list is ever written. The student must
+    be actively enrolled in one of the assignment's target sections; that cross-module
+    fact is validated against the identity/course module before the row is written, never
+    by a database join.
+    """
+
+    __tablename__ = "assignment_students"
+    __table_args__ = (
+        Index("ix_assignment_students_student_id", "student_id"),
+        {"schema": SCHEMA},
+    )
+
+    assignment_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey(
+            "b3.assignments.assignment_id",
+            name="fk_assignment_students_assignment_id",
+        ),
+        primary_key=True,
+    )
+    student_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 

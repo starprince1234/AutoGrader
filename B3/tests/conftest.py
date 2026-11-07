@@ -160,7 +160,38 @@ COURSE_B = uuid.UUID("22222222-2222-4222-8222-222222222222")
 #: COURSE_A accumulates questions from every HTTP test in the session.
 COURSE_C = uuid.UUID("55555555-5555-4555-8555-555555555555")
 SECTION_A = uuid.UUID("33333333-3333-4333-8333-333333333333")
+#: A second class of COURSE_A. Assignments target a *set* of sections now, so a test that
+#: only ever uses one section cannot tell the set model from the old single column.
+SECTION_A2 = uuid.UUID("33333333-3333-4333-8333-333333333334")
+#: A class of COURSE_B, used to prove a cross-course target is refused (422).
+SECTION_B = uuid.UUID("33333333-3333-4333-8333-333333333335")
+#: A course and class written by **no** assignment test other than the pagination one.
+#: Assignment rows are not truncated between tests, so an exact-served-set assertion needs
+#: a course nobody else writes; COURSE_C is equally "quiet" but the tag-coverage tests
+#: assert its exact question counts, which a published fixture question would break.
+COURSE_D = uuid.UUID("77777777-7777-4777-8777-777777777777")
+SECTION_D = uuid.UUID("33333333-3333-4333-8333-333333333336")
 TEACHER_ID = "44444444-4444-4444-8444-444444444444"
+STUDENT_A = uuid.UUID("66666666-6666-4666-8666-666666666666")
+STUDENT_B = uuid.UUID("66666666-6666-4666-8666-666666666667")
+
+#: Which course each known section belongs to. This is the identity/course module's fact,
+#: served to B3 through the internal validation endpoint; the test-only opener below
+#: answers from this mapping so target validation runs for real (no database, no network)
+#: while the HTTP client, parsing and failure classification are the production code.
+SECTION_COURSES: dict[uuid.UUID, uuid.UUID] = {
+    SECTION_A: COURSE_A,
+    SECTION_A2: COURSE_A,
+    SECTION_B: COURSE_B,
+    SECTION_D: COURSE_D,
+}
+
+#: ``student_id -> (course_id, section_id)`` for students that are actively enrolled.
+#: A student not in this mapping is "unknown / not actively enrolled" to the validator.
+ENROLLMENTS: dict[uuid.UUID, tuple[uuid.UUID, uuid.UUID]] = {
+    STUDENT_A: (COURSE_A, SECTION_A),
+    STUDENT_B: (COURSE_A, SECTION_A2),
+}
 
 
 @pytest.fixture
@@ -170,6 +201,13 @@ def tokens() -> dict[str, dict]:
             "sub": TEACHER_ID,
             "roles": ["teacher"],
             "scope": [{"course_id": str(COURSE_A), "section_id": str(SECTION_A)}],
+        },
+        # Same course, whole-course grant: the assignment audience model must let this
+        # token read every target-section variant of COURSE_A, unlike `teacher-a`.
+        "teacher-wide": {
+            "sub": str(uuid.uuid4()),
+            "roles": ["teacher"],
+            "scope": [{"course_id": str(COURSE_A)}],
         },
         "teacher-b": {
             "sub": str(uuid.uuid4()),
@@ -181,8 +219,14 @@ def tokens() -> dict[str, dict]:
             "roles": ["teacher"],
             "scope": [{"course_id": str(COURSE_C)}],
         },
-        "student-a": {
+        # Only used by the assignment pagination test; COURSE_D exists for it alone.
+        "teacher-d": {
             "sub": str(uuid.uuid4()),
+            "roles": ["teacher"],
+            "scope": [{"course_id": str(COURSE_D)}],
+        },
+        "student-a": {
+            "sub": str(STUDENT_A),
             "roles": ["student"],
             "scope": [{"course_id": str(COURSE_A), "section_id": str(SECTION_A)}],
         },
@@ -216,8 +260,96 @@ def publisher():
     return InMemoryEventPublisher()
 
 
+# --- identity/course module stand-in (assignment target validation) ------
+#
+# Only the *HTTP endpoint* is replaced (same allowance as the B4 JWKS fetch): the
+# request B3 builds, the production client's parsing and its failure classification all
+# run for real. The answer is computed from the SECTION_COURSES/ENROLLMENTS mapping above,
+# so "unknown section", "student not enrolled in the given section" and "cross-course
+# student" are real decisions rather than scripted strings.
+
+
+class _B4Response:
+    def __init__(self, payload: dict, *, status: int = 200) -> None:
+        self.status = status
+        self._body = json.dumps(payload).encode("utf-8")
+
+    def read(self) -> bytes:
+        return self._body
+
+    def __enter__(self) -> _B4Response:
+        return self
+
+    def __exit__(self, *exc_info: object) -> bool:
+        return False
+
+
+def b4_validation_answer(request) -> dict:
+    """The identity/course module's ``CourseTargetValidation`` body for a request.
+
+    Kept a free function so the client tests can call it directly (or wrap it in a
+    custom opener) without duplicating the fixture mapping.
+    """
+    body = json.loads(bytes(request.data).decode("utf-8"))
+    course_id = uuid.UUID(str(body["course_id"]))
+    requested_sections = [uuid.UUID(str(value)) for value in body.get("section_ids", ())]
+    requested_students = [uuid.UUID(str(value)) for value in body.get("student_ids", ())]
+    sections: list[dict] = []
+    unknown_sections: list[str] = []
+    for section_id in requested_sections:
+        if SECTION_COURSES.get(section_id) != course_id:
+            unknown_sections.append(str(section_id))
+            continue
+        sections.append(
+            {
+                "section_id": str(section_id),
+                "course_id": str(course_id),
+                "section_code": f"S-{str(section_id)[:8]}",
+                "term": None,
+            }
+        )
+    students: list[dict] = []
+    unknown_students: list[str] = []
+    for student_id in requested_students:
+        enrollment = ENROLLMENTS.get(student_id)
+        if (
+            enrollment is not None
+            and enrollment[0] == course_id
+            and enrollment[1] in requested_sections
+        ):
+            students.append(
+                {"student_id": str(student_id), "section_id": str(enrollment[1])}
+            )
+        else:
+            unknown_students.append(str(student_id))
+    return {
+        "course_id": str(course_id),
+        "sections": sections,
+        "unknown_section_ids": unknown_sections,
+        "students": students,
+        "unknown_student_ids": unknown_students,
+    }
+
+
+def b4_opener(request, timeout: float):
+    """Opener that serves :func:`b4_validation_answer` without a network call."""
+    return _B4Response(b4_validation_answer(request))
+
+
 @pytest.fixture
-def dependencies(settings, database, verifier, publisher, clock):
+def b4_target_client():
+    from autograder_b3.integration.b4 import B4TargetClient
+
+    return B4TargetClient(
+        base_url="http://identity.invalid",
+        service_token="test-service-token",
+        timeout_seconds=1.0,
+        opener=b4_opener,
+    )
+
+
+@pytest.fixture
+def dependencies(settings, database, verifier, publisher, clock, b4_target_client):
     from autograder_b3.api.deps import B3Dependencies
     from autograder_b3.auth import ServiceTokenVerifier
 
@@ -227,6 +359,7 @@ def dependencies(settings, database, verifier, publisher, clock):
         token_verifier=verifier,
         service_verifier=ServiceTokenVerifier("test-service-token"),
         publisher=publisher,
+        b4_targets=b4_target_client,
         clock=clock,
     )
 

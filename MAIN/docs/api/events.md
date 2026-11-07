@@ -51,7 +51,7 @@
 
 - **含义**：提交已通过校验、内容已落库、已进入评测队列。
 - **不是**："代码正确"或"评分完成"。**不得**被解读为任何成绩信号。
-- **可携带**：`submission_id`、`student_id`、`course_id`、`section_id`、`question_version_id`、`occurred_at`、来源（`api`/`email`）。
+- **可携带**：`submission_id`、`assignment_id`（CHG-0032；升级瞬间留在 outbox 的旧事件可以没有它，消费者必须容忍其缺失）、`student_id`、`course_id`、`section_id`、`question_version_id`、`occurred_at`、来源（`api`/`email`）。
 - **禁止携带**：源码内容或摘要（摘要可以，内容不可以）、文件清单内容、学生姓名、邮件正文。
 
 ### 3.2 `evaluation.started`

@@ -22,8 +22,12 @@
 | `20260915_0002` | **完整业务**：15 张业务表、5 个触发器、最小权限授权 | `20260915_0001` |
 | `20260915_0003` | **凭证与消费可见性**：`reference_attestations`、`consumption_counters`、`question_versions` 的 `revision_note`/`revision_diff`、`questions.tags` 三条 CHECK、两处 keyset/检索索引、新对象授权 | `20260915_0002` |
 | `20260915_0004` | **表规范对齐**（`RQ-B-4-30` / E16）：17 个主键约束命名为 `pk_<table>`；15 个 `created_at`/`updated_at` 改为 `timestamptz(3)`。只改声明，不改键形状、不引入兼容层 | `20260915_0003` |
+| `20260915_0005` | **AI 草稿生成**（AI-FLOW-01A）：`question_draft_generations`（受保护候选，接受/丢弃后清正文）与 `ai_generation_usage`（去标识化付费调用账本，无 prompt/响应列） | `20260915_0004` |
+| `20261107_0006` | 生成记录的 `accepted_question_version_id` 在版本删除后被 `SET NULL` 时不再违反 CHECK（`accepted_at` 只要求 `proposal IS NULL`） | `20260915_0005` |
+| `20261107_0007` | **执行声明**：`question_versions.execution_manifest`、`test_cases.execution`（可空 jsonb，`NULL` = `per_case`/无声明），不可变触发器同步覆盖新列 | `20261107_0006` |
+| `20261107_0008` | **作业目标模型**（`CHG-0032`）：`assignments.section_id` 及 `ix_assignments_section_id` 删除；新增 `assignment_sections` / `assignment_students`（复合主键、各自 `ix_*_section_id` / `ix_*_student_id`、命名 FK），普通角色只读、内部角色可插入 | `20261107_0007` |
 
-- 当前 head：`20260915_0004`，与 `module.yaml: database.migration_head` **一致**（`tests/test_migrations.py::test_module_yaml_head_matches_alembic_head` 断言；MAIN 的 `checks.py` 亦独立校验）。
+- 当前 head：`20261107_0008`，与 `module.yaml: database.migration_head` **一致**（`tests/test_migrations.py::test_module_yaml_head_matches_alembic_head` 断言；MAIN 的 `checks.py` 亦独立校验）。
   该断言此前还钉死了字面量 `"20260915_0003"`，于是下一个合法迁移必然让它失败，而它并未因此多证明任何东西；已改为只断言 `declared == head`（与 `test_contracts_lock_is_not_hand_edited` 同一处理）。
 - 一致性要求：每新增迁移后，`module.yaml` 的 `migration_head` 与 Alembic head 必须一致（`RQ-B-4-30` 验收 3）。
 - **`20260915_0004` 的两点如实说明**：
@@ -40,6 +44,14 @@
      **0 条 DDL 语句、0 条违规**，32 条仍记在 `20260915_0002`/`0003` 的原文上。**库层面已合规**（见
      [Phase 05](../phases/active/phase-05-table-standard-alignment.md) 的真实输出），文本层面要让门禁归零
      **必须改动已应用的 revision**，超出本模块授权，已上报。
+
+## `20261107_0008` 的回滚语义（有损，dev-only）
+
+`assignment_sections` 是集合，无法无损回填进单列 `section_id`。`downgrade` 按
+**每个作业目标课序里字典序最小**的 `section_id` 回填，恢复 `NOT NULL` 与旧索引后删除两张目标表：
+其它目标课序与整张学生收窄名单会**被丢弃**。没有任何目标行的作业无法表达成旧形状；
+写入路径保证每个作业 1..N 行目标课序，因此这种情况只可能来自手工改库，让 `NOT NULL` 直接失败
+比编造一个课序号更诚实。迁移 docstring 同样写明了这一点。
 
 ## 生成与执行命令
 

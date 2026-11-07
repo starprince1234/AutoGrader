@@ -120,14 +120,21 @@ def enqueue(
 def submission_accepted_payload(
     *,
     submission_id: str,
+    assignment_id: str | None,
     student_id: str,
     course_id: str,
     section_id: str,
     question_version_id: str,
     intake: str,
 ) -> dict[str, object]:
-    """`submission.accepted` 的 payload：**只有标识**，任何情况下都不含源码（契约硬约束）。"""
-    return {
+    """`submission.accepted` 的 payload：**只有标识**，任何情况下都不含源码（契约硬约束）。
+
+    `assignment_id` 是 CHG-0032 新增的**可选**键：新事件总是携带它；`None` 只可能来自历史提交
+    （`assignment_id` 出现之前接收的行），此时**省略该键**而不是写 `null`——事件里不出现某个事实，
+    好过出现一个"看起来像值"的空值。它**不在** `events.payload.REQUIRED_KEYS` 里，因此升级瞬间
+    outbox 里已有的旧事件（没有该键）仍可投递。
+    """
+    payload: dict[str, object] = {
         "submission_id": submission_id,
         "student_id": student_id,
         "course_id": course_id,
@@ -135,3 +142,6 @@ def submission_accepted_payload(
         "question_version_id": question_version_id,
         "intake": intake,
     }
+    if assignment_id is not None:
+        payload["assignment_id"] = assignment_id
+    return payload

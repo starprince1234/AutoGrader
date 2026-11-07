@@ -455,4 +455,31 @@ def build_auth_router(state: B4State, dependencies: Dependencies) -> APIRouter:
         """Public key set. Unauthenticated by design: every module verifies locally."""
         return state.signing_key.jwks()
 
+    @router.get("/api/v1/me")
+    def get_current_user(
+        caller=Depends(dependencies.principal),
+        connection: Connection = Depends(dependencies.connection),
+    ) -> dict[str, object]:
+        """The caller's own account facts (CHG-0032).
+
+        The mail-submission body must carry the student's name and student number, and the
+        browser has no legitimate way to derive them: the access token carries identity and
+        scope, not profile data, and the roster endpoint is staff-only. Reading one's own
+        profile is not a privilege escalation, so the shape is deliberately minimal (no
+        e-mail address, no other user's data) and every authenticated caller may read exactly
+        their own row.
+        """
+        row = connection.execute(
+            select(users).where(users.c.user_id == caller.user_id)
+        ).one_or_none()
+        if row is None:  # pragma: no cover - a valid session implies an existing user
+            raise unauthenticated()
+        return {
+            "user_id": str(row.user_id),
+            "username": row.username,
+            "display_name": row.display_name,
+            "student_number": row.student_number,
+            "roles": sorted(caller.all_roles),
+        }
+
     return router

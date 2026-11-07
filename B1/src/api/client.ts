@@ -208,6 +208,25 @@ export async function apiRequest<T>(
   return (await response.text()) as unknown as T;
 }
 
+/**
+ * 读取**纯文本**响应（提交答案文件等）。
+ *
+ * 为什么不能直接用裸 `<a href>` 或 `<img src>`：这些端点要求
+ * `Authorization: Bearer …`，浏览器不会为链接/图片附加请求头，而 B1 的访问令牌只在内存里。
+ * 因此受控读取必须经本函数；调用方拿到的字符串由 React 转义渲染，**不写日志**、
+ * 也不把内容塞进任何会持久化的地方。
+ */
+export async function apiRequestText(
+  path: string,
+  options: ApiRequestOptions = {},
+): Promise<string> {
+  const { response } = await apiRequestRaw(path, {
+    ...options,
+    accept: options.accept ?? "text/plain",
+  });
+  return response.text();
+}
+
 /** 生成幂等键：同一份草稿重复提交必须复用同一个键（RQ-B-1-50 验收 1）。 */
 export function newIdempotencyKey(): string {
   return newRequestId();

@@ -3,6 +3,19 @@
 宿主（MAIN composition host）调用 `router()` 时只给一个 `ModuleContext`（settings 字典）。
 配置不完整时**不让宿主启动失败**（其它模块仍应可用），但本模块的端点必须返回 `503` 并在
 `health()` 中如实反映——宁可明确不可用，也不静默降级（例如"不验签也放行"）。
+
+## 作业受众目录（设计 §5.2/§6.5）
+
+提交接收与邮件收件都需要同一个只读端口：`B3AssignmentDirectory`（B3 internal
+`GET /api/v1/assignment-audiences/{id}`）。它复用 B2 已有的 `B2_B3_BASE_URL` +
+`B2_B3_AUTHORIZATION`（与服务取包/存证同一条服务间通道），不新增凭据。
+
+- 没配 → `assignment_directory=None`：接收端点对带作业的提交返回 503（`AssignmentDirectoryUnavailable`
+  由 `intake.service` 抛出），核验码端点同样 503。**不**把"没配"伪装成"作业不存在"。
+- 配了但装配非法（地址不是 http(s) / 凭据为空）→ 同上，原因可读。
+
+**同一个实例**同时交给 `SubmissionIntakeService` 与 `EmailVerificationService`：
+两个入口对"作业是否存在/是否受众"不可能给出不同答案。
 """
 
 from __future__ import annotations
@@ -25,14 +38,11 @@ from autograder_b2.db.engine import create_db_engine
 from autograder_b2.db.schema import EXPECTED_SCHEMA_REVISION
 from autograder_b2.intake.email_verification import EmailVerificationService
 from autograder_b2.intake.imap import EmailCheckpointStore, EmailIntakeService, QuarantineStore
-from autograder_b2.intake.matching import (
-    DirectoryEmailMatcher,
-    MappingEmailMatcher,
-    SenderDirectory,
-)
+from autograder_b2.intake.matching import DirectoryEmailMatcher, SenderDirectory
 from autograder_b2.intake.quarantine import IntakeQuarantineService
 from autograder_b2.intake.query import SubmissionQueryService
 from autograder_b2.intake.service import IntakeLimits, SubmissionIntakeService
+from autograder_b2.integration.assignments import AssignmentDirectory, B3AssignmentDirectory
 from autograder_b2.storage.cas import ContentAddressedStore
 
 
@@ -51,9 +61,11 @@ class IntakeRuntime:
     engine: Engine | None = None
     email: EmailIntakeService | None = None
     email_unavailable_reason: str | None = None
-    #: 一次性核验码服务（设计 §4）：与邮件入口同生共死——没有收件链路时，挑战端点也明确不可用。
+    #: 一次性核验码服务（设计 §6.3）：与邮件入口同生共死——没有收件链路时，挑战端点也明确不可用。
     #: 顶层 `B2Runtime` 通过属性把它转给路由；IMAP 路径由 `EmailIntakeService.verification` 使用。
     email_verification: EmailVerificationService | None = None
+    #: 作业受众目录（B3 internal 端点）。接收服务与核验服务**共用**这一个实例；`None` = 未配置。
+    assignment_directory: AssignmentDirectory | None = None
     _failures: int = field(default=0, init=False)
 
     @property
@@ -147,21 +159,41 @@ def build_runtime(settings_source: Mapping[str, str]) -> IntakeRuntime:
     runtime.authenticator = JwksAuthenticator(
         jwks, issuer=settings.jwt_issuer, audience=settings.jwt_audience
     )
+    runtime.assignment_directory = _build_assignment_directory(settings)
     limits = IntakeLimits(
         max_files=settings.max_files,
         max_file_bytes=settings.max_file_bytes,
         max_total_bytes=settings.max_total_bytes,
     )
     runtime.service = SubmissionIntakeService(
-        engine, ContentAddressedStore(settings.artifact_root, engine), limits
+        engine,
+        ContentAddressedStore(settings.artifact_root, engine),
+        limits,
+        assignment_directory=runtime.assignment_directory,
     )
     runtime.query = SubmissionQueryService(engine)
     runtime.quarantines = IntakeQuarantineService(engine)
     _wire_email_intake(runtime, settings_source, engine)
     if runtime.email is not None:
-        # 匹配用户需要回邮箱取原邮件；没有邮件入口时服务仍可读列表/作废/暂存。
+        # 人工复核需要回邮箱取原邮件；没有邮件入口时服务仍可读列表/作废/暂存。
         runtime.quarantines = IntakeQuarantineService(engine, email=runtime.email)
     return runtime
+
+
+def _build_assignment_directory(settings: Settings) -> AssignmentDirectory | None:
+    """用现有 B2→B3 服务通道装配作业目录；未配置/非法装配都收敛成 `None`（端点 503）。"""
+    base_url = settings.b3_base_url
+    authorization = settings.b3_authorization
+    if not base_url or not authorization:
+        return None
+    try:
+        return B3AssignmentDirectory(
+            base_url=base_url, authorization=authorization
+        )
+    except ValueError:
+        # 非法装配（地址不是 http(s)）在这里收敛成"没有目录"：端点会以 503 + 可读原因拒绝，
+        # 而不是让宿主启动失败或悄悄跳过作业校验。
+        return None
 
 
 def _wire_email_intake(
@@ -179,42 +211,36 @@ def _wire_email_intake(
     try:
         imap = load_imap_settings(settings_source)
         if imap is None:
-            matcher = None
-        elif imap.matching:
-            matcher = MappingEmailMatcher(imap.matching)
-        elif imap.identity is not None:
-            matcher = DirectoryEmailMatcher(
-                base_url=imap.identity.base_url,
-                authorization=imap.identity.authorization,
-                target=imap.identity.target,
-                timeout_seconds=imap.timeout_seconds,
-            )
-        else:
+            return
+        if imap.identity is None:
+            # 按发件地址解析账号是核验链路的必需依赖：没有它就无法证明"这封邮件属于谁"。
+            # 明确不可用，而不是把每一封邮件都隔离成"发件人未注册"。
             raise ConfigurationError(
-                "no matching rules configured: set B2_IMAP_MATCHING_JSON or "
-                "B2_IDENTITY_URL + B2_IDENTITY_AUTHORIZATION + B2_IMAP_TARGET_JSON"
+                "mail intake needs the B4 identity directory: set B2_IDENTITY_URL and"
+                " B2_IDENTITY_AUTHORIZATION"
             )
     except ConfigurationError as error:
         runtime.email_unavailable_reason = str(error)
         return
-    if imap is None or matcher is None:
-        return
 
+    directory: SenderDirectory = DirectoryEmailMatcher(
+        base_url=imap.identity.base_url,
+        authorization=imap.identity.authorization,
+        timeout_seconds=imap.timeout_seconds,
+    )
     assert runtime.service is not None
-    # 只有实现 `SenderDirectory` 的匹配器才能证明"发件地址属于哪个账号"；配置表驱动的匹配器
-    # 给的是部署配置里的固定目标，不能作为所有权依据，因此核验路径在它之下会明确拒绝带码邮件。
-    directory = matcher if isinstance(matcher, SenderDirectory) else None
     runtime.email_verification = EmailVerificationService(
         engine=engine,
         authenticator=runtime.authenticator,
         directory=directory,
+        assignment_directory=runtime.assignment_directory,
     )
     runtime.email = EmailIntakeService(
         engine=engine,
         settings=imap,
         intake=runtime.service,
-        matcher=matcher,
         checkpoints=EmailCheckpointStore(engine),
         quarantines=QuarantineStore(engine),
         verification=runtime.email_verification,
+        assignment_directory=runtime.assignment_directory,
     )

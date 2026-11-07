@@ -34,6 +34,8 @@ from autograder_b3.domain.versions import (
 )
 from autograder_b3.dto.internal import PROTECTED_FIELD_NAMES, AssignmentCreateInputModel
 from autograder_b3.errors import (
+    AssignmentTargetsInvalid,
+    AssignmentTargetsUnavailable,
     Conflict,
     DraftAssignmentReference,
     ImmutableVersionConflict,
@@ -43,7 +45,16 @@ from autograder_b3.errors import (
     RevisionNoteMisuse,
 )
 
-from .conftest import COURSE_A, COURSE_B, SECTION_A, draft_payload
+from .conftest import (
+    COURSE_A,
+    COURSE_B,
+    SECTION_A,
+    SECTION_A2,
+    SECTION_B,
+    STUDENT_A,
+    STUDENT_B,
+    draft_payload,
+)
 from .examples import CALLABLE_MANIFEST, FILE_MANIFEST, STDIN_MANIFEST
 from .support import (
     attest,
@@ -511,7 +522,7 @@ def test_deleting_an_ai_generated_draft_keeps_the_generation_ledger(
 # --- assignments ---------------------------------------------------------
 
 
-def test_assignment_accepts_only_published_versions(database, settings):
+def test_assignment_accepts_only_published_versions(database, settings, b4_target_client):
     question, published = create_published_question(database, settings, payload=draft_payload())
     _, draft_version = create_question(
         database,
@@ -526,31 +537,38 @@ def test_assignment_accepts_only_published_versions(database, settings):
             principal=teacher_principal(),
             payload=AssignmentCreateInputModel(
                 course_id=COURSE_A,
-                section_id=SECTION_A,
+                section_ids=(SECTION_A,),
                 title="week 1",
                 due_at=None,
                 question_version_ids=(draft_version.question_version_id,),
             ),
+            targets=b4_target_client,
             now=PUBLISH_AT,
         )
 
-    assignment, items = create_assignment(
+    view = create_assignment(
         database,
         principal=teacher_principal(),
         payload=AssignmentCreateInputModel(
             course_id=COURSE_A,
-            section_id=SECTION_A,
+            section_ids=(SECTION_A, SECTION_A2),
+            student_ids=(STUDENT_A,),
             title="week 1",
             due_at=datetime(2026, 9, 20, tzinfo=UTC),
             question_version_ids=(published.question_version_id,),
         ),
+        targets=b4_target_client,
         now=PUBLISH_AT,
     )
-    assert assignment.title == "week 1"
-    assert [item.question_version_id for item in items] == [published.question_version_id]
+    assert view.assignment.title == "week 1"
+    assert view.question_version_ids == (published.question_version_id,)
+    # The target model is a set: both sections and the narrowing list are stored, not
+    # collapsed into one column (the old shape could not represent either).
+    assert view.section_ids == (SECTION_A, SECTION_A2)
+    assert view.student_ids == (STUDENT_A,)
 
 
-def test_assignment_referencing_another_course_is_not_found(database, settings):
+def test_assignment_referencing_another_course_is_not_found(database, settings, b4_target_client):
     _, version = create_published_question(database, settings, payload=draft_payload())
     with pytest.raises(NotFound):
         create_assignment(
@@ -558,10 +576,99 @@ def test_assignment_referencing_another_course_is_not_found(database, settings):
             principal=teacher_principal(course_ids=(COURSE_B,)),
             payload=AssignmentCreateInputModel(
                 course_id=COURSE_B,
-                section_id=SECTION_A,
+                section_ids=(SECTION_B,),
                 title="cross course",
                 due_at=None,
                 question_version_ids=(version.question_version_id,),
+            ),
+            targets=b4_target_client,
+            now=PUBLISH_AT,
+        )
+
+
+def test_assignment_rejects_a_section_of_another_course(database, settings, b4_target_client):
+    """A section id must belong to the assignment's course; the target validator decides."""
+    _, published = create_published_question(database, settings, payload=draft_payload())
+    with pytest.raises(AssignmentTargetsInvalid):
+        create_assignment(
+            database,
+            principal=teacher_principal(),
+            payload=AssignmentCreateInputModel(
+                course_id=COURSE_A,
+                section_ids=(SECTION_A, SECTION_B),
+                title="wrong class",
+                due_at=None,
+                question_version_ids=(published.question_version_id,),
+            ),
+            targets=b4_target_client,
+            now=PUBLISH_AT,
+        )
+
+
+def test_assignment_rejects_a_student_not_enrolled_in_the_target_sections(
+    database, settings, b4_target_client
+):
+    _, published = create_published_question(database, settings, payload=draft_payload())
+    with pytest.raises(AssignmentTargetsInvalid):
+        # STUDENT_B is enrolled in SECTION_A2, which is not a target of this assignment.
+        create_assignment(
+            database,
+            principal=teacher_principal(),
+            payload=AssignmentCreateInputModel(
+                course_id=COURSE_A,
+                section_ids=(SECTION_A,),
+                student_ids=(STUDENT_A, STUDENT_B),
+                title="not enrolled",
+                due_at=None,
+                question_version_ids=(published.question_version_id,),
+            ),
+            targets=b4_target_client,
+            now=PUBLISH_AT,
+        )
+
+
+def test_assignment_creation_without_a_target_validator_is_unavailable(database, settings):
+    """No validator means no assignment: target ids are never accepted on trust."""
+    _, published = create_published_question(database, settings, payload=draft_payload())
+    with pytest.raises(AssignmentTargetsUnavailable):
+        create_assignment(
+            database,
+            principal=teacher_principal(),
+            payload=AssignmentCreateInputModel(
+                course_id=COURSE_A,
+                section_ids=(SECTION_A,),
+                title="no validator",
+                due_at=None,
+                question_version_ids=(published.question_version_id,),
+            ),
+            targets=None,
+            now=PUBLISH_AT,
+        )
+
+
+def test_assignment_creation_reports_an_unreachable_target_validator(database, settings):
+    """An unreachable validator is a 503 outcome, not a silent skip."""
+    from autograder_b3.integration.b4 import B4TargetClient
+
+    def failing_opener(request, timeout):
+        raise ConnectionError("connection refused")
+
+    _, published = create_published_question(database, settings, payload=draft_payload())
+    with pytest.raises(AssignmentTargetsUnavailable):
+        create_assignment(
+            database,
+            principal=teacher_principal(),
+            payload=AssignmentCreateInputModel(
+                course_id=COURSE_A,
+                section_ids=(SECTION_A,),
+                title="validator down",
+                due_at=None,
+                question_version_ids=(published.question_version_id,),
+            ),
+            targets=B4TargetClient(
+                base_url="http://identity.invalid",
+                service_token="test-service-token",
+                opener=failing_opener,
             ),
             now=PUBLISH_AT,
         )

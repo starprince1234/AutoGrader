@@ -44,6 +44,7 @@ from autograder_b2.intake.quarantine import (
     InvalidQuarantineCursorError,
     InvalidQuarantineFilterError,
     QuarantineAlreadyResolvedError,
+    QuarantineAssignmentUnavailable,
     QuarantineContentRejected,
     QuarantineEmailUnavailable,
     QuarantineMessageGone,
@@ -60,7 +61,7 @@ from autograder_b2.intake.quarantine import (
 )
 from autograder_b2.intake.query import SubmissionNotFoundError, SubmissionView
 from autograder_b2.intake.runtime import IntakeRuntime
-from autograder_b2.intake.service import SubmissionIdConflict
+from autograder_b2.intake.service import AssignmentDirectoryUnavailable, SubmissionIdConflict
 from autograder_b2.logging.context import bind_context
 from autograder_b2.logging.logger import log_dependency_unavailable, log_event
 
@@ -214,6 +215,13 @@ def build_router(runtime: IntakeRuntime) -> APIRouter:
                     ),
                     instance,
                 )
+            except AssignmentDirectoryUnavailable as error:
+                # 作业目录未配置/不可达是**基础设施故障**，不是"学生交错了题"：503 + 依赖故障日志。
+                log_dependency_unavailable(
+                    logger, dependency="b3-assignments", error=error, stage="submissions"
+                )
+                runtime.record_failure()
+                return problem_response(SERVICE_UNAVAILABLE, instance)
             except SQLAlchemyError as error:
                 # 依赖不可用**既有状态也有日志**（RQ-B-2-99 场景 2-99-D）：状态侧是 503 +
                 # `record_failure()`（**只如实累计、不翻转健康判定**，理由见该方法 docstring）；
@@ -577,7 +585,7 @@ def build_router(runtime: IntakeRuntime) -> APIRouter:
 
     @router.post("/api/v1/intake/quarantines/{intake_quarantine_id}/complete")
     async def complete_intake_quarantine(intake_quarantine_id: str, request: Request) -> Response:
-        """匹配用户：按学生 + 课程 + 课序 + 题目版本把原邮件生成提交并关闭隔离记录。"""
+        """匹配用户：按学生 + 课程 + 课序 + 作业把原邮件逐题（`N.txt`）生成提交并关闭隔离记录。"""
         instance = request.url.path
         if not runtime.ready:
             return _not_available(instance, runtime.unavailable_reason)
@@ -592,7 +600,7 @@ def build_router(runtime: IntakeRuntime) -> APIRouter:
             return _unprocessable(instance, "request body must be a JSON object")
         if not isinstance(payload, dict):
             return _unprocessable(instance, "request body must be a JSON object")
-        required = ("student_id", "course_id", "section_id", "question_version_id")
+        required = ("student_id", "course_id", "section_id", "assignment_id")
         unknown = sorted(set(payload) - {*required, "note"})
         if unknown:
             return _unprocessable(instance, "request body has unknown fields: " + ", ".join(unknown))
@@ -607,7 +615,7 @@ def build_router(runtime: IntakeRuntime) -> APIRouter:
                 student_id=payload["student_id"],
                 course_id=payload["course_id"],
                 section_id=payload["section_id"],
-                question_version_id=payload["question_version_id"],
+                assignment_id=payload["assignment_id"],
                 note=payload.get("note"),
             )
         except AuthorizationError:
@@ -659,6 +667,22 @@ def build_router(runtime: IntakeRuntime) -> APIRouter:
                 ),
                 instance,
             )
+        except QuarantineAssignmentUnavailable as error:
+            # 作业受众读不到（目录未配置/B3 不可达）：系统故障，不是"作业不存在"或"学生选错"。
+            log_dependency_unavailable(
+                logger, dependency="b3-assignments", error=error, stage="intake quarantines"
+            )
+            runtime.record_failure()
+            return problem_response(
+                Problem(
+                    503,
+                    "service-unavailable",
+                    "Service Unavailable",
+                    "the assignment directory is not available, so the original message"
+                    " cannot be mapped to an assignment",
+                ),
+                instance,
+            )
         except SQLAlchemyError as error:
             log_dependency_unavailable(
                 logger, dependency="database", error=error, stage="intake quarantines"
@@ -702,6 +726,7 @@ def _submission_view_body(view: SubmissionView) -> dict[str, Any]:
     """契约 `SubmissionView`：字段集合固定；`files` 只含路径/摘要/字节数，绝不含内容。"""
     return {
         "submission_id": view.submission_id,
+        "assignment_id": view.assignment_id,
         "student_id": view.student_id,
         "course_id": view.course_id,
         "section_id": view.section_id,

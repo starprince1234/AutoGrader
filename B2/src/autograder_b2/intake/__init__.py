@@ -3,9 +3,11 @@
 两条入口的分工固定如下，且只有一处落库实现：
 
 - API：`intake.api` → `SubmissionIntakeService.accept` → `persist`；
-- 邮件：`intake.imap.EmailIntakeService.process_raw` → `persist`。
+- 邮件：`intake.imap.EmailIntakeService.process_raw` →（一次性核验码挑战 + 正文/附件映射校验）
+  → 逐题 `persist`。
 
 两者都经 `intake.service.build_submission_envelope` 产出同一个冻结的 `SubmissionEnvelope`。
+邮件不再有"固定目标/匹配规则"：作业归属只来自核验码挑战（设计 §1.5/§6.4）。
 """
 
 from __future__ import annotations
@@ -18,6 +20,13 @@ from autograder_b2.intake.attachments import (
     parse_message,
     screen_attachments,
 )
+from autograder_b2.intake.email_body import (
+    EmailBody,
+    missing_fields_detail,
+    normalize_assignment_id,
+    normalize_person_text,
+    parse_email_body,
+)
 from autograder_b2.intake.email_rules import (
     EMAIL_CHECKS,
     EmailCheck,
@@ -29,11 +38,18 @@ from autograder_b2.intake.email_rules import (
     subject_matches,
 )
 from autograder_b2.intake.email_verification import (
+    ATTACHMENT_MAPPING_INVALID,
     CHALLENGE_TTL,
+    EMAIL_BODY_MISMATCH,
+    EMAIL_BODY_MISSING_FIELD,
     HEARTBEAT_MAX_AGE,
+    ChallengeAssignmentClosedError,
+    ChallengeAssignmentNotFoundError,
+    ChallengeInspection,
     ChallengeNotFoundError,
     ChallengeRequestError,
     ChallengeStatus,
+    ChallengeSubmission,
     ConsumedVerification,
     EmailVerificationService,
     IntakeHealth,
@@ -58,13 +74,10 @@ from autograder_b2.intake.imap import (
 )
 from autograder_b2.intake.matching import (
     DirectoryEmailMatcher,
-    EmailMatcher,
-    MappingEmailMatcher,
     MatchedAccount,
-    MatchResult,
+    MatchingUnavailable,
     ScopeContext,
     SenderDirectory,
-    SubmissionTarget,
 )
 from autograder_b2.intake.quarantine import (
     ATTRIBUTABLE_REASON_CODES,
@@ -74,6 +87,7 @@ from autograder_b2.intake.quarantine import (
     InvalidQuarantineCursorError,
     InvalidQuarantineFilterError,
     QuarantineAlreadyResolvedError,
+    QuarantineAssignmentUnavailable,
     QuarantineNotAttributableError,
     QuarantineNotFoundError,
     QuarantineRequestError,
@@ -83,6 +97,7 @@ from autograder_b2.intake.quarantine import (
 from autograder_b2.intake.runtime import IntakeRuntime, build_runtime
 from autograder_b2.intake.service import (
     STATE_VALIDATED,
+    AssignmentDirectoryUnavailable,
     IntakeLimits,
     IntakeResult,
     SubmissionIntakeService,
@@ -92,24 +107,32 @@ from autograder_b2.intake.service import (
 
 __all__ = [
     "ALLOWED_ATTACHMENT_EXTENSIONS",
+    "ATTACHMENT_MAPPING_INVALID",
     "ATTRIBUTABLE_REASON_CODES",
     "CHALLENGE_TTL",
+    "EMAIL_BODY_MISMATCH",
+    "EMAIL_BODY_MISSING_FIELD",
     "EMAIL_CHECKS",
     "HEARTBEAT_MAX_AGE",
     "STATE_VALIDATED",
+    "AssignmentDirectoryUnavailable",
     "AttachmentRejected",
+    "ChallengeAssignmentClosedError",
+    "ChallengeAssignmentNotFoundError",
+    "ChallengeInspection",
     "ChallengeNotFoundError",
     "ChallengeRequestError",
     "ChallengeStatus",
+    "ChallengeSubmission",
     "Checkpoint",
     "ConsumedVerification",
     "DirectoryEmailMatcher",
+    "EmailBody",
     "EmailCheck",
     "EmailCheckOutcome",
     "EmailCheckpointStore",
     "EmailIntakeReason",
     "EmailIntakeService",
-    "EmailMatcher",
     "EmailReceipt",
     "EmailRequirements",
     "EmailVerificationService",
@@ -126,12 +149,12 @@ __all__ = [
     "InvalidQuarantineCursorError",
     "InvalidQuarantineFilterError",
     "IssuedChallenge",
-    "MappingEmailMatcher",
-    "MatchResult",
     "MatchedAccount",
+    "MatchingUnavailable",
     "MessageOutcome",
     "PullReport",
     "QuarantineAlreadyResolvedError",
+    "QuarantineAssignmentUnavailable",
     "QuarantineNotAttributableError",
     "QuarantineNotFoundError",
     "QuarantineRecord",
@@ -141,7 +164,6 @@ __all__ = [
     "ScopeContext",
     "SenderDirectory",
     "SubmissionIntakeService",
-    "SubmissionTarget",
     "VerificationRejected",
     "build_runtime",
     "build_submission_envelope",
@@ -150,6 +172,10 @@ __all__ = [
     "extract_challenge_codes",
     "intake_health",
     "load_email_receipt",
+    "missing_fields_detail",
+    "normalize_assignment_id",
+    "normalize_person_text",
+    "parse_email_body",
     "parse_message",
     "parse_subject",
     "quarantine_page_body",

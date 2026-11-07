@@ -8,10 +8,15 @@
 
 | 服务层异常 | 状态码 |
 |---|---|
-| `GradingForbidden` | 403 |
+| `AuthorizationError`（读提交内容：`require_submission_read`） | 403 |
+| `GradingForbidden`（评分写动作：仅教师/管理员） | 403 |
 | `SubmissionNotFound` | 404 |
 | `ManualGradeConflict` | 409（乐观锁冲突 / 改分缺理由） |
 | `InvalidManualGrade` | 422 |
+
+读与写刻意用两套判定（CHG-0032）：`GET .../files` 与 `GET .../intake-message` 允许学生读**本人**、
+教师/管理员在课程作用域内读；`POST .../manual-grade`、`.../release`、`GET .../manual-grade` 仍是
+教师/管理员专用——"学生能看自己的答案"绝不能变成"学生能给自己打分"。
 """
 
 from __future__ import annotations
@@ -24,6 +29,7 @@ from fastapi import APIRouter, Request, Response
 from fastapi.responses import JSONResponse
 
 from autograder_b2.api.errors import FORBIDDEN, UNAUTHORIZED, Problem, problem_response
+from autograder_b2.auth.authorization import AuthorizationError
 from autograder_b2.auth.tokens import AuthenticationError, Principal
 from autograder_b2.grades.manual import (
     GradingForbidden,
@@ -138,6 +144,8 @@ def build_manual_grade_router(runtime: B2Runtime) -> APIRouter:
             )
         except GradingForbidden as error:
             return problem_response(FORBIDDEN, instance, str(error))
+        except AuthorizationError:
+            return problem_response(FORBIDDEN, instance)
         except ManualNotFound as error:
             return _json_error(instance, 404, "Not Found", str(error))
         except ManualGradeConflict as error:
@@ -175,6 +183,8 @@ def build_manual_grade_router(runtime: B2Runtime) -> APIRouter:
             )
         except GradingForbidden as error:
             return problem_response(FORBIDDEN, instance, str(error))
+        except AuthorizationError:
+            return problem_response(FORBIDDEN, instance)
         except ManualNotFound as error:
             return _json_error(instance, 404, "Not Found", str(error))
 
@@ -202,6 +212,8 @@ def build_manual_grade_router(runtime: B2Runtime) -> APIRouter:
             )
         except GradingForbidden as error:
             return problem_response(FORBIDDEN, instance, str(error))
+        except AuthorizationError:
+            return problem_response(FORBIDDEN, instance)
         except ManualNotFound as error:
             return _json_error(instance, 404, "Not Found", str(error))
         except ManualGradeConflict as error:
@@ -232,6 +244,8 @@ def build_manual_grade_router(runtime: B2Runtime) -> APIRouter:
             )
         except GradingForbidden as error:
             return problem_response(FORBIDDEN, instance, str(error))
+        except AuthorizationError:
+            return problem_response(FORBIDDEN, instance)
         except ManualNotFound as error:
             return _json_error(instance, 404, "Not Found", str(error))
 
@@ -277,6 +291,8 @@ def build_manual_grade_router(runtime: B2Runtime) -> APIRouter:
             )
         except GradingForbidden as error:
             return problem_response(FORBIDDEN, instance, str(error))
+        except AuthorizationError:
+            return problem_response(FORBIDDEN, instance)
         except ManualNotFound as error:
             return _json_error(instance, 404, "Not Found", str(error))
         if size > MAX_DOWNLOAD_BYTES:

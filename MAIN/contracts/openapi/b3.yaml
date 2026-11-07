@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AutoGrader B3 Question Bank API
-  version: 0.30.0
+  version: 0.31.0
   description: |
     Question bank: stems with graphics, reference answers, immutable question
     versions, assignments, three test-suite adapters and de-identified statistics.
@@ -1023,12 +1023,21 @@ paths:
     get:
       operationId: listAssignments
       summary: List assignments (作业集合) in the caller's course scope
+      description: |
+        Teachers see assignments in the courses they are staff on. Students see only
+        assignments whose target sections include their course section and, when the
+        assignment narrows its audience to named students, whose student list contains them
+        (CHG-0032). The list is keyset-paginated by `(created_at, assignment_id)`.
       tags: [assignments]
       parameters:
         - $ref: './common.yaml#/components/parameters/Cursor'
         - $ref: './common.yaml#/components/parameters/Limit'
         - {name: course_id, in: query, required: false, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
-        - {name: section_id, in: query, required: false, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+        - name: section_id
+          in: query
+          required: false
+          schema: {$ref: './common.yaml#/components/schemas/Uuid'}
+          description: "Only assignments whose target sections include this section."
       responses:
         '200':
           description: Page of assignments.
@@ -1047,7 +1056,12 @@ paths:
     post:
       operationId: createAssignment
       summary: Create an assignment from published question versions
-      description: "Only published versions may be referenced; a draft reference returns 409."
+      description: |
+        Only published versions may be referenced; a draft reference returns 409. The assignment
+        must target at least one section of `course_id`; `student_ids` optionally narrows the
+        audience to named students inside those sections (empty means the whole sections).
+        Sections and students are validated against B4 server-side; invalid targets are 422 and
+        are never silently narrowed.
       tags: [assignments]
       requestBody:
         required: true
@@ -1055,16 +1069,32 @@ paths:
           application/json:
             schema:
               type: object
-              required: [course_id, section_id, title, question_version_ids]
+              required: [course_id, section_ids, title, question_version_ids]
               properties:
                 course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
-                section_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+                section_ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 50
+                  uniqueItems: true
+                  items: {$ref: './common.yaml#/components/schemas/Uuid'}
+                  description: "Target sections of this course (1-based class ordinals are per course)."
+                student_ids:
+                  type: array
+                  maxItems: 2000
+                  uniqueItems: true
+                  default: []
+                  items: {$ref: './common.yaml#/components/schemas/Uuid'}
+                  description: "Optional narrowing: exactly these students (each validated as actively enrolled in one of `section_ids`). Empty means every student in the target sections."
                 title: {type: string, minLength: 1, maxLength: 200}
                 due_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
                 question_version_ids:
                   type: array
                   minItems: 1
+                  maxItems: 50
+                  uniqueItems: true
                   items: {$ref: './common.yaml#/components/schemas/Uuid'}
+                  description: "Assignment order: item ordinal equals array position (0-based). Answer files are named by 1-based position (`1.txt`, ...)."
               additionalProperties: false
       responses:
         '201':
@@ -1076,6 +1106,7 @@ paths:
         '403': {$ref: './common.yaml#/components/responses/Forbidden'}
         '409': {$ref: './common.yaml#/components/responses/Conflict'}
         '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+        '503': {$ref: './common.yaml#/components/responses/ServiceUnavailable'}
 
   /api/v1/assignments/{assignment_id}:
     parameters:
@@ -1098,6 +1129,33 @@ paths:
         '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
         '403': {$ref: './common.yaml#/components/responses/Forbidden'}
         '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
+  /api/v1/assignment-audiences/{assignment_id}:
+    parameters:
+      - {name: assignment_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    get:
+      operationId: getInternalAssignment
+      summary: Read an assignment's audience for submission admission (service-to-service)
+      description: |
+        Consumed by B2 when accepting a web or mail submission (CHG-0032). Being internal is not a
+        substitute for authorization: the caller must present the pre-shared `serviceToken`, not a
+        student or teacher access token. The response is the minimum needed for admission:
+        identity, status, target sections/students and the ordered question list. A missing
+        assignment is `404`; missing/wrong credentials are `401`; a deployment with no service
+        credential configured refuses the endpoint with `503` instead of treating it as open
+        (an unconfigured internal channel must fail closed, not degrade).
+      tags: [internal]
+      security:
+        - serviceToken: []
+      responses:
+        '200':
+          description: The assignment audience.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AssignmentInternal'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '503': {$ref: './common.yaml#/components/responses/ServiceUnavailable'}
 
 components:
   schemas:
@@ -1983,17 +2041,24 @@ components:
     AssignmentPublic:
       type: object
       description: |
-        A homework set that groups published question versions for one section.
-        Recorded by CHG-0007: the operation previously returned an undocumented body
-        ("Page of assignments."), so a client could not tell what an assignment even
-        contains — while the platform had already created eight of them. The shape below
-        is what B3 in fact returns and what the live API was measured to return.
-      required: [assignment_id, course_id, section_id, title, status, question_version_ids]
+        A homework set that groups published question versions for one course and one or more
+        target sections, optionally narrowed to named students (CHG-0032). `question_version_ids`
+        is in assignment order (item ordinal 0..n-1); answer files are named by 1-based position
+        (`1.txt`, `2.txt`, ...). `student_ids` empty means "every student in the target
+        sections"; non-empty means exactly those students.
+      required: [assignment_id, course_id, section_ids, student_ids, title, status, question_version_ids]
       properties:
         assignment_id: {$ref: './common.yaml#/components/schemas/Uuid'}
         course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
-        section_id: {$ref: './common.yaml#/components/schemas/Uuid'}
-        title: {type: string, minLength: 1, maxLength: 300}
+        section_ids:
+          type: array
+          minItems: 1
+          items: {$ref: './common.yaml#/components/schemas/Uuid'}
+        student_ids:
+          type: array
+          description: "Optional audience narrowing. Empty = all students in the target sections."
+          items: {$ref: './common.yaml#/components/schemas/Uuid'}
+        title: {type: string, minLength: 1, maxLength: 200}
         status: {type: string, enum: [open, archived]}
         due_at: {anyOf: [{$ref: './common.yaml#/components/schemas/Timestamp'}, {type: "null"}]}
         question_version_ids:
@@ -2001,6 +2066,32 @@ components:
           items: {$ref: './common.yaml#/components/schemas/Uuid'}
         created_at: {anyOf: [{$ref: './common.yaml#/components/schemas/Timestamp'}, {type: "null"}]}
         updated_at: {anyOf: [{$ref: './common.yaml#/components/schemas/Timestamp'}, {type: "null"}]}
+      additionalProperties: false
+
+    AssignmentInternal:
+      type: object
+      description: |
+        The assignment audience served to B2 over the internal channel (serviceToken only). It
+        is the minimum B2 needs to admit or refuse a submission: identity, target sections and
+        students, and the ordered question list. Timestamps are not needed for admission and are
+        therefore not exposed here.
+      required: [assignment_id, course_id, title, status, section_ids, student_ids, question_version_ids]
+      properties:
+        assignment_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        section_ids:
+          type: array
+          minItems: 1
+          items: {$ref: './common.yaml#/components/schemas/Uuid'}
+        student_ids:
+          type: array
+          items: {$ref: './common.yaml#/components/schemas/Uuid'}
+        title: {type: string, minLength: 1, maxLength: 200}
+        status: {type: string, enum: [open, archived]}
+        question_version_ids:
+          type: array
+          minItems: 1
+          items: {$ref: './common.yaml#/components/schemas/Uuid'}
       additionalProperties: false
 
     QuestionStatistics:
@@ -2095,12 +2186,15 @@ components:
       type: object
       description: |
         PROTECTED requirements for `email_delivery`. The receipt itself is produced by the real
-        IMAP intake; this object only says what the message must satisfy.
+        IMAP intake; this object only says what the message subject must satisfy. From CHG-0032
+        the answer attachment is not templated per question any more: a submission is one
+        assignment question and its answer file is named by the question's 1-based position in
+        the assignment (`1.txt`, `2.txt`, ...), so the `attachment` check means "the message
+        mapped an answer file to this question".
       required: [attempt]
       properties:
         attempt: {type: integer, minimum: 1, maximum: 99}
         subject_template: {type: string, maxLength: 200, default: "{student_number}_{attempt}"}
-        required_attachment_template: {type: string, maxLength: 200, default: "{student_number}.txt"}
       additionalProperties: false
 
     ExecutionSsh:

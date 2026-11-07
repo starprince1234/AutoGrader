@@ -20,11 +20,12 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from sqlalchemy import Engine
+from sqlalchemy import Engine, text
 
 from autograder_b2.api.errors import install_problem_handlers
 from autograder_b2.intake.api import build_router
 from autograder_b2.intake.runtime import IntakeRuntime, build_runtime
+from autograder_b2.integration.assignments import AssignmentAudience
 from tests.conftest import requires_postgres
 
 pytestmark = requires_postgres
@@ -32,8 +33,46 @@ pytestmark = requires_postgres
 ISSUER = "autograder-b4"
 AUDIENCE = "autograder"
 SOURCE = b"print('secret student code')\n"
+ANSWER_FILE = "1.txt"
 POST = "/api/v1/submissions"
 ENDPOINT = "/api/v1/submissions"
+
+
+class _AssignmentDirectory:
+    """测试用作业目录（端口替身）：只回答本用例显式登记的作业。
+
+    生产实现是 `integration.assignments.B3AssignmentDirectory`（HTTP + 服务令牌）；这里替换的只是
+    **传输**，`accept` 的校验顺序与 422/403/503 语义走的是真实服务代码。
+    """
+
+    def __init__(self) -> None:
+        self.audiences: dict[str, AssignmentAudience] = {}
+
+    def add(
+        self,
+        *,
+        assignment_id: str,
+        course_id: str,
+        section_id: str,
+        question_version_id: str,
+        student_ids: tuple[str, ...] = (),
+        status: str = "open",
+    ) -> None:
+        self.audiences[str(uuid.UUID(assignment_id))] = AssignmentAudience(
+            assignment_id=str(uuid.UUID(assignment_id)),
+            course_id=str(uuid.UUID(course_id)),
+            title="作业",
+            status=status,
+            section_ids=(str(uuid.UUID(section_id)),),
+            student_ids=tuple(str(uuid.UUID(item)) for item in student_ids),
+            question_version_ids=(str(uuid.UUID(question_version_id)),),
+        )
+
+    def get(self, assignment_id: str) -> AssignmentAudience | None:
+        try:
+            return self.audiences.get(str(uuid.UUID(assignment_id)))
+        except (AttributeError, TypeError, ValueError):
+            return None
 
 
 def _b64url(data: bytes) -> str:
@@ -88,21 +127,37 @@ def signer() -> _Signer:
 
 
 @pytest.fixture(scope="module")
+def assignments() -> _AssignmentDirectory:
+    return _AssignmentDirectory()
+
+
+@pytest.fixture(scope="module")
 def runtime(
-    upgraded_database_url: str, tmp_path_factory: pytest.TempPathFactory, signer: _Signer
+    upgraded_database_url: str,
+    tmp_path_factory: pytest.TempPathFactory,
+    signer: _Signer,
+    assignments: _AssignmentDirectory,
 ) -> IntakeRuntime:
-    return build_runtime(
+    instance = build_runtime(
         {
             "DATABASE_URL": upgraded_database_url,
             "B2_ARTIFACT_ROOT": str(tmp_path_factory.mktemp("artifacts")),
             "B2_JWKS_JSON": json.dumps(signer.jwks),
         }
     )
+    # 作业目录是接收入口的外部依赖：测试注入端口替身（生产由 `B2_B3_BASE_URL` 装配真实 HTTP 客户端）。
+    assert instance.service is not None
+    instance.assignment_directory = assignments
+    instance.service.assignment_directory = assignments
+    return instance
 
 
 @pytest.fixture()
-def client(runtime: IntakeRuntime, engine: Engine) -> Iterator[TestClient]:
+def client(
+    runtime: IntakeRuntime, engine: Engine, assignments: _AssignmentDirectory
+) -> Iterator[TestClient]:
     app = FastAPI()
+    app.state.assignment_directory = assignments
     install_problem_handlers(app)
     app.include_router(build_router(runtime))
     with TestClient(app) as test_client:
@@ -129,23 +184,40 @@ def _auth(token: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _submit(client: TestClient, signer: _Signer, student_id: str, course: tuple[str, str]) -> str:
+def _submit(
+    client: TestClient,
+    signer: _Signer,
+    student_id: str,
+    course: tuple[str, str],
+    *,
+    assignment_id: str | None = None,
+) -> str:
     course_id, section_id = course
+    question_version_id = str(uuid.uuid4())
+    assignment = assignment_id or str(uuid.uuid4())
     payload = {
         "submission_id": str(uuid.uuid4()),
+        "assignment_id": assignment,
         "student_id": student_id,
         "course_id": course_id,
         "section_id": section_id,
-        "question_version_id": str(uuid.uuid4()),
+        "question_version_id": question_version_id,
         "files": [
             {
-                "path": "main.py",
+                "path": ANSWER_FILE,
                 "content_sha256": hashlib.sha256(SOURCE).hexdigest(),
                 "content_base64": base64.b64encode(SOURCE).decode("ascii"),
             }
         ],
         "idempotency_key": f"key-{uuid.uuid4().hex}",
     }
+    directory = client.app.state.assignment_directory  # type: ignore[attr-defined]
+    directory.add(
+        assignment_id=assignment,
+        course_id=course_id,
+        section_id=section_id,
+        question_version_id=question_version_id,
+    )
     response = client.post(POST, json=payload, headers=_auth(_student_token(signer, student_id, course)))
     assert response.status_code == 202, response.text
     return payload["submission_id"]
@@ -229,7 +301,10 @@ def test_view_shape_and_no_file_content_leaks(
     client: TestClient, signer: _Signer, course: tuple[str, str]
 ) -> None:
     student_id = str(uuid.uuid4())
-    submission_id = _submit(client, signer, student_id, course)
+    assignment_id = str(uuid.uuid4())
+    submission_id = _submit(
+        client, signer, student_id, course, assignment_id=assignment_id
+    )
     response = client.get(
         f"{ENDPOINT}/{submission_id}", headers=_auth(_student_token(signer, student_id, course))
     )
@@ -241,6 +316,8 @@ def test_view_shape_and_no_file_content_leaks(
         "course_id",
         "section_id",
         "question_version_id",
+        # CHG-0032：提交视图带作业归属（历史行是 null，新行是 UUID）。
+        "assignment_id",
         "state",
         "intake",
         "files",
@@ -252,11 +329,12 @@ def test_view_shape_and_no_file_content_leaks(
         "evaluation_run_id",
         "created_at",
     }
+    assert body["assignment_id"] == assignment_id
     assert body["state"] == "validated"
     assert body["intake"] == "api"
     assert body["files"] == [
         {
-            "path": "main.py",
+            "path": ANSWER_FILE,
             "content_sha256": hashlib.sha256(SOURCE).hexdigest(),
             "size_bytes": len(SOURCE),
         }
@@ -267,6 +345,27 @@ def test_view_shape_and_no_file_content_leaks(
     assert "secret student code" not in serialized, "视图绝不能内联源码"
     assert base64.b64encode(SOURCE).decode("ascii") not in serialized
     assert "content_base64" not in serialized and "storage_ref" not in serialized
+
+
+def test_view_reports_null_assignment_for_a_historical_row(
+    client: TestClient, signer: _Signer, course: tuple[str, str], engine: Engine
+) -> None:
+    """历史行（`assignment_id IS NULL`）在视图里如实是 `null`，不被猜成某个作业。"""
+    student_id = str(uuid.uuid4())
+    submission_id = _submit(client, signer, student_id, course)
+    # 模拟迁移 0021 之前写入的行：作业归属不存在。
+    with engine.begin() as connection:
+        connection.execute(
+            text("UPDATE b2.submissions SET assignment_id = NULL WHERE submission_id = :sid"),
+            {"sid": uuid.UUID(submission_id)},
+        )
+
+    response = client.get(
+        f"{ENDPOINT}/{submission_id}", headers=_auth(_student_token(signer, student_id, course))
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["assignment_id"] is None
 
 
 def test_state_history_is_real_and_ordered(

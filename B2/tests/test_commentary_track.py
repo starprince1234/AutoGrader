@@ -642,6 +642,7 @@ def _envelope(submission_id: str, question_version_id: str, world: _World) -> Su
     content = CLEAN_SOURCE.encode("utf-8")
     return SubmissionEnvelope(
         submission_id=submission_id,
+        assignment_id=str(uuid.uuid4()),
         student_id=world.student,
         course_id=world.course,
         section_id=world.section,

@@ -21,10 +21,17 @@
 4. **非法请求零落库**：任何校验失败都发生在写内容与写元数据之前；
 5. **内容先于元数据**：字节先落 CAS，随后"提交行 + 文件行 + 状态迁移 + outbox 事件"在**同一事务**提交；
 6. **幂等**：`(idempotency_scope, idempotency_key)` 唯一约束兜底；重放返回既有 `submission_id`，
-   且**不**重复入队 `submission.accepted`。
+   且**不**重复入队 `submission.accepted`。作用域是 `assignment:student:question_version` 的规范化
+   UUID 三元组（规格 §5.2）：两个作业引用同一题目版本时不会被当成彼此的重放；历史行的旧作用域保持
+   原样，不迁移、不回填。
 7. **信封可往返**：`correlation_id` 与 provenance 随提交行一起落库（迁移 `20260915_0008`），
    因此 `integration.submission_loader` 能把这一行重新组装成同一个冻结信封。少了这两样，
    评测阶段就没有生产级输入路径——它必须用 `submission.correlation_id` 发事件。
+8. **作业归属（CHG-0032）**：新提交必须带 `assignment_id`，并逐项对上 B3 的作业受众——作业存在且
+   open、课程与题目属于作业、section/student 在受众内。作业目录**未配置或不可达**一律是基础设施
+   失败（`AssignmentDirectoryUnavailable` → 对外 `503`），绝不把平台故障记成"学生交错了题"。
+9. **一次提交 = 一道题 = 一个单段 `.txt`**（规格 §1.4）：入口、`build_submission_envelope`、
+   `persist` 三处执行同一规则（原因码 `invalid_file_count` / `file_type_not_allowed`）。
 """
 
 from __future__ import annotations
@@ -42,7 +49,7 @@ from sqlalchemy import Connection, Engine
 from sqlalchemy.exc import IntegrityError
 
 from autograder_b2 import contracts
-from autograder_b2.auth.authorization import require_submission_authority
+from autograder_b2.auth.authorization import AuthorizationError, require_submission_authority
 from autograder_b2.auth.tokens import Principal
 from autograder_b2.db.schema import submissions
 from autograder_b2.domain import states
@@ -55,10 +62,16 @@ from autograder_b2.domain.envelope import (
     IntakeProvenance,
     SubmissionEnvelope,
     assert_allowed_relative_path,
+    assert_single_answer_file,
     is_allowed_relative_path,
 )
 from autograder_b2.domain.transitions import record_transitions
 from autograder_b2.events import outbox
+from autograder_b2.integration.assignments import (
+    AssignmentAudience,
+    AssignmentDirectory,
+    AssignmentUnavailable,
+)
 from autograder_b2.storage.cas import ContentAddressedStore
 from autograder_b2.storage.paths import storage_path_for
 
@@ -99,6 +112,14 @@ class SubmissionIdConflict(Exception):
     """
 
 
+class AssignmentDirectoryUnavailable(RuntimeError):
+    """作业目录（B3 internal endpoint）未配置或不可达 → 对外 `503`。
+
+    这是**基础设施**失败，不是学生输入问题：把它记成"题目不属于作业"/"作业不存在"会把平台故障
+    伪装成学生错误（规格 §1.6 禁止降级）。`intake.api` 负责把它映射成 `503`。
+    """
+
+
 @dataclass(frozen=True, slots=True)
 class _PreparedFile:
     path: str
@@ -109,6 +130,7 @@ class _PreparedFile:
 def build_submission_envelope(
     *,
     submission_id: str,
+    assignment_id: str,
     student_id: str,
     course_id: str,
     section_id: str,
@@ -122,8 +144,11 @@ def build_submission_envelope(
 ) -> SubmissionEnvelope:
     """把「标识 + 字节」归一化为冻结的 `SubmissionEnvelope`（**两条入口的唯一构造点**）。
 
+    - `assignment_id` 是**必填**关键字：新写入路径没有"不知道作业"的合法形态（规格 §5.2）；
     - 摘要由服务端按**实际字节**重算（I3），不接受也不转抄任何声明值；
     - 路径白名单在此执行（I2；`stage_contents` 与数据库 CHECK 是第二、第三道防线）；
+    - 「恰好一个单段 `.txt` 答案文件」在此再判一次（与两个入口的真实字节闸门同一规则，见
+      `domain.envelope.assert_single_answer_file`）；
     - `storage_ref` 由摘要派生（`storage.paths.storage_path_for`），与 CAS 实际落盘路径必然一致，
       `persist` 落盘后还会逐项核对一次；
     - 信封**不含字节**（I6），因此可安全进入日志与事件。
@@ -133,10 +158,14 @@ def build_submission_envelope(
     paths = [path for path, _ in files]
     if len(set(paths)) != len(paths):
         raise EnvelopeRejected("duplicate_path", "duplicate file path in submission")
+    # I2 路径白名单先于"单段 .txt"规则：两者都不满足时，先报告更根本的问题（路径本身不允许），
+    # 于是 `../1.txt` 得到 `path_not_allowed` 而不是被当成一个"扩展名不对"的文件。
+    for path, _ in files:
+        assert_allowed_relative_path(path)
+    assert_single_answer_file(paths)
 
     envelope_files: list[EnvelopeFile] = []
     for path, content in files:
-        assert_allowed_relative_path(path)
         digest = sha256_hex(content)
         envelope_files.append(
             EnvelopeFile(
@@ -149,6 +178,7 @@ def build_submission_envelope(
     frozen = tuple(envelope_files)
     return SubmissionEnvelope(
         submission_id=submission_id,
+        assignment_id=assignment_id,
         student_id=student_id,
         course_id=course_id,
         section_id=section_id,
@@ -196,11 +226,20 @@ def _provenance_columns(provenance: IntakeProvenance) -> dict[str, object]:
 
 class SubmissionIntakeService:
     def __init__(
-        self, engine: Engine, store: ContentAddressedStore, limits: IntakeLimits
+        self,
+        engine: Engine,
+        store: ContentAddressedStore,
+        limits: IntakeLimits,
+        *,
+        assignment_directory: AssignmentDirectory | None = None,
     ) -> None:
         self._engine = engine
         self._store = store
         self._limits = limits
+        #: 作业受众目录（B3 internal endpoint）。**未配置即不可用**：HTTP 入口返回 503，
+        #: 绝不把"查不到作业"当成"作业不存在"。属性公开是为了让装配点（`IntakeRuntime`）与测试
+        #: 可以注入同一个端口实例；生产写入路径不会在运行中替换它。
+        self.assignment_directory = assignment_directory
 
     @property
     def limits(self) -> IntakeLimits:
@@ -216,6 +255,8 @@ class SubmissionIntakeService:
         principal: Principal,
         correlation_id: str,
     ) -> IntakeResult:
+        # 作业模型下的固定顺序（规格 §5.2）：先文件形态（原因码要具体），再契约/字节，再身份与目标。
+        self._check_answer_file_shape(payload)
         files = self._check_limits(payload)
         self._check_contract(payload)
         prepared = self._prepare_files(files)
@@ -226,6 +267,8 @@ class SubmissionIntakeService:
             section_id=identity["section_id"],
             student_id=identity["student_id"],
         )
+        audience = self._require_assignment(identity["assignment_id"])
+        self._check_assignment_audience(audience, identity)
 
         pairs = tuple((item.path, item.content) for item in prepared)
         envelope = build_submission_envelope(
@@ -254,11 +297,14 @@ class SubmissionIntakeService:
         而不是两次写入之间的运气。
         """
         pairs = tuple((path, content) for path, content in files)
-        # 与入口无关的**第二道路径/上限闸门**：入口的估算（base64 长度、附件声明大小）可能有偏差，
-        # 真实字节数在此再判一次，因此"上限"只有一处语义。
+        # 与入口无关的**第二道路径/上限/答案文件闸门**：入口的估算（base64 长度、附件声明大小）可能有
+        # 偏差，真实字节集合在此再判一次，因此"恰好一个 `.txt`"与上限都只有一处语义。
+        assert_single_answer_file([path for path, _ in pairs])
         self._check_staged_limits(pairs)
 
-        scope = self._idempotency_scope(envelope.student_id, envelope.question_version_id)
+        scope = self._idempotency_scope(
+            envelope.assignment_id, envelope.student_id, envelope.question_version_id
+        )
         existing = self._find_by_idempotency(scope, envelope.idempotency_key)
         if existing is not None:
             return existing
@@ -279,6 +325,13 @@ class SubmissionIntakeService:
                 connection.execute(
                     sa.insert(submissions).values(
                         submission_id=uuid.UUID(envelope.submission_id),
+                        # 新写入路径必须带作业；`None` 只属于历史行（迁移 0021 之前接收的），
+                        # 而历史行不会经本函数重新写入。
+                        assignment_id=(
+                            None
+                            if envelope.assignment_id is None
+                            else uuid.UUID(envelope.assignment_id)
+                        ),
                         student_id=uuid.UUID(envelope.student_id),
                         course_id=uuid.UUID(envelope.course_id),
                         section_id=uuid.UUID(envelope.section_id),
@@ -315,6 +368,7 @@ class SubmissionIntakeService:
                         subject=outbox.SUBMISSION_ACCEPTED,
                         payload=outbox.submission_accepted_payload(
                             submission_id=envelope.submission_id,
+                            assignment_id=envelope.assignment_id,
                             student_id=envelope.student_id,
                             course_id=envelope.course_id,
                             section_id=envelope.section_id,
@@ -349,6 +403,26 @@ class SubmissionIntakeService:
         )
 
     # --- 校验 ------------------------------------------------------------------
+
+    def _check_answer_file_shape(self, payload: Mapping[str, object]) -> None:
+        """「恰好一个单段 `.txt`」在契约校验**之前**判定，让原因码具体可解释。
+
+        契约 schema 同样限制 `files` 数量与 `path` 模式，但 schema 失败只能给出 `schema_invalid`，
+        学生看不到"是文件数不对还是类型不对"。结构本身不合法（不是数组/条目不是对象/没有 path）
+        时这里不抢答，交给契约校验报 `schema_invalid`；空集合交给 `empty_fileset`。
+        """
+        raw_files = payload.get("files")
+        if not isinstance(raw_files, list) or not raw_files:
+            return
+        paths: list[str] = []
+        for entry in raw_files:
+            if not isinstance(entry, Mapping):
+                return
+            path = entry.get("path")
+            if not isinstance(path, str):
+                return
+            paths.append(path)
+        assert_single_answer_file(paths)
 
     def _check_limits(self, payload: Mapping[str, object]) -> Sequence[Mapping[str, object]]:
         """大小类违规先判：契约把"太大"定义为 `413`，而不是结构错误 `422`。"""
@@ -433,6 +507,9 @@ class SubmissionIntakeService:
             prepared.append(_PreparedFile(path=path, content=content, content_sha256=digest))
         if not prepared:
             raise EnvelopeRejected("empty_fileset", "submission must contain at least one file")
+        # 第二道（真实解码后的）答案文件闸门：入口的估算与契约校验都可能因版本/写法差异漏掉，
+        # 这里按**实际收到的路径**再判一次（与 `persist` 同一规则、同一原因码）。
+        assert_single_answer_file([item.path for item in prepared])
         return tuple(prepared)
 
     @staticmethod
@@ -440,6 +517,7 @@ class SubmissionIntakeService:
         """取出归一化所需的标识字段；契约校验已保证它们存在且形态正确。"""
         keys = (
             "submission_id",
+            "assignment_id",
             "student_id",
             "course_id",
             "section_id",
@@ -448,9 +526,63 @@ class SubmissionIntakeService:
         )
         return {key: str(payload[key]) for key in keys}
 
+    def _require_assignment(self, assignment_id: str) -> AssignmentAudience:
+        """取作业受众；**未配置或不可达一律 503 语义**（不折成"作业不存在"）。
+
+        顺序（规格 §5.2）：目录未配置/不可达 → `AssignmentDirectoryUnavailable`（503）；
+        B3 明确 404 → `assignment_not_found`（422）；存在但非 open → `assignment_closed`（422）。
+        """
+        directory = self.assignment_directory
+        if directory is None:
+            raise AssignmentDirectoryUnavailable(
+                "assignment directory is not configured; submissions cannot be attributed to an assignment"
+            )
+        try:
+            audience = directory.get(assignment_id)
+        except AssignmentUnavailable as error:
+            raise AssignmentDirectoryUnavailable(
+                "assignment directory is unavailable; the submission was not judged as invalid"
+            ) from error
+        if audience is None:
+            raise EnvelopeRejected("assignment_not_found", "the assignment does not exist")
+        if not audience.open:
+            raise EnvelopeRejected("assignment_closed", "the assignment is not open for submissions")
+        return audience
+
     @staticmethod
-    def _idempotency_scope(student_id: str, question_version_id: str) -> str:
-        """作用域由服务端派生（契约口径 `(idempotency_key, scope)`）：同一个学生同一题目。
+    def _check_assignment_audience(
+        audience: AssignmentAudience, identity: Mapping[str, str]
+    ) -> None:
+        """课程/题目必须属于该作业（422），section/student 必须是该作业的受众（403）。
+
+        两种失败刻意分开：前者说明"提交内容与作业不匹配"（可解释的输入错误，422）；后者说明"你不在
+        这份作业的受众里"（授权问题，403，且**不**收窄成"作业不存在"）。
+        """
+        course_id = str(uuid.UUID(identity["course_id"]))
+        if course_id != audience.course_id or not audience.contains_question(
+            identity["question_version_id"]
+        ):
+            raise EnvelopeRejected(
+                "assignment_mismatch",
+                "the course or question version does not belong to this assignment",
+            )
+        section_id = str(uuid.UUID(identity["section_id"]))
+        if section_id not in audience.section_ids:
+            raise AuthorizationError("this section is not targeted by the assignment")
+        student_id = str(uuid.UUID(identity["student_id"]))
+        if audience.student_ids and student_id not in audience.student_ids:
+            raise AuthorizationError("this student is not in the assignment audience")
+
+    @staticmethod
+    def _idempotency_scope(
+        assignment_id: str | None, student_id: str, question_version_id: str
+    ) -> str:
+        """作用域由服务端派生：**同一个作业里的同一个学生的同一道题**。
+
+        为什么必须带作业（规格 §5.2）：两个作业可以引用同一个 `question_version_id`，只按
+        `(student, question)` 建作用域会让两个作业的同一题互相串联——第二个作业的提交被当成第一个
+        作业的重放，悄悄返回错误的 `submission_id`。历史行的旧作用域 `{student}:{question}` 保持原样
+        （不回填、不改写），与新格式 `{assignment}:{student}:{question}` 天然不冲突。
 
         **必须先规范化**：契约的 `Uuid` 接受大写、花括号、`urn:uuid:`、无连字符等**合法写法**
         （令牌侧 `auth/tokens._canonical_uuid` 已显式规范化）。若这里直接拼原始字符串，同一个学生
@@ -458,7 +590,13 @@ class SubmissionIntakeService:
         （实测：除大小写外完全相同的两次请求都返回 202，`b2.submissions` 落了两行）。
         两个入口的标识都经契约 `format: uuid` 校验，因此这里的解析失败属内部缺陷，让它抛。
         """
-        return f"{uuid.UUID(student_id)}:{uuid.UUID(question_version_id)}"
+        if assignment_id is None:
+            # 历史信封不重新写入；走到这里说明调用方构造了"没有作业却要落库"的新提交。
+            raise ValueError("a new submission must carry assignment_id: persist() cannot invent one")
+        return (
+            f"{uuid.UUID(assignment_id)}:{uuid.UUID(student_id)}:"
+            f"{uuid.UUID(question_version_id)}"
+        )
 
     # --- 幂等 ------------------------------------------------------------------
 

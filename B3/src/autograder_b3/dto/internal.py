@@ -39,6 +39,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 Language = Literal["python", "bash"]
 AdapterKind = Literal["stdin", "file", "callable"]
 FixtureMount = Literal["input", "expected_output"]
+#: An assignment's lifecycle state (``open`` / ``archived``); the same enum the public
+#: DTO carries. Restated here because the internal module must not import the public one.
+AssignmentStatus = Literal["open", "archived"]
 CompareMode = Literal["exact", "ignore_trailing_whitespace", "numeric_tolerance", "ignored"]
 StderrCompareMode = Literal["exact", "ignore_trailing_whitespace", "ignored"]
 AuthoringTopic = Literal["quality", "comparison_policy", "wording", "difficulty", "coverage"]
@@ -305,15 +308,33 @@ class AuthoringAssistanceRequestModel(BaseModel):
 
 
 class AssignmentCreateInputModel(BaseModel):
-    """The contract's inline create-assignment body."""
+    """The contract's inline create-assignment body.
+
+    The three id arrays are **sets on the wire**: ``uniqueItems`` is declared in the
+    contract, so a duplicate is a ``422`` before any lookup happens, not a row that fails
+    a database unique constraint halfway through the transaction. Bounds mirror the
+    contract (1..50 target sections, 0..2000 narrowed students, 1..50 versions) and are
+    enforced here because the domain writes every accepted id.
+
+    ``student_ids`` empty (the default) means "every student in the target sections";
+    there is deliberately no way to express "narrowed to nobody".
+    """
 
     model_config = _STRICT
 
     course_id: UUID
-    section_id: UUID
+    section_ids: tuple[UUID, ...] = Field(min_length=1, max_length=50)
+    student_ids: tuple[UUID, ...] = Field(default=(), max_length=2000)
     title: str = Field(min_length=1, max_length=200)
     due_at: datetime | None = None
-    question_version_ids: tuple[UUID, ...] = Field(min_length=1)
+    question_version_ids: tuple[UUID, ...] = Field(min_length=1, max_length=50)
+
+    @field_validator("section_ids", "student_ids", "question_version_ids")
+    @classmethod
+    def _unique(cls, value: tuple[UUID, ...]) -> tuple[UUID, ...]:
+        if len(set(value)) != len(value):
+            raise ValueError("assignment target ids must not contain duplicates")
+        return value
 
 
 class AssetUploadInputModel(BaseModel):
@@ -741,6 +762,42 @@ class FixtureContentBundle:
         return {
             "question_version_id": str(self.question_version_id),
             "items": [item.to_wire() for item in self.items],
+        }
+
+
+@dataclass(frozen=True)
+class AssignmentInternal:
+    """The assignment audience served to the evaluation/submission module (serviceToken).
+
+    It is the minimum a submission path needs to admit or refuse a submission: identity,
+    status, target sections/students and the ordered question list. Timestamps are not
+    needed for admission, so they are not exposed here -- unlike the public
+    :class:`~autograder_b3.dto.public.AssignmentPublic`, which renders them.
+
+    ``section_ids``/``student_ids`` follow the same semantics as the public shape: at
+    least one target section, and an empty student list meaning "every student in the
+    target sections". The class is a plain dataclass with its own ``to_wire`` (like
+    :class:`ReferenceAnswerDelivery`) rather than a pydantic response model, because
+    internal projections are produced explicitly rather than validated on the way out.
+    """
+
+    assignment_id: UUID
+    course_id: UUID
+    title: str
+    status: AssignmentStatus
+    section_ids: tuple[UUID, ...]
+    student_ids: tuple[UUID, ...]
+    question_version_ids: tuple[UUID, ...]
+
+    def to_wire(self) -> dict[str, Any]:
+        return {
+            "assignment_id": str(self.assignment_id),
+            "course_id": str(self.course_id),
+            "title": self.title,
+            "status": self.status,
+            "section_ids": [str(item) for item in self.section_ids],
+            "student_ids": [str(item) for item in self.student_ids],
+            "question_version_ids": [str(item) for item in self.question_version_ids],
         }
 
 

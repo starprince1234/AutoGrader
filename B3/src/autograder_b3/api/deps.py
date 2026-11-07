@@ -28,6 +28,7 @@ from ..config import Settings
 from ..errors import Unauthenticated
 from ..infra.db import Database
 from ..infra.publisher import EventPublisher, InMemoryEventPublisher, NatsEventPublisher
+from ..integration.b4 import B4TargetClient, TargetValidator
 
 
 @dataclass
@@ -37,6 +38,10 @@ class B3Dependencies:
     token_verifier: TokenVerifier | None = None
     service_verifier: ServiceTokenVerifier | None = None
     publisher: EventPublisher | None = None
+    #: Assignment target validator (identity/course module, internal HTTP). ``None`` means
+    #: this deployment has not configured it, and assignment creation must report ``503``
+    #: instead of skipping validation.
+    b4_targets: TargetValidator | None = None
     clock: Callable[[], datetime] = field(
         default_factory=lambda: lambda: datetime.now(UTC)
     )
@@ -59,6 +64,7 @@ def build_dependencies(
     token_verifier: TokenVerifier | None = None,
     service_verifier: ServiceTokenVerifier | None = None,
     publisher: EventPublisher | None = None,
+    b4_targets: TargetValidator | None = None,
     clock: Callable[[], datetime] | None = None,
 ) -> B3Dependencies:
     resolved = settings or Settings.from_env()
@@ -70,6 +76,11 @@ def build_dependencies(
         )
     if publisher is None and resolved.nats_url:
         publisher = NatsEventPublisher(resolved.nats_url)
+    if b4_targets is None and resolved.b4_base_url and resolved.b4_service_token:
+        b4_targets = B4TargetClient(
+            base_url=resolved.b4_base_url,
+            service_token=resolved.b4_service_token,
+        )
     return B3Dependencies(
         settings=resolved,
         database=database or Database(resolved),
@@ -84,6 +95,7 @@ def build_dependencies(
             )
         ),
         publisher=publisher if publisher is not None else InMemoryEventPublisher(),
+        b4_targets=b4_targets,
         clock=clock or (lambda: datetime.now(UTC)),
     )
 

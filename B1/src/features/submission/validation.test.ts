@@ -1,91 +1,78 @@
 import { describe, expect, it } from "vitest";
 import {
-  ENVELOPE_MAX_BASE64_LENGTH,
+  ENVELOPE_MAX_ANSWER_BYTES,
+  answerFileName,
   base64Encode,
   buildSubmissionEnvelope,
   byteLength,
+  isValidAnswerPath,
+  isTxtFileName,
   sha256Hex,
-  validateSubmission,
+  validateAnswer,
 } from "./validation";
 
-describe("提交前校验（RQ-B-1-50 验收 1/2）", () => {
-  it("空文件列表被拦截", () => {
-    expect(validateSubmission([], { maxFiles: 5, maxTotalBytes: 1000 })).toEqual([
-      { code: "no_files" },
+describe("作业答案校验与信封构造（CHG-0032）", () => {
+  it("答案文件名按 1 基题号生成，且符合契约的路径模式", () => {
+    expect(answerFileName(1)).toBe("1.txt");
+    expect(answerFileName(12)).toBe("12.txt");
+    expect(isValidAnswerPath("1.txt")).toBe(true);
+    expect(isValidAnswerPath("12.txt")).toBe(true);
+    // 契约要求单段、小写 .txt、不带前导零。
+    expect(isValidAnswerPath("01.txt")).toBe(false);
+    expect(isValidAnswerPath("0.txt")).toBe(false);
+    expect(isValidAnswerPath("answer.txt")).toBe(false);
+    expect(isValidAnswerPath("dir/1.txt")).toBe(false);
+  });
+
+  it("只接受 .txt（扩展名大小写敏感；文件名本身不必是 N.txt）", () => {
+    expect(isTxtFileName("1.txt")).toBe(true);
+    // 学生选的文件叫什么不重要：提交时路径统一按 1 基题号改写成 N.txt。
+    expect(isTxtFileName("我的答案.txt")).toBe(true);
+    expect(isTxtFileName("1.TXT")).toBe(false);
+    expect(isTxtFileName("1.md")).toBe(false);
+    expect(isTxtFileName(".txt")).toBe(false);
+  });
+
+  it("空答案与非 .txt 文件被拦截；超限按字节数拦截", () => {
+    expect(validateAnswer({ fileName: null, content: "   \n" })).toEqual([
+      { code: "empty" },
     ]);
+    expect(validateAnswer({ fileName: "答案.TXT", content: "x" })).toContainEqual({
+      code: "not_txt",
+      fileName: "答案.TXT",
+    });
+    const tooLarge = validateAnswer({
+      fileName: "1.txt",
+      content: "x".repeat(ENVELOPE_MAX_ANSWER_BYTES + 1),
+    });
+    expect(tooLarge).toContainEqual({
+      code: "too_large",
+      bytes: ENVELOPE_MAX_ANSWER_BYTES + 1,
+      max: ENVELOPE_MAX_ANSWER_BYTES,
+    });
+    // 上限按 UTF-8 字节计：汉字占 3 字节。
+    const multibyte = validateAnswer({
+      fileName: null,
+      content: "中".repeat(Math.floor(ENVELOPE_MAX_ANSWER_BYTES / 3) + 1),
+    });
+    expect(multibyte.some((issue) => issue.code === "too_large")).toBe(true);
   });
 
-  it("路径必须符合契约的路径模式（拒绝绝对路径、反斜杠、.. 逃逸）", () => {
-    const issues = validateSubmission(
-      [
-        { path: "/abs/solution.py", content: "x" },
-        { path: "..\\escape.py", content: "x" },
-        { path: "dir/../../escape.py", content: "x" },
-      ],
-      { maxFiles: null, maxTotalBytes: null },
-    );
-    expect(issues.filter((issue) => issue.code === "bad_path")).toHaveLength(3);
-  });
-
-  it("空路径、重复路径被逐一指出", () => {
-    const issues = validateSubmission(
-      [
-        { path: "", content: "x" },
-        { path: "a.py", content: "x" },
-        { path: "a.py", content: "y" },
-      ],
-      { maxFiles: null, maxTotalBytes: null },
-    );
-    expect(issues).toContainEqual({ code: "empty_path", index: 0 });
-    expect(issues).toContainEqual({ code: "duplicate_path", path: "a.py" });
-  });
-
-  it("文件数上限取题目声明与契约信封上限的较小值", () => {
-    const files = Array.from({ length: 4 }, (_, index) => ({
-      path: `f${index}.py`,
-      content: "x",
-    }));
-    const issues = validateSubmission(files, { maxFiles: 2, maxTotalBytes: null });
-    expect(issues).toContainEqual({ code: "too_many_files", count: 4, max: 2 });
-
-    // 题目未声明时退到信封的 maxItems
-    const many = Array.from({ length: 101 }, (_, index) => ({
-      path: `f${index}.py`,
-      content: "x",
-    }));
-    const fallback = validateSubmission(many, { maxFiles: null, maxTotalBytes: null });
-    expect(fallback).toContainEqual({ code: "too_many_files", count: 101, max: 100 });
-  });
-
-  it("合计大小超限被拦截，单文件 base64 上限使用契约值", () => {
-    const issues = validateSubmission(
-      [
-        { path: "a.py", content: "x".repeat(10) },
-        { path: "b.py", content: "y".repeat(10) },
-      ],
-      { maxFiles: null, maxTotalBytes: 15 },
-    );
-    expect(issues).toContainEqual({ code: "total_too_large", bytes: 20, max: 15 });
-
-    const big = validateSubmission(
-      [{ path: "a.py", content: "x".repeat(ENVELOPE_MAX_BASE64_LENGTH) }],
-      { maxFiles: null, maxTotalBytes: null },
-    );
-    expect(big.some((issue) => issue.code === "file_too_large")).toBe(true);
-  });
-
-  it("信封字段全部来自契约：路径、摘要、base64 内容与幂等键", async () => {
+  it("信封字段全部来自契约：assignment_id + 单文件 N.txt + 摘要 + 幂等键", async () => {
     const envelope = await buildSubmissionEnvelope({
       submissionId: "00000000-0000-4000-8000-0000000000a1",
+      assignmentId: "00000000-0000-4000-8000-0000000000a2",
       studentId: "00000000-0000-4000-8000-0000000000b2",
       courseId: "00000000-0000-4000-8000-0000000000c3",
       sectionId: "00000000-0000-4000-8000-0000000000d4",
       questionVersionId: "00000000-0000-4000-8000-0000000000e5",
+      ordinal: 3,
+      content: "答案：echo 中\n",
       idempotencyKey: "idem-1",
-      files: [{ path: "solution.py", content: "print('中')\n" }],
     });
 
     expect(Object.keys(envelope).sort()).toEqual([
+      "assignment_id",
       "course_id",
       "files",
       "idempotency_key",
@@ -94,8 +81,11 @@ describe("提交前校验（RQ-B-1-50 验收 1/2）", () => {
       "student_id",
       "submission_id",
     ]);
+    expect(envelope.assignment_id).toBe("00000000-0000-4000-8000-0000000000a2");
+    expect(envelope.files).toHaveLength(1);
+    expect(envelope.files[0].path).toBe("3.txt");
     expect(envelope.files[0].content_sha256).toMatch(/^[0-9a-f]{64}$/);
-    expect(envelope.files[0].content_base64).toBe(base64Encode("print('中')\n"));
+    expect(envelope.files[0].content_base64).toBe(base64Encode("答案：echo 中\n"));
   });
 
   it("SHA-256 与已知向量一致，字节长度按 UTF-8 计", async () => {

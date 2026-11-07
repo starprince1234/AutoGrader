@@ -638,7 +638,6 @@ class EmailDeliveryVerifier:
             requirements = EmailRequirements(
                 attempt=int(config.attempt),
                 subject_template=str(config.subject_template),
-                required_attachment_template=str(config.required_attachment_template),
             )
         except (TypeError, ValueError) as error:
             raise DeliveryVerificationDefect("email requirements are not valid") from error

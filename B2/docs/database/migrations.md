@@ -31,21 +31,32 @@
 | `20260916_0016` | 隔离区人工处置留痕与邮件摘要 | `intake_quarantines` 加 `subject`/`resolution`/`resolved_at`（`timestamptz(3)`）/`resolved_by`；加 `ck_intake_quarantines_subject`、`ck_intake_quarantines_decision`、`ck_intake_quarantines_decision_audit`；**删除并取代** 0013 的 `ck_intake_quarantines_resolution`（旧约束不允许"已驳回但没有学生"） |
 | `20261028_0017` | 人工评分（`manual_grades` / `manual_grade_history`） | 新增两张表与 `submissions.grade_status`；**0019 同时修正其 `downgrade()`**：原实现保留表导致后续降级被外键阻断（基线往返实测） |
 | `20261028_0018` | 来信内容（`intake_messages`） | 每份邮件提交一行有界正文摘录（≤4000 字），随提交级联删除 |
-| `20261029_0019` | 隔离区匹配用户、暂存与标记作废 | `intake_quarantines` 加 `resolved_submission_id`/`held`/`held_at`/`held_by`；`resolution` 允许 `completed`；加 `ck_intake_quarantines_hold`；重写 decision/audit 约束；**当前 head** |
+| `20261029_0019` | 隔离区匹配用户、暂存与标记作废 | `intake_quarantines` 加 `resolved_submission_id`/`held`/`held_at`/`held_by`；`resolution` 允许 `completed`；加 `ck_intake_quarantines_hold`；重写 decision/audit 约束 |
+| `20261107_0020` | 一次性邮件核验码（设计 §4） | 新增 `email_verification_challenges`/`email_verifications`/`email_sender_bindings`/`intake_state` 四张表；同时把 0017/0018 遗留的时间列收窄到 `timestamptz(3)` |
+| `20261107_0021` | 作业维度接入提交（CHG-0032） | `submissions.assignment_id uuid NULL` + `ix_submissions_assignment_id`；**不回填**（历史行没有作业归属，不猜测） |
+| `20261107_0022` | 多题邮件提交（CHG-0032 / 设计 §6.2） | 核验码/邮件事实按作业绑定（`assignment_id`、`question_version_id` 放开 NOT NULL、`processed_at`）；新表 `email_verification_submissions`；放宽 `ck_email_checkpoints_outcome` 的 processed 分支；**当前 head** |
 
-- 当前 head = **`20261029_0019`**，三处一致（`uv run alembic heads` 实测为
-  `20261029_0019 (head)`）：`module.yaml: database.migration_head`、`db/schema.py: EXPECTED_SCHEMA_REVISION`、
-  Alembic 自身。**注意**：`EXPECTED_SCHEMA_REVISION` 是 readiness 判据，因此**部署时必须先跑
-  `uv run alembic upgrade head`**——库停在上一个 revision 时评测/成绩/评语/隔离区路由会按设计返回 503
+- 当前 head = **`20261107_0022`**，三处一致：`module.yaml: database.migration_head`、
+  `db/schema.py: EXPECTED_SCHEMA_REVISION`、Alembic 自身（由 `tests/test_migrations.py` 断言）。**注意**：
+  `EXPECTED_SCHEMA_REVISION` 是 readiness 判据，因此**部署时必须先跑 `uv run alembic upgrade head`**——
+  库停在上一个 revision 时评测/成绩/评语/隔离区路由会按设计返回 503
   （如实报"库结构版本与本构建不符"，而不是带着旧结构继续服务）。
+- **0021/0022 的数据后果**：0021 只加**可空**列与索引，**不回填任何一行**——历史提交没有作业归属，
+  不猜测、不回填；它们继续可评测、可查成绩，只是不出现在任何作业级视图/过滤里。0022 同样只加可空列、
+  不改变既有行的 `question_version_id`/`submission_id`（那是"一邮件一题"时代的真实事实）。
+- **0022 的 downgrade 是 dev-only 有损的**：要恢复 `question_version_id NOT NULL` 与旧 checkpoint 约束，
+  必须在回滚时**删除**新形态的行（一邮件多题的 verification/challenge、以及 `processed` 且
+  `submission_id IS NULL` 的 checkpoint）。迁移 docstring 已逐条写明删什么；生产发布不做回滚
+  （正常发布保留业务数据，重建需单独授权）。
 - **0016 的兼容性**：纯加列 + 新约束，历史行保持 NULL（主题与处置留痕显示"未记录"）；没有数据回填，
   也没有"旧行必须补处置结果"的要求。`downgrade()` 会删除四列并恢复 0013 约束，届时已驳回行会
   违反"已处理 ⇔ 有学生"，因此降级前必须先处理 `resolution='dismissed'` 的行（见回滚说明）。
 - **0015 为什么必须新增列**：P13 要求"教师只能读取授权范围内有可靠课程关联的隔离记录"。没有
   可持久化的课程/课序，"拥有任意课程权限"就等于"能读全局隔离数据"（旧行为是已登记的缺口）。
-  列的**唯一**来源是邮件匹配规则的候选共识（全部命中规则的 `(course_id, section_id)` 完全一致）；
+  列的**唯一**来源是当时邮件匹配规则的候选共识（全部命中规则的 `(course_id, section_id)` 完全一致）；
   `not_matched`、跨课程/课序的 `ambiguous`、信封/附件拒绝一律 NULL，**不从** mailbox/发件人/
-  附件名/请求参数推测（那些是可伪造输入）。
+  附件名/请求参数推测（那些是可伪造输入）。**CHG-0032 起匹配规则表整体删除**：新语义下课程/课序由
+  核验码绑定的作业受众决定，历史隔离行的 `scope_*` 保持原样（NULL 的行仍只对管理员可见）。
 - **0015 的数据后果**：纯加列，**不改动任何既有行**；历史记录留成 NULL（无法证明课程归属），
   新语义下只对平台管理员可见/可处置——这是**收紧**而不是丢数据。`downgrade()` 删索引、约束与两列，
   课程关联随之丢失（授权退回旧的"任意 scope 可见"行为），降级必须写进运维记录。

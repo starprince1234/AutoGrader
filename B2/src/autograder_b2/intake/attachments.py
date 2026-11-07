@@ -7,14 +7,15 @@
 1. **先判大小、再解码**：编码形态（base64 / quoted-printable）的长度已经给出解码后大小的**上界**，
    先按上界拒绝，压缩炸弹就永远没有机会在内存里展开——"先解码再判大小"正是这类攻击的入口；
 2. **先认已知的坏东西（为了原因码精确）**：可执行体与归档容器的签名扫描；
-3. **再做正向判定**：允许列表内的附件必须能被"纯文本源码"这一性质**证明**——严格 UTF-8 解码成功、
+3. **再做正向判定**：允许列表内的附件必须能被"纯文本"这一性质**证明**——严格 UTF-8 解码成功、
    无 NUL 字节、每个字符可打印或属于空格类分隔符、控制字符只允许 `\\t\\n\\r\\x0c`（`\\x0c`
    换页符被 Python 当空白接受，`\\x0b` 不被接受）；
 4. **文本还要过结构级容器判定**：一份"全长可打印"的 tar / zip 仍然是**能打开的归档**
    （数字字段写成"七位八进制 + 空格"、magic 区填空格、数据块用空格补齐即无 NUL），
    正向判定看不出来，因此用 stdlib 解析器（`tarfile` / `zipfile`）在**有界字节**上做结构判定，
    并且查**任意偏移**（预置前缀不算绕过）。炸弹证据可读即 `archive_bomb`，否则 `archive_attachment`；
-5. **最后看扩展名**：只放行纯文本源码（`.py` / `.sh` / `.txt` / `.md`）；
+5. **最后看扩展名**：**只放行 `.txt`**（设计 §1.4：每题一个 `.txt` 答案文件；邮件附件与网页
+   提交是同一规则。归档/可执行体/二进制一概不在列表内）；
 6. **名称走 I2 白名单**：附件名会成为提交内的 `path`，因此与 API 路径受**同一套**白名单约束
    （`..`、绝对路径、空格、控制字符一律拒绝），且**不做静默改名**——替学生猜文件名等于伪造事实。
 
@@ -27,7 +28,7 @@
   的 PDF、含 `<script>` 的 HTML/SVG、`.bat`/`.ps1` 文本——在命名为允许扩展名时**会**通过闸门。
   这是设计使然：接收层只回答"能不能安全地收下这份字节"，"这段源码会不会做危险的事"属于静态规则
   与沙箱（大类 3/4）的职责。**不得**把本闸门当成"不是程序"的证明。
-- **也不承诺**："代码能通过语法检查"。`.py` 有语法错误是**学生结果**（由 RQ-B-2-40 静态检查出报告），
+- **也不承诺**："文本能通过语法检查"。`.txt` 里写的程序有语法错误是**学生结果**（由 RQ-B-2-40 静态检查出报告），
   不是接收期拒绝理由。因此这里**禁止**用 `ast.parse` 之类做闸门——那会把"语法错误"变成"邮件被拒"，
   破坏"两条入口同一路径"的语义。
 
@@ -69,12 +70,12 @@
 
 ### 已知误报面（诚实列出，未自行放宽）
 
-严格 UTF-8 判据 + 允许列表会拒绝一些**合法**提交：UTF-16/GBK/latin-1 编码的源码（非法 UTF-8）、
-附件名含空格或中文（I2 白名单）、`main.py.` 这类尾点命名（见下）。这些都会进隔离区并带精确原因码，
+严格 UTF-8 判据 + 允许列表会拒绝一些**合法**提交：UTF-16/GBK/latin-1 编码的文本（非法 UTF-8）、
+附件名含空格或中文（I2 白名单）、`1.txt.` 这类尾点命名（见下）。这些都会进隔离区并带精确原因码，
 运维可人工处置。
 
-**`main.py.`（尾点）为什么必须拒绝**（不是"改名的近亲"，是硬事实）：**Windows 文件系统会剥掉路径
-末尾的点与空格**，于是"声明的路径"与"磁盘上实际的文件名"会不一致（`main.py.` 落盘成 `main.py`）。
+**`1.txt.`（尾点）为什么必须拒绝**（不是"改名的近亲"，是硬事实）：**Windows 文件系统会剥掉路径
+末尾的点与空格**，于是"声明的路径"与"磁盘上实际的文件名"会不一致（`1.txt.` 落盘成 `1.txt`）。
 这既会让入口脚本解析/路径比对出现名字不匹配，也可能成为绕过路径判定的手段，因此按
 `unsupported_attachment_type` 拒绝（扩展名解析为 `.`，不在允许列表）。
 
@@ -123,8 +124,9 @@ from autograder_b2.domain.clock import sha256_hex
 from autograder_b2.domain.envelope import is_allowed_relative_path, redact_path_for_message
 from autograder_b2.intake.service import IntakeLimits
 
-#: 允许的附件类型：**纯文本源码**是全部。归档、可执行体、二进制一概不在列表内。
-ALLOWED_ATTACHMENT_EXTENSIONS = frozenset({".py", ".sh", ".txt", ".md"})
+#: 允许的附件类型：**只接受 `.txt`**（设计 §1.4：每题一个 `.txt` 答案文件）。
+#: 归档、可执行体、二进制与其它源码扩展名一律不在列表内（拒绝文案明确写出只接受 `.txt`）。
+ALLOWED_ATTACHMENT_EXTENSIONS = frozenset({".txt"})
 #: 可执行体扩展名（内容判定之外的第二道：截断/伪装的二进制也让原因码精确）。
 EXECUTABLE_EXTENSIONS = frozenset(
     {".exe", ".dll", ".so", ".dylib", ".bin", ".com", ".scr", ".msi", ".bat", ".cmd", ".ps1",
@@ -176,11 +178,17 @@ EmailIntakeReason = Literal[
     "message_too_large",
     "not_uniquely_matched",
     "ambiguous_match",
-    # 一次性核验码路径（`MAIN/docs/architecture/unix-homework-evaluation.md` §4，迁移 0020）：
+    # 一次性核验码路径（`MAIN/docs/architecture/assignment-workflow.md` §6）：
     # 被拒的邮件**绝不**变成提交，也绝不消耗不属于它的挑战。
     "email_verification_rejected",
     "email_sender_mismatch",
     "email_verification_expired",
+    # 正文/附件映射的机器校验（设计 §6.4 第 4、5 步；迁移 0022 的 rejection CHECK 同步扩展）。
+    "email_body_missing_field",
+    "email_body_mismatch",
+    "attachment_mapping_invalid",
+    # 人工复核路径（原邮件在当前策略下已不能作为提交）：见 `intake.quarantine`。
+    "message_mismatch",
 ]
 
 _BASE64_ENCODINGS = frozenset({"base64", "x-base64"})
@@ -558,7 +566,7 @@ def screen_attachments(
                 f"attachment name {shown} is not a permitted relative path",
                 attachment_name=shown,
             )
-        # 大小写不敏感判重：`main.py` 与 `MAIN.PY` 在大小写不敏感文件系统上会互相覆盖。
+        # 大小写不敏感判重：`1.txt` 与 `1.TXT` 在大小写不敏感文件系统上会互相覆盖。
         folded = attachment.filename.casefold()
         if folded in seen:
             raise AttachmentRejected(
@@ -611,7 +619,7 @@ def screen_attachments(
                 size_bytes=len(content),
             )
         if verdict.kind == "binary":
-            # 正向判定失败：没有任何容器/可执行体特征，但**证明了**它不是纯文本源码。
+            # 正向判定失败：没有任何容器/可执行体特征，但**证明了**它不是纯文本。
             raise AttachmentRejected(
                 "not_plain_text",
                 f"attachment {shown} is not plain text: {verdict.label}",
@@ -638,7 +646,7 @@ def screen_attachments(
             raise AttachmentRejected(
                 "unsupported_attachment_type",
                 f"attachment {shown} has extension {extension or '<none>'};"
-                " only plain text sources are accepted",
+                " only .txt answer files are accepted (one .txt per question)",
                 attachment_name=shown,
                 size_bytes=len(content),
             )
@@ -723,7 +731,7 @@ def probe_container(content: bytes, *, declared_size_limit: int) -> ContentVerdi
 
 
 def plain_text_problem(content: bytes) -> str | None:
-    """正向判定"是不是纯文本源码"；返回**有界、无内容**的问题描述，`None` 表示确实是纯文本。
+    """正向判定"是不是纯文本"；返回**有界、无内容**的问题描述，`None` 表示确实是纯文本。
 
     判据：严格 UTF-8 解码成功、无 NUL 字节、且每个字符要么可打印、要么属于**空格类分隔符**
     （NBSP、全角空格等——源码里很常见，且它们不是控制字符）、要么是 `\\t\\n\\r\\x0c` 或 BOM。
@@ -757,7 +765,7 @@ def plain_text_problem(content: bytes) -> str | None:
 
 
 def _is_text_character(character: str) -> bool:
-    """单个字符是否属于"纯文本源码"允许的字符集（判据见 `plain_text_problem`）。
+    """单个字符是否属于"纯文本"允许的字符集（判据见 `plain_text_problem`）。
 
     允许集 = 可打印字符 ∪ 空格类分隔符（Zs）∪ `\\t\\n\\r\\x0c` ∪ 5 个排版类格式字符（Cf）。
     **双向控制字符显式排除**（它们是 Cf，但属 Trojan Source 攻击面，见 `_BIDI_CONTROL_CHARACTERS`）。

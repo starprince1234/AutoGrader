@@ -1,8 +1,10 @@
 """`email_delivery` 共享规则引擎的纯函数测试（无需数据库）。
 
 覆盖：主题解析/匹配、四类 check 的通过与失败类别、缺邮件时"四条全 missing_output"、
-脱敏（消息/明细不含主题、地址、附件名）、模板缺陷的拒绝。这些断言同时钉住
-"学生评测与参考答案验证调用同一个入口对象"这一契约的实现侧（调用点见
+脱敏（消息/明细不含主题、地址、附件名）、模板缺陷的拒绝，以及**附件检查的新语义**：
+"该题有没有映射答案文件"（`answer_attachment_name`），不再是"学号.txt"模板。
+
+这些断言同时钉住"学生评测与参考答案验证调用同一个入口对象"这一契约的实现侧（调用点见
 `tests/test_email_verification_flow.py::test_receipt_loading_feeds_the_shared_rule_engine`）。
 """
 
@@ -14,11 +16,9 @@ import pytest
 
 from autograder_b2.intake.email_rules import (
     EMAIL_CHECKS,
-    REQUIRED_ATTACHMENT_TEMPLATE,
     SUBJECT_TEMPLATE,
     EmailReceipt,
     EmailRequirements,
-    attachment_matches,
     evaluate_email_receipt,
     parse_subject,
     subject_matches,
@@ -27,7 +27,7 @@ from autograder_b2.intake.email_rules import (
 STUDENT_NUMBER = "2024141460192"
 SENDER = "alice@example.edu"
 SUBJECT = f"{STUDENT_NUMBER}_1"
-ATTACHMENT = f"{STUDENT_NUMBER}.txt"
+ANSWER_ATTACHMENT = "1.txt"
 
 
 def _receipt(**overrides: object) -> EmailReceipt:
@@ -37,7 +37,7 @@ def _receipt(**overrides: object) -> EmailReceipt:
         "subject": SUBJECT,
         "sender": SENDER,
         "account_email": SENDER,
-        "attachment_names": (ATTACHMENT,),
+        "answer_attachment_name": ANSWER_ATTACHMENT,
         "received": True,
         "account_email_verified": True,
         "sender_binding_matches": True,
@@ -93,18 +93,6 @@ def test_subject_matches_requires_both_facts() -> None:
     assert subject_matches(f"{SUBJECT}_", STUDENT_NUMBER, 1) is False
 
 
-# --- 附件名 ---------------------------------------------------------------------
-
-
-def test_attachment_matches_is_membership_not_substring() -> None:
-    assert attachment_matches((ATTACHMENT,), STUDENT_NUMBER) is True
-    assert attachment_matches(("notes.txt", ATTACHMENT), STUDENT_NUMBER) is True
-    assert attachment_matches((f"x{ATTACHMENT}",), STUDENT_NUMBER) is False
-    assert attachment_matches((ATTACHMENT,), None) is False
-    # 大小写不归一：文件名是事实，不能"看起来像"就放过。
-    assert attachment_matches((ATTACHMENT.upper(),), STUDENT_NUMBER) is False
-
-
 # --- 要求对象 -------------------------------------------------------------------
 
 
@@ -120,7 +108,6 @@ def test_attachment_matches_is_membership_not_substring() -> None:
         {"subject_template": "{student_number}_{attempt!r}"},
         {"subject_template": "{student_number}_{attempt:03d}"},
         {"subject_template": "{student_number_"},
-        {"required_attachment_template": "{student_number"},
     ],
 )
 def test_requirements_reject_invalid_package_declarations(kwargs: dict[str, object]) -> None:
@@ -132,7 +119,8 @@ def test_requirements_reject_invalid_package_declarations(kwargs: dict[str, obje
 def test_requirements_defaults_match_the_design_document() -> None:
     requirements = EmailRequirements(attempt=2)
     assert requirements.subject_template == SUBJECT_TEMPLATE
-    assert requirements.required_attachment_template == REQUIRED_ATTACHMENT_TEMPLATE
+    # 附件名没有模板字段了（设计 §2.6）：第 N 题恒为 N.txt，由收件映射决定。
+    assert not hasattr(requirements, "required_attachment_template")
 
 
 # --- 四类 check -----------------------------------------------------------------
@@ -162,7 +150,7 @@ def test_not_received_builder_is_empty_and_frozen() -> None:
         subject=None,
         sender=None,
         account_email=None,
-        attachment_names=(),
+        answer_attachment_name=None,
         received=False,
         account_email_verified=False,
         sender_binding_matches=False,
@@ -182,12 +170,13 @@ def test_subject_mismatch_is_output_mismatch() -> None:
     assert [outcome.check for outcome in outcomes if not outcome.passed] == ["subject"]
 
 
-def test_missing_student_number_fails_subject_and_attachment_deterministically() -> None:
+def test_missing_student_number_fails_subject_but_not_attachment() -> None:
+    """学号只用于主题模板；附件检查看映射是否存在，与学号无关（设计 §6.5）。"""
     outcomes = evaluate_email_receipt(
         _receipt(student_number=None), EmailRequirements(attempt=1)
     )
     assert _outcome(outcomes, "subject").category == "output_mismatch"
-    assert _outcome(outcomes, "attachment").category == "output_mismatch"
+    assert _outcome(outcomes, "attachment").passed is True
     assert _outcome(outcomes, "sender").passed is True
 
 
@@ -221,14 +210,22 @@ def test_sender_binding_mismatch_fails_sender() -> None:
     assert sender.category == "output_mismatch"
 
 
-def test_missing_attachment_is_output_mismatch() -> None:
+def test_a_mapped_answer_file_passes_the_attachment_check() -> None:
+    outcomes = evaluate_email_receipt(_receipt(), EmailRequirements(attempt=1))
+    attachment = _outcome(outcomes, "attachment")
+    assert attachment.passed is True
+    assert attachment.detail == {"answer_attachment_recorded": True}
+
+
+def test_no_mapped_answer_file_is_output_mismatch() -> None:
+    """没有该题的映射答案文件 = 学生没交这道题的答案文件（不是"猜一个文件名"）。"""
     outcomes = evaluate_email_receipt(
-        _receipt(attachment_names=("notes.txt",)), EmailRequirements(attempt=1)
+        _receipt(answer_attachment_name=None), EmailRequirements(attempt=1)
     )
     attachment = _outcome(outcomes, "attachment")
     assert attachment.passed is False
     assert attachment.category == "output_mismatch"
-    assert attachment.detail["attachment_count"] == 1
+    assert attachment.detail == {"answer_attachment_recorded": False}
 
 
 def test_attempt_comes_from_the_requirements_not_the_receipt() -> None:
@@ -249,7 +246,7 @@ def test_outcomes_never_echo_the_subject_sender_or_attachment_names() -> None:
         subject=marker_subject,
         sender=marker_sender,
         account_email=SENDER,
-        attachment_names=(marker_attachment,),
+        answer_attachment_name=marker_attachment,
         sender_binding_matches=False,
     )
     outcomes = evaluate_email_receipt(receipt, EmailRequirements(attempt=7))
@@ -274,4 +271,4 @@ def test_detail_only_carries_bounded_facts() -> None:
         "sender_matches_account_email": True,
         "sender_binding_matches": True,
     }
-    assert _outcome(outcomes, "attachment").detail == {"attachment_count": 1}
+    assert _outcome(outcomes, "attachment").detail == {"answer_attachment_recorded": True}

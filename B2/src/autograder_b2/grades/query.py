@@ -7,21 +7,27 @@ Problem Details 由路由层决定）。越权判定复用 `auth.authorization.A
 行口径以契约 `MAIN/contracts/openapi/b2.yaml` 的 `GradeRow` 为准（字段名与顺序照抄契约，
 不在此复述整张表）：
 
-- `b2.submissions` → `submission_id`/`student_id`/`course_id`/`section_id`/
-  `question_version_id`/`submitted_at`(=`created_at`)；
+- `b2.submissions` → `submission_id`/`student_id`/`course_id`/`section_id`/`assignment_id`/
+  `question_version_id`/`grade_status`/`submitted_at`(=`created_at`)；
 - 该提交**最新一次**评测运行（`sequence` 降序，再按 `created_at`、`evaluation_run_id` 降序定序）
   → `evaluation_run_id`/`state`；
-- `b2.evaluation_results` → `score`/`max_score`/`is_pass`。
+- `b2.evaluation_results` → `score`/`max_score`/`is_pass`（机器分）；
+- `b2.manual_grades`（`submission_id` 唯一）→ 教师给的分：**存在时它才是生效分数**，见下。
 
 **`state` 的取值来源**：有评测运行时取该运行的状态，尚无运行时回落到提交状态（`received`/
 `validated` 只可能来自提交）。两种取值都在契约 `GradeRow.state` 的枚举内，且这样处理同时满足
 两条要求：①"未完成的**运行**"如实上报自己的状态；②重跑（同一提交出现更高 `sequence` 的运行）
 时行不会被上一轮的终态掩盖。
 
-**未完成 ≠ 0 分**：`score`/`max_score`/`is_pass` **只在**运行状态为 `completed` 且
-`evaluation_results` 行确实存在时才非空；`queued`/`running`/`rejected`/`failed` 一律为 `null`，
-由 `state` 说明当前处境。0 分是**学生结果**，不是"还没跑"：把未完成渲染成 0 会让 B1 页面把
-"排队中"显示成"考了 0 分"，而这个错误无法从页面上看出来。
+**未完成 ≠ 0 分**：`score`/`max_score`/`is_pass` **只在**有可报告的分数时非空；`queued`/`running`/
+`rejected`/`failed` 一律为 `null`，由 `state` 说明当前处境。0 分是**学生结果**，不是"还没跑"：把未完成
+渲染成 0 会让 B1 页面把"排队中"显示成"考了 0 分"，而这个错误无法从页面上看出来。
+
+**人工评分（CHG-0024）**：机器分与教师分分表存储。一行存在 `b2.manual_grades` 时，`score` 报告**教师
+给的分**、`max_score` 是该评分刻度的满分（100）、`is_pass` 为 `None`（人工评分没有通过/不通过结论），
+`score_source = "manual"`；否则 `score_source = "deterministic"`（仅在运行 `completed` 且结果行存在时）。
+`grade_status` 始终来自提交行（`deterministic`/`awaiting_manual`/`graded`）。这样导出能回答"这个分谁给的"
+（CHG-0024 的硬要求），而不会把机器结果挂上"人工"标签或反之。
 
 **`student_number` / `display_name` 恒为 `null`**：这两个字段属 B4（`b4.users` / `b4.enrollments`），
 B2 只拥有 `b2` schema、**不读 `b4` schema**（`AGENTS.md` 硬规则 2）。因此本服务不自造、不从别处
@@ -52,8 +58,18 @@ from sqlalchemy import Engine
 from autograder_b2.api.formatting import rfc3339_millis
 from autograder_b2.auth.authorization import AuthorizationError
 from autograder_b2.auth.tokens import Principal
-from autograder_b2.db.schema import evaluation_results, evaluation_runs, submissions
+from autograder_b2.db.schema import (
+    evaluation_results,
+    evaluation_runs,
+    manual_grades,
+    submissions,
+)
 from autograder_b2.domain.states import COMPLETED
+
+#: 人工评分的固定满分刻度（`grades.manual.MAX_SCORE`）。人工分与机器分分表存储（CHG-0024）；
+#: 当一行有人工评分时，GradeRow 报告的是**教师给的分**，满分即该刻度的 100。这是评分模型的常量，
+#: 不是从别处猜出来的值。
+MANUAL_GRADE_MAX_SCORE = 100.0
 
 #: 契约 `Limit` 的默认值与边界（`common.yaml`）。
 DEFAULT_LIMIT = 50
@@ -84,11 +100,22 @@ class GradeRow:
     display_name: str | None
     course_id: str
     section_id: str
+    #: 该提交回答的作业（CHG-0032）。历史行（作业字段出现之前接收的）为 `None`：它们不进入任何
+    #: 作业级过滤，也不被猜进某个作业。字段顺序紧跟 `section_id`（与契约一致）。
+    assignment_id: str | None
     question_version_id: str
     state: str
     score: float | None
     max_score: float | None
     is_pass: bool | None
+    #: 提交的评分状态（`b2.submissions.grade_status`）：`deterministic`（机器评分）/`awaiting_manual`
+    #: （只能人工评分，尚待评分）/`graded`（已有评分）。`awaiting_manual` 表示"交了但还没评"，
+    #: **不是**"未交"（CHG-0024）。
+    grade_status: str
+    #: 这一行的 `score` 是谁产生的（CHG-0024）：有人工评分行 → `manual`；否则运行完成且结果已持久化
+    #: → `deterministic`；没有分数 → `None`。人工评分存在时 `score` 报告教师给的分（满分 100）且
+    #: `is_pass` 为 `None`（人工评分没有通过/不通过结论），不会把机器结果冒充成人工分。
+    score_source: str | None
     submitted_at: datetime
     evaluation_run_id: str | None
     #: 三态安全结论（迁移 0011）。NULL = 没走到安全判定阶段，`not_checked` = 走了但没执行该项检查——
@@ -113,6 +140,9 @@ class _Filters:
     sections: tuple[uuid.UUID, ...] | None
     question_version_id: uuid.UUID | None
     student_id: str | None
+    #: 只返回该作业的提交（CHG-0032）。历史行 `assignment_id IS NULL` 因此**不会**被任何作业级
+    #: 过滤命中——这不是"漏数据"，而是"没有归属"的诚实表达（不猜测、不回填）。
+    assignment_id: uuid.UUID | None = None
     #: 时间范围（作用在 `b2.submissions.created_at`）：两端都**含**，且只由调用方显式给出时生效。
     since: datetime | None = None
     until: datetime | None = None
@@ -244,11 +274,14 @@ def grade_row_body(row: GradeRow) -> dict[str, Any]:
         "display_name": row.display_name,
         "course_id": row.course_id,
         "section_id": row.section_id,
+        "assignment_id": row.assignment_id,
         "question_version_id": row.question_version_id,
         "state": row.state,
         "score": row.score,
         "max_score": row.max_score,
         "is_pass": row.is_pass,
+        "grade_status": row.grade_status,
+        "score_source": row.score_source,
         "submitted_at": rfc3339_millis(row.submitted_at),
         "evaluation_run_id": row.evaluation_run_id,
         "security_status": row.security_status,
@@ -283,6 +316,7 @@ class GradeQueryService:
         section_id: str | None = None,
         question_version_id: str | None = None,
         student_id: str | None = None,
+        assignment_id: str | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
         evaluation_run_id: str | None = None,
@@ -291,7 +325,7 @@ class GradeQueryService:
     ) -> GradePage:
         """查询一页成绩行。
 
-        参数：`course_id` 必填；`section_id`/`question_version_id`/`student_id` 可选过滤；
+        参数：`course_id` 必填；`section_id`/`question_version_id`/`student_id`/`assignment_id` 可选过滤；
         `since`/`until` 可选时间范围（含两端，作用在提交时刻）；`evaluation_run_id` 可选按运行反查；
         `limit` ∈ [1, 200]（契约 `Limit`）；`cursor` 为上一页的 `next_cursor`（首页传 `None`）。
 
@@ -305,6 +339,7 @@ class GradeQueryService:
             section_id=section_id,
             question_version_id=question_version_id,
             student_id=student_id,
+            assignment_id=assignment_id,
             since=since,
             until=until,
             evaluation_run_id=evaluation_run_id,
@@ -322,6 +357,7 @@ class GradeQueryService:
         section_id: str | None = None,
         question_version_id: str | None = None,
         student_id: str | None = None,
+        assignment_id: str | None = None,
         since: datetime | None = None,
         until: datetime | None = None,
         evaluation_run_id: str | None = None,
@@ -340,6 +376,7 @@ class GradeQueryService:
             section_id=section_id,
             question_version_id=question_version_id,
             student_id=student_id,
+            assignment_id=assignment_id,
             since=since,
             until=until,
             evaluation_run_id=evaluation_run_id,
@@ -366,6 +403,7 @@ class GradeQueryService:
         section_id: str | None,
         question_version_id: str | None,
         student_id: str | None,
+        assignment_id: str | None,
         since: datetime | None,
         until: datetime | None,
         evaluation_run_id: str | None,
@@ -373,6 +411,7 @@ class GradeQueryService:
         course = _require_uuid(course_id, "course_id")
         section = _optional_uuid(section_id, "section_id")
         question = _optional_uuid(question_version_id, "question_version_id")
+        assignment = _optional_uuid(assignment_id, "assignment_id")
         requested_student = _optional_uuid(student_id, "student_id")
         run = _optional_uuid(evaluation_run_id, "evaluation_run_id")
         since, until = _validated_range(since, until)
@@ -395,6 +434,7 @@ class GradeQueryService:
             sections=sections,
             question_version_id=question,
             student_id=effective_student,
+            assignment_id=assignment,
             since=since,
             until=until,
             evaluation_run_id=run,
@@ -452,8 +492,10 @@ def _statement(
             submissions.c.student_id,
             submissions.c.course_id,
             submissions.c.section_id,
+            submissions.c.assignment_id,
             submissions.c.question_version_id,
             submissions.c.state.label("submission_state"),
+            submissions.c.grade_status,
             submissions.c.created_at,
             latest_run.c.evaluation_run_id,
             latest_run.c.state.label("run_state"),
@@ -461,12 +503,16 @@ def _statement(
             evaluation_results.c.score,
             evaluation_results.c.max_score,
             evaluation_results.c.is_pass,
+            # 人工评分的存在性与分值（`submission_id` 唯一：一次提交只有一个当前评分）。
+            manual_grades.c.score.label("manual_score"),
         )
         .select_from(
-            submissions.outerjoin(latest_run, sa.true()).outerjoin(
+            submissions.outerjoin(latest_run, sa.true())
+            .outerjoin(
                 evaluation_results,
                 evaluation_results.c.evaluation_run_id == latest_run.c.evaluation_run_id,
             )
+            .outerjoin(manual_grades, manual_grades.c.submission_id == submissions.c.submission_id)
         )
         .where(submissions.c.course_id == filters.course_id)
         .order_by(submissions.c.created_at.asc(), submissions.c.submission_id.asc())
@@ -478,6 +524,10 @@ def _statement(
         statement = statement.where(
             submissions.c.question_version_id == filters.question_version_id
         )
+    if filters.assignment_id is not None:
+        # 历史行（`assignment_id IS NULL`）不会被任何作业过滤命中：没有归属就是没有归属，
+        # 不把它们当成"某个作业"或"全部作业"返回。
+        statement = statement.where(submissions.c.assignment_id == filters.assignment_id)
     if filters.student_id is not None:
         statement = statement.where(submissions.c.student_id == uuid.UUID(filters.student_id))
     if filters.since is not None:
@@ -509,17 +559,31 @@ def _statement(
 
 
 def _row_from_record(record: Any) -> GradeRow:
-    """记录 → 契约行；分数只在"运行已 `completed` 且结果已持久化"时出现（否则一律 `None`）。"""
+    """记录 → 契约行。
+
+    分数来源的判定（CHG-0024）：**人工评分存在时它才是生效分数**（教师判断优先于机器分），
+    此时 `max_score` 是人工评分刻度（100）、`is_pass` 为 `None`；否则沿用"运行已 `completed`
+    且结果已持久化才有分数"的规则。`score_source` 如实说明 `score` 的来源，绝不把一种来源的分
+    标成另一种。
+    """
     run_state = record.run_state
     state = str(run_state) if run_state is not None else str(record.submission_state)
     run_id = record.evaluation_run_id
     score: float | None = None
     max_score: float | None = None
     is_pass: bool | None = None
-    if state == COMPLETED and run_id is not None and record.score is not None:
+    score_source: str | None = None
+    manual_score = record.manual_score
+    if manual_score is not None:
+        score = float(manual_score)
+        max_score = MANUAL_GRADE_MAX_SCORE
+        is_pass = None
+        score_source = "manual"
+    elif state == COMPLETED and run_id is not None and record.score is not None:
         score = float(record.score)
         max_score = None if record.max_score is None else float(record.max_score)
         is_pass = None if record.is_pass is None else bool(record.is_pass)
+        score_source = "deterministic"
     return GradeRow(
         submission_id=str(record.submission_id),
         student_id=str(record.student_id),
@@ -527,11 +591,15 @@ def _row_from_record(record: Any) -> GradeRow:
         display_name=None,
         course_id=str(record.course_id),
         section_id=str(record.section_id),
+        # 历史行没有作业归属：如实给 `None`，不猜、不回填（CHG-0032）。
+        assignment_id=None if record.assignment_id is None else str(record.assignment_id),
         question_version_id=str(record.question_version_id),
         state=state,
         score=score,
         max_score=max_score,
         is_pass=is_pass,
+        grade_status=str(record.grade_status),
+        score_source=score_source,
         submitted_at=record.created_at,
         evaluation_run_id=None if run_id is None else str(run_id),
         security_status=None if record.security_status is None else str(record.security_status),

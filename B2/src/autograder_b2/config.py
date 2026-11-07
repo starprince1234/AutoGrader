@@ -27,7 +27,9 @@ from autograder_b2.integration.bindings import (
 #: 单文件解码后字节上限（与契约 `submission-envelope` 的 `content_base64.maxLength` 一致：
 #: 2097152 个 base64 字符 ⇒ 1572864 字节）。
 MAX_FILE_BYTES = 1572864
-#: 提交文件数上限（与契约 `files.maxItems` 一致）。
+#: 部署级文件数上限（`B2_MAX_FILES`）。注意**单次提交**的文件数不由此项决定：作业模型下一次提交
+#: 恒为一道题一个 `.txt`（`domain.envelope.MAX_ANSWER_FILES = 1`，是代码不变量、不是配置）。这里
+#: 的数字只约束"一封邮件最多携带多少个附件"这种部署级闸门（作业题数上限 50 由 B3 契约约束）。
 MAX_FILES = 100
 #: 提交总字节上限的部署默认值；题目级 `max_total_bytes` 在取得 evaluation package 后收紧。
 DEFAULT_MAX_TOTAL_BYTES = 4 * 1024 * 1024
@@ -52,6 +54,8 @@ DEFAULT_IMAP_MAX_MESSAGE_BYTES = 8 * 1024 * 1024
 MAILBOX_LABEL_PATTERN = re.compile(r"^[A-Za-z0-9_.@+-]{1,100}$")
 
 #: 与 IMAP 接收有关的全部环境变量名；用于区分"完全未配置"与"半配置"。
+#: 旧邮件路由的 `B2_IMAP_MATCHING_JSON` / `B2_IMAP_MATCHING_PATH` 已随作业模型整体移除（CHG-0032：
+#: 身份由核验码 + 账号证明，收件不再需要固定目标/匹配规则表）。
 _IMAP_VARIABLES = (
     "B2_IMAP_HOST",
     "B2_IMAP_PORT",
@@ -61,8 +65,6 @@ _IMAP_VARIABLES = (
     "B2_IMAP_MAILBOX",
     "B2_IMAP_USE_SSL",
     "B2_IMAP_PROCESSED_MAILBOX",
-    "B2_IMAP_MATCHING_JSON",
-    "B2_IMAP_MATCHING_PATH",
     "B2_IMAP_MAX_MESSAGES",
     "B2_IMAP_MAX_MESSAGE_BYTES",
     "B2_IMAP_TIMEOUT_SECONDS",
@@ -481,6 +483,10 @@ class ImapSettings:
 
     `password` 声明 `repr=False`：数据类默认的 `repr` 会把口令打进任何一次 `print(settings)`、
     日志或异常链——这是最容易发生的凭据泄漏路径，在类型层面直接堵掉。
+
+    旧邮件路由的 `matching`（`B2_IMAP_MATCHING_*` 规则表）已删除：作业模型下邮件身份由
+    "核验码绑定 challenge + 发件账号必须等于 challenge 所有者"证明（CHG-0032），收件路径只需要
+    按发件人查账号的 `identity` 目录，不再存在"按规则表把邮件挂到某个作业"的路径。
     """
 
     host: str
@@ -489,12 +495,11 @@ class ImapSettings:
     password: str = field(repr=False)
     mailbox: str
     use_ssl: bool
-    matching: Mapping[str, Mapping[str, str]]
     max_messages_per_pull: int
     max_message_bytes: int
     timeout_seconds: float
     processed_mailbox: str | None = None
-    #: 发件人 → 账号 的查询配置；存在时不再需要 `B2_IMAP_MATCHING_*` 规则表。
+    #: 按发件人查账号的 B4 身份目录配置（`B2_IDENTITY_URL` + `B2_IDENTITY_AUTHORIZATION`）。
     identity: IdentitySettings | None = None
 
 
@@ -538,11 +543,6 @@ def load_imap_settings(environ: Mapping[str, str] | None = None) -> ImapSettings
         password=_imap_password(source),
         mailbox=mailbox,
         use_ssl=use_ssl,
-        matching=(
-            load_imap_matching(source)
-            if load_identity_settings(source) is None
-            else {}
-        ),
         identity=load_identity_settings(source),
         max_messages_per_pull=_positive_int(
             source, "B2_IMAP_MAX_MESSAGES", DEFAULT_IMAP_MAX_MESSAGES
@@ -553,40 +553,6 @@ def load_imap_settings(environ: Mapping[str, str] | None = None) -> ImapSettings
         timeout_seconds=_positive_float(source, "B2_IMAP_TIMEOUT_SECONDS", 30.0),
         processed_mailbox=processed or None,
     )
-
-
-def load_imap_matching(environ: Mapping[str, str] | None = None) -> dict[str, dict[str, str]]:
-    """读取邮件 → 提交身份的匹配规则：`B2_IMAP_MATCHING_JSON`（内联）优先，其次文件路径。
-
-    规则原文（键形态与"不唯一即隔离"的判定）由 `intake.matching` 解释；这里只保证"读到了一份
-    结构上是对象套对象的配置"。两者都没有时明确失败——**绝不**退化为"任何邮件都当成某个学生"。
-    """
-    source = os.environ if environ is None else environ
-    inline = (source.get("B2_IMAP_MATCHING_JSON") or "").strip()
-    if inline:
-        document = _json_object(inline, "B2_IMAP_MATCHING_JSON")
-    else:
-        path = (source.get("B2_IMAP_MATCHING_PATH") or "").strip()
-        if not path:
-            raise ConfigurationError(
-                "no matching rules configured: set B2_IMAP_MATCHING_JSON or B2_IMAP_MATCHING_PATH"
-            )
-        file = Path(path)
-        if not file.is_file():
-            raise ConfigurationError("B2_IMAP_MATCHING_PATH does not exist")
-        document = _json_object(file.read_text(encoding="utf-8"), "B2_IMAP_MATCHING_PATH")
-
-    rules: dict[str, dict[str, str]] = {}
-    for key, value in document.items():
-        if not isinstance(value, dict):
-            raise ConfigurationError(f"matching rule {key!r} must be a JSON object")
-        row: dict[str, str] = {}
-        for field_name, field_value in value.items():
-            if not isinstance(field_value, str):
-                raise ConfigurationError(f"matching rule {key!r} field {field_name!r} must be a string")
-            row[str(field_name)] = field_value
-        rules[str(key)] = row
-    return rules
 
 
 def _imap_password(source: Mapping[str, str]) -> str:
@@ -607,16 +573,6 @@ def _imap_password(source: Mapping[str, str]) -> str:
             raise ConfigurationError("B2_IMAP_PASSWORD_FILE is empty")
         return secret
     raise ConfigurationError("no IMAP password configured: set B2_IMAP_PASSWORD or B2_IMAP_PASSWORD_FILE")
-
-
-def _json_object(text: str, name: str) -> dict[str, object]:
-    try:
-        document = json.loads(text)
-    except json.JSONDecodeError as error:
-        raise ConfigurationError(f"{name} is not valid JSON") from error
-    if not isinstance(document, dict):
-        raise ConfigurationError(f"{name} must contain a JSON object")
-    return document
 
 
 def _boolean(source: Mapping[str, str], name: str, *, default: bool) -> bool:
@@ -645,52 +601,38 @@ def _positive_float(source: Mapping[str, str], name: str, default: float) -> flo
 
 @dataclass(frozen=True, slots=True)
 class IdentitySettings:
-    """按发件人查账号所需的配置（B4 内部端点 + 本次作业的统一目标）。
+    """按发件人查账号的 B4 内部身份目录配置（`B2_IDENTITY_URL` + `B2_IDENTITY_AUTHORIZATION`）。
 
-    `target` 是"这次收的作业要挂到哪门课、哪个课序、哪个题目版本"，与具体学生无关；学生身份
-    由发件人地址查询得到。这样每周只需要改一次目标，而不是为每个学生维护一条规则。
+    它只回答"这个发件地址属于哪个账号"；"这次收的邮件属于哪个作业"由核验码绑定
+    （CHG-0032：核验码绑定 `(student, course, section, assignment)`），**不再**存在部署期固定目标
+    （`B2_IMAP_TARGET_JSON`）或匹配规则表（`B2_IMAP_MATCHING_*`）——两条旧路径已整体删除。
     """
 
     base_url: str
-    authorization: str
-    target: dict[str, str]
+    authorization: str = field(repr=False)
 
     @property
     def display(self) -> str:
-        """用于健康/日志的可读描述：只含主机与目标，不含凭据。"""
-        return f"{self.base_url} -> {self.target.get('question_version_id', '?')}"
+        """用于健康/日志的可读描述：只含身份端点地址，不含凭据。"""
+        return self.base_url
 
 
-IDENTITY_VARIABLES = ("B2_IDENTITY_URL", "B2_IDENTITY_AUTHORIZATION", "B2_IMAP_TARGET_JSON")
+IDENTITY_VARIABLES = ("B2_IDENTITY_URL", "B2_IDENTITY_AUTHORIZATION")
 
 
 def load_identity_settings(environ: Mapping[str, str] | None = None) -> IdentitySettings | None:
-    """读取身份查询配置。三项都没给返回 `None`；给了任意一项却缺别项则当场报错。"""
+    """读取身份目录配置：两项都未给返回 `None`；只给一项是半配置，当场报错。"""
     source = os.environ if environ is None else environ
     values = {name: (source.get(name) or "").strip() for name in IDENTITY_VARIABLES}
     present = [name for name, value in values.items() if value]
     if not present:
         return None
-    missing = [name for name, value in values.items() if not value]
+    missing = [name for name in IDENTITY_VARIABLES if not values[name]]
     if missing:
         raise ConfigurationError(
             "identity lookup is half-configured; missing " + ", ".join(missing)
         )
-
-    try:
-        document = json.loads(values["B2_IMAP_TARGET_JSON"])
-    except json.JSONDecodeError as error:
-        raise ConfigurationError("B2_IMAP_TARGET_JSON is not valid JSON") from error
-    if not isinstance(document, dict):
-        raise ConfigurationError("B2_IMAP_TARGET_JSON must be a JSON object")
-    target: dict[str, str] = {}
-    for name in ("course_id", "section_id", "question_version_id"):
-        value = document.get(name)
-        if not isinstance(value, str) or not value.strip():
-            raise ConfigurationError(f"B2_IMAP_TARGET_JSON.{name} must be a non-empty string")
-        target[name] = value.strip()
     return IdentitySettings(
         base_url=values["B2_IDENTITY_URL"].rstrip("/"),
         authorization=values["B2_IDENTITY_AUTHORIZATION"],
-        target=target,
     )

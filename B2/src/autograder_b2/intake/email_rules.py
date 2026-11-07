@@ -4,29 +4,35 @@
 
 | 调用方 | 输入来源 |
 |---|---|
-| 评测编排（`evaluation` 的 `email_delivery` 分支） | `b2.email_verifications` 里记录的真实 IMAP 邮件事实（`load_email_receipt`） |
+| 评测编排（`evaluation` 的 `email_delivery` 分支） | 真实 IMAP 收件链路落下的邮件事实（`load_email_receipt`） |
 | 参考答案验证（`reference`） | 受保护的「合成邮件回执 JSON」（调用方解析后直接构造 `EmailReceipt`） |
 
 因此本模块只回答"给定这些邮件事实与这些要求，四个 check 各自过不过"，**不**决定依赖是否可用：
 邮件收件依赖不可用（心跳过期/未配置）属于 `infrastructure_error`，由调用方用
 `intake.email_verification.intake_health` 判定，绝不折算成学生答错。
 
-## 判定语义（`MAIN/docs/architecture/unix-homwork-evaluation.md` §3.5）
+## 判定语义（`MAIN/docs/architecture/assignment-workflow.md` §6.5）
 
 - `email_received`：存在与本次提交绑定、来自真实 IMAP 拉取的验证记录；
 - `subject`：实际主题等于 `subject_template.format(student_number=..., attempt=...)`（学号来自已核验账号，
   `attempt` 来自 package）；
 - `sender`：实际发件地址等于该账号已验证邮箱，**且**等于该学生在该课程/课序绑定的首次发件地址；
-- `attachment`：实际附件名包含 `required_attachment_template.format(student_number=...)`。
+- `attachment`：**该题存在映射答案文件**（`answer_attachment_name` 非空）即通过。
+  答案文件名由作业题目位置统一决定（第 N 题 = `N.txt`，设计 §1.4），不再是"学号.txt"模板；
+  package 的 `execution.email.required_attachment_template` 已随契约删除（§2.6）。
 
 失败类别只有两个：字段/事实不符 = `output_mismatch`；没有收到邮件 = `missing_output`。
 **收到的邮件永远返回四条结论**（固定顺序），即使 package 只声明了其中一部分——调用方按
 `outcome.check` 过滤，从而"每个 email_check 用例一条证据"的对应关系不依赖本模块猜测 package 内容。
 
+历史数据（迁移 0022 之前的收件行）没有按题映射：`answer_attachment_name` 回退为旧列里的
+附件名（若旧记录有附件）；旧记录本来也不带"第几题"信息，因此这次判定只回答"该提交对应的
+邮件里有没有一个答案文件"，不因数据形态差异把学生判成缺交。
+
 ## 脱敏纪律
 
-`message` 是**固定文案**，不含实际主题、发件地址、账号邮箱、附件名或正文；`detail` 只放布尔值与计数。
-本模块从不读取正文（`EmailReceipt` 根本没有正文字段），因此不可能把正文带进证据或日志。
+`message` 是**固定文案**，不含实际主题、发件地址、账号邮箱、附件名或正文；`detail` 只放布尔值与
+计数。本模块从不读取正文（`EmailReceipt` 根本没有正文字段），因此不可能把正文带进证据或日志。
 """
 
 from __future__ import annotations
@@ -38,8 +44,6 @@ from typing import Literal
 
 #: `execution.email.subject_template` 的默认值（与设计文档 §2 一致）。
 SUBJECT_TEMPLATE = "{student_number}_{attempt}"
-#: `execution.email.required_attachment_template` 的默认值（与设计文档 §2 一致）。
-REQUIRED_ATTACHMENT_TEMPLATE = "{student_number}.txt"
 #: 模板里允许出现的占位符名字：写别的名字是 package 缺陷，不是学生失败。
 _ALLOWED_TEMPLATE_FIELDS = frozenset({"student_number", "attempt"})
 #: `execution.email.attempt` 的取值范围（设计文档 §2 的校验规则：1..99）。
@@ -59,13 +63,13 @@ EmailFailureCategory = Literal["missing_output", "output_mismatch"]
 class EmailRequirements:
     """一封 `email_delivery` 邮件必须满足的要求（来自 package 的 `execution.email`）。
 
-    `attempt` 与两个模板都由 B3 在编译期校验；这里再做一次独立校验（解析期拒绝），
-    因为"package 合法"与"这份 package 真的能判"是两件事。
+    只剩 `attempt` 与 `subject_template`：附件名由作业题目位置统一决定（设计 §1.4），
+    `required_attachment_template` 已随契约删除（§2.6）。两者由 B3 在编译期校验；这里再做一次
+    独立校验（解析期拒绝），因为"package 合法"与"这份 package 真的能判"是两件事。
     """
 
     attempt: int = 1
     subject_template: str = SUBJECT_TEMPLATE
-    required_attachment_template: str = REQUIRED_ATTACHMENT_TEMPLATE
 
     def __post_init__(self) -> None:
         if isinstance(self.attempt, bool) or not isinstance(self.attempt, int):
@@ -78,7 +82,6 @@ class EmailRequirements:
                 f"execution.email.attempt must be between {MIN_ATTEMPT} and {MAX_ATTEMPT}"
             )
         _require_template(self.subject_template, "subject_template")
-        _require_template(self.required_attachment_template, "required_attachment_template")
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,19 +89,22 @@ class EmailReceipt:
     """一次投递的**邮件事实**视图（来自真实 IMAP 记录，或参考答案验证的合成回执）。
 
     字段全部公开且不可变：参考答案验证直接构造它，学生评测由 `load_email_receipt` 从
-    `b2.email_verifications` 组装它。两者调用同一个 `evaluate_email_receipt`。
+    `b2.email_verification_submissions`（新）或 `b2.email_verifications`（历史回退）组装它。
+    两者调用同一个 `evaluate_email_receipt`。
 
     - `student_number`：**已核验账号**的学号（不是从邮件里猜的）；`None` = 账号没有学号，
-      此时 subject/attachment 无法判定而失败（`output_mismatch`），而不是"猜一个学号"。
+      `subject` 无法判定而失败（`output_mismatch`），而不是"猜一个学号"。
     - `account_email_verified`：账号邮箱在注册流程里已证明归属（设计 §4.1 的既有事实）。
     - `sender_binding_matches`：本次发件地址等于该学生在该课程/课序的首个绑定地址。
+    - `answer_attachment_name`：本题在 `email_verification_submissions` 里的映射答案文件名
+      （`N.txt`）；`None` = 该提交没有映射答案文件（历史行则回退旧列，见模块文档）。
     """
 
     student_number: str | None
     subject: str | None
     sender: str | None
     account_email: str | None
-    attachment_names: tuple[str, ...] = ()
+    answer_attachment_name: str | None = None
     received: bool = False
     account_email_verified: bool = False
     sender_binding_matches: bool = False
@@ -111,7 +117,7 @@ class EmailReceipt:
             subject=None,
             sender=None,
             account_email=None,
-            attachment_names=(),
+            answer_attachment_name=None,
             received=False,
             account_email_verified=False,
             sender_binding_matches=False,
@@ -159,20 +165,6 @@ def subject_matches(
     return subject.strip() == expected
 
 
-def attachment_matches(
-    attachment_names: tuple[str, ...],
-    student_number: str | None,
-    *,
-    attempt: int | None = None,
-    template: str = REQUIRED_ATTACHMENT_TEMPLATE,
-) -> bool:
-    """实际附件名里是否包含模板渲染出的必需附件名（精确成员判定，不做大小写归一）。"""
-    if student_number is None:
-        return False
-    required = _render(template, student_number=student_number, attempt=attempt)
-    return required in attachment_names
-
-
 def evaluate_email_receipt(
     receipt: EmailReceipt,
     requirements: EmailRequirements,
@@ -189,7 +181,7 @@ def evaluate_email_receipt(
         _email_received_outcome(receipt),
         _subject_outcome(receipt, requirements),
         _sender_outcome(receipt),
-        _attachment_outcome(receipt, requirements),
+        _attachment_outcome(receipt),
     )
 
 
@@ -302,43 +294,30 @@ def _sender_outcome(receipt: EmailReceipt) -> EmailCheckOutcome:
     )
 
 
-def _attachment_outcome(
-    receipt: EmailReceipt, requirements: EmailRequirements
-) -> EmailCheckOutcome:
+def _attachment_outcome(receipt: EmailReceipt) -> EmailCheckOutcome:
+    """`attachment` 检查 = "该题是否有映射答案文件"（设计 §2.6/§6.5）。
+
+    映射由收件链路在创建提交时写入（`b2.email_verification_submissions.attachment_name`）；
+    本函数只看这份事实，不再按"学号.txt"模板重新渲染——附件名由作业题目位置统一决定。
+    """
     if not receipt.received:
         return _missing(
             "attachment", "no message was received, so the attachment cannot be checked"
         )
-    if receipt.student_number is None:
-        return EmailCheckOutcome(
-            check="attachment",
-            passed=False,
-            category="output_mismatch",
-            message=(
-                "the verified account carries no student number,"
-                " so the required attachment name cannot be rendered"
-            ),
-            detail={"student_number_recorded": False},
-        )
-    if attachment_matches(
-        receipt.attachment_names,
-        receipt.student_number,
-        attempt=requirements.attempt,
-        template=requirements.required_attachment_template,
-    ):
+    if receipt.answer_attachment_name is not None:
         return EmailCheckOutcome(
             check="attachment",
             passed=True,
             category=None,
-            message="the received message carries the required attachment name",
-            detail={"attachment_count": len(receipt.attachment_names)},
+            message="the submission has a mapped answer file for this question",
+            detail={"answer_attachment_recorded": True},
         )
     return EmailCheckOutcome(
         check="attachment",
         passed=False,
         category="output_mismatch",
-        message="the received message does not carry the required attachment name",
-        detail={"attachment_count": len(receipt.attachment_names)},
+        message="the submission has no mapped answer file for this question",
+        detail={"answer_attachment_recorded": False},
     )
 
 
@@ -426,14 +405,12 @@ __all__ = [
     "EMAIL_CHECKS",
     "MAX_ATTEMPT",
     "MIN_ATTEMPT",
-    "REQUIRED_ATTACHMENT_TEMPLATE",
     "SUBJECT_TEMPLATE",
     "EmailCheck",
     "EmailCheckOutcome",
     "EmailFailureCategory",
     "EmailReceipt",
     "EmailRequirements",
-    "attachment_matches",
     "evaluate_email_receipt",
     "parse_subject",
     "subject_matches",

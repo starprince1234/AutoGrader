@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Literal
@@ -24,12 +25,23 @@ RejectionReason = Literal[
     "total_too_large",
     "too_many_files",
     "language_mismatch",
+    # 作业模型（CHG-0032）：新写入路径必须精确落在作业受众内，且一次提交只有一道题一个 `.txt`。
+    "assignment_not_found",
+    "assignment_closed",
+    "assignment_mismatch",
+    "invalid_file_count",
+    "file_type_not_allowed",
 ]
 
 #: I2 路径白名单上限：长度（字符）与段数。契约的 `path` 模式是**下限**，这里更严。
 MAX_PATH_LENGTH = 200
 MAX_PATH_SEGMENTS = 8
 _SEGMENT_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
+
+#: 一次提交 = 一道题 = 恰好一个答案文件（规格 §1.4）。文件名是该题在**作业中**的 1 基序号
+#: （`1.txt`、`2.txt`……），单段、大小写敏感的 `.txt`；不按附件顺序猜测映射。
+MAX_ANSWER_FILES = 1
+ANSWER_FILE_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+\.txt$")
 
 
 class EnvelopeRejected(Exception):
@@ -80,6 +92,36 @@ def assert_allowed_relative_path(value: object) -> None:
         raise EnvelopeRejected("path_not_allowed", f"path rejected: {shown}")
 
 
+def is_answer_file_name(value: object) -> bool:
+    """答案文件名规则（规格 §1.4）：单段 `[A-Za-z0-9_.-]+` 且以大小写敏感的 `.txt` 结尾。
+
+    这是**唯一**的题号→文件映射规则：文件名即该题在作业中的 1 基序号（`1.txt`）。刻意不接受
+    `1.TXT`/`answer.txt`/`sub/1.txt`：按附件顺序或模糊匹配猜题号会让"这题交了没交"变成猜测。
+    """
+    return isinstance(value, str) and ANSWER_FILE_PATTERN.match(value) is not None
+
+
+def assert_single_answer_file(paths: Sequence[str]) -> None:
+    """"恰好一个 `.txt` 答案文件"的判定；不满足即抛带稳定原因码的 `EnvelopeRejected`。
+
+    两个入口（HTTP 与 IMAP）在**各自的真实字节闸门**处都调用它：入口的契约/附件校验可能因
+    schema 版本或估算偏差漏掉某条，真实字节集合是最后一道、也是唯一权威的一道。
+    """
+    if len(paths) != MAX_ANSWER_FILES:
+        raise EnvelopeRejected(
+            "invalid_file_count",
+            f"a submission must contain exactly {MAX_ANSWER_FILES} answer file",
+        )
+    for path in paths:
+        if not is_answer_file_name(path):
+            shown = redact_path_for_message(path) if isinstance(path, str) else "?"
+            raise EnvelopeRejected(
+                "file_type_not_allowed",
+                f"answer file must be a single-segment .txt named after the question position: {shown}",
+            )
+
+
+
 @dataclass(frozen=True, slots=True)
 class EnvelopeFile:
     path: str              # 白名单校验后的工作区相对路径
@@ -107,6 +149,9 @@ IntakeProvenance = ApiProvenance | EmailProvenance
 @dataclass(frozen=True, slots=True)
 class SubmissionEnvelope:
     submission_id: str
+    #: 该提交回答的作业（B3 的事实）。**新写入路径必填**；`None` 只表示历史提交——它们在
+    #: `assignment_id` 字段出现之前被接收，不猜测归属、不回填，因此不出现在任何作业级视图里。
+    assignment_id: str | None
     student_id: str
     course_id: str
     section_id: str

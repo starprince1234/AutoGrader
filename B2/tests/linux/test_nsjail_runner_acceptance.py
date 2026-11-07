@@ -480,6 +480,7 @@ def test_i5_real_pipeline_reaches_completed_with_a_score(tmp_path: Path) -> None
             )
         envelope = SubmissionEnvelope(
             submission_id=str(submission_id),
+            assignment_id=str(uuid.uuid4()),
             student_id=str(student_id),
             course_id=str(course_id),
             section_id=str(section_id),

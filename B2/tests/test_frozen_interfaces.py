@@ -199,6 +199,8 @@ def test_rejection_reasons_match_doc_table(doc_source: str) -> None:
     """`EnvelopeRejected.reason` 取值集合必须逐条等于 interfaces.md 第 2.4 节表格。
 
     文档允许一行并列两个原因码（如 `` `empty_fileset` / `duplicate_path` ``），此处按行内出现顺序展开。
+    第 2.4 节末尾的作业模型原因码（CHG-0032）同样是这组稳定原因码的一部分：它们不是"实现细节"，
+    而是对外 Problem type 的机器可读依据。
     """
     section = doc_source.split("### 2.4 失败语义", 1)[1].split("\n## ", 1)[0]
     codes: list[str] = []
@@ -210,7 +212,7 @@ def test_rejection_reasons_match_doc_table(doc_source: str) -> None:
         if in_table and line.startswith("|") and "`" in line:
             first_cell = line.strip("|").split("|")[0]
             codes.extend(re.findall(r"`([a-z_]+)`", first_cell))
-    assert len(codes) == 9, f"第 2.4 节原因码数量异常: {codes}"
+    assert len(codes) == 14, f"第 2.4 节原因码数量异常: {codes}"
     assert get_args(domain.RejectionReason) == tuple(codes)
 
 

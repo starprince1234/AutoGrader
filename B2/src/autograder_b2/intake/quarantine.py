@@ -30,11 +30,11 @@
   所以 resolve 阶段没有任何可重算的摘要。要做到只能是"resolve 时回邮箱重新拉取该 UID 的报文再跑一遍
   完整校验"，而契约给 resolve 的响应集合是 401/403/404/409/422——**没有 503**——反证它不依赖外部
   邮箱（邮箱未配置时按项目纪律只能 503，那就是跳过校验）。
-- **归属后的闭环**：契约说"归属后评测交给正常提交路径"。构造提交信封还需要
-  `course_id`/`section_id`/`question_version_id`，而自动路径正是从匹配规则里取这三项；`not_matched`
-  时规则表根本没得出任何身份，因此"只给一个 `student_id`"不足以重建信封。此外该 UID 的 checkpoint
-  已按 `quarantined` 落库，下次拉取会直接跳过。**本模块不发明"归属即建提交"的路径**：那会绕开
-  自动路径的身份判定，而契约明确要求归属与正常提交路径分开。
+- **归属后的闭环**：自动路径构造提交信封需要 `assignment_id` + 题目映射，而"归属"只补一个学生
+  **推不出来**；`complete`（匹配用户）是后来补上的完整闭环：教师显式选作业，取回原邮件、按附件
+  名（`N.txt`）映射逐题走与自动路径**同一个** `build_submission_envelope` + `persist`，
+  并且只在**全部题目成功**后才把这一行标记 `completed`。`resolve` 仍然保留"只记归属不建提交"
+  的语义（设计 §6.5 明确要求），两者是不同动作。
 
 ## 归属**不触发任何评测**（结构性保证，不是靠记得）
 
@@ -45,8 +45,8 @@
 ## 行级课程范围（P13 的越权修复）
 
 隔离记录从迁移 `20260915_0015` 起带 `scope_course_id/scope_section_id`（成对为空或非空）。
-这两个字段的**唯一**来源是邮件匹配规则的候选共识（`intake.matching` 的模块文档），不是本模块
-从请求、邮箱或身份里推出来的。据此本模块把授权做到行级：
+这两个字段的**唯一**来源是**一次性核验码挑战**（服务端签发事实：挑战本身绑定学生/课程/课序/
+作业），不是本模块从请求、邮箱或身份里推出来的。据此本模块把授权做到行级：
 
 - **列表**：`require_intake_quarantine_authority` 只判"角色 + staff 至少一个课程作用域"这一层；
   真正的行级过滤是 `_scope_predicate(principal)` 翻译出的 SQL 条件：staff 只保留
@@ -93,6 +93,7 @@ from autograder_b2.auth.tokens import Principal
 from autograder_b2.db.schema import intake_quarantines
 from autograder_b2.intake.attachments import AttachmentRejected
 from autograder_b2.intake.imap import ImapProtocolError
+from autograder_b2.integration.assignments import AssignmentUnavailable
 
 if TYPE_CHECKING:
     from autograder_b2.intake.imap import EmailIntakeService
@@ -142,6 +143,10 @@ class QuarantineEmailUnavailable(RuntimeError):
     """匹配用户需要回邮箱取原邮件，但本部署没有配置邮件入口 → 对外 503。"""
 
 
+class QuarantineAssignmentUnavailable(RuntimeError):
+    """匹配用户需要作业受众，但本部署没有配置/连不上作业目录 → 对外 503（系统故障，不是学生错）。"""
+
+
 class QuarantineMessageGone(RuntimeError):
     """原邮件已不在邮箱里（UIDVALIDITY 变化/被删除/取信失败）→ 对外 409。"""
 
@@ -151,17 +156,21 @@ class QuarantineContentRejected(ValueError):
 
 
 class QuarantineTargetMismatch(ValueError):
-    """选择的课程/课序与记录已证明的 scope 不一致 → 对外 422。"""
+    """选择的课程/课序/作业与记录、或与作业受众不一致 → 对外 422。"""
 
 
 @dataclass(frozen=True, slots=True)
 class CompletionTarget:
-    """匹配用户时的目标身份（全部由调用方显式选择，不从邮件内容推断）。"""
+    """匹配用户时的目标身份（全部由调用方显式选择，不从邮件内容推断）。
+
+    设计 §6.5：作业模型下人工复核选定的是**一个作业**，题目由附件名（`N.txt`）映射，
+    不再手工输入 `question_version_id`。
+    """
 
     student_id: str
     course_id: str
     section_id: str
-    question_version_id: str
+    assignment_id: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,7 +192,7 @@ class IntakeQuarantineView:
     resolved: bool
     resolved_student_id: str | None
     resolution_note: str | None
-    #: 匹配规则候选共识给出的课程/课序；成对为空（未关联）或非空。未关联行只对管理员可见。
+    #: 核验码挑战（服务端签发事实）给出的课程/课序；成对为空（未关联）或非空。未关联行只对管理员可见。
     scope_course_id: str | None = None
     scope_section_id: str | None = None
     #: 邮件主题头（有界、无正文）；历史行为 `None`。
@@ -404,7 +413,7 @@ def validate_completion_request(
     student_id: object,
     course_id: object,
     section_id: object,
-    question_version_id: object,
+    assignment_id: object,
     note: object,
 ) -> tuple[CompletionTarget, str | None]:
     """匹配用户的请求体：四个 UUID + 可选备注；任何非法值都是 422。"""
@@ -420,7 +429,7 @@ def validate_completion_request(
             student_id=canonical(student_id, "student_id"),
             course_id=canonical(course_id, "course_id"),
             section_id=canonical(section_id, "section_id"),
-            question_version_id=canonical(question_version_id, "question_version_id"),
+            assignment_id=canonical(assignment_id, "assignment_id"),
         ),
         validate_resolution_note(note),
     )
@@ -659,23 +668,26 @@ class IntakeQuarantineService:
         student_id: str,
         course_id: str,
         section_id: str,
-        question_version_id: str,
+        assignment_id: str,
         note: str | None = None,
     ) -> IntakeQuarantineView:
-        """匹配用户：按选中的课程/课序/题目版本，把原邮件重新取回并生成该学生的提交。
+        """匹配用户：按选中的作业，把原邮件逐题（附件名 `N.txt`）生成该学生的提交。
 
-        这是"人工归属"的完整闭环：检查行级 scope → 取回原邮件 → 重跑附件闸门 → 走与自动路径
-        相同的 `persist` → 同一行标记 `completed` 并写入提交 id。**依赖邮件入口配置**：没有 IMAP
-        时明确 `503`，不从缓存/客户端补附件字节（隔离记录按设计不存附件）。
+        这是"人工归属"的完整闭环：检查行级 scope → 校验学生在作业受众内 → 取回原邮件 →
+        重跑附件闸门与题目映射 → 走与自动路径**同一个** `build_submission_envelope` + `persist`
+        → 同一行标记 `completed`（`resolved_submission_id` 取第一条提交）。
 
-        异常：403 越权；404 不存在；409 已处理/原邮件不可定位；422 请求或附件不合规；
-        `QuarantineEmailUnavailable` → 503。
+        依赖：邮件入口（没有 IMAP 时 503，不从缓存补附件字节）与作业目录（读不到受众时 503，
+        绝不跳过受众校验）。
+
+        异常：403 越权；404 不存在；409 已处理/原邮件不可定位；422 请求/目标/附件不合规；
+        `QuarantineEmailUnavailable` / `QuarantineAssignmentUnavailable` → 503。
         """
         target, canonical_note = validate_completion_request(
             student_id=student_id,
             course_id=course_id,
             section_id=section_id,
-            question_version_id=question_version_id,
+            assignment_id=assignment_id,
             note=note,
         )
         identifier = self._identifier(intake_quarantine_id)
@@ -695,18 +707,21 @@ class IntakeQuarantineService:
         if mailbox is None or uidvalidity is None or uid is None:
             raise QuarantineMessageGone("the record has no mailbox position")
 
+        audience = self._load_audience(target)
+
         try:
             raw = self._email.fetch_raw(uidvalidity=uidvalidity, uid=uid)
         except ImapProtocolError as error:
             raise QuarantineMessageGone(str(error)) from error
 
         try:
-            submission_id = self._email.ingest_raw_for_target(
+            submission_ids = self._email.ingest_raw_for_assignment(
                 raw=raw,
                 student_id=target.student_id,
                 course_id=target.course_id,
                 section_id=target.section_id,
-                question_version_id=target.question_version_id,
+                assignment_id=target.assignment_id,
+                audience=audience,
                 mailbox=mailbox,
                 uidvalidity=uidvalidity,
                 uid=uid,
@@ -714,6 +729,11 @@ class IntakeQuarantineService:
             )
         except AttachmentRejected as error:
             raise QuarantineContentRejected(f"{error.reason}: {error.detail}") from error
+        if not submission_ids:
+            raise QuarantineContentRejected(
+                "attachment_mapping_invalid: the original message carries no mapped answer file"
+            )
+        first_submission_id = submission_ids[0]
 
         now = datetime.now(UTC)
         with self._engine.begin() as connection:
@@ -725,7 +745,7 @@ class IntakeQuarantineService:
                     )
                 ).fetchone()
                 assert current is not None
-                if str(current.resolved_submission_id or "") == submission_id:
+                if str(current.resolved_submission_id or "") == first_submission_id:
                     return _view_of(current)
                 raise QuarantineAlreadyResolvedError(str(identifier))
             self._require_completion_target(principal, target, row)
@@ -744,7 +764,7 @@ class IntakeQuarantineService:
                     resolution="completed",
                     resolved_at=now,
                     resolved_by=uuid.UUID(principal.user_id),
-                    resolved_submission_id=uuid.UUID(submission_id),
+                    resolved_submission_id=uuid.UUID(first_submission_id),
                     held=False,
                     held_at=None,
                     held_by=None,
@@ -755,7 +775,7 @@ class IntakeQuarantineService:
                 mailbox=mailbox,
                 uidvalidity=uidvalidity,
                 uid=uid,
-                submission_id=submission_id,
+                submission_id=first_submission_id,
                 now=now,
             )
             updated = connection.execute(
@@ -763,6 +783,37 @@ class IntakeQuarantineService:
             ).fetchone()
         assert updated is not None
         return _view_of(updated)
+
+    def _load_audience(self, target: CompletionTarget):
+        """读取并校验人工复核选定的作业受众（与自动路径**同一个**目录与判定）。
+
+        - 目录未配置/不可达 → `QuarantineAssignmentUnavailable`（503，系统故障不是学生错）；
+        - 作业不存在、不属于目标课程、或学生/课序不在受众内、或作业不再 open → 422
+          `QuarantineTargetMismatch`（人工复核不能把学生塞进不属于他的作业）。
+        """
+        assert self._email is not None
+        directory = self._email.assignment_directory
+        if directory is None:
+            raise QuarantineAssignmentUnavailable("assignment directory is not configured")
+        try:
+            audience = directory.get(target.assignment_id)
+        except AssignmentUnavailable as error:
+            raise QuarantineAssignmentUnavailable(str(error)) from error
+        if audience is None:
+            raise QuarantineTargetMismatch("the selected assignment does not exist")
+        if not audience.open:
+            raise QuarantineTargetMismatch("the selected assignment is not open")
+        if audience.course_id != target.course_id:
+            raise QuarantineTargetMismatch(
+                "the selected assignment belongs to another course"
+            )
+        if not audience.is_target(
+            section_id=target.section_id, student_id=target.student_id
+        ):
+            raise QuarantineTargetMismatch(
+                "the selected student or section is not in the assignment audience"
+            )
+        return audience
 
     def set_held(
         self,
@@ -989,6 +1040,7 @@ __all__ = [
     "InvalidQuarantineCursorError",
     "InvalidQuarantineFilterError",
     "QuarantineAlreadyResolvedError",
+    "QuarantineAssignmentUnavailable",
     "QuarantineNotAttributableError",
     "QuarantineNotFoundError",
     "QuarantineRequestError",

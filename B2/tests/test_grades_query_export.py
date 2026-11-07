@@ -24,7 +24,7 @@ import io
 import time
 import uuid
 import zipfile
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Any
@@ -38,7 +38,12 @@ from sqlalchemy import Engine, delete, select
 from autograder_b2 import contracts
 from autograder_b2.auth.authorization import AuthorizationError
 from autograder_b2.auth.tokens import CourseScope, Principal
-from autograder_b2.db.schema import evaluation_results, evaluation_runs, submissions
+from autograder_b2.db.schema import (
+    evaluation_results,
+    evaluation_runs,
+    manual_grades,
+    submissions,
+)
 from autograder_b2.grades.export import (
     ESCAPE_PREFIX,
     EXPORT_COLUMN_FIELDS,
@@ -196,19 +201,21 @@ def _seed_submission(
     question_version_id: uuid.UUID,
     submitted_at: datetime,
     state: str = "queued",
+    assignment_id: uuid.UUID | None = None,
 ) -> uuid.UUID:
     """写入一条提交行（形状 = 真实的 `intake='api'` 提交，含 0008 要求的 provenance）。
 
     迁移 `20260915_0008_b2_submission_provenance` 给 `b2.submissions` 加了 `correlation_id NOT NULL`
     与 provenance 五列，并由 `ck_submissions_provenance_shape` 按 `intake` 取值锁形状：这里写
     `intake='api'`，因此 `request_id` 非空、邮件四列（`mailbox`/`uidvalidity`/`uid`/`message_id`）
-    **留空**（不写入即为 NULL）。
+    **留空**（不写入即为 NULL）。`assignment_id` 缺省为 `NULL`（历史行形态）——作业过滤用例显式传入。
     """
     identifier = uuid.uuid4()
     with engine.begin() as connection:
         connection.execute(
             submissions.insert().values(
                 submission_id=identifier,
+                assignment_id=assignment_id,
                 student_id=student_id,
                 course_id=course_id,
                 section_id=section_id,
@@ -295,11 +302,14 @@ def _synthetic_row(**overrides: object) -> GradeRow:
         "display_name": "张三",
         "course_id": str(uuid.uuid4()),
         "section_id": str(uuid.uuid4()),
+        "assignment_id": str(uuid.uuid4()),
         "question_version_id": str(uuid.uuid4()),
         "state": "completed",
         "score": 86.5,
         "max_score": 100.0,
         "is_pass": True,
+        "grade_status": "deterministic",
+        "score_source": "deterministic",
         "submitted_at": BASE,
         "evaluation_run_id": str(uuid.uuid4()),
     }
@@ -367,11 +377,14 @@ def _normalised(record: dict[str, object]) -> dict[str, object]:
         "display_name": cell("display_name"),
         "course_id": cell("course_id"),
         "section_id": cell("section_id"),
+        "assignment_id": cell("assignment_id"),
         "question_version_id": cell("question_version_id"),
         "state": cell("state"),
         "score": _as_number(record[_HEADER["score"]]),
         "max_score": _as_number(record[_HEADER["max_score"]]),
         "is_pass": _as_bool(record[_HEADER["is_pass"]]),
+        "grade_status": cell("grade_status"),
+        "score_source": cell("score_source"),
         "submitted_at": _as_timestamp(record[_HEADER["submitted_at"]]),
         "evaluation_run_id": cell("evaluation_run_id"),
     }
@@ -1318,6 +1331,266 @@ def test_filters_narrow_the_export_too(
         ).content
     )
     assert [record[_HEADER["submission_id"]] for record in records] == [str(wanted)]
+
+
+# --- 作业过滤（CHG-0032） -------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class _AssignmentWorld:
+    course: uuid.UUID
+    section: uuid.UUID
+    question: uuid.UUID
+    first: uuid.UUID
+    second: uuid.UUID
+    in_first: uuid.UUID
+    in_second: uuid.UUID
+    historical: uuid.UUID
+
+
+def _assignment_dataset(engine: Engine) -> _AssignmentWorld:
+    """同一课程、同一题目版本，分属两个作业与一条历史行（`assignment_id IS NULL`）的成绩数据。"""
+    course, section, question = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    first, second = uuid.uuid4(), uuid.uuid4()
+    return _AssignmentWorld(
+        course=course,
+        section=section,
+        question=question,
+        first=first,
+        second=second,
+        in_first=_seed_submission(
+            engine,
+            course_id=course,
+            section_id=section,
+            student_id=uuid.uuid4(),
+            question_version_id=question,
+            submitted_at=BASE,
+            state="validated",
+            assignment_id=first,
+        ),
+        in_second=_seed_submission(
+            engine,
+            course_id=course,
+            section_id=section,
+            student_id=uuid.uuid4(),
+            question_version_id=question,
+            submitted_at=BASE + timedelta(seconds=1),
+            state="validated",
+            assignment_id=second,
+        ),
+        historical=_seed_submission(
+            engine,
+            course_id=course,
+            section_id=section,
+            student_id=uuid.uuid4(),
+            question_version_id=question,
+            submitted_at=BASE + timedelta(seconds=2),
+            state="validated",
+            assignment_id=None,
+        ),
+    )
+
+
+def test_assignment_filter_selects_only_that_assignment_and_skips_historical_rows(
+    engine: Engine, query: GradeQueryService, exporter: GradesExportService
+) -> None:
+    """`?assignment_id=` 只返回该作业；历史行（`assignment_id IS NULL`）不出现在任何作业过滤里。
+
+    两个作业可以引用同一个 `question_version_id`（真实数据里很常见：同一道题被两个作业复用），因此
+    作业过滤不能退化成"按题目过滤"——那样会同时返回另一个作业的提交，把不同作业的成绩混在一起。
+    """
+    world = _assignment_dataset(engine)
+    teacher = _teacher(world.course)
+
+    page = query.list_grades(
+        principal=teacher, course_id=str(world.course), assignment_id=str(world.first)
+    )
+    assert [row.submission_id for row in page.items] == [str(world.in_first)]
+    assert page.items[0].assignment_id == str(world.first)
+
+    # 不带作业过滤：三行都在，历史行如实是 None（不猜归属，也不把历史行藏起来）。
+    everything = query.list_grades(principal=teacher, course_id=str(world.course))
+    assert {
+        row.submission_id: row.assignment_id for row in everything.items
+    } == {
+        str(world.in_first): str(world.first),
+        str(world.in_second): str(world.second),
+        str(world.historical): None,
+    }
+
+    # 导出与查询同一口径（导出复用同一个 `iter_grades`）。
+    _, records = _read_csv(
+        _export(
+            exporter,
+            principal=teacher,
+            course_id=str(world.course),
+            assignment_id=str(world.second),
+            fmt="csv",
+        ).content
+    )
+    assert [record[_HEADER["assignment_id"]] for record in records] == [str(world.second)]
+
+    # 历史行的作业ID是**空单元格**：既不是 0，也不是一个编出来的 UUID。
+    _, records = _read_csv(
+        _export(exporter, principal=teacher, course_id=str(world.course), fmt="csv").content
+    )
+    by_submission = {record[_HEADER["submission_id"]]: record for record in records}
+    assert by_submission[str(world.historical)][_HEADER["assignment_id"]] == ""
+    assert by_submission[str(world.in_first)][_HEADER["assignment_id"]] == str(world.first)
+
+
+def test_assignment_filter_paginates_without_gaps_or_duplicates(
+    engine: Engine, query: GradeQueryService
+) -> None:
+    """作业过滤与游标分页一起用：跨页既无重复也不漏行（keyset 语义不因过滤而失效）。"""
+    course, section, question, assignment = (
+        uuid.uuid4(),
+        uuid.uuid4(),
+        uuid.uuid4(),
+        uuid.uuid4(),
+    )
+    teacher = _teacher(course)
+    expected = [
+        _seed_submission(
+            engine,
+            course_id=course,
+            section_id=section,
+            student_id=uuid.uuid4(),
+            question_version_id=question,
+            submitted_at=BASE + timedelta(seconds=index),
+            state="validated",
+            assignment_id=assignment,
+        )
+        for index in range(3)
+    ]
+    first = query.list_grades(
+        principal=teacher, course_id=str(course), assignment_id=str(assignment), limit=2
+    )
+    assert [row.submission_id for row in first.items] == [str(item) for item in expected[:2]]
+    assert first.next_cursor is not None
+    second = query.list_grades(
+        principal=teacher,
+        course_id=str(course),
+        assignment_id=str(assignment),
+        limit=2,
+        cursor=first.next_cursor,
+    )
+    assert [row.submission_id for row in second.items] == [str(expected[2])]
+    assert second.next_cursor is None
+
+
+def test_assignment_filter_rejects_a_non_uuid(engine: Engine, query: GradeQueryService) -> None:
+    """`assignment_id` 不是 UUID → 422 语义（`InvalidFilterError`），与其它过滤参数同口径。"""
+    course = uuid.uuid4()
+    with pytest.raises(InvalidFilterError):
+        query.list_grades(
+            principal=_teacher(course), course_id=str(course), assignment_id="not-a-uuid"
+        )
+
+
+# --- 人工评分（CHG-0024）：报告分数与来源 ---------------------------------------------------
+
+
+def _set_grade_status(engine: Engine, submission_id: uuid.UUID, status: str) -> None:
+    with engine.begin() as connection:
+        connection.execute(
+            submissions.update()
+            .where(submissions.c.submission_id == submission_id)
+            .values(grade_status=status)
+        )
+
+
+def _seed_manual_grade(engine: Engine, submission_id: uuid.UUID, *, score: str = "88.5") -> None:
+    with engine.begin() as connection:
+        connection.execute(
+            manual_grades.insert().values(
+                manual_grade_id=uuid.uuid4(),
+                submission_id=submission_id,
+                score=Decimal(score),
+                comment=None,
+                graded_by=uuid.uuid4(),
+                graded_at=BASE,
+                updated_at=BASE,
+                revision=1,
+            )
+        )
+
+
+def test_manual_grade_is_the_effective_score_and_names_its_source(
+    engine: Engine, query: GradeQueryService, exporter: GradesExportService
+) -> None:
+    """有人工评分时：`score` 是教师给的分、`max_score` 是人工刻度、`is_pass=None`，来源 `manual`。
+
+    没评之前（`awaiting_manual`）：`score` 为 `None`（不是 0 分），来源也为 `None`——
+    "交了但没评"绝不能显示成"0 分"或"未交"（CHG-0024）。
+    """
+    course, section, question = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    teacher = _teacher(course)
+    submission = _seed_submission(
+        engine,
+        course_id=course,
+        section_id=section,
+        student_id=uuid.uuid4(),
+        question_version_id=question,
+        submitted_at=BASE,
+        state="validated",
+    )
+    _set_grade_status(engine, submission, "awaiting_manual")
+
+    pending = query.list_grades(principal=teacher, course_id=str(course)).items[0]
+    assert pending.grade_status == "awaiting_manual"
+    assert pending.score is None and pending.score_source is None
+    assert pending.is_pass is None
+
+    _seed_manual_grade(engine, submission, score="88.5")
+    _set_grade_status(engine, submission, "graded")
+
+    row = query.list_grades(principal=teacher, course_id=str(course)).items[0]
+    assert row.grade_status == "graded"
+    assert row.score == 88.5, "人工分是生效分数"
+    assert row.max_score == 100.0, "人工评分刻度固定 0..100"
+    assert row.score_source == "manual"
+    assert row.is_pass is None, "人工评分没有通过/不通过结论，不得沿用机器结果"
+
+    # 导出报告同一份事实（导出口径 = 查询口径）。
+    _, records = _read_csv(
+        _export(exporter, principal=teacher, course_id=str(course), fmt="csv").content
+    )
+    record = records[0]
+    assert _as_number(record[_HEADER["score"]]) == 88.5
+    assert record[_HEADER["grade_status"]] == "graded"
+    assert record[_HEADER["score_source"]] == "manual"
+
+
+def test_deterministic_rows_report_their_source_and_no_manual_grade(
+    engine: Engine, query: GradeQueryService
+) -> None:
+    """没有人工评分时，来源是 `deterministic`（仅当运行完成且结果已持久化），且机器分原样报告。"""
+    course, section, question = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    teacher = _teacher(course)
+    submission = _seed_submission(
+        engine,
+        course_id=course,
+        section_id=section,
+        student_id=uuid.uuid4(),
+        question_version_id=question,
+        submitted_at=BASE,
+        state="completed",
+    )
+    _seed_run(
+        engine,
+        submission_id=submission,
+        question_version_id=question,
+        state="completed",
+        score="72",
+        is_pass=True,
+    )
+
+    row = query.list_grades(principal=teacher, course_id=str(course)).items[0]
+    assert row.score == 72.0
+    assert row.score_source == "deterministic"
+    assert row.grade_status == "deterministic"
+    assert row.is_pass is True
 
 
 # --- 导出不泄漏报告/源码/参考答案/隐藏用例 --------------------------------------------------

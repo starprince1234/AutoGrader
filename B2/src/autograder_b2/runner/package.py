@@ -67,8 +67,8 @@ MAX_EMAIL_ATTEMPT = 99
 _EMAIL_TEMPLATE_PLACEHOLDERS = {"student_number", "attempt"}
 
 #: `execution.email` / `execution.ssh` 中带契约默认值的可选字段（缺省即用默认值，不是拒绝）。
+#: 附件名不再有模板：第 N 题的答案文件恒为 `N.txt`（设计 §1.4/§2.6）。
 DEFAULT_EMAIL_SUBJECT_TEMPLATE = "{student_number}_{attempt}"
-DEFAULT_EMAIL_ATTACHMENT_TEMPLATE = "{student_number}.txt"
 DEFAULT_SSH_LOGIN_TIMEOUT_SECONDS = 10.0
 DEFAULT_SSH_SESSION_TIMEOUT_SECONDS = 10.0
 #: `execution.ssh` 的必填字段；两个 timeout 有默认值，不在其中。
@@ -138,7 +138,7 @@ _CASE_FIELDS = {
     "email_check",
 }
 _EXECUTION_FIELDS = {"mode", "segment_delimiter", "email", "ssh"}
-_EMAIL_FIELDS = {"attempt", "subject_template", "required_attachment_template"}
+_EMAIL_FIELDS = {"attempt", "subject_template"}
 _SSH_FIELDS = {
     "host",
     "port",
@@ -209,7 +209,6 @@ class PackageEmailConfig:
 
     attempt: int
     subject_template: str
-    required_attachment_template: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -652,9 +651,10 @@ def _parse_email_config(payload: object) -> PackageEmailConfig | None:
         return None
     config = _require_mapping(payload, "execution.email")
     _reject_unknown(config, _EMAIL_FIELDS, "execution.email", reason="invalid_email_check")
-    # Contract: only `attempt` is required. The two templates carry defaults in both the
-    # contract schema and B3's DTO, so a package that omits them means "use the documented
-    # defaults", not "reject the package".
+    # Contract: only `attempt` is required. `subject_template` carries a default in both the
+    # contract schema and B3's DTO, so a package that omits it means "use the documented
+    # default", not "reject the package". The attachment file name has no template any more:
+    # question N's answer file is always `N.txt` (design §1.4/§2.6).
     if "attempt" not in config:
         _reject("invalid_email_check", "execution.email missing required field: attempt")
     attempt = _require_int(config["attempt"], "execution.email.attempt")
@@ -665,17 +665,10 @@ def _parse_email_config(payload: object) -> PackageEmailConfig | None:
             f" got {attempt}",
         )
     subject_template = config.get("subject_template", DEFAULT_EMAIL_SUBJECT_TEMPLATE)
-    attachment_template = config.get(
-        "required_attachment_template", DEFAULT_EMAIL_ATTACHMENT_TEMPLATE
-    )
     return PackageEmailConfig(
         attempt=attempt,
         subject_template=_parse_template(
             subject_template, "execution.email.subject_template"
-        ),
-        required_attachment_template=_parse_template(
-            attachment_template,
-            "execution.email.required_attachment_template",
         ),
     )
 

@@ -46,8 +46,8 @@ const apiUrl = "http://127.0.0.1:18000";
 // same entries for an existing host; omitting it here is what made the first deployment
 // report the channel as unconfigured while Doppler held every value.
 const mailEntries = mailEnvEntries(process.env);
-const imapEntries = imapEnvEntries(process.env);
-const intakeEntries = intakeEnvEntries(process.env);
+const intakeEntries = intakeEnvEntries({ ...process.env, B2_B3_SERVICE_TOKEN: serviceToken });
+const imapEntries = imapEnvEntries({ ...process.env, ...intakeEntries });
 
 // Same arrangement for the model provider: `sync-llm-config` renders the identical block for a
 // host whose environment file already exists, and this render covers a fresh one.
@@ -78,6 +78,11 @@ const runtimeEntries = {
   B3_JWT_ISSUER: "autograder",
   B3_JWT_AUDIENCE: "autograder-api",
   B3_SERVICE_TOKEN: serviceToken,
+  // CHG-0032: B3 validates a new assignment's target sections/students against B4's internal
+  // endpoint; without this credential it must refuse to create the assignment (503), never
+  // trust the client's ids. Same shared secret, new consumer.
+  B3_B4_BASE_URL: apiUrl,
+  B3_B4_SERVICE_TOKEN: serviceToken,
   JWT_PRIVATE_KEY_FILE: "/var/lib/autograder/jwt/jwt-ed25519.pem",
   // B2 的邮件收信查账号时调用 B4 内部端点，B4 用它校验预共享凭证。
   B4_SERVICE_TOKEN: serviceToken,

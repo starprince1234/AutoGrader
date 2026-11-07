@@ -27,6 +27,14 @@ export const queryKeys = {
   courses: ["courses"] as const,
   sections: (courseId: string) => ["sections", courseId] as const,
   enrollments: (sectionId: string) => ["enrollments", sectionId] as const,
+  /**
+   * 一次取完的课序名单（作业受众/指定学生用）。
+   *
+   * 与 `enrollments`（无限查询、逐页翻）**必须分开缓存**：同一个键下两种数据形状会让
+   * 一个页面的缓存被另一个页面读成错误结构。这里把"取完全部页"封装在单次 queryFn 里，
+   * 因此结果就是完整名单 + 是否被翻页上限截断。
+   */
+  sectionRoster: (sectionId: string) => ["section-roster", sectionId] as const,
   rosterImport: (id: string) => ["roster-import", id] as const,
   users: (role: string | null) => ["users", role] as const,
   /** 当前生效的注册名单批次（P14）。只有一个对象，没有筛选维度可进键。 */
@@ -53,6 +61,17 @@ export const queryKeys = {
   intakeMessage: (submissionId: string) => ["intake-message", submissionId] as const,
   manualGrade: (submissionId: string) => ["manual-grade", submissionId] as const,
   submission: (submissionId: string) => ["submission", submissionId] as const,
+  /**
+   * 提交答案文件内容（受控读取，见 `apiRequestText`）。按 `(submission_id, path)` 缓存：
+   * 同一个提交的同一道题内容不会变（提交是不可变快照），因此不必反复下载。
+   */
+  submissionFile: (submissionId: string, path: string) =>
+    ["submission-file", submissionId, path] as const,
+  /** 调用者本人资料（`GET /api/v1/me`）。一个账号只有一份，没有筛选维度。 */
+  currentUser: ["current-user"] as const,
+  /** 邮件核验码挑战状态（轮询）：按 challenge_id 缓存。 */
+  emailVerificationChallenge: (challengeId: string) =>
+    ["email-verification-challenge", challengeId] as const,
   evaluationReport: (runId: string, view: string) =>
     ["evaluation-report", runId, view] as const,
   /**

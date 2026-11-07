@@ -115,6 +115,10 @@ services:
       B3_JWT_ISSUER: autograder
       B3_JWT_AUDIENCE: autograder-api
       B3_SERVICE_TOKEN: local-integration-service-token
+      # CHG-0032: B3 validates assignment target sections/students against B4's internal
+      # endpoint. Same in-process address and shared service token convention as B2's channel.
+      B3_B4_BASE_URL: http://127.0.0.1:8000
+      B3_B4_SERVICE_TOKEN: local-integration-service-token
 
       # --- B4: identity, courses, roster, registry, messaging ----------------------
       B4_DATABASE_URL: postgresql+psycopg://autograder_b4:change-me@postgres:5432/autograder

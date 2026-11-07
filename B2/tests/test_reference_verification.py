@@ -1522,12 +1522,13 @@ def test_batch_evidence_that_does_not_cover_every_case_is_a_defect(
 # --- 执行模式：email_delivery（合成回执，不是真实邮件端到端） --------------------------------
 
 #: 合成邮件回执（受保护参考答案正文）；键集合与共享规则引擎的输入一一对应。
+#: `answer_attachment_name` = 该题在收件映射里的答案文件名（设计 §1.4/§6.5），非空即"有映射"。
 RECEIPT: dict[str, Any] = {
     "student_number": "2020141440777",
     "subject": "2020141440777_1",
     "sender": "student@example.edu",
     "account_email": "student@example.edu",
-    "attachment_names": ["2020141440777.txt"],
+    "answer_attachment_name": "1.txt",
     "received": True,
     "account_email_verified": True,
     "sender_binding_matches": True,

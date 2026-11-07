@@ -35,7 +35,7 @@ from .logging import configure_logging, get_logger, log_event
 class B3Module:
     descriptor = ModuleDescriptor(
         module="B3",
-        contract_version="0.30.0",
+        contract_version="0.31.0",
         provides=("b3-questions",),
         requires=("host", "b4-course"),
         routes=(
@@ -43,6 +43,11 @@ class B3Module:
             "/api/v1/question-versions",
             "/api/v1/question-draft-generations",
             "/api/v1/assignments",
+            # Internal service-to-service operations: the assignment audience B2 reads when
+            # admitting a submission (CHG-0032). It gets its own prefix because a route
+            # prefix is owned by exactly one module (the host checks enforce that); B4 owns
+            # `/api/v1/internal` for its identity/target endpoints.
+            "/api/v1/assignment-audiences",
         ),
         events=(
             # publishes (module.yaml: events.publishes)

@@ -115,6 +115,7 @@ from autograder_b2.integration.adapters import (
     RunnerCaseRunner,
     StaticSecurityDecider,
 )
+from autograder_b2.integration.assignments import AssignmentDirectory
 from autograder_b2.integration.bindings import UNSET_ENVIRONMENT_TAG
 from autograder_b2.integration.submission_loader import load_submission_envelope
 from autograder_b2.reference import (
@@ -190,6 +191,30 @@ class B2Runtime:
         转发而不另建一个实例：同一进程里两个实例会让"挑战是否已消费"出现两个缓存视图。
         """
         return self.intake.email_verification
+
+    @property
+    def assignment_directory(self) -> AssignmentDirectory | None:
+        """作业受众目录（B3 internal endpoint；CHG-0032）。**未配置时为 `None`**。
+
+        装配点在接收入口共用的 `IntakeRuntime`：`B2_B3_BASE_URL` + `B2_B3_AUTHORIZATION` 同时存在时
+        构造一个 `B3AssignmentDirectory`，两个入口（HTTP 提交与 IMAP 收件）用的是**同一个实例**。
+        这里只转发，不另建客户端：同一进程里两个客户端不会让受众数据不一致（它无缓存），但会让
+        "未配置"出现两种判断；只留一处装配是让"目录不可用"只有一个口径（对外一律 503）。
+        """
+        return self.intake.assignment_directory
+
+    @property
+    def email(self):
+        """邮件拉取服务（IMAP 入口；未装配时为 `None`）。由 `pull` CLI 使用。
+
+        与 `email_verification` 同理：属于接收运行时，这里只转发，不在顶层另建实例。
+        """
+        return self.intake.email
+
+    @property
+    def email_unavailable_reason(self) -> str | None:
+        """邮件入口不可用的可读原因（未配置 vs 配错，由接收运行时区分）。"""
+        return self.intake.email_unavailable_reason
 
     def record_failure(self) -> None:
         """记录一次**未预期**的端点依赖失败（供健康状态的 detail 如实报告；不含敏感细节）。

@@ -1,7 +1,7 @@
 asyncapi: 3.0.0
 info:
   title: AutoGrader domain events
-  version: 0.30.0
+  version: 0.31.0
   description: |
     Asynchronous contract between modules, carried by NATS JetStream.
 
@@ -29,7 +29,12 @@ servers:
 channels:
   submissionAccepted:
     address: autograder.v1.submission.accepted
-    description: A submission passed validation, is stored by digest and is queued.
+    description: |-
+      A submission passed validation, is stored by digest and is queued. From CHG-0032 the
+      payload also carries `assignment_id` (one submission is one assignment question). The
+      field is optional for readers: events already sitting in the outbox at upgrade time were
+      produced before it existed and must still be deliverable, so consumers must treat it as
+      possibly absent rather than reject the delivery.
     messages:
       submissionAccepted:
         $ref: '#/components/messages/submissionAccepted'
@@ -171,6 +176,7 @@ components:
             producer: B2
             payload:
               submission_id: 00000000-0000-4000-8000-000000000101
+              assignment_id: 00000000-0000-4000-8000-000000000106
               student_id: 00000000-0000-4000-8000-000000000102
               course_id: 00000000-0000-4000-8000-000000000103
               section_id: 00000000-0000-4000-8000-000000000104

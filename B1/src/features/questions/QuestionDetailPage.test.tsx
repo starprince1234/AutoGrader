@@ -57,15 +57,15 @@ function Harness() {
 }
 
 /**
- * 题目详情里有指向作答页的 `<Link>`，因此测试需要一个最小路由上下文
- * （只用测试路由表，不引入应用路由表，避免测试与应用装配耦合）。
+ * 题目详情里有指向「我的作业」的 `<Link>`（作答入口只在作业工作区），因此测试需要一个
+ * 最小路由上下文（只用测试路由表，不引入应用路由表，避免测试与应用装配耦合）。
  */
 function renderQuestionDetail() {
   const rootRoute = createRootRoute({ component: Harness });
-  const submitRoute = createRoute({
+  const assignmentsRoute = createRoute({
     getParentRoute: () => rootRoute,
-    path: "/submit/$questionVersionId",
-    component: () => <span>submit target</span>,
+    path: "/assignments",
+    component: () => <span>assignments target</span>,
   });
   const editRoute = createRoute({
     getParentRoute: () => rootRoute,
@@ -73,7 +73,7 @@ function renderQuestionDetail() {
     component: () => <span>edit target</span>,
   });
   const testRouter = createRouter({
-    routeTree: rootRoute.addChildren([submitRoute, editRoute]),
+    routeTree: rootRoute.addChildren([assignmentsRoute, editRoute]),
     history: createMemoryHistory({ initialEntries: ["/"] }),
   });
   return renderWithProviders(<RouterProvider router={testRouter} />);

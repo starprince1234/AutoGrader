@@ -240,13 +240,10 @@ export function QuestionDetailPage({
 
             {version.data.status === "published" && canSubmitAnswer(session) ? (
               <div className="inline">
-                <Link
-                  className="button"
-                  to="/submit/$questionVersionId"
-                  params={{ questionVersionId: version.data.question_version_id }}
-                  search={{}}
-                >
-                  {t("questions.submit")}
+                {/* 作答入口只存在于作业工作区（一次提交 = 一道题，必须知道 assignment 与题号）。
+                    题目页没有作业上下文，因此这里只把学生带到「我的作业」。 */}
+                <Link className="button" to="/assignments" data-testid="go-to-assignments">
+                  {t("questions.goToAssignments")}
                 </Link>
               </div>
             ) : null}

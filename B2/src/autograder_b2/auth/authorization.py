@@ -59,6 +59,38 @@ def require_submission_authority(
         raise AuthorizationError("a student may only submit their own work")
 
 
+def require_submission_read(
+    principal: Principal, *, course_id: str, section_id: str, student_id: str
+) -> None:
+    """**读**一份提交（元数据/附件内容/来信摘录）的授权判定；不满足即 `AuthorizationError`（403）。
+
+    三层独立成立（`MAIN/docs/architecture/security.md` §3.6、`identifiers.md` §3）：
+
+    1. **角色**：令牌必须持有至少一个**已登记**角色；没有任何角色的令牌连自己的数据也不能读
+       （认证 ≠ 授权）；
+    2. **课程/课序作用域**：令牌必须覆盖该提交的 `(course_id, section_id)`——用只覆盖课程 A 的令牌
+       读课程 B 里自己的提交同样是 403；
+    3. **身份**：管理员放行；学生只允许读**本人**；教师/助教在其课程作用域内可读他人。
+
+    顺序有意如此（角色 → 作用域 → 身份）。`course_id`/`section_id`/`student_id` 都来自**库里的行**，
+    因此不需要请求侧规范化；`principal.user_id` 已由令牌层规范化。
+
+    这是**读**判定：评分写动作（`set_manual_grade`/`release`/`get_manual_grade`）仍走教师/管理员专用
+    的路径——学生能看自己的答案，不等于能给自己打分。
+    """
+    if principal.is_admin:
+        return
+    if not principal.has_recognized_role:
+        raise AuthorizationError("the token carries no recognized platform role")
+    if not principal.covers_course(course_id, section_id):
+        raise AuthorizationError("course scope does not cover this submission")
+    if student_id == principal.user_id:
+        return
+    if principal.is_course_staff:
+        return
+    raise AuthorizationError("the caller is not permitted to read this submission")
+
+
 #: 隔离区复核台的角色（`CHG-0014`：teacher/admin）。只读复核**不含**学生：
 #: 一条隔离记录连的是"某封邮件没能变成提交"，学生既不拥有它、也不该凭它推断他人邮件是否存在。
 _QUARANTINE_STAFF_ROLES = ("teacher",)

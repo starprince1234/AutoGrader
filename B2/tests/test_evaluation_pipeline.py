@@ -196,7 +196,6 @@ class _FakeEmails:
 
     attempt: int
     subject_template: str = "{student_number}_{attempt}"
-    required_attachment_template: str = "{student_number}.txt"
 
 
 @dataclass(frozen=True, slots=True)
@@ -704,6 +703,7 @@ def _envelope(
     )
     return SubmissionEnvelope(
         submission_id=str(submission_id),
+        assignment_id=str(uuid.uuid4()),
         student_id=str(uuid.uuid4()),
         course_id=str(uuid.uuid4()),
         section_id=str(uuid.uuid4()),

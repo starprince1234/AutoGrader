@@ -11,6 +11,9 @@ import type {
   AuthoringAssistance,
   ComparisonDiagnostics,
   CoursePublic,
+  CurrentUser,
+  EmailVerificationChallenge,
+  EmailVerificationChallengeStatus,
   EnrollmentPublic,
   EvaluationCommentary,
   EvaluationQualitySummary,
@@ -74,14 +77,15 @@ export function coursePage(courses: CoursePublic[], nextCursor: string | null = 
 }
 
 /**
- * 作业（`AssignmentPublic`，CHG-0007）。B1 只拿到 `assignment_id → question_version_ids`，
- * 没有别的字段可用；`status` 只有 `open`/`archived`。
+ * 作业（`AssignmentPublic`，CHG-0032）：一门课程 + 1..N 个目标课序，
+ * 可选收窄到指定学生（`student_ids` 为空 = 所选课序全体）。
  */
 export function assignmentPublic(overrides?: Partial<AssignmentPublic>): AssignmentPublic {
   return {
     assignment_id: UUID_A,
     course_id: UUID_B,
-    section_id: UUID_C,
+    section_ids: [UUID_C],
+    student_ids: [],
     title: "第一次作业",
     status: "open",
     due_at: "2026-10-01T15:59:00.000Z",
@@ -90,6 +94,44 @@ export function assignmentPublic(overrides?: Partial<AssignmentPublic>): Assignm
     updated_at: "2026-09-15T07:00:00.000Z",
     ...overrides,
   } as AssignmentPublic;
+}
+
+/** 调用者本人资料（`GET /api/v1/me`）：邮件正文的姓名/学号来自这里。 */
+export function currentUser(overrides?: Partial<CurrentUser>): CurrentUser {
+  return {
+    user_id: UUID_D,
+    username: "student1",
+    display_name: "张三",
+    student_number: "20260001",
+    roles: ["student"] as Role[],
+    ...overrides,
+  } as CurrentUser;
+}
+
+/** 一次性核验码挑战（`POST /api/v1/email-verification/challenges`，CHG-0032）。 */
+export function emailVerificationChallenge(
+  overrides?: Partial<EmailVerificationChallenge>,
+): EmailVerificationChallenge {
+  return {
+    challenge_id: UUID_A,
+    assignment_id: UUID_A,
+    code: "AG-123456789012",
+    expires_at: "2099-01-01T00:00:00.000Z",
+    ...overrides,
+  } as EmailVerificationChallenge;
+}
+
+/** 核验码状态（`GET .../challenges/{id}`）：收到后带逐题 `submissions[]`。 */
+export function emailVerificationChallengeStatus(
+  overrides?: Partial<EmailVerificationChallengeStatus>,
+): EmailVerificationChallengeStatus {
+  return {
+    challenge_id: UUID_A,
+    state: "pending",
+    expires_at: "2099-01-01T00:00:00.000Z",
+    submissions: [],
+    ...overrides,
+  } as EmailVerificationChallengeStatus;
 }
 
 export function assignmentPage(
@@ -182,6 +224,7 @@ export function gradeRow(overrides?: Partial<GradeRow>): GradeRow {
     display_name: "张三",
     course_id: UUID_A,
     section_id: UUID_B,
+    assignment_id: UUID_A,
     question_version_id: UUID_C,
     state: "completed",
     score: 86,
@@ -345,6 +388,7 @@ export function questionVersionPublic(
     status: "published",
     language: "bash",
     adapter_kind: "stdin",
+    execution_mode: "per_case",
     stem_markdown: "# 统计文件行数\n\n请实现 `wc -l` 的最小版本。",
     stem_assets: [],
     content_digest: SHA_A,

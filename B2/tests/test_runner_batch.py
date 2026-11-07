@@ -23,7 +23,6 @@ Linux 的 `crypt` 模块，因此该项在本机 skip。
 from __future__ import annotations
 
 import copy
-import importlib
 import json
 import os
 import re
@@ -34,6 +33,7 @@ import pytest
 
 from autograder_b2.domain import SandboxUnavailableError
 from autograder_b2.domain.evidence import BatchRunInput, FileCheckResult
+from autograder_b2.runner import ssh_session as ssh_session_module  # noqa: F401  (导入路径自检)
 from autograder_b2.runner.adapters import (
     PREPARE_PROGRAM_FILENAME,
     build_execution_plan,
@@ -88,7 +88,6 @@ from autograder_b2.runner.ssh_session import (
     render_ssh_driver_program,
     ssh_check_passed,
 )
-from autograder_b2.runner import ssh_session as ssh_session_module  # noqa: F401  (导入路径自检)
 
 CASE_ID_1 = "11111111-1111-4111-8111-111111111111"
 CASE_ID_2 = "22222222-2222-4222-8222-222222222222"
@@ -241,7 +240,7 @@ class FakeKiller:
     def __init__(self) -> None:
         self.calls: list[tuple[int, int | None]] = []
 
-    def kill_tree(self, pid: int, process_group: int | None):  # noqa: ANN201 - 测试替身
+    def kill_tree(self, pid: int, process_group: int | None):
         from autograder_b2.runner.run_case import KillReport
 
         self.calls.append((pid, process_group))
@@ -268,7 +267,7 @@ class FakeProcess:
             return None
         return self._exit_code
 
-    def kill_tree(self):  # noqa: ANN201 - 测试替身
+    def kill_tree(self):
         self.kill_calls += 1
         return self._killer.kill_tree(self.pid, self.process_group)
 
@@ -452,7 +451,6 @@ class TestExecutionPackageValidation:
                         "email": {
                             "attempt": 1,
                             "subject_template": "{student_number}_{attempt}",
-                            "required_attachment_template": "{student_number}.txt",
                         },
                     }
                 },
@@ -558,7 +556,6 @@ class TestExecutionPackageValidation:
         email_config = {
             "attempt": 1,
             "subject_template": "{student_number}_{attempt}",
-            "required_attachment_template": "{student_number}.txt",
         }
         for extra in ({"segment_delimiter": "x" * 8}, {"email": email_config}):
             payload = ssh_payload()
@@ -676,7 +673,7 @@ class TestSegmentation:
 
 
 class TestFileChecksEvaluation:
-    def _case(self, payload_overrides: list[dict]):  # noqa: ANN202 - 测试辅助
+    def _case(self, payload_overrides: list[dict]):
         payload = package_payload()
         payload["tests"][0]["file_checks"] = payload_overrides
         return load(payload)
@@ -1054,8 +1051,8 @@ class TestEvidenceDigest:
     def test_default_values_do_not_enter_the_legacy_payload(self, tmp_path: Path) -> None:
         """缺省 segment/file_checks 不改变旧证据摘要（引入扩展前生成的数据仍可重放）。"""
         package = load(package_payload())
-        from autograder_b2.runner.run_case import build_evidence, CaseOutcome
         from autograder_b2.runner.adapters import build_execution_plan
+        from autograder_b2.runner.run_case import CaseOutcome, build_evidence
 
         plan = build_execution_plan(
             adapter=package.adapter,

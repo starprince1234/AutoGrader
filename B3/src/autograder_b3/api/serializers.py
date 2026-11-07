@@ -300,11 +300,23 @@ def authoring_assistance_to_public(
     )
 
 
-def assignment_to_public(row: Any, version_ids: list[UUID]) -> AssignmentPublic:
+def assignment_to_public(
+    row: Any,
+    version_ids: list[UUID],
+    section_ids: list[UUID],
+    student_ids: list[UUID],
+) -> AssignmentPublic:
+    """Project one assignment. Targets are passed in because they are separate rows.
+
+    They are *not* read off ``row``: the assignment object no longer has a ``section_id``,
+    so a caller that forgot to load the target rows would raise instead of silently
+    emitting an assignment with an empty audience.
+    """
     return AssignmentPublic(
         assignment_id=row.assignment_id,
         course_id=row.course_id,
-        section_id=row.section_id,
+        section_ids=tuple(section_ids),
+        student_ids=tuple(student_ids),
         title=row.title,
         status=row.status,
         due_at=row.due_at,

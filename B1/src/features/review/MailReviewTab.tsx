@@ -196,7 +196,6 @@ export function MailReviewTab({
   const [confirming, setConfirming] = useState(false);
   const [pickerCourseId, setPickerCourseId] = useState("");
   const [matchAssignmentId, setMatchAssignmentId] = useState("");
-  const [matchVersionId, setMatchVersionId] = useState("");
   const [success, setSuccess] = useState<string | null>(null);
   const complete = useCompleteQuarantine();
   const hold = useSetQuarantineHold();
@@ -223,8 +222,14 @@ export function MailReviewTab({
       );
   const selectedAssignment =
     assignmentOptions.find((assignment) => assignment.assignment_id === matchAssignmentId) ?? null;
-  const versionOptions = selectedAssignment?.question_version_ids ?? [];
-  const candidateSectionId = selectedAssignment?.section_id ?? matchSectionId;
+  // 人工归属不再选"题目版本"：complete 请求按 assignment_id 定位，服务端按附件题号逐题建提交。
+  // 课序取记录关联的课序（若它属于该作业的目标课序），否则取作业的第一个目标课序。
+  const candidateSectionId =
+    selectedAssignment === null
+      ? matchSectionId
+      : matchSectionId !== null && selectedAssignment.section_ids.includes(matchSectionId)
+        ? matchSectionId
+        : (selectedAssignment.section_ids[0] ?? matchSectionId);
   const enrollments = useEnrollments(demo ? null : candidateSectionId);
   const candidates = useMemo(
     () => (demo ? DEMO_STUDENTS : (enrollments.data?.pages ?? []).flatMap((page) => page.items)),
@@ -243,7 +248,6 @@ export function MailReviewTab({
     setConfirming(false);
     setPickerCourseId(row.scope_course_id ?? "");
     setMatchAssignmentId("");
-    setMatchVersionId("");
     complete.reset();
   };
 
@@ -254,17 +258,12 @@ export function MailReviewTab({
     setIssue(null);
     setConfirming(false);
     setMatchAssignmentId("");
-    setMatchVersionId("");
     complete.reset();
   };
 
   const submit = () => {
     if (selectedAssignment === null) {
       setIssue(t("review.mail.issueAssignment"));
-      return;
-    }
-    if (matchVersionId === "") {
-      setIssue(t("review.mail.issueVersion"));
       return;
     }
     if (studentId === "") {
@@ -280,7 +279,7 @@ export function MailReviewTab({
   };
 
   const confirm = () => {
-    if (!resolveTarget || !selectedAssignment || studentId === "" || matchVersionId === "") return;
+    if (!resolveTarget || !selectedAssignment || studentId === "" || candidateSectionId === null) return;
     if (demo) {
       updateDemoRow(resolveTarget.intake_quarantine_id, {
         resolved: true,
@@ -304,8 +303,8 @@ export function MailReviewTab({
         body: {
           student_id: studentId,
           course_id: selectedAssignment.course_id,
-          section_id: selectedAssignment.section_id,
-          question_version_id: matchVersionId,
+          section_id: candidateSectionId,
+          assignment_id: selectedAssignment.assignment_id,
           note: note.trim() === "" ? null : note.trim(),
         },
       },
@@ -800,7 +799,6 @@ export function MailReviewTab({
                   onChange={(event) => {
                     setPickerCourseId(event.target.value);
                     setMatchAssignmentId("");
-                    setMatchVersionId("");
                     setStudentId("");
                   }}
                 >
@@ -821,12 +819,7 @@ export function MailReviewTab({
                 value={matchAssignmentId}
                 disabled={matchCourseId === null}
                 onChange={(event) => {
-                  const assignmentId = event.target.value;
-                  setMatchAssignmentId(assignmentId);
-                  const assignment = assignmentOptions.find(
-                    (option) => option.assignment_id === assignmentId,
-                  );
-                  setMatchVersionId(assignment?.question_version_ids[0] ?? "");
+                  setMatchAssignmentId(event.target.value);
                   setStudentId("");
                 }}
               >
@@ -834,26 +827,6 @@ export function MailReviewTab({
                 {assignmentOptions.map((assignment) => (
                   <option key={assignment.assignment_id} value={assignment.assignment_id}>
                     {assignment.title}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-
-            <Field label={t("review.mail.questionVersion")} htmlFor="review-resolve-version">
-              <Select
-                id="review-resolve-version"
-                data-testid="review-resolve-version"
-                value={matchVersionId}
-                disabled={selectedAssignment === null}
-                onChange={(event) => {
-                  setMatchVersionId(event.target.value);
-                  setStudentId("");
-                }}
-              >
-                <option value="">{t("common.selectPrompt")}</option>
-                {versionOptions.map((versionId) => (
-                  <option key={versionId} value={versionId}>
-                    {shortenId(versionId)}
                   </option>
                 ))}
               </Select>
@@ -934,7 +907,6 @@ export function MailReviewTab({
                 disabled={
                   complete.isPending ||
                   selectedAssignment === null ||
-                  matchVersionId === "" ||
                   studentId === "" ||
                   selectedStudent === null ||
                   candidateSectionId === null

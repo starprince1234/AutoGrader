@@ -361,7 +361,8 @@ export function demoAssignment(courseId: string | null): AssignmentPublic {
   return {
     assignment_id: DEMO_ASSIGNMENT_ID,
     course_id: courseId ?? DEMO_COURSE_ID,
-    section_id: DEMO_SECTION_ID,
+    section_ids: [DEMO_SECTION_ID],
+    student_ids: [],
     title: "示例作业：统计文件行数",
     status: "open",
     due_at: "2026-11-20T15:59:00.000Z",

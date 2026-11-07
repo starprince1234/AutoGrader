@@ -188,18 +188,19 @@ describe("会话状态机", () => {
     ]);
 
     const studentId = "00000000-0000-4000-8000-0000000000d4";
+    const assignmentId = "00000000-0000-4000-8000-0000000000a7";
     const versionId = "00000000-0000-4000-8000-0000000000c3";
     saveDraft({
       ownerId: studentId,
+      assignmentId,
       questionVersionId: versionId,
-      language: "python",
-      files: [{ path: "solution.py", content: "print(1)" }],
-      savedAt: "2026-09-15T08:00:00.000Z",
+      content: "print(1)",
+      updatedAt: "2026-09-15T08:00:00.000Z",
     });
 
     await signIn("u", "p");
     await signOut();
 
-    expect(loadDraft(studentId, versionId)).toBeNull();
+    expect(loadDraft(studentId, assignmentId, versionId)).toBeNull();
   });
 });

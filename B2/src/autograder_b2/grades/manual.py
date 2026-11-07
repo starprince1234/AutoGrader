@@ -16,6 +16,13 @@ Three rules the contract requires and this module is the only place that decides
    silent overwrite.
 3. **`expected_updated_at` is an optimistic lock.** Two teachers opening the same submission
    must not have one silently undo the other; the stale writer gets 409 and re-reads.
+
+Reads are a different question from grading (CHG-0032, 规格 §1.7): a student must be able to see
+their own answer and their own message excerpt, while a teacher/admin may read within their
+course scope. The three content reads (`read_submission_file` / `list_submission_files` /
+`get_intake_message`) therefore go through `require_submission_read`, **not** through the
+grading-only `_load_submission`: "you may look at your answer" must never become "you may score
+it" (and vice versa — a teacher allowed to grade is allowed to read).
 """
 
 from __future__ import annotations
@@ -28,6 +35,7 @@ from pathlib import Path
 
 from sqlalchemy import Connection, Engine, insert, select, update
 
+from autograder_b2.auth.authorization import require_submission_read
 from autograder_b2.auth.tokens import Principal
 from autograder_b2.db.schema import (
     artifacts,
@@ -126,6 +134,36 @@ def _load_submission(
         student_id=None,
     )
     return str(student_id), str(course_id), section_id, grade_status, updated_at
+
+
+def _load_submission_for_read(
+    connection: Connection, *, submission_id: str, principal: Principal
+) -> None:
+    """**读**提交内容的授权：学生本人 + 教师/管理员课程范围（`require_submission_read`）。
+
+    与 `_load_submission` 的分工是"读"与"写"：评分是写动作，学生不得调用（仍走教师/管理员专用的
+    `_load_submission`）；而看自己的答案、自己的来信摘录是读动作，学生必须能看（规格 §1.7）。
+
+    先取行、再授权：课程作用域只能来自被读资源的归属（路径里没有 course_id），因此"记录存在但
+    越权 → 403、记录不存在 → 404"这个顺序无法消除；本模块选择不用 404 掩盖越权。授权失败抛
+    `AuthorizationError`（`auth.authorization` 的统一异常），路由映射为 403。
+    """
+    row = connection.execute(
+        select(
+            submissions.c.student_id,
+            submissions.c.course_id,
+            submissions.c.section_id,
+        ).where(submissions.c.submission_id == submission_id)
+    ).one_or_none()
+    if row is None:
+        raise SubmissionNotFound("The submission does not exist.")
+    student_id, course_id, section_id = row
+    require_submission_read(
+        principal,
+        course_id=str(course_id),
+        section_id=str(section_id),
+        student_id=str(student_id),
+    )
 
 
 def set_manual_grade(
@@ -278,7 +316,7 @@ def get_intake_message(
     engine: Engine, *, submission_id: str, principal: Principal
 ) -> IntakeMessage:
     with engine.begin() as connection:
-        _load_submission(connection, submission_id=submission_id, principal=principal)
+        _load_submission_for_read(connection, submission_id=submission_id, principal=principal)
         row = connection.execute(
             select(
                 intake_messages.c.subject,
@@ -316,7 +354,7 @@ def read_submission_file(
     返回 `(绝对路径, 字节数)`，实际读取由调用方做，以便先判大小上限。
     """
     with engine.begin() as connection:
-        _load_submission(connection, submission_id=submission_id, principal=principal)
+        _load_submission_for_read(connection, submission_id=submission_id, principal=principal)
         row = connection.execute(
             select(artifacts.c.storage_path, artifacts.c.size_bytes)
             .select_from(
@@ -350,7 +388,7 @@ def list_submission_files(
     一条不该泄漏的信息。
     """
     with engine.begin() as connection:
-        _load_submission(connection, submission_id=submission_id, principal=principal)
+        _load_submission_for_read(connection, submission_id=submission_id, principal=principal)
         rows = connection.execute(
             select(submission_files.c.path)
             .where(submission_files.c.submission_id == submission_id)

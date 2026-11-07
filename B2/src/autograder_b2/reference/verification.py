@@ -615,14 +615,14 @@ class ReferenceVerificationService:
 #: 合成邮件回执 JSON 的 schema 标签（内部格式；参考答案正文就是这份 JSON 的 UTF-8 文本）。
 SYNTHETIC_RECEIPT_SCHEMA = "b2.reference-email-receipt.v1"
 
-#: 合成回执的键集合 = `EmailReceipt` 的字段集合（一一对应；多一个少一个都算缺陷）。
+#: 合成邮件回执的键集合 = `EmailReceipt` 的字段集合（一一对应；多一个少一个都算缺陷）。
 _SYNTHETIC_RECEIPT_FIELDS = frozenset(
     {
         "student_number",
         "subject",
         "sender",
         "account_email",
-        "attachment_names",
+        "answer_attachment_name",
         "received",
         "account_email_verified",
         "sender_binding_matches",
@@ -637,9 +637,13 @@ def _parse_synthetic_receipt(text: str) -> EmailReceipt:
 
     ```json
     {"student_number": "20230001", "subject": "20230001_1", "sender": "alice@example.edu",
-     "account_email": "alice@example.edu", "attachment_names": ["20230001.txt"],
+     "account_email": "alice@example.edu", "answer_attachment_name": "1.txt",
      "received": true, "account_email_verified": true, "sender_binding_matches": true}
     ```
+
+    `answer_attachment_name` 是**该题在收件映射里的答案文件名**（`N.txt`，设计 §1.4/§6.5）：
+    非空 = 该题有映射答案文件（`attachment` 检查通过），null = 没有映射。它不是"学号.txt"模板，
+    也不再是一份附件名数组。
 
     这不是"真实邮件"：它只是参考解自检的输入。解析失败即 `ReferenceVerificationDefect`（缺陷），
     **不**映射成"参考解未通过"——否则一份写坏的参考答案会被读成一次正常的验证失败。
@@ -671,19 +675,21 @@ def _parse_synthetic_receipt(text: str) -> EmailReceipt:
         if not isinstance(value, bool):
             raise ReferenceVerificationDefect("a synthetic receipt boolean field is not a boolean")
         values[name] = value
-    attachments = document["attachment_names"]
-    if not isinstance(attachments, list) or any(
-        not isinstance(item, str) for item in attachments
-    ):
+    answer_attachment_name = document["answer_attachment_name"]
+    if answer_attachment_name is not None and not isinstance(answer_attachment_name, str):
         raise ReferenceVerificationDefect(
-            "the synthetic receipt attachment_names is not an array of strings"
+            "the synthetic receipt answer_attachment_name is not a string or null"
         )
-    values["attachment_names"] = tuple(attachments)
+    values["answer_attachment_name"] = answer_attachment_name
     return EmailReceipt(**values)  # type: ignore[arg-type] - 键集合与字段一一对应已校验
 
 
 def _email_requirements(view: PackageView) -> EmailRequirements:
-    """从 package 的 `execution.email` 取投递要求（受保护配置只在本进程内使用，不落日志/响应）。"""
+    """从 package 的 `execution.email` 取投递要求（受保护配置只在本进程内使用，不落日志/响应）。
+
+    `required_attachment_template` 已随契约删除（设计 §2.6）：附件名由作业题目位置统一决定
+    （第 N 题 = `N.txt`），`attachment` 检查只看"该题有没有映射答案文件"。
+    """
     execution = view.execution.handle
     config = getattr(execution, "email", None)
     if config is None:
@@ -694,7 +700,6 @@ def _email_requirements(view: PackageView) -> EmailRequirements:
         return EmailRequirements(
             attempt=int(config.attempt),
             subject_template=str(config.subject_template),
-            required_attachment_template=str(config.required_attachment_template),
         )
     except (AttributeError, TypeError, ValueError) as error:
         raise ReferenceVerificationDefect(

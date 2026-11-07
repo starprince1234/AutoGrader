@@ -892,15 +892,51 @@ def _build_mime(
 def test_probe_email_rejections_leave_no_submission_artifact_or_file(
     engine: Engine, probe_root: pathlib.Path
 ) -> None:
-    """可执行附件、压缩炸弹、不唯一匹配、缺 Message-ID：都不落 submission/artifact、也不落 CAS 文件。"""
+    """可执行附件、非 `.txt`、无核验码、缺 Message-ID：都不落 submission/artifact、也不落 CAS 文件。"""
     from autograder_b2.config import DEFAULT_IMAP_MAX_MESSAGE_BYTES, ImapSettings
+    from autograder_b2.intake.email_verification import EmailVerificationService
     from autograder_b2.intake.imap import EmailCheckpointStore, EmailIntakeService, QuarantineStore
-    from autograder_b2.intake.matching import MappingEmailMatcher
+    from autograder_b2.intake.matching import MatchedAccount
     from autograder_b2.intake.service import IntakeLimits, SubmissionIntakeService
+    from autograder_b2.integration.assignments import AssignmentAudience
 
     mailbox = "probe-mailbox"
     limits = IntakeLimits(max_files=4, max_file_bytes=64 * 1024, max_total_bytes=128 * 1024)
     store = ContentAddressedStore(probe_root, engine)
+    student_id = "11111111-1111-4111-8111-111111111111"
+    course_id = "22222222-2222-4222-8222-222222222222"
+    section_id = "33333333-3333-4333-8333-333333333333"
+    question_id = "44444444-4444-4444-8444-444444444444"
+    assignment_id = "55555555-5555-4555-8555-555555555555"
+
+    class _Directory:
+        def lookup_account(self, sender: str):  # type: ignore[no-untyped-def]
+            if sender.strip().lower() != "matched@example.edu":
+                return None
+            return MatchedAccount(
+                user_id=student_id,
+                student_number="2024141460192",
+                display_name="张三",
+            )
+
+    class _Assignments:
+        def get(self, wanted: str):  # type: ignore[no-untyped-def]
+            if str(wanted) != assignment_id:
+                return None
+            return AssignmentAudience(
+                assignment_id=assignment_id,
+                course_id=course_id,
+                title="probe",
+                status="open",
+                section_ids=(section_id,),
+                student_ids=(),
+                question_version_ids=(question_id,),
+            )
+
+    assignments = _Assignments()
+    verification = EmailVerificationService(
+        engine=engine, directory=_Directory(), assignment_directory=assignments
+    )
     service = EmailIntakeService(
         engine=engine,
         settings=ImapSettings(
@@ -910,47 +946,37 @@ def test_probe_email_rejections_leave_no_submission_artifact_or_file(
             password="probe-secret",
             mailbox=mailbox,
             use_ssl=False,
-            matching={
-                "matched@example.edu": {
-                    "student_id": "11111111-1111-4111-8111-111111111111",
-                    "course_id": "22222222-2222-4222-8222-222222222222",
-                    "section_id": "33333333-3333-4333-8333-333333333333",
-                    "question_version_id": "44444444-4444-4444-8444-444444444444",
-                }
-            },
             max_messages_per_pull=20,
             # 复核后新增的必填项（报文大小闸门）：这里取部署缺省值，本探针不针对该闸门。
             max_message_bytes=DEFAULT_IMAP_MAX_MESSAGE_BYTES,
             timeout_seconds=10.0,
         ),
-        intake=SubmissionIntakeService(engine, store, limits),
-        matcher=MappingEmailMatcher(
-            {
-                "matched@example.edu": {
-                    "student_id": "11111111-1111-4111-8111-111111111111",
-                    "course_id": "22222222-2222-4222-8222-222222222222",
-                    "section_id": "33333333-3333-4333-8333-333333333333",
-                    "question_version_id": "44444444-4444-4444-8444-444444444444",
-                }
-            }
+        intake=SubmissionIntakeService(
+            engine, store, limits, assignment_directory=assignments
         ),
         checkpoints=EmailCheckpointStore(engine),
         quarantines=QuarantineStore(engine),
+        verification=verification,
+        assignment_directory=assignments,
     )
 
     elf = b"\x7fELF\x02\x01\x01\x00" + b"\x00" * 24
     cases = [
         ("executable attachment", 1, _build_mime(
             sender="matched@example.edu", message_id="<p1@example.edu>",
-            attachments=(("run.sh", elf),),
+            attachments=(("1.txt", elf),),
         )),
-        ("unmatched sender", 2, _build_mime(
-            sender="stranger@example.edu", message_id="<p2@example.edu>",
-            attachments=(("solution.py", b"print('x')\n"),),
+        ("non-txt attachment", 2, _build_mime(
+            sender="matched@example.edu", message_id="<p2@example.edu>",
+            attachments=(("1.py", b"print('x')\n"),),
         )),
-        ("missing message-id", 3, _build_mime(
+        ("no verification code", 3, _build_mime(
+            sender="matched@example.edu", message_id="<p3@example.edu>",
+            attachments=(("1.txt", b"print('x')\n"),),
+        )),
+        ("missing message-id", 4, _build_mime(
             sender="matched@example.edu", message_id=None,
-            attachments=(("solution.py", b"print('x')\n"),),
+            attachments=(("1.txt", b"print('x')\n"),),
         )),
     ]
     for label, uid, raw in cases:
@@ -998,15 +1024,21 @@ def test_probe_tampered_envelope_is_reachable_only_from_library_callers(
     store = ContentAddressedStore(probe_root, engine)
     service = SubmissionIntakeService(engine, store, limits)
     ids = {key: str(uuid.uuid4()) for key in (
-        "submission_id", "student_id", "course_id", "section_id", "question_version_id", "correlation_id"
+        "submission_id",
+        "assignment_id",
+        "student_id",
+        "course_id",
+        "section_id",
+        "question_version_id",
+        "correlation_id",
     )}
-    pairs = (("main.py", b"tampered envelope probe content\n"),)
+    pairs = (("1.txt", b"tampered envelope probe content\n"),)
     honest = build_submission_envelope(
         **ids, idempotency_key="tampered-1", intake="api",
         provenance=ApiProvenance(request_id=ids["correlation_id"]), files=pairs,
     )
     tampered_file = EnvelopeFile(
-        path="renamed.py",
+        path="2.txt",
         content_sha256=honest.files[0].content_sha256,
         size_bytes=honest.files[0].size_bytes,
         storage_ref=honest.files[0].storage_ref,

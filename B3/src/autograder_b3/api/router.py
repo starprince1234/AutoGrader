@@ -24,6 +24,7 @@ from fastapi.responses import JSONResponse
 
 from ..auth import require_authenticated, require_service
 from ..domain import (
+    AssignmentView,
     archive_version,
     authoring_assistance,
     create_assignment,
@@ -58,6 +59,7 @@ from ..domain.tags import validate_tags
 from ..dto.internal import (
     AssetUploadInputModel,
     AssignmentCreateInputModel,
+    AssignmentInternal,
     AuthoringAssistanceRequestModel,
     FixtureUploadInputModel,
     QuestionDraftGenerationRequestModel,
@@ -70,7 +72,7 @@ from ..dto.public import (
     FixtureUploadResult,
     StemAssetUploadResult,
 )
-from ..errors import UnprocessableEntity
+from ..errors import ServiceUnavailable, UnprocessableEntity
 from ..logging import get_logger, log_event
 from .deps import B3Dependencies, RequestContext, get_dependencies, request_context
 from .pagination import clamp_limit, decode_cursor, encode_cursor
@@ -979,6 +981,16 @@ def reference_answer_endpoint(request: Request, question_version_id: uuid.UUID) 
 # --------------------------------------------------------------------------
 
 
+def _assignment_public(view: AssignmentView) -> AssignmentPublic:
+    """Project one assignment view; every list is passed explicitly, never read off the row."""
+    return assignment_to_public(
+        view.assignment,
+        list(view.question_version_ids),
+        list(view.section_ids),
+        list(view.student_ids),
+    )
+
+
 @router.get("/api/v1/assignments")
 def list_assignments_endpoint(
     request: Request,
@@ -987,45 +999,64 @@ def list_assignments_endpoint(
     course_id: uuid.UUID | None = None,
     section_id: uuid.UUID | None = None,
 ) -> dict:
+    """Page of assignments the caller may read, keyset-paginated by ``(created_at, id)``.
+
+    The cursor is decoded here and passed down: a list that accepted ``cursor`` and then
+    ignored it would return the first page on every request while advertising a
+    ``next_cursor``, which is a silent infinite loop for a paging client.
+    """
     context = _context(request)
     dependencies = _dependencies(request)
     resolved_limit = clamp_limit(limit)
-    rows, has_more = list_assignment_versions(
+    after = decode_cursor(cursor) if cursor else None
+    views, has_more = list_assignment_versions(
         dependencies.database,
         principal=context.principal,
         course_id=course_id,
         section_id=section_id,
         limit=resolved_limit,
+        after=after,
     )
-    items = [
-        serialize_public(assignment_to_public(row, version_ids)) for row, version_ids in rows
-    ]
+    items = [serialize_public(_assignment_public(view)) for view in views]
     next_cursor = None
-    if has_more and rows:
-        last = rows[-1][0]
+    if has_more and views:
+        last = views[-1].assignment
         next_cursor = encode_cursor(last.created_at, last.assignment_id)
+    log_event(
+        get_logger("api.assignments"),
+        "assignments.listed",
+        request_id=context.request_id,
+        status_code=200,
+        attempt_count=len(items),
+    )
     return {"items": items, "next_cursor": next_cursor}
 
 
 @router.post("/api/v1/assignments", status_code=201)
 def create_assignment_endpoint(request: Request, payload: AssignmentCreateInputModel) -> dict:
+    """Create an assignment for 1..N target sections, optionally narrowed to students.
+
+    Target sections/students are validated against the identity/course module before the
+    write; that module being unconfigured or unreachable is a ``503`` and creates nothing.
+    """
     context = _context(request)
     dependencies = _dependencies(request)
-    assignment, items = create_assignment(
-        dependencies.database, principal=context.principal, payload=payload, now=dependencies.now
+    view = create_assignment(
+        dependencies.database,
+        principal=context.principal,
+        payload=payload,
+        targets=dependencies.b4_targets,
+        now=dependencies.now,
     )
     log_event(
         get_logger("api.assignments"),
         "assignment.created",
         request_id=context.request_id,
-        assignment_id=str(assignment.assignment_id),
-        course_id=str(assignment.course_id),
+        assignment_id=str(view.assignment.assignment_id),
+        course_id=str(view.assignment.course_id),
         status_code=201,
     )
-    result: AssignmentPublic = assignment_to_public(
-        assignment, [item.question_version_id for item in items]
-    )
-    return serialize_public(result)
+    return serialize_public(_assignment_public(view))
 
 
 @router.get("/api/v1/assignments/{assignment_id}")
@@ -1033,8 +1064,54 @@ def get_assignment_endpoint(request: Request, assignment_id: uuid.UUID) -> dict:
     """Read one assignment; the detail page must not scan the list to find it."""
     context = _context(request)
     dependencies = _dependencies(request)
-    assignment, version_ids = get_assignment_detail(
+    view = get_assignment_detail(
         dependencies.database, principal=context.principal, assignment_id=assignment_id
     )
-    result: AssignmentPublic = assignment_to_public(assignment, version_ids)
-    return serialize_public(result)
+    return serialize_public(_assignment_public(view))
+
+
+@router.get("/api/v1/assignment-audiences/{assignment_id}")
+def get_internal_assignment_endpoint(request: Request, assignment_id: uuid.UUID) -> dict:
+    """INTERNAL. The assignment audience B2 needs to admit or refuse a submission.
+
+    ``serviceToken`` only. Two ordering decisions:
+
+    * an **unconfigured** service credential is ``503``, checked before the caller's
+      header is even interpreted: an endpoint that silently accepted everyone because the
+      deployment forgot the secret would be the worst possible failure mode;
+    * the credential is verified before the assignment is looked up, so a caller without
+      the service token learns nothing about which ids exist.
+
+    The response is the internal DTO's own wire form (like the reference-answer channel):
+    it deliberately omits timestamps and never carries the question list's private
+    details -- B2 needs admission facts, not a second copy of the assignment API.
+    """
+    dependencies = _dependencies(request)
+    if dependencies.service_verifier is None:
+        raise ServiceUnavailable(
+            "the service credential for internal endpoints is not configured"
+        )
+    context = _context(request)
+    require_service(context.principal)
+    view = get_assignment_detail(
+        dependencies.database, principal=context.principal, assignment_id=assignment_id
+    )
+    internal = AssignmentInternal(
+        assignment_id=view.assignment.assignment_id,
+        course_id=view.assignment.course_id,
+        title=view.assignment.title,
+        status=view.assignment.status,
+        section_ids=view.section_ids,
+        student_ids=view.student_ids,
+        question_version_ids=view.question_version_ids,
+    )
+    log_event(
+        get_logger("api.internal"),
+        "assignment.audience.served",
+        request_id=context.request_id,
+        assignment_id=str(assignment_id),
+        section_count=len(view.section_ids),
+        narrowed_student_count=len(view.student_ids),
+        status_code=200,
+    )
+    return internal.to_wire()

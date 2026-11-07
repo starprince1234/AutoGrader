@@ -59,7 +59,11 @@ def main(argv: list[str] | None = None) -> int:
     )
     arguments = parser.parse_args(argv)
 
-    runtime = build_b2_runtime(os.environ)
+    settings = dict(os.environ)
+    for key in ("DATABASE_URL", "NATS_URL"):
+        if "B2_" + key in settings:
+            settings[key] = settings["B2_" + key]
+    runtime = build_b2_runtime(settings)
     if runtime.email is None:
         # Not configured is a legitimate state (the platform reports `not-configured`); the
         # CLI says so on stderr and exits 2 so the timer's status is honest.

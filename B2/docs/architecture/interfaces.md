@@ -68,6 +68,7 @@ IntakeProvenance = ApiProvenance | EmailProvenance
 @dataclass(frozen=True, slots=True)
 class SubmissionEnvelope:
     submission_id: str
+    assignment_id: str | None  # 该提交回答的作业；历史提交（作业字段出现之前接收的行）为 None，绝不猜测归属
     student_id: str
     course_id: str
     section_id: str
@@ -93,9 +94,10 @@ class SubmissionEnvelope:
 
 | 外部字段 | 内部字段 | 处理 |
 |---|---|---|
-| `files[].path` | `EnvelopeFile.path` | 白名单校验；不合法即整体拒绝 |
+| `files[].path` | `EnvelopeFile.path` | 白名单校验；不合法即整体拒绝；单次提交恰好一个单段 `.txt`（`<n>.txt`，1 基题号） |
 | `files[].content_sha256` | `EnvelopeFile.content_sha256` | **按实际字节重算并核对**；不符即整体拒绝 |
 | `files[].content_base64` | —（**不再保留**） | 解码 → 内容寻址写入 → 只留 `storage_ref` 与 `size_bytes` |
+| `assignment_id` | `SubmissionEnvelope.assignment_id` | 新写入路径**必填**（`build_submission_envelope` 的关键字参数）；历史行从库里读出 `NULL` → `None`，不猜测、不回填 |
 | —— | `intake` / `provenance` | 按入口（API / IMAP）填充 |
 
 ### 2.3 不变量
@@ -103,15 +105,15 @@ class SubmissionEnvelope:
 - **I1 不可变**：信封为 `frozen`；归一化完成后任何字段不得原地修改，改内容即新摘要、新实体。
 - **I2 路径已白名单**：每个 `path` 均满足——非空、长度 ≤200 字符、段数 ≤8、每段匹配 `[A-Za-z0-9_.-]+`、无 `.`/`..` 段、非绝对路径、无反斜杠、无控制字符、无空段；**存储路径由服务端按摘要派生，与客户端输入无关**。
   - 数值上限的代码源：`autograder_b2.domain.MAX_PATH_LENGTH`（200）/ `MAX_PATH_SEGMENTS`（8）；判定函数 `is_allowed_relative_path`。
-  - **实测边界（本文件冻结时验证）**：契约的 `path` 模式 `^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$` **接受 `..` 段**——`../a.py`、`../../etc/passwd`、`a/../../b.py` 均**通过** schema 校验（仅绝对路径与反斜杠被模式拦下）。因此本白名单是路径穿越**唯一有效防线**，"契约已校验"绝不等于"路径安全"；该事实由 `tests/test_contract_conformance.py` 断言，若契约模式将来收紧会使该测试失败并提示更新本条。
+  - **与契约的分层（CHG-0032 后更新）**：契约的 `path` 模式已收紧为单段 `.txt`（`^[A-Za-z0-9_.-]+\.txt$`），因此含 `/` 与 `..` 段的路径无法通过 schema；但白名单仍是**独立**的一道防线——它服务于信封构造/邮件附件名等其它构造方，以及历史形态（多文件、任意路径）的行。`tests/test_contract_conformance.py` 同时断言"契约拒绝多段/`..`"与"白名单独立拒绝"两件事，任一侧行为变化都会让它失败并提示更新本条。
 - **I3 摘要可信**：每个 `content_sha256` 由服务端按实际字节重算得出，不是客户端声明值的转抄。
-- **I4 非空且无重名**：`files` 非空，`path` 在信封内唯一。
+- **I4 非空、单一且无重名**：`files` 非空；**恰好一个**单段 `<n>.txt` 答案文件（`n` 是该题在作业中的 1 基序号，见规格 §1.4），`path` 在信封内唯一。多文件是 `invalid_file_count`、非 `.txt` 是 `file_type_not_allowed`（都是稳定拒绝原因，不是"取第一个文件凑合"）。
 - **I5 上限已满足**：文件数 ≤ 题目声明的 `max_files`，总字节 ≤ `max_total_bytes`，单文件字节 ≤ 契约单文件上限。
 - **I6 无字节**：信封**不携带任何文件内容字节**，因此可安全进入日志与事件（只含标识与摘要）。
-- **I7 标识形态**：`submission_id`/`student_id`/`course_id`/`section_id`/`question_version_id`/`correlation_id` 为 UUID v4 小写规范串（见 [../../../MAIN/docs/api/identifiers.md](../../../MAIN/docs/api/identifiers.md)）。
+- **I7 标识形态**：`submission_id`/`assignment_id`/`student_id`/`course_id`/`section_id`/`question_version_id`/`correlation_id` 为 UUID v4 小写规范串（见 [../../../MAIN/docs/api/identifiers.md](../../../MAIN/docs/api/identifiers.md)）。`assignment_id` 是唯一**允许为 `None`** 的标识：它表示"历史提交没有作业归属"，不是"作业标识未知"。
 - **I8 稳定摘要**：`submission_digest` 只由「路径 + 文件摘要」的规范化序列决定，与文件顺序、时间、来源无关。
 - **I35 可往返（集成期补齐）**：归一化后的信封必须**逐字段可重建**——库里存的字段集合必须足以还原本类型的每一个字段，不允许"入口有、库里没有"。缺字段不是小事：`correlation_id` 是 outbox 事件的必填关联项，`provenance` 是"哪封邮件/哪个请求"的唯一追溯依据；少存一个字段，评测阶段就重建不出信封，而"重建不出来"会被误读成"这条链路没有生产级输入路径"（实测发生过：`b2.submissions` 原先既无 `correlation_id` 也无 provenance 列）。
-  - 落地：迁移 `alembic/versions/20260915_0008_b2_submission_provenance.py` 增加 `correlation_id` 与按 `intake` 判形状的 provenance 列；装载器 `autograder_b2.integration.submission_loader.load_submission_envelope` 负责重建，并在装载时**重算 `submission_digest` 自校验**（不一致即拒绝装载——否则"同输入同分"会因装载出的信封与当初写入的不一致而变成谎话）。
+  - 落地：迁移 `alembic/versions/20260915_0008_b2_submission_provenance.py` 增加 `correlation_id` 与按 `intake` 判形状的 provenance 列；迁移 `alembic/versions/20261107_0021_b2_assignment_submissions.py` 增加**可空**的 `assignment_id`（历史行保持 `NULL`，不回填、不猜归属）；装载器 `autograder_b2.integration.submission_loader.load_submission_envelope` 负责重建，并在装载时**重算 `submission_digest` 自校验**（不一致即拒绝装载——否则"同输入同分"会因装载出的信封与当初写入的不一致而变成谎话）。
   - `received_at` 的持久化名为 `created_at`（同一事实：接收路径以 `envelope.received_at` 同时写入该列），这不是别名，是契约对外的既有列名。
 
 ### 2.4 失败语义
@@ -127,6 +129,14 @@ class SubmissionEnvelope:
 | `file_too_large` / `total_too_large` | 单文件或总量超限 | `413` |
 | `too_many_files` | 文件数超限 | `422` |
 | `language_mismatch` | 提交语言与 package 声明不符 | `422` |
+| `assignment_not_found` | B3 明确回答作业不存在（404） | `422` |
+| `assignment_closed` | 作业存在但状态不是 `open` | `422` |
+| `assignment_mismatch` | 课程或题目版本不属于该作业 | `422` |
+| `invalid_file_count` | 文件数不是恰好 1（一次提交 = 一道题） | `422` |
+| `file_type_not_allowed` | 文件名不是单段 `<n>.txt`（大小写敏感） | `422` |
+
+作业目录**未配置或不可达**不属于上表：它抛 `intake.service.AssignmentDirectoryUnavailable`（基础设施失败），
+对外是 `503`，绝不被折算成"作业不存在/题目不属于作业"这类学生错误（规格 §1.6 / §5.2）。
 
 **不落库**：以上任一失败都不得在 `b2.submission`/`b2.artifact` 留下任何行。认证/作用域失败（`401`/`403`）发生在归一化之前，且**不得用 `404` 掩盖**。
 

@@ -106,27 +106,86 @@ export function useQuestion(questionId: string) {
   return useQuery({
     queryKey: queryKeys.question(questionId),
     enabled: questionId !== "",
-    queryFn: async (): Promise<QuestionPublic> => {
-      const question = await apiRequest<QuestionPublic>(
-        `/api/v1/questions/${encodeURIComponent(questionId)}`,
-      );
-      assertNoProtectedFields(question);
-      return question;
-    },
+    queryFn: async (): Promise<QuestionPublic> => fetchQuestion(questionId),
   });
+}
+
+export async function fetchQuestion(questionId: string): Promise<QuestionPublic> {
+  const question = await apiRequest<QuestionPublic>(
+    `/api/v1/questions/${encodeURIComponent(questionId)}`,
+  );
+  assertNoProtectedFields(question);
+  return question;
 }
 
 export function useQuestionVersion(versionId: string | null) {
   return useQuery({
     queryKey: queryKeys.questionVersion(versionId ?? ""),
     enabled: Boolean(versionId),
-    queryFn: async (): Promise<QuestionVersionPublic> => {
-      const version = await apiRequest<QuestionVersionPublic>(
-        `/api/v1/question-versions/${encodeURIComponent(versionId as string)}`,
-      );
-      assertNoProtectedFields(version);
-      return version;
-    },
+    queryFn: async (): Promise<QuestionVersionPublic> =>
+      fetchQuestionVersion(versionId as string),
+  });
+}
+
+export async function fetchQuestionVersion(
+  versionId: string,
+): Promise<QuestionVersionPublic> {
+  const version = await apiRequest<QuestionVersionPublic>(
+    `/api/v1/question-versions/${encodeURIComponent(versionId)}`,
+  );
+  assertNoProtectedFields(version);
+  return version;
+}
+
+/** 一次作业题目的读取结果：版本与题目标题各自有独立错误态（N+1 允许，但要并行且互不拖累）。 */
+export type QuestionVersionRow = {
+  questionVersionId: string;
+  /** 1 基题号（作业顺序）。 */
+  ordinal: number;
+  version: QuestionVersionPublic | null;
+  question: QuestionPublic | null;
+  isPending: boolean;
+  error: unknown;
+};
+
+/**
+ * 并行读取一组题目版本及其题目标题（作业工作区、教师作业详情共用）。
+ *
+ * 为什么不用 `useQuestionVersion`/`useQuestion` 逐个渲染成组件：同一个页面里既要在左侧
+ * 列表显示标题、又要在题干区渲染版本、还要在邮件映射表里显示题序，三处需要**同一份**
+ * 已加载数据。这里用两个 `useQueries` 保持索引对齐：第 i 个版本对应第 i 个题目查询
+ * （题目标题只在版本读回后才知道 `question_id`，因此第二次查询依赖第一次的结果）。
+ */
+export function useQuestionVersionRows(versionIds: readonly string[]): QuestionVersionRow[] {
+  const versionQueries = useQueries({
+    queries: versionIds.map((versionId) => ({
+      queryKey: queryKeys.questionVersion(versionId),
+      enabled: versionId !== "",
+      queryFn: async (): Promise<QuestionVersionPublic> => fetchQuestionVersion(versionId),
+    })),
+  });
+  const questionIds = versionIds.map(
+    (_versionId, index) => versionQueries[index]?.data?.question_id ?? "",
+  );
+  const questionQueries = useQueries({
+    queries: questionIds.map((questionId) => ({
+      queryKey: queryKeys.question(questionId),
+      enabled: questionId !== "",
+      queryFn: async (): Promise<QuestionPublic> => fetchQuestion(questionId),
+    })),
+  });
+
+  return versionIds.map((questionVersionId, index) => {
+    const versionQuery = versionQueries[index];
+    const questionQuery = questionQueries[index];
+    return {
+      questionVersionId,
+      ordinal: index + 1,
+      version: versionQuery?.data ?? null,
+      question: questionQuery?.data ?? null,
+      isPending: Boolean(versionQuery?.isPending || questionQuery?.isPending),
+      error: versionQuery?.error ?? questionQuery?.error ?? null,
+    };
   });
 }
 

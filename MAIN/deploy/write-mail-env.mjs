@@ -17,10 +17,11 @@ if (!target) {
 }
 
 const smtp = mailEnvFile(process.env, { mode: "strict" });
-const intake = Object.entries(intakeEnvEntries(process.env))
+const intakeEntries = intakeEnvEntries(process.env);
+const intake = Object.entries(intakeEntries)
   .map(([name, value]) => name + '=' + JSON.stringify(value) + '\n')
   .join("");
-const imap = Object.entries(imapEnvEntries(process.env))
+const imap = Object.entries(imapEnvEntries({ ...process.env, ...intakeEntries }))
   .map(([name, value]) => name + '=' + JSON.stringify(value) + '\n')
   .join("");
 const body = smtp + imap + intake;

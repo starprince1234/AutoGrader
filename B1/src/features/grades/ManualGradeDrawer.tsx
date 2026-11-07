@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Drawer, InlineLoader } from "../../ui/components";
 import { t } from "../../i18n";
 import { describeApiError, isApiError } from "../../api/problem";
+import { downloadSubmissionFile } from "../submission/useSubmissionFile";
 import {
   useIntakeMessage,
   useManualGrade,
@@ -31,6 +32,8 @@ export function ManualGradeDrawer({
   const [reason, setReason] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
+  // 附件下载错误（403/404/网络）单独显示：它不影响评分表单本身。
+  const [downloadError, setDownloadError] = useState<unknown>(null);
 
   // 改分时把当前分数填进输入框：老师要先看到"现在是多少"再决定改成多少。
   // 用 effect 而不是渲染期赋值——渲染期 setState 会让用户刚输入的值被预填覆盖，
@@ -107,16 +110,27 @@ export function ManualGradeDrawer({
                 <ul data-testid="intake-attachments">
                   {(intake.data.attachment_names ?? []).map((name) => (
                     <li key={name}>
-                      <a
-                        href={`/api/v1/submissions/${submissionId}/files?path=${encodeURIComponent(name)}`}
-                        download
+                      {/* 下载需要 `Authorization`：浏览器不会为裸 `<a href>` 附加请求头，
+                          因此走带鉴权的 fetch，而不是一个看起来能点、实际 401 的链接。 */}
+                      <button
+                        type="button"
+                        className="button button--ghost"
                         data-testid={`download-${name}`}
+                        onClick={() => {
+                          setDownloadError(null);
+                          void downloadSubmissionFile(submissionId, name).catch(setDownloadError);
+                        }}
                       >
                         {t("manualGrade.download", { name })}
-                      </a>
+                      </button>
                     </li>
                   ))}
                 </ul>
+              ) : null}
+              {downloadError ? (
+                <p className="form-error" data-testid="download-error">
+                  {describeApiError(downloadError)}
+                </p>
               ) : null}
             </div>
           ) : null}

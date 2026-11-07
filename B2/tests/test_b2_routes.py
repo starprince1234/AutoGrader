@@ -53,7 +53,9 @@ from autograder_b2.db.schema import (
     EXPECTED_SCHEMA_REVISION,
     evaluation_results,
     evaluation_runs,
+    intake_messages,
     static_findings,
+    submission_files,
     submissions,
 )
 from autograder_b2.domain.envelope import ApiProvenance, EnvelopeFile, SubmissionEnvelope
@@ -78,8 +80,15 @@ from autograder_b2.grades import (
     FORMULA_TRIGGERS,
     GRADE_EXPORT_COLUMNS,
     XLSX_MEDIA_TYPE,
+    GradesExportService,
     render_csv,
     render_xlsx,
+)
+from autograder_b2.grades.identity import (
+    EnrollmentIdentity,
+    IdentityLookup,
+    IdentityLookupError,
+    merge_identities,
 )
 from autograder_b2.plugin import B2Module
 from autograder_b2.runner.policy import (
@@ -95,6 +104,7 @@ from autograder_b2.runtime import (
     build_b2_runtime,
 )
 from autograder_b2.static.rules import RULES
+from autograder_b2.storage.cas import ContentAddressedStore
 from tests.conftest import requires_postgres, run_alembic
 
 pytestmark = requires_postgres
@@ -123,6 +133,7 @@ RUN_EVENTS = "/api/v1/evaluation-runs/{run}/events"
 RUN_REPORT = "/api/v1/evaluation-runs/{run}/report"
 GRADES = "/api/v1/grades"
 GRADES_EXPORT = "/api/v1/grades/export"
+SUBMISSIONS = "/api/v1/submissions"
 
 #: 本模块实现的 6 条读路径（`b2.yaml` 里除 `POST /api/v1/submissions` 外的全部）。
 READ_PATHS = (RUN_VIEW, RUN_EVENTS, RUN_REPORT, GRADES, GRADES_EXPORT)
@@ -331,12 +342,67 @@ def runtime(settings_source: dict[str, str]) -> B2Runtime:
     return build_b2_runtime(dict(settings_source))
 
 
+def _identity_for(student_id: str) -> EnrollmentIdentity:
+    """与 `_RouteRoster` 一致的确定性身份（测试用它构造导出期望值）。"""
+    short = student_id.replace("-", "")[:8]
+    return EnrollmentIdentity(
+        student_id=student_id, student_number=f"N-{short}", display_name=f"学生{short}"
+    )
+
+
+class _RouteRoster:
+    """测试用 B4 名单端口（**不是生产降级**）：导出需要姓名/学号，而 B2 只能经授权接口取得。
+
+    生产实现是 `grades.identity.HttpEnrollmentDirectory`（HTTP + 调用者自己的 bearer 头）。
+    这里替换的只是传输；"未配置 B4 ⇒ 有行的导出返回 503"的生产语义不变，由
+    `tests/test_grades_query_export.py::test_export_requires_a_configured_enrollment_directory`
+    在服务层覆盖。
+    """
+
+    def __init__(self, engine: Engine) -> None:
+        self._engine = engine
+
+    def identities(
+        self, *, section_id: str, authorization: str, request_id: str | None = None
+    ) -> IdentityLookup:
+        if not authorization:
+            raise IdentityLookupError("roster lookup requires the caller token")
+        with self._engine.connect() as connection:
+            student_ids = (
+                connection.execute(
+                    sa.select(submissions.c.student_id)
+                    .where(submissions.c.section_id == uuid.UUID(section_id))
+                    .distinct()
+                )
+                .scalars()
+                .all()
+            )
+        return IdentityLookup(
+            identities={str(student_id): _identity_for(str(student_id)) for student_id in student_ids},
+            pages=1,
+        )
+
+
 @pytest.fixture()
-def client(module: B2Module, context: _Context, engine: Engine) -> Iterator[TestClient]:
-    """走**与宿主相同**的注册路径（`B2Module.router`），因此六条路由都被真的注册了。"""
+def roster(engine: Engine) -> _RouteRoster:
+    return _RouteRoster(engine)
+
+
+@pytest.fixture()
+def client(
+    module: B2Module, context: _Context, engine: Engine, roster: _RouteRoster
+) -> Iterator[TestClient]:
+    """走**与宿主相同**的注册路径（`B2Module.router`），因此六条路由都被真的注册了。
+
+    导出额外注入 B4 名单端口（`GradesExportService` 装配点）：没有姓名/学号的成绩单不是可用文件，
+    而测试环境没有 B4 服务。注入的只是**端口实现**，导出逻辑与 HTTP 管线仍是生产代码。
+    """
     app = FastAPI()
     install_problem_handlers(app)
     app.include_router(module.router(context))
+    runtime = module._runtime
+    assert runtime is not None
+    runtime.exporter = GradesExportService(engine, directory=roster)
     with TestClient(app) as test_client:
         yield test_client
 
@@ -378,11 +444,12 @@ def _seed_submission(
     section_id: str,
     state: str = "queued",
     digest: str | None = None,
+    assignment_id: str | None = None,
 ) -> tuple[str, str]:
     """写入一条提交行，返回 `(submission_id, question_version_id)`。
 
     `intake='api'` 时 provenance 五列必须全为 NULL、`request_id` 非空（迁移 0008 的约束），因此
-    这里按库里**真实的列**填充；0008 之前的库上这些列不存在，跳过即可（两种形状都是真实合规的行）。
+    这里按库里**真实的列**填充。`assignment_id` 缺省为 NULL（历史行形态）；作业级用例显式传入。
     """
     identifier = uuid.uuid4()
     question = str(uuid.uuid4())
@@ -401,6 +468,10 @@ def _seed_submission(
         "updated_at": BASE,
     }
     column_types = _column_types(engine, "submissions")
+    if "assignment_id" in column_types:
+        values["assignment_id"] = (
+            None if assignment_id is None else uuid.UUID(assignment_id)
+        )
     for name in ("correlation_id", "request_id"):
         if name in column_types:
             values[name] = identifier if column_types[name] == "uuid" else str(identifier)
@@ -579,6 +650,7 @@ def _envelope(
     content = CLEAN_SOURCE.encode("utf-8")
     return SubmissionEnvelope(
         submission_id=submission_id,
+        assignment_id=str(uuid.uuid4()),
         student_id=student_id,
         course_id=course_id,
         section_id=section_id,
@@ -626,6 +698,7 @@ def _run_to_terminal(
     *,
     student_id: str | None = None,
     section_id: str | None = None,
+    assignment_id: str | None = None,
     source: _PackageSource | None = None,
     decision: SecurityDecision | None = None,
 ) -> tuple[str, str, Any]:
@@ -633,7 +706,11 @@ def _run_to_terminal(
     student = student_id or world.student_a
     section = section_id or world.section_a
     submission_id, question = _seed_submission(
-        engine, student_id=student, course_id=world.course, section_id=section
+        engine,
+        student_id=student,
+        course_id=world.course,
+        section_id=section,
+        assignment_id=assignment_id,
     )
     envelope = _envelope(
         submission_id=submission_id,
@@ -1279,6 +1356,80 @@ def test_grades_show_the_persisted_score_of_a_completed_run(
     assert row["evaluation_run_id"] == run_id
 
 
+def test_grades_filter_by_assignment_keeps_historical_rows_out(
+    client: TestClient, signer: _Signer, world: _World, engine: Engine
+) -> None:
+    """`?assignment_id=` 只返回该作业；历史行（`assignment_id IS NULL`）不被任何作业过滤命中。"""
+    first, second = str(uuid.uuid4()), str(uuid.uuid4())
+    first_submission, _ = _seed_submission(
+        engine,
+        student_id=world.student_a,
+        course_id=world.course,
+        section_id=world.section_a,
+        assignment_id=first,
+    )
+    second_submission, _ = _seed_submission(
+        engine,
+        student_id=world.student_b,
+        course_id=world.course,
+        section_id=world.section_b,
+        assignment_id=second,
+    )
+    historical, _ = _seed_submission(
+        engine,
+        student_id=world.student_a,
+        course_id=world.course,
+        section_id=world.section_a,
+        assignment_id=None,
+    )
+    token = _auth(world.teacher_token(signer))
+
+    filtered = client.get(
+        GRADES, params={"course_id": world.course, "assignment_id": first}, headers=token
+    )
+    assert filtered.status_code == 200, filtered.text
+    assert [item["submission_id"] for item in filtered.json()["items"]] == [first_submission]
+    assert filtered.json()["items"][0]["assignment_id"] == first
+
+    everything = client.get(GRADES, params={"course_id": world.course}, headers=token)
+    assert everything.status_code == 200, everything.text
+    by_submission = {
+        item["submission_id"]: item["assignment_id"] for item in everything.json()["items"]
+    }
+    assert by_submission == {
+        first_submission: first,
+        second_submission: second,
+        # 历史行：没有作业归属，如实为 None；不带作业过滤时**仍然返回**（不丢数据）。
+        historical: None,
+    }
+
+    invalid = client.get(
+        GRADES, params={"course_id": world.course, "assignment_id": "not-a-uuid"}, headers=token
+    )
+    _assert_problem(invalid, 422)
+
+
+def test_grades_export_includes_the_assignment_column(
+    client: TestClient, signer: _Signer, world: _World, engine: Engine, tmp_path: pathlib.Path
+) -> None:
+    """导出列含**作业ID**（必需列）；该行的值与查询结果一致。"""
+    assignment = str(uuid.uuid4())
+    run_id, submission_id, _ = _run_to_terminal(
+        engine, tmp_path, world, assignment_id=assignment
+    )
+    response = client.get(
+        GRADES_EXPORT,
+        params={"course_id": world.course, "format": "csv"},
+        headers=_auth(world.teacher_token(signer)),
+    )
+    assert response.status_code == 200, response.text
+    header, records = _csv_records(response.content)
+    assert "作业ID" in header
+    record = next(item for item in records if item["提交ID"] == submission_id)
+    assert record["作业ID"] == assignment
+    assert record["评测运行ID"] == run_id
+
+
 def test_grades_pagination_cursor_boundaries(
     client: TestClient, signer: _Signer, world: _World, engine: Engine
 ) -> None:
@@ -1432,7 +1583,12 @@ def test_export_headers_and_rows_match_the_contract(
 
 
 def test_export_bytes_are_exactly_what_the_renderers_produce(
-    client: TestClient, signer: _Signer, world: _World, engine: Engine, runtime: B2Runtime,
+    client: TestClient,
+    signer: _Signer,
+    world: _World,
+    engine: Engine,
+    runtime: B2Runtime,
+    roster: _RouteRoster,
     tmp_path: pathlib.Path,
 ) -> None:
     """端点发出的字节 == 服务层渲染函数的产物：路由没有另造一套编码/转义。
@@ -1449,6 +1605,16 @@ def test_export_bytes_are_exactly_what_the_renderers_produce(
     principal = authenticator.authenticate(f"Bearer {teacher_token}")
     rows = list(runtime.grades.iter_grades(principal=principal, course_id=world.course))
     assert len(rows) == 2
+    # 导出把 B4 名单合并进文件；期望字节必须按**合并后**的行渲染（否则比的是另一个输入）。
+    rosters = {
+        section: dict(
+            roster.identities(
+                section_id=section, authorization="Bearer test-roster"
+            ).identities
+        )
+        for section in sorted({row.section_id for row in rows})
+    }
+    rows = merge_identities(rows, rosters)
 
     token = _auth(teacher_token)
     for fmt, expected in (
@@ -1467,10 +1633,9 @@ def test_export_never_contains_an_unescaped_formula_cell(
 ) -> None:
     """真实导出里不存在"以触发字符开头却未被转义"的单元格。
 
-    当前数据下这条是**平凡的**（`GradeRow` 的每个字段都是 UUID/枚举/数字/时间戳，两个自由文本字段
-    `student_number`/`display_name` 属 B4、恒为 `None`），因此它不重复
-    `tests/test_grades_query_export.py` 里那组逐触发字符的转义断言；它的作用是**守住这个不变量**：
-    一旦将来某列开始带自由文本，这里会立刻抓到未转义的那种。
+    身份字段（姓名/学号）来自 B4 名单，内容不在本测试控制之内，因此这条断言守的是**不变式**：
+    任何来源的文本单元格只要以触发字符开头，就必须带转义前缀；`tests/test_grades_query_export.py`
+    用可控的敌对值逐字符覆盖转义函数本身。
     """
     _run_to_terminal(engine, tmp_path, world)
     _seed_grade_rows(engine, world, count_b=1)
@@ -1484,6 +1649,32 @@ def test_export_never_contains_an_unescaped_formula_cell(
         for cell in record:
             if cell.startswith(FORMULA_TRIGGERS):
                 assert cell.startswith(ESCAPE_PREFIX), cell
+
+
+def test_export_http_is_503_without_a_configured_roster(
+    signer: _Signer, world: _World, b2_database_url: str, engine: Engine
+) -> None:
+    """生产语义不变：**没有 B4 名单配置**时，有行的导出返回 503（不输出缺姓名的"成功"文件）。
+
+    `client` 夹具注入的是测试名单端口；本用例用**未注入**的独立运行时，证明"503 而不是降级"这条
+    生产行为没有被测试便利性改掉。
+    """
+    _seed_grade_rows(engine, world, count_a=1, count_b=0)
+    client, _runtime = _client_for(
+        {
+            "DATABASE_URL": b2_database_url,
+            "B2_ARTIFACT_ROOT": str(_SCRATCH / "no-roster-artifacts"),
+            "B2_JWKS_JSON": json.dumps(signer.jwks),
+        }
+    )
+    with client:
+        response = client.get(
+            GRADES_EXPORT,
+            params={"course_id": world.course, "format": "csv"},
+            headers=_auth(world.teacher_token(signer)),
+        )
+    body = _assert_problem(response, 503)
+    assert "B2_B4_BASE_URL" in body["detail"], body["detail"]
 
 
 def test_export_rejects_an_unsupported_format(
@@ -1510,6 +1701,170 @@ def test_export_scopes_a_student_to_their_own_rows(
     records = _read_csv(response.content)
     assert len(records) == 2, "表头 + 只有自己的那一行"
     assert world.student_b not in response.content.decode("utf-8")
+
+
+# --- 7b. 提交内容读授权（CHG-0032 / 规格 §1.7）：学生本人 + 教师课程范围 --------------------
+
+
+def _seed_readable_submission(
+    engine: Engine, runtime: B2Runtime, world: _World, *, student_id: str | None = None
+) -> str:
+    """写一条带真实附件与来信摘录的提交（文件真的落 CAS，端点能读出正文）。"""
+    submission_id, _ = _seed_submission(
+        engine,
+        student_id=student_id or world.student_a,
+        course_id=world.course,
+        section_id=world.section_a,
+    )
+    settings = runtime.intake.settings
+    assert settings is not None
+    store = ContentAddressedStore(pathlib.Path(settings.artifact_root), engine)
+    stored = store.put(CLEAN_SOURCE.encode("utf-8"))
+    with engine.begin() as connection:
+        connection.execute(
+            submission_files.insert().values(
+                submission_id=uuid.UUID(submission_id),
+                path="1.txt",
+                artifact_id=uuid.UUID(str(stored.artifact_id)),
+                created_at=BASE,
+            )
+        )
+        connection.execute(
+            intake_messages.insert().values(
+                intake_message_id=uuid.uuid4(),
+                submission_id=uuid.UUID(submission_id),
+                subject="第 1 题答案",
+                sender="student@example.edu",
+                body_excerpt="核验码：AG-XXXXXXXXXXXX",
+                truncated=False,
+                received_at=BASE,
+                created_at=BASE,
+            )
+        )
+    return submission_id
+
+
+def _files_endpoint(submission_id: str) -> str:
+    return f"{SUBMISSIONS}/{submission_id}/files"
+
+
+def _intake_message_endpoint(submission_id: str) -> str:
+    return f"{SUBMISSIONS}/{submission_id}/intake-message"
+
+
+def test_student_can_read_their_own_answer_file(
+    client: TestClient, signer: _Signer, world: _World, engine: Engine, runtime: B2Runtime
+) -> None:
+    """学生读**本人**提交的答案文件：`GET /submissions/{id}/files?path=1.txt` → 200 + 该文本。"""
+    submission_id = _seed_readable_submission(engine, runtime, world)
+    response = client.get(
+        _files_endpoint(submission_id),
+        params={"path": "1.txt"},
+        headers=_auth(world.student_token(signer, world.student_a)),
+    )
+    assert response.status_code == 200, response.text
+    assert response.content == CLEAN_SOURCE.encode("utf-8")
+
+
+def test_other_student_cannot_read_someone_elses_answer_file(
+    client: TestClient, signer: _Signer, world: _World, engine: Engine, runtime: B2Runtime
+) -> None:
+    """同一课程/课序的**其他学生**读他人答案 → 403（不是 404：不用"不存在"掩盖越权）。"""
+    submission_id = _seed_readable_submission(engine, runtime, world)
+    response = client.get(
+        _files_endpoint(submission_id),
+        params={"path": "1.txt"},
+        headers=_auth(world.student_token(signer, world.student_b)),
+    )
+    assert response.status_code == 403, response.text
+    assert response.json()["type"].endswith("forbidden")
+
+
+def test_teacher_in_course_scope_can_read_an_answer_file(
+    client: TestClient, signer: _Signer, world: _World, engine: Engine, runtime: B2Runtime
+) -> None:
+    submission_id = _seed_readable_submission(engine, runtime, world)
+    response = client.get(
+        _files_endpoint(submission_id),
+        params={"path": "1.txt"},
+        headers=_auth(world.teacher_token(signer)),
+    )
+    assert response.status_code == 200, response.text
+
+
+def test_teacher_outside_the_course_cannot_read_an_answer_file(
+    client: TestClient, signer: _Signer, world: _World, engine: Engine, runtime: B2Runtime
+) -> None:
+    submission_id = _seed_readable_submission(engine, runtime, world)
+    response = client.get(
+        _files_endpoint(submission_id),
+        params={"path": "1.txt"},
+        headers=_auth(world.outsider_token(signer)),
+    )
+    assert response.status_code == 403, response.text
+
+
+def test_admin_can_read_any_answer_file(
+    client: TestClient, signer: _Signer, world: _World, engine: Engine, runtime: B2Runtime
+) -> None:
+    submission_id = _seed_readable_submission(engine, runtime, world)
+    response = client.get(
+        _files_endpoint(submission_id),
+        params={"path": "1.txt"},
+        headers=_auth(world.admin_token(signer)),
+    )
+    assert response.status_code == 200, response.text
+
+
+def test_file_read_requires_authentication(
+    client: TestClient, signer: _Signer, world: _World, engine: Engine, runtime: B2Runtime
+) -> None:
+    submission_id = _seed_readable_submission(engine, runtime, world)
+    assert client.get(_files_endpoint(submission_id), params={"path": "1.txt"}).status_code == 401
+
+
+def test_student_can_read_their_own_intake_message_but_not_anothers(
+    client: TestClient, signer: _Signer, world: _World, engine: Engine, runtime: B2Runtime
+) -> None:
+    """来信摘录的读授权与附件一致：本人 200、他人 403；教师课程范围内 200。"""
+    submission_id = _seed_readable_submission(engine, runtime, world)
+
+    own = client.get(
+        _intake_message_endpoint(submission_id),
+        headers=_auth(world.student_token(signer, world.student_a)),
+    )
+    assert own.status_code == 200, own.text
+    assert own.json()["attachment_names"] == ["1.txt"]
+    assert own.json()["subject"] == "第 1 题答案"
+
+    other = client.get(
+        _intake_message_endpoint(submission_id),
+        headers=_auth(world.student_token(signer, world.student_b)),
+    )
+    assert other.status_code == 403, other.text
+
+    teacher = client.get(
+        _intake_message_endpoint(submission_id), headers=_auth(world.teacher_token(signer))
+    )
+    assert teacher.status_code == 200, teacher.text
+
+
+def test_grading_stays_teacher_only_even_for_your_own_submission(
+    client: TestClient, signer: _Signer, world: _World, engine: Engine, runtime: B2Runtime
+) -> None:
+    """学生能看自己的答案，但**不能**给自己打分（读判定与写判定是两套）。"""
+    submission_id = _seed_readable_submission(engine, runtime, world)
+    response = client.post(
+        f"{SUBMISSIONS}/{submission_id}/manual-grade",
+        json={
+            "score": 100,
+            "comment": "自评",
+            "reason": None,
+            "expected_updated_at": "2026-01-01T00:00:00Z",
+        },
+        headers=_auth(world.student_token(signer, world.student_a)),
+    )
+    assert response.status_code == 403, response.text
 
 
 # --- 6b. 成绩查询与导出：口径一致 / 越权 / 负面声明（HTTP 层） -------------------------------
@@ -1564,6 +1919,31 @@ def _iso_millis(value: Any) -> Any:
         moment = value if value.tzinfo else value.replace(tzinfo=UTC)
         return moment.strftime("%Y-%m-%dT%H:%M:%S.") + f"{moment.microsecond // 1000:03d}Z"
     return str(value)
+
+
+def _with_roster_identities(
+    rows: list[dict[str, Any]], roster: _RouteRoster
+) -> list[dict[str, Any]]:
+    """查询行（姓名/学号恒为 null）→ 导出行的期望形状：按 B4 名单补上身份字段。
+
+    查询路径按设计不关联 B4（B2 不读 `b4` schema），导出路径经授权名单接口补齐；两条路径的唯一
+    差异就是这两个字段，其余字段必须逐字相同。
+    """
+    identities: dict[str, EnrollmentIdentity] = {}
+    for section_id in sorted({str(row["section_id"]) for row in rows}):
+        identities.update(
+            roster.identities(
+                section_id=section_id, authorization="Bearer test-roster"
+            ).identities
+        )
+    return [
+        {
+            **row,
+            "student_number": identities[row["student_id"]].student_number,
+            "display_name": identities[row["student_id"]].display_name,
+        }
+        for row in rows
+    ]
 
 
 def _normalised_export(record: Mapping[str, Any]) -> dict[str, Any]:
@@ -1697,7 +2077,12 @@ def _mixed_grade_dataset(
 
 
 def test_grades_pages_and_both_export_formats_agree_field_by_field(
-    client: TestClient, signer: _Signer, world: _World, engine: Engine, tmp_path: pathlib.Path
+    client: TestClient,
+    signer: _Signer,
+    world: _World,
+    engine: Engine,
+    roster: _RouteRoster,
+    tmp_path: pathlib.Path,
 ) -> None:
     """A：同一筛选条件下，`GET /api/v1/grades` 的**全部页**与 XLSX/CSV 导出逐字段一致。
 
@@ -1740,8 +2125,10 @@ def test_grades_pages_and_both_export_formats_agree_field_by_field(
         "\ufeff" + ",".join(expected_header)
     ).encode("utf-8")
 
-    assert [_normalised_export(record) for record in csv_rows] == rows_two
-    assert [_normalised_export(record) for record in xlsx_rows] == rows_two
+    # 查询行不含姓名/学号（B2 不读 b4）；导出经授权名单补齐。除这两个字段外必须逐字相同。
+    expected_rows_two = _with_roster_identities(rows_two, roster)
+    assert [_normalised_export(record) for record in csv_rows] == expected_rows_two
+    assert [_normalised_export(record) for record in xlsx_rows] == expected_rows_two
     assert [record[_GRADE_HEADER["submission_id"]] for record in csv_rows] == [
         row["submission_id"] for row in rows_two
     ]
@@ -1752,7 +2139,9 @@ def test_grades_pages_and_both_export_formats_agree_field_by_field(
     assert {row["student_id"] for row in narrow_rows} == {world.student_a}
     narrow_csv = client.get(GRADES_EXPORT, params={**narrow, "format": "csv"}, headers=token)
     _, narrow_records = _csv_records(narrow_csv.content)
-    assert [_normalised_export(record) for record in narrow_records] == narrow_rows
+    assert [_normalised_export(record) for record in narrow_records] == _with_roster_identities(
+        narrow_rows, roster
+    )
     assert len(narrow_records) == len(narrow_rows) == 2
 
     # 题目版本过滤同理（三个过滤参数都走同一条 `_resolve`）
@@ -1763,7 +2152,9 @@ def test_grades_pages_and_both_export_formats_agree_field_by_field(
         GRADES_EXPORT, params={**by_question, "format": "csv"}, headers=token
     )
     _, question_records = _csv_records(question_csv.content)
-    assert [_normalised_export(record) for record in question_records] == question_rows
+    assert [
+        _normalised_export(record) for record in question_records
+    ] == _with_roster_identities(question_rows, roster)
 
 
 def test_empty_query_parameters_mean_not_provided(

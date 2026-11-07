@@ -20,48 +20,34 @@ import {
   Table,
   Tabs,
 } from "../../ui/components";
-import {
-  loadedCourses,
-  useCourses,
-  useMergedSections,
-  useSections,
-} from "../../api/directory";
-import {
-  buildCohort,
-  cohortJudged,
-  cohortStatusLabel,
-  cohortStatusTone,
-  type CohortSummary,
-} from "../grades/cohort";
+import { loadedCourses, useCourses, useMergedSections, useSections } from "../../api/directory";
 import { useCohort } from "../grades/useCohort";
 import { useAllGrades, gradesAvailability, type GradesAvailability } from "../grades/useGrades";
 import { useAllAssignments } from "./useAssignments";
 import { AssignmentComposer } from "./AssignmentComposer";
+import {
+  buildOwnProgress,
+  perAssignmentCounts,
+  type AssignmentProgressCounts,
+} from "./useAssignmentProgress";
+import { overallStateLabel, overallStateTone } from "./progressDisplay";
 import { Select } from "../../ui/Select";
 
 /**
- * 复核入口徽标的取数上限：一行待处理记录很小，100 条足够覆盖日常；
- * 超过就显示「100+」，因为列表接口没有 total，一页计数不能冒充总数。
- */
-const PENDING_BADGE_LIMIT = 100;
-
-/**
- * 作业中心（契约 `AssignmentPublic`，CHG-0007）。
- *
- * 为什么需要这一页：题库有上百道题，"从题海里自己找作业"不是可用性，而是缺失的功能。
- * 作业是 B3 提供的**集合**：`assignment_id` + `question_version_ids`，B1 只做展示与跳转，
- * 不新增契约字段。
+ * 作业中心（CHG-0032 适配）。
  *
  * 两种视图（同一批数据，回答不同问题）：
- * - 学生「我的作业」：我该做什么、什么时候到期、我做完了没有 → 每题挂到既有作答流程
- *   `/submit/{question_version_id}`；"做完没有"来自**本人成绩行**（`listGrades` 对学生
- *   只返回本人记录，B1 从不发送 `student_id`）。
- * - 教师「提交情况」：这个作业多少人交了 / 没交 → 复用 `cohort.ts` 的连接与 `useCohort`
- *   的"取完全部页再判定"，不重新实现一遍名单×成绩。
+ * - 学生「我的作业」：我该做什么、什么时候到期、我做到哪了 → 每个作业挂到**作业工作区**
+ *   `/assignments/{assignment_id}`（旧单题作答页已删除）。
+ * - 教师「提交情况」：这个课序里各作业的已交/部分/未交 → 复用 `useCohort` 的
+ *   "取完全部页再判定"，并用 `perAssignmentCounts` 按新分类聚合。
  *
- * 「已提交」的判定口径：该作业的**任一**题目版本有提交记录（作业可以有多个题目版本，
- * 契约只给 `question_version_ids`，B1 不猜"必须全部完成"这种没有契约依据的规则）。
+ * 不能假设作业只有一个课序：`section_ids` 是数组，列表显示全部目标课序，
+ * 进度判定使用当前筛选课序的名单（列标题与说明都写明这一点）。
  */
+
+/** 复核入口徽标的取数上限：一行待处理记录很小，100 条足够覆盖日常。 */
+const PENDING_BADGE_LIMIT = 100;
 
 type AssignmentStatus = AssignmentPublic["status"];
 
@@ -73,28 +59,6 @@ function isOverdue(dueAt: string | null | undefined, now: number): boolean {
   if (!dueAt) return false;
   const due = Date.parse(dueAt);
   return Number.isFinite(due) && due < now;
-}
-
-/** 作业级别的进度：已完成几个题目版本 / 共几个。 */
-function assignmentProgress(
-  assignment: AssignmentPublic,
-  byVersion: Map<string, GradeRow>,
-): { done: number; total: number; tone: "ok" | "warn" | "idle"; label: string } {
-  const versions = assignment.question_version_ids ?? [];
-  const done = versions.filter((versionId) => byVersion.has(versionId)).length;
-  if (done === 0) {
-    return { done, total: versions.length, tone: "idle", label: t("assignments.my.notSubmitted") };
-  }
-  if (done === versions.length) {
-    return { done, total: versions.length, tone: "ok", label: t("assignments.my.submitted") };
-  }
-  return { done, total: versions.length, tone: "warn", label: t("assignments.my.partial") };
-}
-
-/** 下一个该做的题目版本：优先还没提交的那个，全交完了就回到第一个（可重交）。 */
-function nextVersion(assignment: AssignmentPublic, byVersion: Map<string, GradeRow>): string | null {
-  const versions = assignment.question_version_ids ?? [];
-  return versions.find((versionId) => !byVersion.has(versionId)) ?? versions[0] ?? null;
 }
 
 function DueCell({ dueAt, now }: { dueAt: string | null | undefined; now: number }) {
@@ -112,14 +76,29 @@ function DueCell({ dueAt, now }: { dueAt: string | null | undefined; now: number
   );
 }
 
+/** 作业目标课序的多值展示（`section_ids` 是数组，绝不当成单值）。 */
+function SectionCells({
+  assignment,
+  sectionLabelOf,
+}: {
+  assignment: AssignmentPublic;
+  sectionLabelOf: (sectionId: string) => string;
+}) {
+  return (
+    <span data-testid={`assignment-sections-${assignment.assignment_id}`}>
+      {assignment.section_ids.map((sectionId) => sectionLabelOf(sectionId)).join("、")}
+    </span>
+  );
+}
+
 function StudentAssignmentList({
   assignments,
-  byVersion,
+  gradeRows,
   myProgress,
   now,
 }: {
   assignments: AssignmentPublic[];
-  byVersion: Map<string, GradeRow>;
+  gradeRows: GradeRow[];
   myProgress: GradesAvailability;
   now: number;
 }) {
@@ -184,12 +163,21 @@ function StudentAssignmentList({
                 </span>
               );
             }
-            const progress = assignmentProgress(row, byVersion);
+            const own = buildOwnProgress({
+              grades: gradeRows,
+              questionVersionIds: row.question_version_ids ?? [],
+              assignmentId: row.assignment_id,
+            });
             return (
               <span className="inline">
-                <StatusPill tone={progress.tone}>{progress.label}</StatusPill>
+                <StatusPill tone={overallStateTone(own.overall)}>
+                  {overallStateLabel(own.overall)}
+                </StatusPill>
                 <span className="muted" data-testid={`my-progress-${row.assignment_id}`}>
-                  {t("assignments.progressDone", { done: progress.done, total: progress.total })}
+                  {t("assignments.progressDone", {
+                    done: own.completedCount,
+                    total: own.total,
+                  })}
                 </span>
               </span>
             );
@@ -201,21 +189,28 @@ function StudentAssignmentList({
           render: (row) => {
             // 判定未就绪时不渲染动作：动作标签（"作答"/"继续作答"）本身就是进度结论。
             if (myProgress !== "ready") return <span className="muted">{t("common.none")}</span>;
-            const target = nextVersion(row, byVersion);
-            if (!target) return <span className="muted">{t("common.none")}</span>;
-            const progress = assignmentProgress(row, byVersion);
+            const own = buildOwnProgress({
+              grades: gradeRows,
+              questionVersionIds: row.question_version_ids ?? [],
+              assignmentId: row.assignment_id,
+            });
+            const target =
+              own.questions.find((question) => question.state === "not_submitted")
+                ?.questionVersionId ??
+              row.question_version_ids?.[0] ??
+              null;
             const label =
-              progress.done === 0
+              own.overall === "not_submitted"
                 ? t("assignments.answer")
-                : progress.done === progress.total
+                : own.overall === "submitted"
                   ? t("assignments.actionResubmit")
                   : t("assignments.actionContinue");
             return (
               <Link
                 className="button button--ghost"
-                to="/submit/$questionVersionId"
-                params={{ questionVersionId: target }}
-                search={{}}
+                to="/assignments/$assignmentId"
+                params={{ assignmentId: row.assignment_id }}
+                search={{ question: target ?? undefined }}
               >
                 {label}
               </Link>
@@ -227,90 +222,23 @@ function StudentAssignmentList({
   );
 }
 
-/** 逐作业的提交/未提交计数：同一份已加载数据，只为每个作业再过滤一次成绩行。 */
-function perAssignmentSummaries(
-  assignments: AssignmentPublic[],
-  roster: ReturnType<typeof useCohort>["roster"],
-  gradeRows: GradeRow[],
-): Map<string, CohortSummary> {
-  const map = new Map<string, CohortSummary>();
-  for (const assignment of assignments) {
-    const versions = assignment.question_version_ids ?? [];
-    map.set(
-      assignment.assignment_id,
-      buildCohort(
-        roster,
-        gradeRows.filter((grade) => versions.includes(grade.question_version_id)),
-      ),
-    );
-  }
-  return map;
-}
-
-function AssignmentRoster({
-  assignment,
-  summary,
+function CountCell({
+  counts,
+  field,
+  assignmentId,
 }: {
-  assignment: AssignmentPublic | null;
-  summary: CohortSummary | undefined;
+  counts: Map<string, AssignmentProgressCounts> | null;
+  field: keyof Pick<
+    AssignmentProgressCounts,
+    "notSubmitted" | "partial" | "submitted" | "evaluating" | "failed"
+  >;
+  assignmentId: string;
 }) {
-  if (!assignment || !summary) return null;
-  if (summary.rows.length === 0) {
-    return (
-      <Panel title={t("assignments.progressTitle")} testId="assignment-roster">
-        <EmptyState />
-      </Panel>
-    );
-  }
+  const value = counts?.get(assignmentId);
   return (
-    <Panel title={t("assignments.progressTitle")} testId="assignment-roster">
-      <p className="muted">{assignment.title}</p>
-      <Table
-        testId="assignment-roster-table"
-        label={`${t("assignments.progressTitle")} · ${assignment.title}`}
-        rows={summary.rows}
-        getRowKey={(row) => row.enrollmentId}
-        columns={[
-          {
-            key: "student_number",
-            header: t("roster.studentNumber"),
-            render: (row) => row.studentNumber,
-          },
-          { key: "name", header: t("roster.displayName"), render: (row) => row.displayName },
-          {
-            key: "student_id",
-            header: t("grades.missing.studentId"),
-            render: (row) =>
-              row.studentId === null ? (
-                <span className="muted">{t("grades.missing.statusUnbound")}</span>
-              ) : (
-                <span className="mono-id" title={`学生 ID：${row.studentId}`}>
-                  {shortenId(row.studentId)}
-                </span>
-              ),
-          },
-          {
-            key: "status",
-            header: t("grades.state"),
-            render: (row) => (
-              <StatusPill tone={cohortStatusTone(row.status)}>
-                {cohortStatusLabel(row.status)}
-              </StatusPill>
-            ),
-          },
-          {
-            key: "submitted_at",
-            header: t("grades.submittedAt"),
-            render: (row) =>
-              row.grade ? (
-                formatDateTime(row.grade.submitted_at, t("common.none"))
-              ) : (
-                <span className="muted">{t("common.none")}</span>
-              ),
-          },
-        ]}
-      />
-    </Panel>
+    <span data-testid={`${field}-${assignmentId}`}>
+      {value ? value[field] : t("common.none")}
+    </span>
   );
 }
 
@@ -321,13 +249,16 @@ function TeacherProgress({
 }: {
   assignments: AssignmentPublic[];
   cohort: ReturnType<typeof useCohort>;
-  /** course scope 内的课序显示名：作业行必须说清它属于哪个课序。 */
   sectionLabelOf: (sectionId: string) => string;
 }) {
-  const [expanded, setExpanded] = useState<string | null>(null);
-  const summaries = useMemo(
-    () => perAssignmentSummaries(assignments, cohort.roster, cohort.gradeRows),
-    [assignments, cohort.roster, cohort.gradeRows],
+  const complete =
+    !cohort.isPending && !cohort.truncated && !cohort.incomplete && !cohort.error;
+  const counts = useMemo(
+    () =>
+      complete
+        ? perAssignmentCounts(assignments, cohort.roster, cohort.gradeRows)
+        : null,
+    [complete, assignments, cohort.roster, cohort.gradeRows],
   );
 
   if (cohort.error) return <ErrorState error={cohort.error} />;
@@ -389,16 +320,14 @@ function TeacherProgress({
             ),
           },
           {
-            key: "section",
-            header: t("assignments.col.section"),
-            render: (row) => sectionLabelOf(row.section_id),
+            key: "sections",
+            header: t("assignments.targetSections"),
+            render: (row) => <SectionCells assignment={row} sectionLabelOf={sectionLabelOf} />,
           },
           {
             key: "due_at",
             header: t("assignments.col.due"),
-            render: (row) => (
-              <DueCell dueAt={row.due_at} now={Date.now()} />
-            ),
+            render: (row) => <DueCell dueAt={row.due_at} now={Date.now()} />,
           },
           {
             key: "status",
@@ -417,60 +346,26 @@ function TeacherProgress({
           },
           {
             key: "submitted",
-            header: t("assignments.col.submitted"),
+            header: t("assignments.count.submitted"),
             align: "right",
-            render: (row) => {
-              const summary = summaries.get(row.assignment_id);
-              const judged = summary ? cohortJudged(summary) : null;
-              return (
-                <span data-testid={`submitted-${row.assignment_id}`}>
-                  {judged ? `${judged.submitted} / ${judged.judged}` : t("common.none")}
-                </span>
-              );
-            },
+            render: (row) => <CountCell counts={counts} field="submitted" assignmentId={row.assignment_id} />,
+          },
+          {
+            key: "partial",
+            header: t("assignments.count.partial"),
+            align: "right",
+            render: (row) => <CountCell counts={counts} field="partial" assignmentId={row.assignment_id} />,
           },
           {
             key: "missing",
-            header: t("assignments.col.missing"),
+            header: t("assignments.count.notSubmitted"),
             align: "right",
-            render: (row) => {
-              const summary = summaries.get(row.assignment_id);
-              return (
-                <span data-testid={`missing-${row.assignment_id}`}>
-                  {summary ? summary.counts.not_submitted : t("common.none")}
-                </span>
-              );
-            },
-          },
-          {
-            key: "detail",
-            header: t("assignments.col.detail"),
             render: (row) => (
-              <button
-                type="button"
-                className="button button--ghost"
-                data-testid={`toggle-roster-${row.assignment_id}`}
-                aria-expanded={expanded === row.assignment_id}
-                onClick={() =>
-                  setExpanded((previous) =>
-                    previous === row.assignment_id ? null : row.assignment_id,
-                  )
-                }
-              >
-                {expanded === row.assignment_id
-                  ? t("assignments.hideRoster")
-                  : t("assignments.viewRoster")}
-              </button>
+              <CountCell counts={counts} field="notSubmitted" assignmentId={row.assignment_id} />
             ),
           },
         ]}
       />
-      {expanded ? (
-        <AssignmentRoster
-          assignment={assignments.find((item) => item.assignment_id === expanded) ?? null}
-          summary={summaries.get(expanded)}
-        />
-      ) : null}
     </div>
   );
 }
@@ -498,8 +393,7 @@ export function AssignmentsPage() {
   const pendingCount = pendingRows.length;
   const pendingOverflow = Boolean(pendingQuarantine.data?.pages.at(-1)?.nextCursor);
   const hasPendingQuarantine = pendingCount > 0;
-  // 作用域：学生用会话里的课程/课序（与作答页同一约定）；教师的两个视图都由页面上的
-  // 课程/课序选择器决定——列表与提交情况必须看同一个作用域，否则计数与列表对不上。
+  // 作用域：学生用会话里的课程/课序；教师的两个视图都由页面上的课程/课序选择器决定。
   const scope = session.scope[0] ?? null;
   const [tab, setTab] = useState<"list" | "progress">("list");
   const [composerOpen, setComposerOpen] = useState(false);
@@ -517,7 +411,7 @@ export function AssignmentsPage() {
     courseOptions.find((course) => course.course_id === selectedCourseId)?.title ??
     courseTitles[0] ??
     "";
-  // 同名课程的课序合并成一个列表：否则第二门课的班级永远选不到。
+  // 同名课程的课序合并成一个下拉：否则第二门课的班级永远选不到。
   const mergedSections = useMergedSections(
     courseOptions
       .filter((course) => course.title === selectedCourseTitle)
@@ -530,9 +424,7 @@ export function AssignmentsPage() {
   );
 
   const courseScope = cohortView ? selectedCourseId : (scope?.course_id ?? "");
-  const sectionScope = cohortView
-    ? selectedSectionId
-    : (scope?.section_id ?? "");
+  const sectionScope = cohortView ? selectedSectionId : (scope?.section_id ?? "");
 
   const listFilter = useMemo(
     () => ({
@@ -543,16 +435,6 @@ export function AssignmentsPage() {
   );
   const assignments = useAllAssignments(listFilter);
   const mine = useAllGrades(scope?.course_id ?? null, scope?.section_id ?? null);
-  const byVersion = useMemo(() => {
-    const map = new Map<string, GradeRow>();
-    for (const row of mine.rows) {
-      const previous = map.get(row.question_version_id);
-      if (!previous || (row.submitted_at ?? "") > (previous.submitted_at ?? "")) {
-        map.set(row.question_version_id, row);
-      }
-    }
-    return map;
-  }, [mine.rows]);
 
   const cohortFilter = useMemo(
     () => ({
@@ -564,10 +446,21 @@ export function AssignmentsPage() {
   );
   const cohort = useCohort(cohortFilter);
 
+  const sectionLabelOf = (targetSectionId: string) => {
+    const option = (sections.data ?? []).find(
+      (candidate) => candidate.sectionId === targetSectionId,
+    );
+    if (option) return option.label;
+    const merged = mergedSections.options.find(
+      (candidate) => candidate.sectionId === targetSectionId,
+    );
+    return merged ? merged.label : shortenId(targetSectionId);
+  };
+
   const listView = (
     <div className="stack">
-      <Panel title={t("assignments.myTitle")}>
-        <p className="muted">{t("assignments.studentHint")}</p>
+      <Panel title={cohortView ? t("assignments.tabs.list") : t("assignments.myTitle")}>
+        {cohortView ? null : <p className="muted">{t("assignments.studentHint")}</p>}
         {assignments.isPending ? (
           <Spinner label={t("assignments.loadingAll")} />
         ) : assignments.isError ? (
@@ -588,7 +481,7 @@ export function AssignmentsPage() {
         ) : (
           <StudentAssignmentList
             assignments={assignments.assignments}
-            byVersion={byVersion}
+            gradeRows={mine.rows}
             myProgress={gradesAvailability(mine)}
             now={Date.now()}
           />
@@ -735,12 +628,7 @@ export function AssignmentsPage() {
                     <TeacherProgress
                       assignments={assignments.assignments}
                       cohort={cohort}
-                      sectionLabelOf={(sectionId) => {
-                        const index = (sections.data ?? []).findIndex(
-                          (option) => option.sectionId === sectionId,
-                        );
-                        return index >= 0 ? String(index + 1) : shortenId(sectionId);
-                      }}
+                      sectionLabelOf={sectionLabelOf}
                     />
                   ),
               },

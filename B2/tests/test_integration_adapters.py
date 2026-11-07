@@ -38,6 +38,7 @@ from autograder_b2.domain.evidence import (
     SubmissionRunInput,
 )
 from autograder_b2.evaluation.ports import DeliveryUnavailableError, DeliveryVerificationDefect
+from autograder_b2.intake.email_rules import EmailReceipt
 from autograder_b2.integration.adapters import (
     B3Endpoint,
     B3FixtureSource,
@@ -53,7 +54,6 @@ from autograder_b2.integration.bindings import (
     environment_digest,
     question_version_binding,
 )
-from autograder_b2.intake.email_rules import EmailReceipt
 from autograder_b2.runner.package import PackageRejected, parse_evaluation_package
 from autograder_b2.runner.policy import policy_digest, probe_sandbox
 from autograder_b2.security.decision import allows_dynamic_execution
@@ -830,9 +830,8 @@ class TestB3FixtureSource:
         wrong_size["size_bytes"] = 99
         with package_endpoint(
             payload=json.dumps(_bundle([wrong_size])).encode("utf-8")
-        ) as (base_url, _):
-            with pytest.raises(PackageUnavailableError):
-                _fixture_source(base_url).fetch_inputs(question_version_id=QUESTION_ID)
+        ) as (base_url, _), pytest.raises(PackageUnavailableError):
+            _fixture_source(base_url).fetch_inputs(question_version_id=QUESTION_ID)
 
     def test_rejects_another_question_version(self) -> None:
         document = _bundle([_item("a.txt", b"x")], version=str(uuid.uuid4()))
@@ -845,9 +844,8 @@ class TestB3FixtureSource:
             document = _bundle([_item(bad_path, b"x")])
             with package_endpoint(
                 payload=json.dumps(document).encode("utf-8")
-            ) as (base_url, _):
-                with pytest.raises(PackageUnavailableError):
-                    _fixture_source(base_url).fetch_inputs(question_version_id=QUESTION_ID)
+            ) as (base_url, _), pytest.raises(PackageUnavailableError):
+                _fixture_source(base_url).fetch_inputs(question_version_id=QUESTION_ID)
 
     def test_rejects_duplicate_paths_and_too_many_items_and_unknown_fields(self) -> None:
         duplicate = _bundle([_item("a.txt", b"x"), _item("a.txt", b"y")])
@@ -907,7 +905,6 @@ def _email_package(*checks: str) -> types.SimpleNamespace:
         email=types.SimpleNamespace(
             attempt=1,
             subject_template="{student_number}_{attempt}",
-            required_attachment_template="{student_number}.txt",
         ),
     )
     return types.SimpleNamespace(tests=tests, execution=execution)
@@ -930,7 +927,7 @@ def _receipt(**overrides: object) -> EmailReceipt:
         "subject": "2020141440777_1",
         "sender": "student@example.edu",
         "account_email": "student@example.edu",
-        "attachment_names": ("2020141440777.txt",),
+        "answer_attachment_name": "1.txt",
         "received": True,
         "account_email_verified": True,
         "sender_binding_matches": True,

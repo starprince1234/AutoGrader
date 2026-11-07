@@ -26,6 +26,13 @@ export const ASSIGNMENT_PAGE_SIZE = 200;
 
 export type AssignmentListPage = { items: AssignmentPublic[]; nextCursor: string | null };
 
+/**
+ * 作业列表筛选。
+ *
+ * `sectionId` 仍是**单值查询参数**：契约 `listAssignments?section_id=` 的语义是
+ * "目标课序**包含**该课序"（CHG-0032），而不是"作业只有一个课序"。作业本身可以有多值
+ * `section_ids`，列表只根据这个查询参数过滤行；多值展示在页面里做。
+ */
 export type AssignmentFilter = { courseId: string | null; sectionId: string | null };
 
 export function useAssignmentList(filter: AssignmentFilter, options?: { enabled?: boolean }) {

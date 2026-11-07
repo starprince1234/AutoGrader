@@ -1,9 +1,9 @@
 """契约一致性测试（T-CONTRACT-*）：B2 入口校验与 MAIN 契约的关系，以及契约锁只读核验。
 
-关键实测发现（写进断言，防止被"想当然"覆盖）：MAIN `submission-envelope` 的 `path` 模式
-`^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$` **接受 `..` 段**（`../a.py`、`a/../../b.py` 均通过 schema）。
-因此契约模式是路径安全的**下限**，B2 的 `is_allowed_relative_path` 白名单才是穿越的唯一有效防线——
-"契约已校验"绝不等于"路径安全"。
+作业模型（CHG-0032 / 契约 0.31.0）把提交信封收紧为：`assignment_id` 必填、`files` 恰好一个
+**单段 `.txt`**（`<n>.txt`）。因此契约模式本身现在就会拒绝多段路径与 `..` 段；B2 的
+`is_allowed_relative_path` 白名单仍然是**独立**的一道防线（信封构造、邮件附件名等其它构造方，
+以及历史形态的多文件行都要经过它），"契约已校验"依旧不等于"路径安全"。
 """
 
 from __future__ import annotations
@@ -36,11 +36,12 @@ def _file(path: str, digest: str = "a" * 64, content_base64: str = "aGk=") -> di
 def _envelope(**overrides: object) -> dict[str, object]:
     payload: dict[str, object] = {
         "submission_id": _uuid(),
+        "assignment_id": _uuid(),
         "student_id": _uuid(),
         "course_id": _uuid(),
         "section_id": _uuid(),
         "question_version_id": _uuid(),
-        "files": [_file("main.py")],
+        "files": [_file("1.txt")],
         "idempotency_key": "k-1",
     }
     payload.update(overrides)
@@ -97,7 +98,16 @@ def test_unknown_field_rejected() -> None:
 
 @pytest.mark.parametrize(
     "missing",
-    ["submission_id", "student_id", "course_id", "section_id", "question_version_id", "files", "idempotency_key"],
+    [
+        "submission_id",
+        "assignment_id",
+        "student_id",
+        "course_id",
+        "section_id",
+        "question_version_id",
+        "files",
+        "idempotency_key",
+    ],
 )
 def test_missing_required_field_rejected(missing: str) -> None:
     payload = _envelope()
@@ -109,9 +119,21 @@ def test_files_must_not_be_empty() -> None:
     assert contracts.contract_schema_errors(SCHEMA, _envelope(files=[])), "空文件集必须被拒"
 
 
+def test_files_must_be_exactly_one_answer_file() -> None:
+    """一次提交 = 一道题（CHG-0032）：契约拒绝多文件；非单段 `.txt` 同样被拒。"""
+    two = [_file("1.txt"), _file("2.txt")]
+    assert contracts.contract_schema_errors(SCHEMA, _envelope(files=two)), "多文件必须被拒"
+    for path in ("main.py", "1.TXT", "1.txt.bak", "a/1.txt"):
+        assert contracts.contract_schema_errors(SCHEMA, _envelope(files=[_file(path)])), (
+            f"非单段 .txt 必须被拒: {path!r}"
+        )
+    for path in ("1.txt", "42.txt", "answer-1.txt", "a.b.txt"):
+        assert contracts.contract_schema_errors(SCHEMA, _envelope(files=[_file(path)])) == []
+
+
 @pytest.mark.parametrize("bad_digest", ["A" * 64, "a" * 63, "a" * 65, "z" * 64, ""])
 def test_malformed_file_digest_rejected(bad_digest: str) -> None:
-    payload = _envelope(files=[_file("main.py", digest=bad_digest)])
+    payload = _envelope(files=[_file("1.txt", digest=bad_digest)])
     assert contracts.contract_schema_errors(SCHEMA, payload), f"非法摘要 {bad_digest[:8]!r} 必须被拒"
 
 
@@ -122,18 +144,18 @@ def test_malformed_identifiers_rejected() -> None:
 
 
 def test_file_extra_field_rejected() -> None:
-    payload = _envelope(files=[{**_file("main.py"), "mode": "0755"}])
+    payload = _envelope(files=[{**_file("1.txt"), "mode": "0755"}])
     assert contracts.contract_schema_errors(SCHEMA, payload), "文件对象的多余字段必须被拒"
 
 
-# --- 契约模式的已知边界：`..` 不被 schema 拦住，必须由 B2 白名单拦住 -------------------------
+# --- 路径白名单：契约收紧之后仍是独立的一道防线 ---------------------------------------------
 
 
-@pytest.mark.parametrize("traversal", ["../a.py", "../../etc/passwd", "a/../../b.py", "./../a.py"])
-def test_contract_schema_accepts_dotdot_but_b2_allowlist_rejects(traversal: str) -> None:
-    """实测：契约模式接受 `..` 段；因此 B2 白名单是该攻击面唯一有效防线。"""
-    assert contracts.contract_schema_errors(SCHEMA, _envelope(files=[_file(traversal)])) == [], (
-        "契约模式行为已变化：若 schema 现在会拒绝 `..`，请更新本断言与 interfaces.md I2"
+@pytest.mark.parametrize("traversal", ["../1.txt", "../../etc/passwd", "a/../../1.txt", "./../1.txt"])
+def test_contract_schema_now_rejects_dotdot_and_b2_allowlist_still_rejects(traversal: str) -> None:
+    """作业模型下契约 `path` 模式是单段 `.txt`，`..` 段已无法通过 schema；B2 白名单照旧拒绝。"""
+    assert contracts.contract_schema_errors(SCHEMA, _envelope(files=[_file(traversal)])), (
+        "契约应拒绝含 `..` 的路径（单段 .txt 模式）"
     )
     assert is_allowed_relative_path(traversal) is False
     with pytest.raises(EnvelopeRejected) as excinfo:
@@ -143,19 +165,20 @@ def test_contract_schema_accepts_dotdot_but_b2_allowlist_rejects(traversal: str)
 
 @pytest.mark.parametrize("bad_path", ["/etc/passwd", "..\\a.py", "a\\b.py", "", "a//b.py", "x" * 201, "a/b/c/d/e/f/g/h/i.py", "a\x00b"])
 def test_contract_schema_or_allowlist_rejects_bad_path(bad_path: str) -> None:
-    """绝对路径/反斜杠由契约拦住；空串/空段/超长/超深/控制字符由 B2 白名单拦住。两层合计必须全拒。"""
+    """绝对路径/反斜杠/多段由契约拦住；空串/空段/超长/超深/控制字符由 B2 白名单拦住。两层合计必须全拒。"""
     schema_errors = contracts.contract_schema_errors(SCHEMA, _envelope(files=[_file(bad_path)]))
     allowlist_ok = is_allowed_relative_path(bad_path)
     assert schema_errors or not allowlist_ok, f"{bad_path!r} 两层都没拦住"
 
 
-@pytest.mark.parametrize("good_path", ["main.py", "src/main.py", "a-b_c.d.py", "solution/part_1.py"])
+@pytest.mark.parametrize("good_path", ["1.txt", "42.txt", "answer-1.txt", "a.b.txt"])
 def test_allowlist_accepts_legitimate_paths(good_path: str) -> None:
     assert is_allowed_relative_path(good_path) is True
     assert contracts.contract_schema_errors(SCHEMA, _envelope(files=[_file(good_path)])) == []
 
 
 def test_allowlist_boundaries() -> None:
+    """白名单的数值边界（与契约无关的 I2 实现约束）。"""
     assert is_allowed_relative_path("/".join(["a"] * MAX_PATH_SEGMENTS)) is True
     assert is_allowed_relative_path("/".join(["a"] * (MAX_PATH_SEGMENTS + 1))) is False
     assert is_allowed_relative_path("a" * 200) is True

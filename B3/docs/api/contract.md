@@ -29,12 +29,16 @@
 | GET | `/api/v1/question-versions/{id}/evaluation-package` | **内部**：可执行输入（隐藏用例/适配器/比较策略/沙箱策略）。**草稿与已发布都服务**；包内**不含**参考解答（它有自己的通道） | 服务间认证 | 仅 B2 | 已成文；草稿可服务由 CHG-0028 成文 |
 | GET | `/api/v1/question-versions/{id}/reference-answer` | **内部**：该版本**声明语言**的参考解答正文 + 存证口径的 `content_digest`（`CHG-0019` 的必需输入） | 服务间认证 | 仅 B2；教师/学生一律 `403` | 已成文（CHG-0023） |
 | GET | `/api/v1/question-versions/{id}/learning-context` | **内部**：供 B2 生成学生学习提示的**公开题目上下文**（title/stem/language/tags/adapter_kind），独立 schema | 服务间认证 | 仅 B2 service identity；教师/学生 `403`；草稿 `409` | 已成文（0.18.0，AI-FLOW-01B） |
-| GET | `/api/v1/assignments` | assignment 列表 | 是 | 课程/课序作用域 | 已成文 |
-| POST | `/api/v1/assignments` | 创建 assignment（只能引用已发布版本，草稿 → `409`） | 是 | 教师 | 已成文 |
+| GET | `/api/v1/assignments` | assignment 列表（按读者受众过滤；`section_id` = 目标课序包含该课序；真正 keyset 分页） | 是 | 教师：课程范围 + 目标课序命中；学生：目标课序 + 收窄名单 | 已成文（0.31.0，CHG-0032） |
+| POST | `/api/v1/assignments` | 创建 assignment：`section_ids`（1..N）+ 可选 `student_ids` 收窄；只能引用已发布版本（草稿 → `409`）；目标经 B4 校验（无效 `422`、不可用 `503`） | 是 | 教师/管理员，课程写权限 | 已成文（0.31.0，CHG-0032） |
+| GET | `/api/v1/assignments/{assignment_id}` | 单个 assignment（含 `section_ids`/`student_ids`/有序 `question_version_ids`） | 是 | 同上（受众外 `403`，不存在 `404`） | 已成文（0.31.0） |
+| GET | `/api/v1/assignment-audiences/{assignment_id}` | **内部**：B2 受理提交所需的作业受众（`AssignmentInternal`） | **服务间认证** | 仅服务；不存在 `404`，服务令牌未配置 `503` | 已成文（0.31.0，CHG-0032） |
 
-> `module.yaml` 声明四个路由前缀：`/api/v1/questions`、`/api/v1/question-versions`、
-> `/api/v1/question-draft-generations`、`/api/v1/assignments`。**每个路由路径都落在其中一个前缀之下**
+> `module.yaml` 声明五个路由前缀：`/api/v1/questions`、`/api/v1/question-versions`、
+> `/api/v1/question-draft-generations`、`/api/v1/assignments`、`/api/v1/assignment-audiences`。
+> **每个路由路径都落在其中一个前缀之下**
 > （`MAIN/host/src/autograder_host/checks.py::check_route_declarations` 双向断言），因此没有引入孤立前缀。
+> `/api/v1/assignment-audiences` 是 B3 独有的服务间前缀（路由前缀全局唯一，B4 拥有 `/api/v1/internal`），只承载以 `serviceToken` 鉴权的服务间操作。
 >
 > 0.18.0 的契约变化、以及它们为什么不是"新增隐藏入口"：(a) 草稿生成三个操作 + 能力查询，写的是
 > **候选**而不是题目；(b) fixture 上传从服务令牌改为教师令牌——此前那条声明让浏览器在结构上无法
@@ -61,9 +65,11 @@
 
 ## 公开 DTO 的字段存在性（最高危约束）
 
-- 公开响应（`QuestionPublic` / `QuestionVersionPublic` / `QuestionStatistics` / `AssignmentPublic` / `ReferenceAttestationPublic` / 两个上传结果）**永不含**参考答案、隐藏用例、expected output、fixture 内容、学生身份或内部存储路径。
+- 公开响应（`QuestionPublic` / `QuestionVersionPublic` / `QuestionStatistics` / `AssignmentPublic` / `ReferenceAttestationPublic` / 两个上传结果）**永不含**参考答案、隐藏用例、expected output、fixture 内容或内部存储路径。
+  例外不是例外：`AssignmentPublic.section_ids`/`student_ids` 是契约 0.31.0（`CHG-0032`）**明确定义的受众 id**（教师与目标学生在作业工作区/矩阵里本就需要它），与受保护词表里的 `student_id` 单数字段不是同一件事；白名单与"受保护键名抛错"机制仍原样生效。
 - 出站唯一出口是 `api/serializers.py: serialize_public`：按 DTO 字段做白名单投影，并对任何受保护键名**抛错**（不静默丢弃）。
-- 端点的实现形状（`assignment` 响应体在契约中只有"Page of assignments"一句，未给 schema）由 B3 定义为最小有用形状（`AssignmentPublic`），同样受白名单与"键缺失"测试约束。
+- 端点的实现形状：`assignment` 的公开响应体自 0.31.0（`CHG-0032`）起由契约的 `AssignmentPublic` 定义，
+  B2 的服务间读取由 `AssignmentInternal` 定义；两者同样受白名单与"键缺失"测试约束。
 - `ReferenceAttestationPublic` 只有事实、计数与摘要；**没有学生可见面**——"这道题验证过"不是学生需要的信息。
 
 ## 消费健康面（B3 内部，无新端点）
@@ -76,7 +82,7 @@
 ## 我消费的端点 / 事件
 
 - 事件：`autograder.v1.evaluation.completed`（B2 发布，去标识化，见 [events.md](events.md)）。
-- 依赖 B4：`course_id`/`section_id` 作用域校验与 JWT/JWKS 本地验签（`GET /api/v1/auth/jwks`；非对称，仅存公钥）。**不读 `b4` schema**。
+- 依赖 B4：`course_id`/`section_id` 作用域校验与 JWT/JWKS 本地验签（`GET /api/v1/auth/jwks`；非对称，仅存公钥）；作业目标校验的 outbound 调用（`POST /api/v1/internal/course-targets/validate`，服务令牌，`B3_B4_BASE_URL`/`B3_B4_SERVICE_TOKEN`）。**不读 `b4` schema**。
 - 依赖 B2：无（B3 不拉 B2 的 HTTP；只消费事件）。
 
 ## 权威链接
@@ -276,6 +282,24 @@
 | **默认 `published_only=true`** | 与 `listQuestions` 同一默认、同一理由：忘了传参数必须少看见。非教职员调用方**无论如何都被强制为已发布**，与列表路径同一个判定实现（`domain/catalog.py:_read_scope`） |
 | **路由顺序** | `/api/v1/questions/coverage` 是 `/questions/{question_id}` 的**同级字面段**，声明在参数化路由之前；被吞掉的表现是把 `coverage` 当 `question_id` 解析后返回校验错误，而不是聚合体。由结构断言（`router.routes` 的声明顺序）与行为断言（该路径确实走聚合、兄弟路由仍 404）双重固定 |
 | **聚合代价** | 两条语句：合计走 `count(*) FILTER`，逐标签走 `jsonb_array_elements_text` 展开后一次 `GROUP BY`。**不建预聚合表**（会引入需要维护的第二事实源）。注意 `ix_questions_tags` 这个 GIN 索引**不服务**集合返回函数展开——它服务的是 `listQuestions?tags=` 的 `jsonb @>` 谓词；实测 plan 与理由见 [Phase 07](../phases/active/phase-07-question-tag-coverage.md) §3 |
+
+## 作业目标模型与受众（CHG-0032 / 契约 0.31.0）
+
+作业属于一门课程，目标是 **1..N 个课序**（`section_ids`），可在其中再勾选学生收窄受众
+（`student_ids`，空 = 所选课序全体）。这是**集合**语义：`assignments.section_id` 与
+`ix_assignments_section_id` 已由迁移 `20261107_0008` 删除，目标落在 `b3.assignment_sections` /
+`b3.assignment_students` 两张表；"只选学生不选课序"在结构上不可表达。
+
+| 事项 | 落地方式 |
+|---|---|
+| **目标合法性** | 创建前经 B4 内部端点 `POST /api/v1/internal/course-targets/validate`（`serviceToken`）校验：section 必须属于该课程；学生必须在给定课序中有效在册。未知/停用/跨课程 → `422 invalid-assignment-target`，detail 只给数量、不泄漏学生信息，也**不静默收窄**。 |
+| **依赖不可用** | `B3_B4_BASE_URL` / `B3_B4_SERVICE_TOKEN` 未配置、端点非 200、网络错误、超时或响应畸形 → `503 assignment-targets-unavailable`，**不创建**作业。绝不跳过校验：跳过就等于允许教师向别的课程的班级或未在册学生发布作业。 |
+| **版本校验** | 与旧行为一致：版本不存在 → `404`；跨课程 → `404`（伪装不存在，不泄漏存在性）；非 published → `409 draft-assignment-reference`；三类 id 数组重复 → `422`（pydantic `uniqueItems`）。 |
+| **写事务** | `assignments` + `assignment_items`（ordinal = 数组位置）+ `assignment_sections` + `assignment_students` 同一事务；`section_ids` 为空不可表达（契约 `minItems: 1`）。 |
+| **响应排序** | `section_ids`/`student_ids` 按 UUID 升序稳定输出；`question_version_ids` **保持创建顺序**——每题 `.txt` 的 `N.txt` 映射依赖它。 |
+| **读授权** | 管理员/服务身份放行；教师要求课程读权限，令牌若只持有 section pair 则必须命中某个目标课序（整门课授权覆盖全部课序）；学生要求令牌覆盖 course+section 且该 section ∈ 目标课序，`student_ids` 非空时本人还必须在名单内。受众外 → `403`；资源不存在 → `404`（先存在性、后授权）。列表逐行应用同一判定；SQL 侧先做同样的预过滤，避免 keyset 分页因后置过滤而错页。 |
+| **列表分页** | `cursor` 必须被真正解码并使用（此前的缺陷是 router 丢弃 cursor：每次返回第一页却照样给 `next_cursor`，分页客户端会无限循环）。`section_id` 过滤的语义是"目标课序包含该课序"。未认证 → `401`。 |
+| **内部受众端点** | `GET /api/v1/assignment-audiences/{assignment_id}` 复用 `ServiceTokenVerifier`（`B3_SERVICE_TOKEN`）；响应 `AssignmentInternal` 只含受理所需字段（无时间戳、无题目内容）；服务令牌未配置 → `503`（不降级为放行），缺失/错误用户凭据 → `401`/`403`，作业不存在 → `404`。B2 用它拒绝非目标课序/非名单学生的网页或邮件提交。 |
 
 ## 错误与关联约定（不可协商）
 

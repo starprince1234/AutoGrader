@@ -60,6 +60,15 @@ class Settings:
     consumer_name: str = "b3-question-statistics"
     log_level: str = "INFO"
 
+    #: The identity/course module's internal endpoint that validates an assignment's target
+    #: sections and students (``MAIN/docs/architecture/assignment-workflow.md`` §2.4).
+    #: Both values are required for assignment creation: when either is absent the module
+    #: cannot validate who an assignment is for, so creation is refused with ``503`` rather
+    #: than accepting the ids on the caller's word. The service token is a pre-shared
+    #: service credential, never a user token.
+    b4_base_url: str | None = None
+    b4_service_token: str | None = None
+
     # Limits. All external input is bounded (boundaries.md §5).
     max_stem_chars: int = 20_000
     max_asset_bytes: int = 5 * 1024 * 1024
@@ -162,6 +171,8 @@ class Settings:
             jwt_issuer=value("B3_JWT_ISSUER", "autograder") or "autograder",
             jwt_audience=value("B3_JWT_AUDIENCE", "autograder-api") or "autograder-api",
             service_token=value("B3_SERVICE_TOKEN", None),
+            b4_base_url=value("B3_B4_BASE_URL", None),
+            b4_service_token=value("B3_B4_SERVICE_TOKEN", None),
             consumer_name=value("B3_CONSUMER_NAME", "b3-question-statistics")
             or "b3-question-statistics",
             log_level=value("B3_LOG_LEVEL", "INFO") or "INFO",

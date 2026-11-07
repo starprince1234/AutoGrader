@@ -51,7 +51,8 @@ export function useEvaluationRunId(
     enabled: Boolean(submissionId) && !acceptedRunId && !terminal,
     refetchInterval: (query) => {
       const data = query.state.data as SubmissionView | undefined;
-      return data?.evaluation_run_id ? false : 1000;
+      return data?.evaluation_run_id || (data && ["completed", "rejected", "failed"].includes(data.state))
+        ? false : 1000;
     },
     queryFn: async (): Promise<SubmissionView> =>
       apiRequest<SubmissionView>(`/api/v1/submissions/${submissionId}`),

@@ -33,6 +33,8 @@ REQUIRED_TABLES = {
     "reference_attestations",
     "assignments",
     "assignment_items",
+    "assignment_sections",
+    "assignment_students",
     "event_inbox",
     "event_outbox",
     "consumption_counters",
@@ -316,6 +318,82 @@ def test_constraint_names_follow_the_convention(owner_engine):
         if prefix is None:
             continue
         assert name.startswith(prefix), f"{name} should start with {prefix}"
+
+
+def test_assignment_targets_replace_the_single_section_column(owner_engine):
+    """Migration 0008: the target model is two tables, not a column on ``assignments``.
+
+    The rework cannot keep ``assignments.section_id``: a set of target sections plus an
+    optional student narrowing list is not representable in one value, and a leftover
+    column would become a second, silently diverging answer to "who is this for".
+    """
+    with owner_engine.connect() as connection:
+        columns = set(
+            connection.execute(
+                text(
+                    "SELECT column_name FROM information_schema.columns "
+                    "WHERE table_schema = 'b3' AND table_name = 'assignments'"
+                )
+            ).scalars()
+        )
+        tables = set(
+            connection.execute(
+                text(
+                    "SELECT table_name FROM information_schema.tables WHERE table_schema = 'b3'"
+                )
+            ).scalars()
+        )
+        indexes = set(
+            connection.execute(
+                text("SELECT indexname FROM pg_indexes WHERE schemaname = 'b3'")
+            ).scalars()
+        )
+        constraints = {
+            row.conname
+            for row in connection.execute(
+                text(
+                    "SELECT conname FROM pg_constraint "
+                    "WHERE connamespace = 'b3'::regnamespace AND conname IN ("
+                    "'pk_assignment_sections', 'pk_assignment_students', "
+                    "'fk_assignment_sections_assignment_id', "
+                    "'fk_assignment_students_assignment_id')"
+                )
+            )
+        }
+    assert "section_id" not in columns
+    assert "ix_assignments_section_id" not in indexes
+    assert {"assignment_sections", "assignment_students"} <= tables
+    assert {
+        "pk_assignment_sections",
+        "pk_assignment_students",
+        "fk_assignment_sections_assignment_id",
+        "fk_assignment_students_assignment_id",
+    } == constraints
+    assert "ix_assignment_sections_section_id" in indexes
+    assert "ix_assignment_students_student_id" in indexes
+
+
+def test_app_role_reads_but_cannot_write_assignment_targets(database):
+    """The create path runs on the internal role; the ordinary role only reads targets."""
+    with database.app_session() as session:
+        session.execute(text("SELECT * FROM b3.assignment_sections LIMIT 1"))
+        session.execute(text("SELECT * FROM b3.assignment_students LIMIT 1"))
+
+    for table, student_column in (
+        ("assignment_sections", "section_id"),
+        ("assignment_students", "student_id"),
+    ):
+        with pytest.raises(ProgrammingError) as error:
+            with database.app_session() as session:
+                session.execute(
+                    text(
+                        f"INSERT INTO b3.{table} (assignment_id, {student_column}, created_at) "
+                        "VALUES (gen_random_uuid(), gen_random_uuid(), now())"
+                    )
+                )
+        assert "permission denied" in str(error.value).lower(), table
+        with database.app_session() as session:
+            session.rollback()
 
 
 def test_migration_downgrade_then_upgrade_round_trips(postgres_owner_url):

@@ -23,7 +23,7 @@ from datetime import datetime
 import sqlalchemy as sa
 from sqlalchemy import Engine
 
-from autograder_b2.auth.authorization import AuthorizationError
+from autograder_b2.auth.authorization import require_submission_read
 from autograder_b2.auth.tokens import Principal
 from autograder_b2.db.schema import artifacts, evaluation_runs, submission_files, submissions
 from autograder_b2.domain.transitions import history_of
@@ -55,6 +55,8 @@ class SubmissionView:
     course_id: str
     section_id: str
     question_version_id: str
+    #: 该提交回答的作业（CHG-0032）。`None` 只属于历史提交：它们没有作业归属，不猜测、不回填。
+    assignment_id: str | None
     state: str
     intake: str
     files: tuple[SubmissionFileView, ...]
@@ -92,6 +94,7 @@ class SubmissionQueryService:
                     submissions.c.course_id,
                     submissions.c.section_id,
                     submissions.c.question_version_id,
+                    submissions.c.assignment_id,
                     submissions.c.state,
                     submissions.c.intake,
                     submissions.c.created_at,
@@ -100,7 +103,7 @@ class SubmissionQueryService:
             if row is None:
                 raise SubmissionNotFoundError(str(identifier))
 
-            _require_read_authority(
+            require_submission_read(
                 principal,
                 course_id=str(row[2]),
                 section_id=str(row[3]),
@@ -135,8 +138,9 @@ class SubmissionQueryService:
             course_id=str(row[2]),
             section_id=str(row[3]),
             question_version_id=str(row[4]),
-            state=str(row[5]),
-            intake=str(row[6]),
+            assignment_id=None if row[5] is None else str(row[5]),
+            state=str(row[6]),
+            intake=str(row[7]),
             files=tuple(
                 SubmissionFileView(
                     path=str(item[0]), content_sha256=str(item[1]), size_bytes=int(item[2])
@@ -152,35 +156,10 @@ class SubmissionQueryService:
                 )
                 for entry in history
             ),
-            created_at=row[7],
+            created_at=row[8],
             evaluation_run_id=str(run_row[0]) if run_row is not None else None,
         )
 
 
-def _require_read_authority(
-    principal: Principal, *, course_id: str, section_id: str, student_id: str
-) -> None:
-    """读权限判定：**角色**与**课程作用域**是独立两层，即便读自己的数据也必须满足。
-
-    顺序有意如此：角色 → 作用域 → 身份。`identifiers.md` §3 要求三层同时成立，因此
-    "用只覆盖课程 A 的令牌读课程 B 里自己的提交"同样是 `403`，而"没有任何已登记角色的令牌"
-    连自己的数据也不能读（认证 ≠ 授权）。
-
-    **门禁顺序的说明（与 `MAIN/docs/architecture/models.md` §4 的箭头图）**：该图给出的是
-    通用判定序列"认证 → 角色 → 作用域 → 存在性"。本端点的课程作用域**只能**来自被读资源的
-    归属，而请求路径里没有 `course_id`，因此必须先把记录读出来才知道该比对哪个作用域。
-    结果是：记录存在但越权 → `403`；记录不存在 → `404`（`identifiers.md` §3 明确"有权限但资源
-    不存在 → 404"）。两者无法同时消除一个副作用：越权调用者能区分"存在/不存在"。
-    本模块选择服从本模块验收标准（越权必须 403，不得用 404 掩盖），并把该取舍如实记录在此。
-    """
-    if principal.is_admin:
-        return
-    if not principal.has_recognized_role:
-        raise AuthorizationError("the token carries no recognized platform role")
-    if not principal.covers_course(course_id, section_id):
-        raise AuthorizationError("course scope does not cover this submission")
-    if student_id == principal.user_id:
-        return
-    if principal.is_course_staff:
-        return
-    raise AuthorizationError("the caller is not permitted to read this submission")
+#: 读权限判定的唯一实现在 `auth.authorization.require_submission_read`（读提交元数据、附件内容、
+#: 来信摘录三个端点共用同一层规则）。本模块此前自持一份同义私有函数，已删除以免两处漂移。

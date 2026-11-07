@@ -348,6 +348,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/internal/course-targets/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Validate an assignment's target sections and students (internal)
+         * @description Purpose: B3 owns assignments and stores target section/student ids, but B4 owns the
+         *     sections and enrollments that make those ids meaningful. Before an assignment is
+         *     created, B3 therefore asks this endpoint whether the chosen sections belong to the course
+         *     and whether the chosen students are actively enrolled in those sections (CHG-0032).
+         *     Server-side validation is mandatory: accepting ids on the client's word would let a
+         *     teacher publish to a class of another course, or name a student who is not enrolled.
+         *
+         *     Being internal is not authorization: the caller must present the pre-shared
+         *     `serviceToken`, never a user session. The response intentionally returns only ids and
+         *     section labels (no student names/numbers): B3 needs a decision, not a second copy of
+         *     identity data.
+         */
+        post: operations["validateCourseTargets"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/me": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Read the caller's own account facts
+         * @description Added by CHG-0032 for the assignment workspace: the mail-submission body must carry the
+         *     student's display name and student number, and the browser cannot derive them from the
+         *     access token (identity + scope only) or from the staff-only roster. This endpoint returns
+         *     exactly the caller's own row: no e-mail address, no other user's data. Every
+         *     authenticated caller may read only themselves.
+         */
+        get: operations["getCurrentUser"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/users": {
         parameters: {
             query?: never;
@@ -759,6 +813,34 @@ export interface components {
             roles: components["schemas"]["Role"][];
             is_active: boolean;
         };
+        /** @description Assignment target ids to validate against the course's sections and active enrollments. */
+        CourseTargetValidationRequest: {
+            course_id: components["schemas"]["Uuid"];
+            section_ids: components["schemas"]["Uuid"][];
+            student_ids: components["schemas"]["Uuid"][];
+        };
+        /**
+         * @description Validation result for one assignment's target ids. `sections` contains the requested
+         *     sections that actually belong to `course_id`; `unknown_section_ids` lists the rest.
+         *     `students` contains (student_id, section_id) pairs for requested students that are
+         *     actively enrolled in one of the requested sections; `unknown_student_ids` lists the
+         *     rest (not enrolled, not active, or not matched to an account).
+         */
+        CourseTargetValidation: {
+            course_id: components["schemas"]["Uuid"];
+            sections: {
+                section_id: components["schemas"]["Uuid"];
+                course_id: components["schemas"]["Uuid"];
+                section_code: string;
+                term: string | null;
+            }[];
+            unknown_section_ids: components["schemas"]["Uuid"][];
+            students: {
+                student_id: components["schemas"]["Uuid"];
+                section_id: components["schemas"]["Uuid"];
+            }[];
+            unknown_student_ids: components["schemas"]["Uuid"][];
+        };
         /**
          * @description One row of a section's roster. Recorded by CHG-0007: the operation previously
          *     returned an undocumented body ("Page of enrollments.").
@@ -780,6 +862,18 @@ export interface components {
             display_name: string;
             is_active: boolean;
             updated_at?: components["schemas"]["Timestamp"];
+        };
+        /**
+         * @description The authenticated caller's own account facts (CHG-0032). Deliberately minimal: it exists
+         *     so a student can render the required mail-submission body fields (name/student number)
+         *     without the roster endpoint (staff-only). No e-mail address and no other user's data.
+         */
+        CurrentUser: {
+            user_id: components["schemas"]["Uuid"];
+            username: string;
+            display_name: string;
+            student_number?: string | null;
+            roles: components["schemas"]["Role"][];
         };
         UserSummary: {
             user_id: components["schemas"]["Uuid"];
@@ -1559,6 +1653,53 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
             422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    validateCourseTargets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CourseTargetValidationRequest"];
+            };
+        };
+        responses: {
+            /** @description Which requested sections/students are valid for this course. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CourseTargetValidation"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    getCurrentUser: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's account facts. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CurrentUser"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
         };
     };
     listUsers: {

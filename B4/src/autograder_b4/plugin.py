@@ -38,7 +38,7 @@ logger = get_logger("plugin")
 
 DESCRIPTOR = ModuleDescriptor(
     module="B4",
-    contract_version="0.30.0",
+    contract_version="0.31.0",
     provides=("b4-auth", "b4-course", "postgres", "nats"),
     requires=("host",),
     routes=(
@@ -51,6 +51,9 @@ DESCRIPTOR = ModuleDescriptor(
         "/api/v1/audit-records",
         "/api/v1/modules",
         "/api/v1/registration-allowlists",
+        # CHG-0032: the caller's own account facts (assignment mail body needs the
+        # student's display name/number). Must match module.yaml.
+        "/api/v1/me",
         # Internal endpoint for B2 mail intake (look up an account by sender address).
         # Must match module.yaml: validate_registry refuses to start otherwise.
         "/api/v1/internal",

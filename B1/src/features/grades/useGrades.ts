@@ -11,6 +11,11 @@ import { log, newRequestId } from "../../logging/logger";
 export type GradeFilter = {
   courseId: string | null;
   sectionId: string | null;
+  /**
+   * 只看某个作业的提交/成绩行（`?assignment_id=`，CHG-0032）。历史提交没有 `assignment_id`，
+   * 因此不会被任何作业级过滤返回——它们仍可按题目版本查询，但不进作业视图。
+   */
+  assignmentId?: string | null;
   questionVersionId: string | null;
   /** UTC RFC 3339（页面把本地输入转成它）；`null` = 不限制。 */
   fromUtc?: string | null;
@@ -37,6 +42,7 @@ export function useGrades(filter: GradeFilter, options?: { enabled?: boolean }) 
     queryKey: queryKeys.grades({
       course_id: filter.courseId ?? undefined,
       section_id: filter.sectionId ?? undefined,
+      assignment_id: filter.assignmentId ?? undefined,
       question_version_id: filter.questionVersionId ?? undefined,
       from: filter.fromUtc ?? undefined,
       to: filter.toUtc ?? undefined,
@@ -49,6 +55,7 @@ export function useGrades(filter: GradeFilter, options?: { enabled?: boolean }) 
         query: {
           course_id: filter.courseId as string,
           section_id: filter.sectionId ?? undefined,
+          assignment_id: filter.assignmentId ?? undefined,
           question_version_id: filter.questionVersionId ?? undefined,
           from: filter.fromUtc ?? undefined,
           to: filter.toUtc ?? undefined,
@@ -81,7 +88,11 @@ export function loadedGrades(pages: readonly GradeListPage[] | undefined): Grade
  * 把两者合并成一个标志，调用方只能对合并态渲染"加载中"，于是真的被截断时用户看到的是
  * 一个永远不会结束的 spinner——数据被静默丢弃换了个说法继续存在。
  */
-export function useAllGrades(courseId: string | null, sectionId: string | null): {
+export function useAllGrades(
+  courseId: string | null,
+  sectionId: string | null,
+  assignmentId: string | null = null,
+): {
   rows: GradeRow[];
   isPending: boolean;
   isError: boolean;
@@ -92,6 +103,7 @@ export function useAllGrades(courseId: string | null, sectionId: string | null):
   const query = useGrades({
     courseId,
     sectionId,
+    assignmentId,
     questionVersionId: null,
     fromUtc: null,
     toUtc: null,
@@ -184,6 +196,7 @@ export async function downloadGradesExport(
     query: {
       course_id: filter.courseId as string,
       section_id: filter.sectionId ?? undefined,
+      assignment_id: filter.assignmentId ?? undefined,
       question_version_id: filter.questionVersionId ?? undefined,
       from: filter.fromUtc ?? undefined,
       to: filter.toUtc ?? undefined,
@@ -224,6 +237,7 @@ export async function downloadGradesExport(
     bytes: blob.size,
     course_id: filter.courseId,
     section_id: filter.sectionId,
+    assignment_id: filter.assignmentId ?? null,
     question_version_id: filter.questionVersionId,
     from: filter.fromUtc ?? null,
     to: filter.toUtc ?? null,

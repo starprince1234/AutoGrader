@@ -6,7 +6,7 @@
 
 - 只使用 `b3` schema；迁移版本表 `alembic_version_b3`（`alembic.ini`/`env.py` 固定）。
 - **禁止**跨 schema 外键 / SQL / 视图 / ORM；禁止 `public` 共享 ORM；禁止超级用户连接。
-- 当前实际状态：`已完成` —— 三个迁移（`20260915_0001` 建 schema、`20260915_0002` 完整业务、`20260915_0003` 凭证与消费可见性）可在空库从零执行，回滚可往返；`tests/test_migrations.py` 每次运行都会 drop `b3` 后重跑，因此这是**持续验证**的结论。
+- 当前实际状态：`已完成` —— 迁移 `20260915_0001` 建 schema、`20260915_0002` 完整业务、`20260915_0003` 凭证与消费可见性、`0004` 表规范对齐、`0005` AI 草稿生成、`0006` 生成记录外键、`0007` 执行声明、`20261107_0008` 作业目标模型；当前 head `20261107_0008`，可在空库从零执行且回滚可往返（`0008` 的降级为**有损**，见 [migrations.md](migrations.md)）。`tests/test_migrations.py` 每次运行都会 drop `b3` 后重跑，因此这是**持续验证**的结论。
 
 ## 表清单（实际）
 
@@ -23,7 +23,10 @@
 | `reference_attestations` | 外部验证器的**声明**：它跑过该版本的参考答案并观察到期望输出。**非**受保护表：只有摘要与计数，没有它所描述的内容 | 复合 PK `(question_version_id, content_digest)`（同一内容重复上报是替换，不是新增；内容改了旧凭证仍留档）；`uq_..._attestation_id`；`cases_total 1..1000`、`cases_passed ≤ cases_total`；`content_digest` 正则 CHECK；`fk → question_versions ON DELETE CASCADE` | 由服务间调用写入（仅草稿版本）；`publish` 要求存在与**重算摘要**一致的凭证；无凭证/不匹配即拒发 |
 | `question_draft_generations` | **受保护**：一份**未被接受**的 AI 候选（AI-FLOW-01A）。它不属于任何题目/版本，因此单独一张表 | `owner_subject`（JWT `sub`，文本而非 UUID：issuer 不保证形式）；`status IN (ready, needs_review, failed)`；`warnings` 为数组、`proposal` 为对象或 NULL；`accepted_at ⇒ proposal IS NULL ∧ accepted_question_version_id 非空`；`discarded_at ⇒ proposal IS NULL`；`expires_at > created_at`；`fk → question_versions ON DELETE SET NULL` | 生成时写入候选正文与 `expires_at`；教师保存时**在同一事务**里回填 `accepted_question_version_id` 并置 `proposal = NULL`；显式丢弃只清正文、留 `discarded_at`；过期后读取被拒并删除该行（用量账本不受影响） |
 | `ai_generation_usage` | **非**受保护：付费调用的去标识化账本。**没有任何列**能放 prompt、目标、响应正文或候选 | `status IN (ready, needs_review, failed)`；`duration_ms >= 0`；三组 token 计数 `>= 0` 或 NULL；索引 `(owner_subject, requested_at)` 服务预算窗口统计 | 每次**出网调用**写一条（含失败）；接受候选时回填 `accepted_question_version_id`；永不随候选一起删除 |
-| `assignments` | 作业集合（课程 × 课序） | `status IN (open, archived)`；`course_id`/`section_id` 普通 UUID 列 | 教师创建 || `assignment_items` | assignment ↔ **已发布**版本的关联 | `uq_assignment_items_assignment_id_question_version_id`、`uq_..._ordinal` | "只引用已发布版本"由领域层保证（跨行条件不适合做 CHECK） |
+| `assignments` | 作业集合（课程 + 1..N 个目标课序，可选收窄到指定学生） | `status IN (open, archived)`；`course_id` 普通 UUID 列；**目标不在这张表**（在下面两张目标表里） | 教师创建 |
+| `assignment_sections` | 作业的目标课序集合（每个作业 1..N 行） | 复合 PK `(assignment_id, section_id)` 命名 `pk_assignment_sections`；`fk_assignment_sections_assignment_id`；`ix_assignment_sections_section_id`；`section_id` 普通 UUID 列（无跨 schema FK） | 与作业主行**同一事务**写入；无更新路径（目标整体不原地改） |
+| `assignment_students` | 可选的学生收窄名单；**无行 = 所选课序全体**，因此"收窄到 0 人"不可表达 | 复合 PK `(assignment_id, student_id)` 命名 `pk_assignment_students`；`fk_assignment_students_assignment_id`；`ix_assignment_students_student_id`；`student_id` 普通 UUID 列 | 同上；写入前经 B4 校验"在给定课序中有效在册"，B4 不可用则整体拒绝（不发生部分写入） |
+| `assignment_items` | assignment ↔ **已发布**版本的关联（`ordinal` = 创建数组位置，决定 `N.txt` 映射） | `uq_assignment_items_assignment_id_question_version_id`、`uq_..._ordinal` | "只引用已发布版本"由领域层保证（跨行条件不适合做 CHECK） |
 | `event_inbox` | 事件去重 inbox（durable） | `event_id` PK；`uq_event_inbox_evaluation_run_id`；`producer='B2'` CHECK；`payload` 仅存**白名单校验后**的去标识化字段；复合索引 `(question_version_id, occurred_at, event_id)` 服务于窗口的 keyset 分页 | 消费器写入；重放的唯一数据源 |
 | `event_outbox` | 发布侧 outbox（与业务变更同事务） | `uq_event_outbox_event_id`；`producer='B3'` CHECK；`attempts`/`last_error`/`published_at` | 发布事务写入；投递器标记已发布；失败保留待重试 |
 | `consumption_counters` | 按投递结果（accepted / duplicate_event / duplicate_run / rejected）计数 + 最后发生时间 | `outcome` PK + 取值 CHECK；`delivery_count >= 0` | 消费器**每条路径**递增；供健康面区分"没有事件"与"事件被拒收"。被拒事件从不进 inbox，这是它唯一的落库痕迹 |
@@ -73,6 +76,11 @@
 - **修订差异的落库形状 = 契约形状**（`CHG-0013`）：`revision_diff` 存的就是 `RevisionDiff` 的 11 个键，
   因此版本 DTO 不需要投影层，"库里能读出什么"与"客户端能收到什么"是同一个结构。
   首个版本两个字段均为 `NULL`（`revision_diff` 的列 CHECK 只要求"是对象"或不存）。
+- **作业目标与受众**（`CHG-0032`）：`assignments` + `assignment_items`（ordinal 顺序）+ `assignment_sections`
+  + `assignment_students` 在**同一事务**写入；section 属于课程、学生有效在册由 B4 的内部端点校验
+  （B3 不读 `b4` schema），校验不可用 → `503` 且**不落库**（不存在"先建作业再补校验"的路径）。
+  `0008` 已删除单列 `section_id` 与 `ix_assignments_section_id`：集合语义无法无损表达为单列，
+  保留列会成为第二个互相矛盾的受众答案；该迁移的降级是有损的，见 [migrations.md](migrations.md)。
 - 统计只写预聚合表：不保留源码、身份或分数原值；`rebuild` 从 `event_inbox` 覆盖重建。
 - 窗口统计不预聚合：`from`/`to` 路径按 keyset 分页从 `event_inbox` 重算（每页 1000 行，硬上限 100 万行），
   因此它是 `O(窗口内事件数)` 的；10 万量级的实测与不达标结论见

@@ -38,6 +38,8 @@ from .models import (
     AIGenerationUsage,
     Assignment,
     AssignmentItem,
+    AssignmentSection,
+    AssignmentStudent,
     Blob,
     ConsumptionCounter,
     EventInbox,
@@ -484,16 +486,21 @@ class QuestionBankRepository:
         self,
         *,
         course_id: uuid.UUID,
-        section_id: uuid.UUID,
         title: str,
         due_at: datetime | None,
         created_by: uuid.UUID | None,
         now: datetime,
     ) -> Assignment:
+        """Insert the assignment row; targets and items follow in the same transaction.
+
+        The target sections/students live in their own tables now (they are a set, not a
+        column), so this method deliberately has no ``section_id`` parameter and cannot
+        create an assignment with an empty target by itself: the transaction that calls it
+        must add at least one section row before committing.
+        """
         row = Assignment(
             assignment_id=new_id(),
             course_id=course_id,
-            section_id=section_id,
             title=title,
             status="open",
             due_at=due_at,
@@ -519,8 +526,56 @@ class QuestionBankRepository:
         self.session.flush()
         return row
 
+    def add_assignment_section(
+        self, *, assignment_id: uuid.UUID, section_id: uuid.UUID, now: datetime
+    ) -> AssignmentSection:
+        row = AssignmentSection(
+            assignment_id=assignment_id,
+            section_id=section_id,
+            created_at=now,
+        )
+        self.session.add(row)
+        self.session.flush()
+        return row
+
+    def add_assignment_student(
+        self, *, assignment_id: uuid.UUID, student_id: uuid.UUID, now: datetime
+    ) -> AssignmentStudent:
+        row = AssignmentStudent(
+            assignment_id=assignment_id,
+            student_id=student_id,
+            created_at=now,
+        )
+        self.session.add(row)
+        self.session.flush()
+        return row
+
     def get_assignment(self, assignment_id: uuid.UUID) -> Assignment | None:
         return self.session.get(Assignment, assignment_id)
+
+    def list_assignment_items(self, assignment_id: uuid.UUID) -> list[AssignmentItem]:
+        statement = (
+            select(AssignmentItem)
+            .where(AssignmentItem.assignment_id == assignment_id)
+            .order_by(AssignmentItem.ordinal)
+        )
+        return list(self.session.execute(statement).scalars())
+
+    def list_assignment_sections(self, assignment_id: uuid.UUID) -> list[AssignmentSection]:
+        statement = (
+            select(AssignmentSection)
+            .where(AssignmentSection.assignment_id == assignment_id)
+            .order_by(AssignmentSection.section_id)
+        )
+        return list(self.session.execute(statement).scalars())
+
+    def list_assignment_students(self, assignment_id: uuid.UUID) -> list[AssignmentStudent]:
+        statement = (
+            select(AssignmentStudent)
+            .where(AssignmentStudent.assignment_id == assignment_id)
+            .order_by(AssignmentStudent.student_id)
+        )
+        return list(self.session.execute(statement).scalars())
 
     def list_assignments(
         self,
@@ -528,9 +583,26 @@ class QuestionBankRepository:
         course_ids: Iterable[uuid.UUID] | None,
         course_id: uuid.UUID | None,
         section_id: uuid.UUID | None,
+        visible_course_ids: Iterable[uuid.UUID] | None = None,
+        visible_section_ids: Iterable[uuid.UUID] | None = None,
+        audience_student_id: uuid.UUID | None = None,
         limit: int,
         after: tuple[datetime, uuid.UUID] | None = None,
     ) -> tuple[list[Assignment], bool]:
+        """Keyset page of assignments, filtered **in SQL** for scope and audience.
+
+        Reader filtering has to happen here rather than after the page is fetched:
+        dropping rows afterwards would return short pages and, worse, would make the
+        keyset cursor point past rows that were never served.
+
+        * ``section_id`` -- the query parameter: only assignments targeting that section.
+        * ``visible_course_ids`` / ``visible_section_ids`` -- the caller's read scope. When
+          the caller holds whole-course grants, an assignment in one of those courses is
+          visible regardless of its targets; otherwise at least one target section must be
+          in ``visible_section_ids``. ``None`` means "no restriction".
+        * ``audience_student_id`` -- a student reader: visible only when the assignment
+          names no students (whole target sections) or names this student.
+        """
         statement = select(Assignment)
         if course_ids is not None:
             scoped = list(course_ids)
@@ -540,7 +612,36 @@ class QuestionBankRepository:
         if course_id is not None:
             statement = statement.where(Assignment.course_id == course_id)
         if section_id is not None:
-            statement = statement.where(Assignment.section_id == section_id)
+            statement = statement.where(
+                select(AssignmentSection.assignment_id)
+                .where(
+                    AssignmentSection.assignment_id == Assignment.assignment_id,
+                    AssignmentSection.section_id == section_id,
+                )
+                .exists()
+            )
+        if visible_section_ids is not None:
+            sections = list(visible_section_ids)
+            section_visible = select(AssignmentSection.assignment_id).where(
+                AssignmentSection.assignment_id == Assignment.assignment_id,
+                AssignmentSection.section_id.in_(sections),
+            ).exists()
+            whole_course = list(visible_course_ids or ())
+            if whole_course:
+                statement = statement.where(
+                    or_(Assignment.course_id.in_(whole_course), section_visible)
+                )
+            else:
+                statement = statement.where(section_visible)
+        if audience_student_id is not None:
+            narrowed = select(AssignmentStudent.assignment_id).where(
+                AssignmentStudent.assignment_id == Assignment.assignment_id
+            ).exists()
+            includes_student = select(AssignmentStudent.assignment_id).where(
+                AssignmentStudent.assignment_id == Assignment.assignment_id,
+                AssignmentStudent.student_id == audience_student_id,
+            ).exists()
+            statement = statement.where(or_(~narrowed, includes_student))
         if after is not None:
             created_at, assignment_id = after
             statement = statement.where(
@@ -553,14 +654,6 @@ class QuestionBankRepository:
         rows = list(self.session.execute(statement).scalars())
         has_more = len(rows) > limit
         return rows[:limit], has_more
-
-    def list_assignment_items(self, assignment_id: uuid.UUID) -> list[AssignmentItem]:
-        statement = (
-            select(AssignmentItem)
-            .where(AssignmentItem.assignment_id == assignment_id)
-            .order_by(AssignmentItem.ordinal)
-        )
-        return list(self.session.execute(statement).scalars())
 
     # --- statistics reads -------------------------------------------------
 

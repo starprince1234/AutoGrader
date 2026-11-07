@@ -118,8 +118,8 @@ function renderAt(children: ReactNode) {
     }),
     createRoute({
       getParentRoute: () => rootRoute,
-      path: "/submit/$questionVersionId",
-      component: () => <span>submit</span>,
+      path: "/assignments",
+      component: () => <span>assignments</span>,
     }),
     createRoute({
       getParentRoute: () => rootRoute,

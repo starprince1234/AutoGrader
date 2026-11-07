@@ -153,6 +153,19 @@ NATURAL_KEYS = {
         ("question_version_id", "content_digest"),
         "an attestation is about (version, digest) and nothing else",
     ),
+    # CHG-0032 assignment targets: the identity is the pair, exactly like the existing
+    # `assignment_items(assignment_id, question_version_id)` pattern; a surrogate id would
+    # allow the same section/student to be targeted twice.
+    ("B3", "assignment_sections"): NaturalKey(
+        COMPOSITE_NATURAL_KEY,
+        ("assignment_id", "section_id"),
+        "a target section is identified by (assignment, section)",
+    ),
+    ("B3", "assignment_students"): NaturalKey(
+        COMPOSITE_NATURAL_KEY,
+        ("assignment_id", "student_id"),
+        "a target student is identified by (assignment, student)",
+    ),
 }
 
 #: Table names that are correct as written: `event_inbox`/`event_outbox` are the conventional
