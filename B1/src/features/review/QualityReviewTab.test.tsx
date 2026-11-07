@@ -143,8 +143,10 @@ function renderQuality(initial: ReviewSearch) {
   return renderWithProviders(<RouterProvider router={router} />);
 }
 
+/** 已经查过的一次（`q=1`）：刷新/分享后的状态，界面应当直接给出结果。 */
 const QUALITY_PATH: ReviewSearch = {
   tab: "quality",
+  q: "1",
   course_id: UUID_A,
   question_version_id: UUID_C,
 };
@@ -501,13 +503,20 @@ describe("P13-B 题目质量 · 示例预览", () => {
     ];
   }
 
-  it("不发 B3/B2 请求，直接展示示例聚合；切到 v2 看得到样本不足", async () => {
+  it("示例也要点「查询」才出数字；切到 v2 看得到样本不足", async () => {
     const user = userEvent.setup();
     stub = installFetchStub(sessionOnly());
     await signIn("teacher1", "pw");
     renderQuality({ tab: "quality", demo: "1" });
 
     expect(await screen.findByTestId("review-demo-banner")).toHaveTextContent("示例预览");
+    // 还没查询：没有数字，只有一句"点查询"；课程/版本已按示例预填好。
+    expect(screen.queryByTestId("review-quality-answerers-value")).toBeNull();
+    expect(screen.getByTestId("review-quality-no-version")).toHaveTextContent("点「查询」");
+    expect(screen.getByTestId("review-quality-course")).toHaveValue(DEMO_COURSE_ID);
+    expect(screen.getByTestId("review-quality-version")).toHaveValue(DEMO_VERSION_ID);
+
+    await user.click(screen.getByTestId("review-quality-apply"));
     expect(await screen.findByTestId("review-quality-answerers-value")).toHaveTextContent("18");
     expect(screen.getByTestId("review-quality-attempts-value")).toHaveTextContent("42");
     // 系统故障 = 5 次基础设施问题 + 6 次资源用量缺失。
@@ -515,17 +524,20 @@ describe("P13-B 题目质量 · 示例预览", () => {
     expect(screen.getByTestId("review-quality-security-value")).toHaveTextContent("1");
     expect(screen.getByTestId("review-quality-unchecked-value")).toHaveTextContent("14");
     expect(screen.getByTestId("review-quality-hint")).toHaveTextContent("存在异常");
+    expect(screen.getByTestId("review-quality-scope")).toHaveTextContent("全部时间");
 
     const table = screen.getByTestId("review-quality-cases-table");
     const rows = table.querySelectorAll("tbody tr");
     expect(rows[0]).toHaveTextContent("第 2 个用例");
     expect(rows[0]).toHaveTextContent("74%");
 
-    // 课程与版本由示例自带：不需要课程目录，也不需要 B3 的题目列表。
-    expect(screen.getByTestId("review-quality-course")).toHaveValue(DEMO_COURSE_ID);
-    expect(screen.getByTestId("review-quality-version")).toHaveValue(DEMO_VERSION_ID);
-
+    // 换版本不查询：旧汇总收起；再查一次才更新。
     await user.selectOptions(screen.getByTestId("review-quality-version"), DEMO_VERSION_V2_ID);
+    expect(await screen.findByTestId("review-quality-selection-changed")).toHaveTextContent(
+      "点「查询」",
+    );
+    expect(screen.queryByTestId("review-quality-answerers-value")).toBeNull();
+    await user.click(screen.getByTestId("review-quality-apply"));
     await waitFor(() => {
       expect(screen.getByTestId("review-quality-attempts-value")).toHaveTextContent("3");
     });
@@ -538,26 +550,36 @@ describe("P13-B 题目质量 · 示例预览", () => {
     expect(business).toHaveLength(0);
   });
 
-  it("从题目详情带着真实版本进入示例时，回落到示例版本而不是空汇总", async () => {
-    // 真实场景：在某个题目详情点「查看题目质量」得到真实 question_version_id，再点「查看示例」。
-    // 用真实版本去查示例聚合只能得到"暂无评测记录"，所以示例只认示例自己的版本。
+  it("示例里从题目详情进来也不冒充那道题：没有锁定标签，查询后给示例数据", async () => {
+    // 真实场景：在某个题目详情点「查看题目质量」得到真实版本，再点「查看示例」。
+    // 示例数字是编的，不能顶着那个真实题目说"正在看这道题"，因此走总览视图。
+    const user = userEvent.setup();
     stub = installFetchStub(sessionOnly());
     await signIn("teacher1", "pw");
     renderQuality({
       tab: "quality",
       demo: "1",
+      origin: "question",
       course_id: UUID_A,
       question_version_id: UUID_C,
     });
 
-    expect(await screen.findByTestId("review-quality-answerers-value")).toHaveTextContent("18");
-    expect(screen.getByTestId("review-quality-version")).toHaveValue(DEMO_VERSION_ID);
+    // 等页面挂载完成（路由是异步装载的），再断言"没有锁定标签、没有数字"。
+    expect(await screen.findByTestId("review-quality-version")).toHaveValue(DEMO_VERSION_ID);
+    expect(screen.queryByTestId("review-quality-locked")).toBeNull();
+    expect(screen.queryByTestId("review-quality-answerers-value")).toBeNull();
+    expect(screen.getByTestId("review-quality-no-version")).toHaveTextContent("点「查询」");
+
+    await user.click(screen.getByTestId("review-quality-apply"));
+    expect(await screen.findByTestId("review-quality-attempts-value")).toHaveTextContent("42");
   });
 
-  it("时间范围真的过滤示例记录（不只在请求参数上出现）", async () => {    const user = userEvent.setup();
+  it("时间范围真的过滤示例记录，并在汇总里写明统计范围", async () => {
+    const user = userEvent.setup();
     stub = installFetchStub(sessionOnly());
     await signIn("teacher1", "pw");
     renderQuality({ tab: "quality", demo: "1" });
+    await user.click(await screen.findByTestId("review-quality-apply"));
     await screen.findByTestId("review-quality-attempts-value");
 
     fireEvent.change(screen.getByTestId("review-quality-from"), {
@@ -576,6 +598,9 @@ describe("P13-B 题目质量 · 示例预览", () => {
       expect(attempts).toBeGreaterThan(0);
       expect(attempts).toBeLessThan(42);
     });
+    // 数字变了要说清是按什么范围算的，否则两次结果对不上看起来像 bug。
+    expect(screen.getByTestId("review-quality-scope")).toHaveTextContent("统计范围：");
+    expect(screen.getByTestId("review-quality-scope")).not.toHaveTextContent("全部时间");
     expect(
       stub!.requests.filter((item) => item.url.pathname === SUMMARY),
     ).toHaveLength(0);

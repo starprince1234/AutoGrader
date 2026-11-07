@@ -13,7 +13,7 @@ import {
   Spinner,
   Table,
 } from "../../ui/components";
-import { isUuid } from "../../ui/format";
+import { formatDateTime, isUuid } from "../../ui/format";
 import { useVersionContext, useVersionOptions } from "./useQualityVersions";
 import {
   toContractTimestamp,
@@ -265,11 +265,32 @@ function QualityBody({ summary }: { summary: EvaluationQualitySummary }) {
 /**
  * 评测汇总面板：真实数据与示例数据走同一段渲染。
  *
- * 示例模式的说明只出现在页头那一条横幅里：同一句话在面板里再写一遍，读者会以为自己看漏了什么。
+ * 第一行永远是"统计范围"：同一道题换个时间范围数字就会变，不写清范围，老师只会觉得
+ * "这两个数怎么对不上"。
  */
-function SummaryPanel({ summary }: { summary: EvaluationQualitySummary }) {
+function SummaryPanel({
+  summary,
+  from,
+  to,
+}: {
+  summary: EvaluationQualitySummary;
+  from: string | null;
+  to: string | null;
+}) {
+  const fromLabel = from === null ? null : formatDateTime(from, t("common.none"));
+  const toLabel = to === null ? null : formatDateTime(to, t("common.none"));
+  const scope =
+    fromLabel === null && toLabel === null
+      ? t("review.quality.scopeAll")
+      : t("review.quality.scopeRange", {
+          from: fromLabel ?? t("review.quality.scopeOpenStart"),
+          to: toLabel ?? t("review.quality.scopeOpenEnd"),
+        });
   return (
     <Panel title={t("review.quality.result")} testId="review-quality-panel">
+      <p className="muted" data-testid="review-quality-scope">
+        {scope}
+      </p>
       {summary.attempt_count === 0 ? (
         <Banner tone="info" testId="review-quality-empty">
           {t("review.quality.empty")}
@@ -305,8 +326,11 @@ export function QualityReviewTab({
   /**
    * 从题目详情点进来（`origin=question`）：直接显示这道题的汇总，并且**只**能看这道题——
    * 课程/版本下拉不再出现，避免老师以为可以在这里换成别的题。
+   *
+   * 示例模式例外：示例里的数字是编的，不能顶着某个真实题目说"正在看这道题"，因此示例
+   * 一律走总览视图（可换示例版本），并且同样要点「查询」。
    */
-  const fromQuestion = search.origin === "question";
+  const fromQuestion = search.origin === "question" && !demo;
   const identity = session.subject ?? session.username ?? "anonymous";
   const filter = readQualityFilter(search);
 
@@ -346,6 +370,18 @@ export function QualityReviewTab({
   /** 已经查询过的那一份（URL 是唯一真源）；页面上的数字只属于它。 */
   const appliedVersionId = filter.questionVersionId;
   const invalidVersion = appliedVersionId !== null && !isUuid(appliedVersionId);
+  /**
+   * 只在两种情况下算"查过了"：地址栏明确带着一次查询（`q=1`，刷新/分享仍有效），
+   * 或者是从题目详情点进来的那一次（`origin=question`，契约要求的"直接看到"）。
+   * 只是在下拉里选好条件不算——那是这一页之前的问题：选一下就把数字放出来了。
+   *
+   * 示例模式额外要求版本必须是示例自带的：从题目详情带着真实版本点「查看示例」时，
+   * 不能再拿真实版本去算示例数字（只会得到空汇总），而是退回"没查过"并让人占查询。
+   */
+  const queried =
+    appliedVersionId !== null &&
+    (fromQuestion || search.q === "1") &&
+    (!demo || DEMO_VERSION_IDS.has(appliedVersionId));
   const targetVersionId = fromQuestion
     ? appliedVersionId
     : versionDraft === ""
@@ -358,7 +394,6 @@ export function QualityReviewTab({
       : courseDraft;
   // 选了别的版本却还没点「查询」：把上一次的汇总收起来，避免把旧数字当成新结果读。
   const selectionChanged =
-    !demo &&
     !fromQuestion &&
     (courseDraft !== (filter.courseId ?? "") ||
       versionDraft !== (filter.questionVersionId ?? ""));
@@ -368,10 +403,10 @@ export function QualityReviewTab({
   );
   // 示例模式不发 B2 聚合请求：数字由 `demoData` 里的记录算出，时间范围真的会过滤。
   const summaryEnabled =
-    !demo && appliedVersionId !== null && !invalidVersion && context.version.isSuccess;
+    !demo && queried && !invalidVersion && context.version.isSuccess;
   const summary = useQualitySummary({ identity, filter, enabled: summaryEnabled });
   const demoSummary =
-    demo && versionDraft !== "" ? demoQualitySummary(versionDraft, filter.from, filter.to) : null;
+    demo && queried ? demoQualitySummary(appliedVersionId as string, filter.from, filter.to) : null;
 
   const apply = () => {
     if (targetVersionId === null) return;
@@ -394,28 +429,30 @@ export function QualityReviewTab({
       return;
     }
     setIssue(null);
-    onChange(
-      withQualityFilter(search, {
+    onChange({
+      ...withQualityFilter(search, {
         courseId: targetCourseId,
         questionVersionId: targetVersionId,
         from: fromValue,
         to: toValue,
       }),
-    );
+      q: "1",
+    });
   };
 
   const clearTime = () => {
     setIssue(null);
     setFromDraft("");
     setToDraft("");
-    onChange(
-      withQualityFilter(search, {
+    onChange({
+      ...withQualityFilter(search, {
         courseId: targetCourseId,
         questionVersionId: targetVersionId,
         from: null,
         to: null,
       }),
-    );
+      q: "1",
+    });
   };
 
   const versionError = context.version.error;
@@ -438,10 +475,9 @@ export function QualityReviewTab({
         <div className="stack">
           {fromQuestion ? (
             <p className="muted" data-testid="review-quality-locked">
-              {t("review.quality.lockedHint")}：
-              <strong>
-                {context.label ?? appliedVersionId ?? t("review.quality.lockedMissing")}
-              </strong>
+              {context.label
+                ? t("review.quality.lockedWithTitle", { title: context.label })
+                : t("review.quality.lockedNoTitle")}
             </p>
           ) : null}
 
@@ -568,9 +604,7 @@ export function QualityReviewTab({
         </Banner>
       ) : null}
 
-      {demo ? (
-        demoSummary ? <SummaryPanel summary={demoSummary} /> : null
-      ) : appliedVersionId === null ? (
+      {!queried ? (
         <Banner tone="info" testId="review-quality-no-version">
           {fromQuestion
             ? t("review.quality.deepLinkMissing")
@@ -580,6 +614,10 @@ export function QualityReviewTab({
         <Banner tone="info" testId="review-quality-selection-changed">
           {t("review.quality.queryAgain")}
         </Banner>
+      ) : demo ? (
+        demoSummary ? (
+          <SummaryPanel summary={demoSummary} from={filter.from} to={filter.to} />
+        ) : null
       ) : versionForbidden ? (
         <Banner tone="error" testId="review-quality-forbidden">
           {t("review.quality.forbidden")}
@@ -606,13 +644,11 @@ export function QualityReviewTab({
       ) : summary.isPending && summaryEnabled ? (
         <Spinner />
       ) : summary.data ? (
-        <SummaryPanel summary={summary.data} />
+        <SummaryPanel summary={summary.data} from={filter.from} to={filter.to} />
       ) : null}
 
       {/* 还没查过 / 查出来是空的：给一条"可以先看示例"的路（从题目详情进来时不需要）。 */}
-      {!demo &&
-      !fromQuestion &&
-      (appliedVersionId === null || summary.data?.attempt_count === 0) ? (
+      {!demo && !fromQuestion && (!queried || summary.data?.attempt_count === 0) ? (
         <DemoHint
           testId="review-quality-empty-demo"
           onShow={() => onChange({ ...search, demo: "1" })}

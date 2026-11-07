@@ -163,4 +163,27 @@ describe("复核工作区的 URL 状态", () => {
     expect(filter.courseId).toBe(UUID_A);
     expect(filter.questionVersionId).toBe(UUID_B);
   });
+
+  it("「已经查过」的标记同样接受字符串与数字；换标签后不再算「从某道题进来」", () => {
+    // 地址栏能恢复一次查询（q=1），但换过标签就回到可换题的视图，否则总览会一直是
+    // 上次那道题的锁定页，看起来像"没点查询就出了数字"。
+    expect(parseReviewSearch({ q: "1" }).q).toBe("1");
+    expect(parseReviewSearch({ q: 1 }).q).toBe("1");
+    expect(parseReviewSearch({ q: "0" }).q).toBeUndefined();
+
+    const fromQuestion = parseReviewSearch({
+      tab: "quality",
+      origin: "question",
+      q: 1,
+      question_version_id: UUID_B,
+    });
+    const mail = withTab(fromQuestion, "mail");
+    expect(mail.origin).toBeUndefined();
+    expect(mail.q).toBe("1");
+
+    const back = withTab(mail, "quality");
+    expect(back.origin).toBeUndefined();
+    expect(back.q).toBe("1");
+    expect(readQualityFilter(back).questionVersionId).toBe(UUID_B);
+  });
 });

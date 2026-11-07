@@ -1,4 +1,4 @@
-import { REASON_CODES, type ReasonCode } from "./reasonCodes";
+﻿import { REASON_CODES, type ReasonCode } from "./reasonCodes";
 
 /**
  * P13 复核工作区的 URL 状态（`/review?tab=mail|quality`）。
@@ -26,6 +26,8 @@ export type ReviewSearch = {
   origin?: "question";
   /** 示例预览（前端 mock，不请求/不写真实数据）。 */
   demo?: "1";
+  /** 质量标签已经按当前条件查询过一次（地址栏能恢复结果，但不会自动"选好就出数字"）。 */
+  q?: "1";
   course_id?: string;
   section_id?: string;
   resolved?: "true" | "false" | "all";
@@ -112,6 +114,7 @@ export function parseReviewSearch(search: Record<string, unknown>): ReviewSearch
   if (tab === "quality") parsed.tab = "quality";
   if (search.origin === "question") parsed.origin = "question";
   if (search.demo === "1" || search.demo === 1 || search.demo === true) parsed.demo = "1";
+  if (search.q === "1" || search.q === 1 || search.q === true) parsed.q = "1";
   const course = token(search.course_id);
   if (course) parsed.course_id = course;
   const section = token(search.section_id);
@@ -219,6 +222,7 @@ export function withMailFilter(
     tab: "mail",
     origin: search.origin,
     demo: search.demo,
+    q: search.q,
     course_id: filter.courseId ?? undefined,
     section_id: filter.sectionId ?? undefined,
     resolved: resolvedValue(filter.resolved),
@@ -251,6 +255,7 @@ export function withQualityFilter(
     tab: "quality",
     origin: search.origin,
     demo: search.demo,
+    q: search.q,
     course_id: filter.courseId ?? undefined,
     question_version_id: filter.questionVersionId ?? undefined,
     from: filter.from ?? undefined,
@@ -267,13 +272,18 @@ export function withQualityFilter(
 /**
  * 切换标签：目标标签恢复自己的条件，当前标签的条件暂存到 `<tab>_*`。
  * 两个标签因此互不干扰，也不会把邮件的「待处理」筛选带进题目质量。
+ *
+ * `origin=question` 只属于"刚从某道题点进来"的那一次：换过标签就回到**可换题**的视图，
+ * 否则老师从题目详情看过一次质量后，再回到「题目质量」会一直是那道题的锁定视图，
+ * 看起来像"总览页只能看一道题、而且没点查询就出了数字"。
  */
 export function withTab(search: ReviewSearch, tab: ReviewTab): ReviewSearch {
   if (normalizeReviewTab(search.tab) === tab) return search;
-  if (tab === "quality") {
-    return withQualityFilter(search, readQualityFilter(search));
-  }
-  return withMailFilter(search, readMailFilter(search));
+  const next =
+    tab === "quality"
+      ? withQualityFilter(search, readQualityFilter(search))
+      : withMailFilter(search, readMailFilter(search));
+  return next.origin === undefined ? next : { ...next, origin: undefined };
 }
 
 /** 去掉值为 `undefined` 的键（路由 search 类型不接受 `undefined` 值之外的占位）。 */

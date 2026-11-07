@@ -7,6 +7,7 @@ import {
   DEMO_COURSE,
   DEMO_COURSE_ID,
   DEMO_TEACHER_ID,
+  DEMO_VERSION_ID,
   DEMO_VERSION_V2_ID,
 } from "../features/review/demoData";
 
@@ -127,6 +128,12 @@ async function boot(): Promise<void> {
   // 让路由地址与真实页面一致：示例模式下两个标签都在 `/review`，刷新前先看 query 里的 demo。
   const search = new URLSearchParams(empty ? { tab } : { demo: "1", tab });
   // 可选的预设状态：用于截图/评审某一种状态，不需要先手点筛选器。
+  // `show=1` 相当于"刚点过查询"：地址栏带着示例版本与查询标记，页面直接给结果。
+  if (tab === "quality" && params.get("show") === "1") {
+    search.set("course_id", DEMO_COURSE_ID);
+    search.set("question_version_id", DEMO_VERSION_ID);
+    search.set("q", "1");
+  }
   if (tab === "quality" && params.get("version") === "2") {
     search.set("question_version_id", DEMO_VERSION_V2_ID);
   }
