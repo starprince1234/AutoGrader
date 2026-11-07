@@ -161,7 +161,7 @@ jobs:
     # real schema, and the mail path uses the repository's real TCP IMAP fixture.
     if: github.event_name == 'push' || inputs.operation == 'deploy'
     runs-on: ubuntu-22.04
-    timeout-minutes: 45
+    timeout-minutes: 60
     services:
       postgres:
         image: postgres:17
@@ -213,6 +213,7 @@ jobs:
         env:
           DATABASE_URL: postgresql+psycopg://autograder_platform:ci-platform-password@127.0.0.1:5432/autograder
           B4_ADMIN_DATABASE_URL: postgresql+psycopg://autograder_platform:ci-platform-password@127.0.0.1:5432/autograder
+          B4_DB_PASSWORD: ci-b4
         run: |
           ../MAIN/.venv/bin/python -m alembic upgrade head
           ../MAIN/.venv/bin/python -m autograder_b4.ops.provision
@@ -262,6 +263,109 @@ jobs:
             tests/test_authorization.py \
             tests/test_auth.py \
             tests/test_users_courses.py
+
+      # ------------------------------------------------------------------ end-to-end
+      # The module suites above prove each boundary against real PostgreSQL. This block
+      # starts the composed host (B2+B3+B4 in one process) and drives the whole teacher ->
+      # student web/mail -> teacher flow over real HTTP, with synthetic accounts seeded into
+      # the real b4 schema and a real TCP IMAP fixture for the mail leg.
+      - name: Acceptance — reset schemas for the composed host
+        env:
+          PGHOST: 127.0.0.1
+          PGUSER: autograder_platform
+          PGPASSWORD: ci-platform-password
+          PGDATABASE: autograder
+          AUTOGRADER_B2_DB_PASSWORD: ci-b2
+          AUTOGRADER_B3_APP_DB_PASSWORD: ci-b3app
+          AUTOGRADER_B3_INTERNAL_DB_PASSWORD: ci-b3internal
+          AUTOGRADER_B4_DB_PASSWORD: ci-b4
+        run: |
+          psql --username "$PGUSER" --dbname "$PGDATABASE" --set ON_ERROR_STOP=1 \
+            -c "DROP SCHEMA IF EXISTS b2 CASCADE" \
+            -c "DROP SCHEMA IF EXISTS b3 CASCADE" \
+            -c "DROP SCHEMA IF EXISTS b4 CASCADE" \
+            -c "CREATE SCHEMA b2" -c "CREATE SCHEMA b3" -c "CREATE SCHEMA b4"
+          psql --username "$PGUSER" --dbname "$PGDATABASE" --set ON_ERROR_STOP=1 \
+            -v b2_password="$AUTOGRADER_B2_DB_PASSWORD" \
+            -v b3_app_password="$AUTOGRADER_B3_APP_DB_PASSWORD" \
+            -v b3_internal_password="$AUTOGRADER_B3_INTERNAL_DB_PASSWORD" \
+            -v b4_password="$AUTOGRADER_B4_DB_PASSWORD" \
+            -f MAIN/infra/postgres/init.sql
+      - name: Acceptance — migrate the composed host schemas
+        env:
+          DATABASE_URL: postgresql+psycopg://autograder_platform:ci-platform-password@127.0.0.1:5432/autograder
+        run: |
+          for module in B2 B3 B4; do
+            ( cd "$module" && DATABASE_URL="$DATABASE_URL" ../MAIN/.venv/bin/python -m alembic upgrade head )
+          done
+          ( cd B4 && DATABASE_URL="$DATABASE_URL" ../MAIN/.venv/bin/python -m autograder_b4.ops.provision )
+      - name: Acceptance — signing key and JWKS
+        env:
+          JWT_PRIVATE_KEY_FILE: ${{ runner.temp }}/jwt-ed25519.pem
+          B2_JWKS_PATH: ${{ runner.temp }}/jwks.json
+        run: |
+          MAIN/.venv/bin/python -m autograder_b4.ops.generate_key
+          MAIN/.venv/bin/python MAIN/host/write_jwks.py "$JWT_PRIVATE_KEY_FILE" "$B2_JWKS_PATH"
+      - name: Acceptance — composed host end-to-end (teacher / web / mail / answers)
+        env:
+          PLATFORM_DATABASE_URL: postgresql+psycopg://autograder_platform:ci-platform-password@127.0.0.1:5432/autograder
+          ACCEPTANCE_SERVICE_TOKEN: ci-service-token
+          ACCEPTANCE_BASE_URL: http://127.0.0.1:18000
+          JWT_PRIVATE_KEY_FILE: ${{ runner.temp }}/jwt-ed25519.pem
+          B2_JWKS_PATH: ${{ runner.temp }}/jwks.json
+          B4_MODULE_ROOT: ${{ github.workspace }}
+          B4_DATABASE_URL: postgresql+psycopg://autograder_b4:ci-b4@127.0.0.1:5432/autograder
+          B4_NATS_URL: nats://127.0.0.1:4222
+          B4_ENV: development
+          B4_JWT_ISSUER: autograder
+          B4_JWT_AUDIENCE: autograder-api
+          B4_JWKS_URL: http://127.0.0.1:18000/api/v1/auth/jwks
+          B4_SERVICE_TOKEN: ci-service-token
+          B2_DATABASE_URL: postgresql+psycopg://autograder_b2:ci-b2@127.0.0.1:5432/autograder
+          B2_NATS_URL: nats://127.0.0.1:4222
+          B2_ENV: development
+          B2_ARTIFACT_ROOT: ${{ runner.temp }}/artifacts
+          B2_WORKSPACE_ROOT: ${{ runner.temp }}/workspace
+          B2_B3_BASE_URL: http://127.0.0.1:18000
+          B2_B3_AUTHORIZATION: Bearer ci-service-token
+          B2_IDENTITY_URL: http://127.0.0.1:18000
+          B2_IDENTITY_AUTHORIZATION: Bearer ci-service-token
+          # The challenge endpoints live in the verification service, which is assembled only
+          # when the mail intake is configured. These values need not point at a reachable
+          # mailbox (the host never pulls); the acceptance script starts the real IMAP fixture
+          # and runs the puller CLI against it.
+          B2_IMAP_HOST: 127.0.0.1
+          B2_IMAP_PORT: "143"
+          B2_IMAP_USERNAME: acceptance-inbox
+          B2_IMAP_PASSWORD: acceptance-imap-pass
+          B2_IMAP_MAILBOX: INBOX
+          B2_IMAP_USE_SSL: "false"
+          B3_DATABASE_URL: postgresql+psycopg://autograder_b3_app:ci-b3app@127.0.0.1:5432/autograder
+          B3_DATABASE_PROTECTED_URL: postgresql+psycopg://autograder_b3_internal:ci-b3internal@127.0.0.1:5432/autograder
+          B3_NATS_URL: nats://127.0.0.1:4222
+          B3_JWT_ISSUER: autograder
+          B3_JWT_AUDIENCE: autograder-api
+          B3_SERVICE_TOKEN: ci-service-token
+          B3_B4_BASE_URL: http://127.0.0.1:18000
+          B3_B4_SERVICE_TOKEN: ci-service-token
+          NATS_URL: nats://127.0.0.1:4222
+        run: |
+          mkdir -p "$B2_ARTIFACT_ROOT" "$B2_WORKSPACE_ROOT"
+          MAIN/.venv/bin/python -m uvicorn autograder_host.main:app \
+            --host 127.0.0.1 --port 18000 > "$RUNNER_TEMP/host.log" 2>&1 &
+          echo $! > "$RUNNER_TEMP/host.pid"
+          for _ in $(seq 1 90); do
+            if curl -fsS --max-time 2 http://127.0.0.1:18000/health/live >/dev/null 2>&1; then
+              break
+            fi
+            sleep 1
+          done
+          MAIN/.venv/bin/python MAIN/scripts/acceptance_assignment_workflow.py
+      - name: Acceptance — host log on failure
+        if: failure()
+        run: |
+          test -f "$RUNNER_TEMP/host.log" && tail -n 300 "$RUNNER_TEMP/host.log" || true
+          test -f "$RUNNER_TEMP/host.pid" && cat "$RUNNER_TEMP/host.pid" || true
 
   deploy:
     needs: [verify, verify-frontend, verify-database]
