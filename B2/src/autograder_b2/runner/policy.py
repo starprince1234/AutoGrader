@@ -114,8 +114,10 @@ SECCOMP_ARCH = "x86_64"
 #: seccomp 允许清单：CPython 3.12 与 bash 的常规运行所需系统调用。
 #: 由 Linux 验收容器内 `strace -f` 实测的工作负载系统调用集合（CPython 启动 + 标准库 + 文件 IO +
 #: 线程 + 子进程 + 时间/随机/hash）反推，并取其为子集后人工收窄。
-#: **强度边界**：缺项会让正常程序以 SIGSYS 被杀（表现为 `security_blocked`）；
-#: 仅覆盖已实测的工作负载，未实测路径仍可能缺项（诚实记录见交付报告）。
+#: **shell 运行时**：这份清单最初只覆盖 CPython，`bash`/`dash` 会撞上未列出的调用而被 SIGSYS
+#: 杀掉（`security_blocked`，线上所有 bash 题——哪怕参考答案是 `true`——都过不了校验）。
+#: 因此补入 shell 启动、作业控制与"等子进程"所需的一小组调用；全部是**进程本地、不涉特权与网络**
+#: 的调用，默认拒绝与显式拒绝清单都没有改动（`fork` 只用于起 cat/grep 这类子进程）。
 SECCOMP_ALLOW: tuple[str, ...] = (
     "accept4",
     "access",
@@ -149,14 +151,16 @@ SECCOMP_ALLOW: tuple[str, ...] = (
     "fchdir",
     "fchmod",
     "fchmodat",
-    "fdatasync",
     "fcntl",
+    "fdatasync",
+    "fork",
     "fstat",
     "fstatfs",
     "fsync",
     "ftruncate",
     "futex",
     "getcwd",
+    "getdents",
     "getdents64",
     "getegid",
     "geteuid",
@@ -185,10 +189,14 @@ SECCOMP_ALLOW: tuple[str, ...] = (
     "mincore",
     "mkdir",
     "mkdirat",
+    "mlock",
+    "mlockall",
     "mmap",
     "mprotect",
     "mremap",
     "msync",
+    "munlock",
+    "munlockall",
     "munmap",
     "nanosleep",
     "newfstatat",
@@ -214,8 +222,10 @@ SECCOMP_ALLOW: tuple[str, ...] = (
     "restart_syscall",
     "rseq",
     "rt_sigaction",
+    "rt_sigpending",
     "rt_sigprocmask",
     "rt_sigreturn",
+    "rt_sigsuspend",
     "rt_sigtimedwait",
     "sched_getaffinity",
     "sched_getparam",
@@ -226,6 +236,8 @@ SECCOMP_ALLOW: tuple[str, ...] = (
     "set_robust_list",
     "set_tid_address",
     "setitimer",
+    "setpgid",
+    "setpriority",
     "sigaltstack",
     "splice",
     "stat",
