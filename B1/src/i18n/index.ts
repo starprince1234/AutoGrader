@@ -430,6 +430,7 @@ export const messages = {
 
 "questions.title": "题目",
 "questions.countLoaded": "题目列表（已加载 {count} 道）",
+"questions.unknownCourse": "未归属课程",
 "questions.detailTitle": "题目详情",
 "questions.language": "语言",
 "questions.language.python": "Python",

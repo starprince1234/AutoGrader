@@ -11,6 +11,7 @@ import {
 import { renderWithProviders } from "../../testing/renderWithProviders";
 import { installFetchStub, jsonResponse, type StubbedRoute, type FetchStub } from "../../testing/httpBoundary";
 import {
+  coursePage,
   courseSummary,
   questionPublic,
   questionTagCoverage,
@@ -53,7 +54,14 @@ function routes(pages: Record<string, ReturnType<typeof pageOf>>): StubbedRoute[
     },
     {
       path: "/api/v1/courses",
-      respond: () => jsonResponse({ items: [courseSummary()], next_cursor: null }),
+      respond: () => jsonResponse(
+          coursePage([
+            courseSummary(),
+            // 题目夹具的课程是 UUID_B：课程目录里必须真的有它，否则这些题就是"查无此课"——
+            // 线上那个「—」分组正是这么来的，用例不该再拿它当正常数据。
+            courseSummary({ course_id: UUID_B, course_code: "QB", title: "题库课程" }),
+          ]),
+        ),
     },
     {
       path: "/api/v1/questions",
@@ -514,5 +522,66 @@ describe("题目列表上的标签覆盖度（CHG-0020）", () => {
         .at(-1);
       expect(last?.url.searchParams.getAll("tags")).toEqual(["unix"]);
     });
+  });
+});
+
+describe("分组标识：只认课程分类里真实存在的课程", () => {
+  const ORPHAN = "00000000-0000-4000-8000-0000000000ff";
+
+  it("查无此课的题目不再并成「—」分组，也不占列表", async () => {
+    stub = installFetchStub(
+      routes({
+        "": {
+          items: [
+            questionPublic({ question_id: "q-known", course_id: UUID_B }),
+            questionPublic({ question_id: "q-orphan", course_id: ORPHAN }),
+          ],
+          next_cursor: null,
+        },
+      }),
+    );
+    await open(userEvent.setup());
+
+    const table = screen.getByTestId("question-table");
+    // 只有真实课程那一组；数量与表格一致（孤立课程的那条不显示）。
+    expect(within(table).getAllByRole("row")).toHaveLength(2); // 表头 + 1 行
+    expect(screen.queryByText("—")).toBeNull();
+    expect(screen.getByText(/已加载 1 道/)).toBeInTheDocument();
+    expect(screen.queryByTestId("delete-q-orphan")).toBeNull();
+  });
+
+  it("课程目录还没取全时，未知课程用中性名字收着，绝不显示「—」也不藏题", async () => {
+    stub = installFetchStub([
+      {
+        method: "POST",
+        path: "/api/v1/auth/session",
+        respond: () => jsonResponse(sessionCreated({ roles: ["teacher"] })),
+      },
+      {
+        path: "/api/v1/courses",
+        // 还有下一页：此刻"查不到"可能只是那一页还没加载。
+        respond: () =>
+          jsonResponse(coursePage([courseSummary()], "cursor-courses")),
+      },
+      {
+        method: "GET",
+        path: "/api/v1/questions",
+        respond: () =>
+          jsonResponse({
+            items: [questionPublic({ question_id: "q-orphan", course_id: ORPHAN })],
+            next_cursor: null,
+          }),
+      },
+      {
+        method: "GET",
+        path: "/api/v1/questions/coverage",
+        respond: () => jsonResponse(questionTagCoverage()),
+      },
+    ]);
+    await open(userEvent.setup());
+
+    expect(await screen.findByText(/未归属课程/)).toBeInTheDocument();
+    expect(screen.queryByText("—")).toBeNull();
+    expect(screen.getByText(/已加载 1 道/)).toBeInTheDocument();
   });
 });

@@ -11,6 +11,7 @@ import {
 import { renderWithProviders } from "../../testing/renderWithProviders";
 import { installFetchStub, jsonResponse, type FetchStub, type StubbedRoute } from "../../testing/httpBoundary";
 import {
+  coursePage,
   courseSummary,
   questionPublic,
   questionTagCoverage,
@@ -76,7 +77,14 @@ function baseRoutes(items: ReturnType<typeof questionPublic>[]): StubbedRoute[] 
     },
     {
       path: "/api/v1/courses",
-      respond: () => jsonResponse({ items: [courseSummary()], next_cursor: null }),
+      respond: () => jsonResponse(
+          coursePage([
+            courseSummary(),
+            // 题目夹具的课程是 UUID_B：课程目录里必须真的有它，否则这些题就是"查无此课"——
+            // 线上那个「—」分组正是这么来的，用例不该再拿它当正常数据。
+            courseSummary({ course_id: UUID_B, course_code: "QB", title: "题库课程" }),
+          ]),
+        ),
     },
     {
       path: "/api/v1/questions",
@@ -199,7 +207,14 @@ describe("题库列表：批量操作", () => {
       },
       {
         path: "/api/v1/courses",
-        respond: () => jsonResponse({ items: [courseSummary()], next_cursor: null }),
+        respond: () => jsonResponse(
+          coursePage([
+            courseSummary(),
+            // 题目夹具的课程是 UUID_B：课程目录里必须真的有它，否则这些题就是"查无此课"——
+            // 线上那个「—」分组正是这么来的，用例不该再拿它当正常数据。
+            courseSummary({ course_id: UUID_B, course_code: "QB", title: "题库课程" }),
+          ]),
+        ),
       },
       {
         // 删除之后再取列表：只剩没被删的那道题（服务端真实行为）。
@@ -611,7 +626,14 @@ describe("题库列表：分页重叠不会重复发版本 id（契约 uniqueIte
       },
       {
         path: "/api/v1/courses",
-        respond: () => jsonResponse({ items: [courseSummary()], next_cursor: null }),
+        respond: () => jsonResponse(
+          coursePage([
+            courseSummary(),
+            // 题目夹具的课程是 UUID_B：课程目录里必须真的有它，否则这些题就是"查无此课"——
+            // 线上那个「—」分组正是这么来的，用例不该再拿它当正常数据。
+            courseSummary({ course_id: UUID_B, course_code: "QB", title: "题库课程" }),
+          ]),
+        ),
       },
       {
         method: "GET",
@@ -685,7 +707,14 @@ describe("批量操作：取消选择", () => {
       },
       {
         path: "/api/v1/courses",
-        respond: () => jsonResponse({ items: [courseSummary()], next_cursor: null }),
+        respond: () => jsonResponse(
+          coursePage([
+            courseSummary(),
+            // 题目夹具的课程是 UUID_B：课程目录里必须真的有它，否则这些题就是"查无此课"——
+            // 线上那个「—」分组正是这么来的，用例不该再拿它当正常数据。
+            courseSummary({ course_id: UUID_B, course_code: "QB", title: "题库课程" }),
+          ]),
+        ),
       },
       {
         method: "GET",

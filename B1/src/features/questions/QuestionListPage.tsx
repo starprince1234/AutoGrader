@@ -62,16 +62,19 @@ type QuestionGroup = { key: string; label: string; rows: QuestionPublic[] };
  */
 function groupByCourse(
   rows: QuestionPublic[],
-  labelOf: (courseId: string) => string,
+  labelOf: (courseId: string) => string | null,
 ): QuestionGroup[] {
   const groups = new Map<string, QuestionGroup>();
   for (const row of rows) {
+    // 按 `course_id` 分组、再取名字。按"名字"分组会把所有查不到名字的课程并成一组
+    // （线上出现过「—（10）」这样一个并不存在的课程分组）。
     const label = labelOf(row.course_id);
-    const existing = groups.get(label);
+    if (label === null) continue;
+    const existing = groups.get(row.course_id);
     if (existing) {
       existing.rows.push(row);
     } else {
-      groups.set(label, { key: label, label, rows: [row] });
+      groups.set(row.course_id, { key: row.course_id, label, rows: [row] });
     }
   }
   return [...groups.values()].sort((left, right) => left.label.localeCompare(right.label, "zh"));
@@ -279,11 +282,33 @@ export function QuestionListPage() {
     [statusRows, query],
   );
 
-  // 课程显示"代码 · 名称"；查不到就留白，绝不把内部编号贴到界面上。
-  const courseLabel = (id: string): string => {
+  /**
+   * 课程名只来自**课程分类里真实配置过的课程**；查不到就是 `null`，不再编一个「—」。
+   *
+   * 题型库里有 10 道题的 `course_id` 指向一门已经不存在的课程（课程分类里查无此课），
+   * 原来它们被并成名为「—」的分组——界面上看起来像多了一门课，其实是空标识。
+   */
+  const courseLabelOf = (id: string): string | null => {
     const match = courseOptions.find((course) => course.course_id === id);
-    return match ? `${match.course_code} · ${match.title}` : "—";
+    if (!match) return null;
+    const code = (match.course_code ?? "").trim();
+    return code === "" ? match.title : `${code} · ${match.title}`;
   };
+
+  /**
+   * 课程目录是否已经取全。
+   *
+   * 只有取全时才敢把"查不到的课程"当成"不存在"过滤掉：目录还是分页状态时，
+   * 查不到可能只是那一页还没加载，把题藏起来才是真丢内容。
+   * 目录还没取全的话，未知课程用一个中性的名字收着，绝不显示「—」。
+   */
+  const courseDirectoryComplete = courses.isSuccess && !courses.hasNextPage;
+  const visibleRows = useMemo(() => {
+    if (!courseDirectoryComplete) return rows;
+    return rows.filter((row) => courseLabelOf(row.course_id) !== null);
+    // `courseLabelOf` 只依赖 `courseOptions`，随 `rows` 一起重算即可。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows, courseDirectoryComplete, courseOptions]);
 
   /**
    * 列表里直接发布（2.0 第 10 条）。
@@ -569,7 +594,7 @@ export function QuestionListPage() {
       </Panel>
 
       <Panel
-        title={t("questions.countLoaded", { count: rows.length })}
+        title={t("questions.countLoaded", { count: visibleRows.length })}
         actions={
           <div className="list-head-actions">
             {/* 需求 1：未选任何题目时，右上角直接展示【批量操作】；点它才渲染复选框。 */}
@@ -665,7 +690,7 @@ export function QuestionListPage() {
           <Banner tone="error" testId="question-list-error">
             {t("questions.listError")}
           </Banner>
-        ) : rows.length === 0 ? (
+        ) : visibleRows.length === 0 ? (
           <EmptyState>
             {query !== ""
               ? t("questions.noStemMatch")
@@ -675,7 +700,8 @@ export function QuestionListPage() {
           </EmptyState>
         ) : (
           <div data-testid="question-table">
-            {groupByCourse(rows, courseLabel).map((group, index) => {
+            {groupByCourse(visibleRows, (id) => courseLabelOf(id) ?? t("questions.unknownCourse")).map(
+            (group, index) => {
               const collapsed = collapsedCourses.has(group.key);
               return (
                 <div key={group.key} className="question-group">
