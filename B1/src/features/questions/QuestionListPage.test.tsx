@@ -347,12 +347,14 @@ describe("题目列表的游标分页", () => {
 
     const tags = screen.getByLabelText("标签") as HTMLSelectElement;
     expect(tags.tagName).toBe("SELECT");
-    // 「全部标签」+ 已加载题目里出现过的标签（去重、排序）。
-    expect([...tags.options].map((option) => option.value)).toEqual([
-      "",
-      "scheduling",
-      "unix",
-    ]);
+    // 「全部标签」在首位；其余是**题库里的标签全集**（覆盖度聚合出来的），
+    // 不是"这一页恰好加载到的那几道题的标签"——那才会时多时少。
+    const values = [...tags.options].map((option) => option.value);
+    expect(values[0]).toBe("");
+    expect(values).toEqual(
+      expect.arrayContaining(["process-scheduling", "scheduling", "unix"]),
+    );
+    expect(values).toHaveLength(4); // 空值 + 覆盖度夹具里的 3 个标签
     expect(tags.value).toBe("");
 
     await user.selectOptions(tags, "unix");
@@ -506,16 +508,71 @@ describe("题目列表的游标分页", () => {
   });
 });
 
+describe("标签下拉：选项是标签全集，不随筛选条件变化", () => {
+  const optionValues = () =>
+    [...(screen.getByLabelText("标签") as HTMLSelectElement).options].map((o) => o.value);
+
+  it("切换课程/状态/题干搜索后，标签选项集合保持一致", async () => {
+    stub = installFetchStub(
+      routes({
+        "": {
+          items: [questionPublic({ question_id: "q-1", tags: ["unix"] })],
+          next_cursor: null,
+        },
+      }),
+    );
+    const user = await open(userEvent.setup());
+
+    const before = optionValues();
+    expect(before).toEqual(expect.arrayContaining(["process-scheduling", "unix"]));
+
+    // 选课程：列表只剩一门课的题，但下拉选项不变（选项来自题库，不来自这一页）。
+    await user.selectOptions(await screen.findByLabelText("课程"), UUID_A);
+    await waitFor(() => expect(optionValues()).toEqual(before));
+
+    // 切发布状态、输入题干关键词，同样不影响选项集合。
+    await user.selectOptions(screen.getByLabelText("发布状态"), "draft");
+    await waitFor(() => expect(optionValues()).toEqual(before));
+    await user.type(screen.getByLabelText("搜索题干"), "不存在");
+    await waitFor(() => expect(optionValues()).toEqual(before));
+  });
+
+  it("选中标签后，列表仍按「课程+状态+标签+题干」组合过滤", async () => {
+    stub = installFetchStub(routes({ "": pageOf(["q-1"], null) }));
+    const user = await open(userEvent.setup());
+
+    await user.selectOptions(await screen.findByLabelText("课程"), UUID_A);
+    await user.selectOptions(screen.getByLabelText("标签"), "unix");
+
+    await waitFor(() => {
+      const last = stub?.requests
+        .filter((request) => request.url.pathname.endsWith("/api/v1/questions"))
+        .at(-1);
+      expect(last?.url.searchParams.getAll("tags")).toEqual(["unix"]);
+      expect(last?.url.searchParams.get("course_id")).toBe(UUID_A);
+    });
+  });
+});
+
 describe("题目列表上的标签覆盖度（CHG-0020）", () => {
   it("选课程后，覆盖度与列表落在同一个作用域（course_id 与 published_only 一起变）", async () => {
     stub = installFetchStub(routes({ "": pageOf(["q-1"], null) }));
     const user = await open(userEvent.setup());
 
-    // 没有课程作用域时契约的 course_id 填不出来：一格请求都不发。
+    // 没有课程作用域时，覆盖度面板自己不统计这道课；但标签全集要为**每一门课**取一次
+    // 覆盖度——那是下拉选项的来源，与当前筛选无关，所以这里断言的是"请求都带 course_id、
+    // 且 published_only 一律 false"，而不是"一个请求都不发"。
     expect(screen.getByTestId("coverage-no-course")).toBeInTheDocument();
-    expect(
-      stub.requests.filter((request) => request.url.pathname.endsWith("/coverage")),
-    ).toHaveLength(0);
+    await waitFor(() => {
+      const universeRequests = (stub?.requests ?? []).filter((request) =>
+        request.url.pathname.endsWith("/coverage"),
+      );
+      expect(universeRequests.length).toBeGreaterThan(0);
+      for (const request of universeRequests) {
+        expect(request.url.searchParams.get("course_id")).not.toBeNull();
+        expect(request.url.searchParams.get("published_only")).toBe("false");
+      }
+    });
 
     await user.selectOptions(await screen.findByLabelText("课程"), UUID_A);
     await screen.findByTestId("coverage-body");

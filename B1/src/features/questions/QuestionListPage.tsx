@@ -29,6 +29,7 @@ import {
   useBatchQuestionVersions,
   useDeleteQuestionVersion,
   useQuestionList,
+  useTagUniverse,
 } from "./useQuestions";
 
 /**
@@ -259,13 +260,24 @@ export function QuestionListPage() {
     return rows;
   }, [questions.data]);
 
-  // 标签下拉的选项：来自已加载题目（**不受当前标签筛选影响**），再加上当前选中的那一档。
+  // 标签下拉的选项 = 标签**全集**：按课程目录里的每门课取覆盖度标签并集，与当前筛选无关。
+  //
+  // 同时把"已加载题目里出现过的标签"和"当前选中的标签"也并进来：前者防止覆盖度查询失败时
+  // 下拉变空，后者保证已选值永远在列表里（否则浏览器会显示成空选项）。
+  const courseIds = useMemo(
+    () => courseOptions.map((course) => course.course_id),
+    [courseOptions],
+  );
+  const tagUniverse = useTagUniverse(courseIds);
   const tagOptions = useMemo(() => {
     const seen = new Set<string>();
+    for (const query of tagUniverse) {
+      for (const row of query.data?.tags ?? []) seen.add(row.tag);
+    }
     for (const row of loadedRows) for (const tag of row.tags ?? []) seen.add(tag);
     if (tagValue !== "") seen.add(tagValue);
     return [...seen].sort((left, right) => left.localeCompare(right, "zh"));
-  }, [loadedRows, tagValue]);
+  }, [tagUniverse, loadedRows, tagValue]);
 
   const statusRows = useMemo(() => {
     // 「草稿」这一档在客户端筛（契约没有"只要草稿"的参数）；「全部状态」不过滤。

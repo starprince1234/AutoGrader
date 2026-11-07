@@ -1,4 +1,10 @@
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  useInfiniteQuery,
+  useMutation,
+  useQueries,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { apiRequest } from "../../api/client";
 import type {
   QuestionPage,
@@ -122,6 +128,29 @@ export function useQuestionCoverage(courseId: string | null, publishedOnly: bool
  * 成功后让题库与覆盖度缓存失效：删掉一道草稿会同时改变列表、标签分布与课程的分组计数，
  * 只失效列表会让覆盖度面板显示一个"刚才那道题还在"的数字。
  */
+/**
+ * 标签**全集**（下拉选项用）：按课程逐个取覆盖度，再把这些标签并起来。
+ *
+ * 为什么不用"已加载的题目里出现过的标签"：列表是游标分页 + 受课程/状态/题干筛选影响的，
+ * 于是同一个下拉框在不同筛选条件下会给出不同的选项——有时三个、有时全量，取决于这一页
+ * 恰好加载到哪几道题。选项必须来自**题库本身**（覆盖度是服务端对该课程全库的聚合），
+ * 而不是来自当前这一页。
+ *
+ * `published_only` 固定 `false`：草稿上的标签也是可用标签，标签全集不该随发布状态变化。
+ * 与覆盖度面板共用同一个 `queryKeys.questionCoverage`，同一门课不会重复请求。
+ */
+export function useTagUniverse(courseIds: readonly string[]) {
+  return useQueries({
+    queries: courseIds.map((courseId) => ({
+      queryKey: queryKeys.questionCoverage(courseId, false),
+      queryFn: async (): Promise<QuestionTagCoverage> =>
+        apiRequest<QuestionTagCoverage>("/api/v1/questions/coverage", {
+          query: { course_id: courseId, published_only: false },
+        }),
+    })),
+  });
+}
+
 export function useDeleteQuestionVersion() {
   const queryClient = useQueryClient();
   return useMutation({
