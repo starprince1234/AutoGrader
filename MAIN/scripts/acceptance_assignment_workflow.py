@@ -234,7 +234,20 @@ def create_published_version(teacher: str, title: str, expected: str) -> str:
     assert isinstance(created, dict), created
     version_id = str(created["versions"][0]["question_version_id"])
     version = json_request("GET", f"/api/v1/question-versions/{version_id}", token=teacher)
-    digest = version["content_digest"]
+    digest = version.get("content_digest")
+    if not digest:
+        # The public DTO is allowed to omit the digest for a draft; the attestation fixture
+        # still needs the value B3 will compare against. Read it from the owning schema
+        # rather than recomputing a second implementation of the canonicalisation here.
+        import psycopg
+
+        with psycopg.connect(_psycopg_dsn(os.environ["PLATFORM_DATABASE_URL"])) as connection:
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "SELECT content_digest FROM b3.question_versions WHERE question_version_id = %s",
+                    (version_id,),
+                )
+                digest = cursor.fetchone()[0]
     json_request(
         "POST",
         f"/api/v1/question-versions/{version_id}/attestations",

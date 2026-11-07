@@ -34,7 +34,7 @@ def _set_email(engine, user_id, email: str) -> None:
 
 
 def test_lookup_returns_the_account_for_a_known_address(client, engine, student_with_email):
-    _set_email(engine, student_with_email.user_id, "2024141460192@qq.com")
+    _set_email(engine, student_with_email, "2024141460192@qq.com")
     response = client.get(
         "/api/v1/internal/identities/by-email",
         params={"email": " 2024141460192@QQ.com "},
@@ -57,7 +57,7 @@ def test_unknown_address_is_404(client):
 
 
 def test_a_user_session_cannot_open_it(client, engine, student_with_email, sign_in_as):
-    _set_email(engine, student_with_email.user_id, "2024141460192@qq.com")
+    _set_email(engine, student_with_email, "2024141460192@qq.com")
     headers = sign_in_as("stu-qq").headers
     response = client.get(
         "/api/v1/internal/identities/by-email",
