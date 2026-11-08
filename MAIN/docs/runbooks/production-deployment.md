@@ -80,6 +80,8 @@ Docker 镜像拉取由 dockerd 发起，本机 Mihomo 环境变量不会代理�
 
 预检只确认实际运行依赖、cgroup v2、受保护的配置文件以及 PostgreSQL/NATS 可用。首次部署残留、已有缓存/JWKS、可用内存的任意阈值、无关网站的连通性都不再决定能否上线。宿主运行时与服务账号仍需一次性准备，PostgreSQL/NATS 不随应用发布重建。
 
+**事件流**：`deploy-release.sh` 在重启 API 前用 `MAIN/deploy/ensure-nats-stream.py` 幂等确保 JetStream 流 `AUTOGRADER`（subjects `autograder.>`）存在。缺流时 B2 的 outbox 发布全部失败，重试耗尽后进 DLQ，B2 readiness 的 `message-broker` 分项会失败并阻断发布；DLQ 非空时必须先排查并重放，不能靠删行绕过。脚本不改写已存在但 subjects 不匹配的流，而是报错交给运维核对。
+
 本机与公网 `/health/ready` 均须报告 ready 且包含健康的 B2/B3/B4/B5；模块标识读取 `name`。失败时保留候选目录、current 与服务现场供诊断，不自动回退指针、删除候选、禁用服务或恢复数据库。公网不可达不会主动关闭已经正常运行的本机 API。失败仍会使 Actions 明确失败。
 
 手动操作只需要选择当前 main 和 operation，不再填写历史 run ID 或旧 SHA：

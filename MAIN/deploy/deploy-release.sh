@@ -74,6 +74,12 @@ systemctl enable --now autograder-notifications.timer
 runuser --preserve-environment --user autograder -- \
     "$release/MAIN/.venv/bin/python" -m autograder_b4.ops.notifications --limit 1 \
     || fail "assignment notification sender failed on this release"
+
+# 事件流是部署基础设施（RQ-B-4-20）：没有它 B2 的 outbox 会先失败、重试耗尽后进 DLQ，
+# 再让下一次部署的 B2 readiness 失败。幂等地确保它存在；已存在的流不被改写。
+runuser --preserve-environment --user autograder -- \
+    "$python" "$release/MAIN/deploy/ensure-nats-stream.py" \
+    || fail "NATS event stream could not be ensured"
 systemctl restart autograder.service
 
 wait_ready() {

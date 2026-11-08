@@ -36,6 +36,7 @@ MAIN/deploy/autograder-notifications.service
 MAIN/deploy/autograder-notifications.timer
 MAIN/deploy/deploy-release.sh
 MAIN/deploy/check-readiness.py
+MAIN/deploy/ensure-nats-stream.py
 MAIN/deploy/reset-database.sh
 MAIN/deploy/release-manifest.txt
 MAIN/host/src
