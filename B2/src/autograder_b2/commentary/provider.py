@@ -133,6 +133,17 @@ class HttpCommentaryProvider:
         status, body = self._transport.post_json(
             self.config.endpoint, payload, headers, self.config.timeout_seconds
         )
+        if status == 400:
+            # 有些 OpenAI 兼容网关会拒绝可选的 stream/max_tokens；退回最小请求体再试一次。
+            # 仍然失败才把 provider 的短说明带出来；这不是重试业务调用，只是同一个请求的
+            # 兼容性降级。
+            minimal = {
+                "model": self.config.model,
+                "messages": [{"role": "user", "content": prompt}],
+            }
+            status, body = self._transport.post_json(
+                self.config.endpoint, minimal, headers, self.config.timeout_seconds
+            )
         if status < 200 or status >= 300:
             # 400 通常是请求体/模型名问题；把 provider 的短说明带出来便于定位，
             # 其它状态仍只报状态码，避免把上游整段响应暴露到界面。
