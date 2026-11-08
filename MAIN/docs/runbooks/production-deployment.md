@@ -178,6 +178,14 @@ SSH/文件评测所需的二进制（`nsjail`、`vim/vi`、`ssh`、`sshd`、`ssh
 `Couldn't mount '/workspace'` 失败（表现为 503 / infrastructure_error，而不是学生答错）。
 `deploy-release.sh` 以 root 运行 `install -d -m 0755 /workspace`；新主机不需要手工处理。
 
+**从旧宿主升级**：`bootstrap-host` 只在 `/etc/autograder/runtime.env` **不存在**时渲染新文件，已有
+宿主不会自动获得 `write-runtime-env.mjs` 新增的键。`CHG-0032` 起 `production-prepare.sh` 要求
+`B3_B4_BASE_URL`、`B3_B4_SERVICE_TOKEN`、`B4_SERVICE_TOKEN`，缺失时发布会在
+`B3_B4_BASE_URL is required and must not be empty` 处失败（此时 API/worker 已被停止）。升级旧宿主前，
+按 `write-runtime-env.mjs` 的同源取值（服务令牌取 `B2_B3_SERVICE_TOKEN`，API 地址为
+`http://127.0.0.1:18000`）把这些键用 `MAIN/deploy/merge-env-keys.py` 合并进现有 runtime.env，再重新
+发布；2026-11-08 的升级即按此处理。
+
 **从旧库升级（`CHG-0032` 以前创建过 `email_delivery` 草稿的部署）**：B3 迁移 `20261108_0009`
 删除存量 `execution_manifest` 里已被契约删除的 `email.required_attachment_template`；B2 的严格
 解析器会拒绝仍带该键的 package。迁移只重写声明、**不**重算 `content_digest`，因此升级后还要做

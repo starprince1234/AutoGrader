@@ -36,7 +36,15 @@ def decode(value: str | None) -> str:
     parts: list[str] = []
     for chunk, encoding in decode_header(value):
         if isinstance(chunk, bytes):
-            parts.append(chunk.decode(encoding or "utf-8", "replace"))
+            # Some senders label 8-bit text with a non-codec token (``unknown-8bit`` /
+            # ``unknown-7bit`` from RFC 6532/2822), which made this diagnostic tool die
+            # with LookupError after a successful login. A probe must report the mailbox,
+            # not crash on one malformed header, so fall back to UTF-8 replacement.
+            charset = encoding or "utf-8"
+            try:
+                parts.append(chunk.decode(charset, "replace"))
+            except LookupError:
+                parts.append(chunk.decode("utf-8", "replace"))
         else:
             parts.append(chunk)
     return "".join(parts)
