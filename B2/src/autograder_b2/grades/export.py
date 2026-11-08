@@ -25,7 +25,7 @@ from __future__ import annotations
 import csv
 import io
 import zipfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -46,6 +46,7 @@ from autograder_b2.grades.identity import (
     IdentityNotConfigured,
     merge_identities,
 )
+from autograder_b2.grades.labels import ExportLabelResolver
 from autograder_b2.grades.query import (
     DEFAULT_BATCH_SIZE,
     GradeQueryService,
@@ -78,8 +79,8 @@ GRADE_EXPORT_COLUMNS: tuple[tuple[str, str], ...] = (
     ("display_name", "姓名"),
     ("course_id", "课程"),
     ("section_id", "课序"),
-    ("assignment_id", "作业ID"),
-    ("question_version_id", "题目版本"),
+    ("assignment_id", "作业"),
+    ("question_version_id", "题目"),
     ("state", "状态"),
     ("score", "得分"),
     ("max_score", "满分"),
@@ -213,6 +214,7 @@ def escape_spreadsheet_cell(value: str) -> str:
 def render_csv(
     rows: Sequence[GradeRow],
     columns: Sequence[tuple[str, str]] | None = None,
+    labels: Mapping[str, Mapping[str, str]] | None = None,
 ) -> bytes:
     """渲染 CSV：UTF-8 BOM + CRLF + 公式注入转义。
 
@@ -224,13 +226,14 @@ def render_csv(
     writer = csv.writer(buffer, lineterminator="\r\n")
     writer.writerow([header for _, header in selected])
     for row in rows:
-        writer.writerow([_csv_text(row, field) for field, _ in selected])
+        writer.writerow([_csv_text(row, field, labels) for field, _ in selected])
     return (CSV_BOM + buffer.getvalue()).encode("utf-8")
 
 
 def render_xlsx(
     rows: Sequence[GradeRow],
     columns: Sequence[tuple[str, str]] | None = None,
+    labels: Mapping[str, Mapping[str, str]] | None = None,
 ) -> bytes:
     """渲染 XLSX（单工作表，首行加粗冻结）。
 
@@ -251,7 +254,7 @@ def render_xlsx(
         cell.font = Font(bold=True)
     for index, row in enumerate(rows, start=2):
         for column, (field, _) in enumerate(selected, start=1):
-            value = _xlsx_value(row, field)
+            value = _xlsx_value(row, field, labels)
             if value is None:
                 continue
             cell = sheet.cell(row=index, column=column, value=value)
@@ -337,6 +340,7 @@ class GradesExportService:
         *,
         directory: EnrollmentDirectory | None = None,
         authorization_directory: UserAuthorizationDirectory | None = None,
+        labels: ExportLabelResolver | None = None,
         batch_size: int = DEFAULT_BATCH_SIZE,
     ) -> None:
         # 查询侧（`GradeQueryService`）自己持有 B4 权威授权目录：导出复用同一次 `iter_grades`，
@@ -345,6 +349,7 @@ class GradesExportService:
             engine, batch_size=batch_size, authorization_directory=authorization_directory
         )
         self._directory = directory
+        self._labels = labels
 
     def export(
         self,
@@ -389,8 +394,13 @@ class GradesExportService:
             )
         )
         rows = self._with_identities(rows, authorization=authorization)
+        labels = (
+            self._labels.resolve(rows, authorization=authorization)
+            if self._labels is not None
+            else {}
+        )
         content = (
-            render_xlsx(rows, selected) if fmt == "xlsx" else render_csv(rows, selected)
+            render_xlsx(rows, selected, labels) if fmt == "xlsx" else render_csv(rows, selected, labels)
         )
         extension = "xlsx" if fmt == "xlsx" else "csv"
         return ExportFile(
@@ -429,9 +439,15 @@ class GradesExportService:
         return merge_identities(rows, rosters)
 
 
-def _csv_text(row: GradeRow, field: str) -> str:
+def _csv_text(
+    row: GradeRow,
+    field: str,
+    labels: Mapping[str, Mapping[str, str]] | None = None,
+) -> str:
     """CSV 单元格文本（统一口径，与格式无关）：空值→空串，布尔→`true`/`false`。"""
     value = getattr(row, field)
+    if labels and field in labels:
+        value = labels[field].get(str(value), value)
     if value is None:
         return ""
     if isinstance(value, bool):
@@ -443,9 +459,15 @@ def _csv_text(row: GradeRow, field: str) -> str:
     return escape_spreadsheet_cell(str(value))
 
 
-def _xlsx_value(row: GradeRow, field: str) -> object | None:
+def _xlsx_value(
+    row: GradeRow,
+    field: str,
+    labels: Mapping[str, Mapping[str, str]] | None = None,
+) -> object | None:
     """XLSX 单元格值：原生类型优先；文本经公式注入转义。"""
     value = getattr(row, field)
+    if labels and field in labels:
+        value = labels[field].get(str(value), value)
     if value is None:
         return None
     if isinstance(value, bool):

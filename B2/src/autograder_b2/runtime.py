@@ -103,6 +103,7 @@ from autograder_b2.events.dispatcher import NatsOutboxDispatcher
 from autograder_b2.events.nats import NatsEventBus
 from autograder_b2.grades import GradeQueryService, GradesExportService
 from autograder_b2.grades.identity import HttpEnrollmentDirectory
+from autograder_b2.grades.labels import ExportLabelResolver
 from autograder_b2.hints import HintsService
 from autograder_b2.hints.context import DEFAULT_LEARNING_CONTEXT_PATH, B3LearningContextClient
 from autograder_b2.intake.runtime import IntakeRuntime, build_runtime
@@ -584,7 +585,18 @@ def _wire_database_services(runtime: B2Runtime) -> None:
             # 非法地址在这里收敛成"没有目录"：导出会以 503 拒绝，不会悄悄输出空姓名列。
             directory = None
     runtime.exporter = GradesExportService(
-        engine, directory=directory, authorization_directory=authorization
+        engine,
+        directory=directory,
+        authorization_directory=authorization,
+        labels=(
+            ExportLabelResolver(
+                b4_base_url=settings.b4_base_url if settings is not None else None,
+                b3_base_url=settings.b3_base_url if settings is not None else None,
+                b3_authorization=settings.b3_authorization if settings is not None else None,
+            )
+            if settings is not None and settings.b3_base_url and settings.b4_base_url
+            else None
+        ),
     )
 
 

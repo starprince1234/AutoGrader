@@ -160,6 +160,21 @@ export function gradesAvailability(state: {
 }
 
 export type ExportFormat = "xlsx" | "csv";
+
+/** 与 B2 的必需列一致：未勾选任何附加列时也必须显式发送这些字段，否则 B2 会按“未提供 columns”
+ * 导出全部列（包括提交ID、学生ID、状态等可选列）。 */
+const REQUIRED_EXPORT_FIELDS = [
+  "student_number",
+  "display_name",
+  "course_id",
+  "section_id",
+  "assignment_id",
+  "question_version_id",
+  "score",
+  "max_score",
+  "submitted_at",
+  "evaluation_run_id",
+] as const;
 /** 从 `Content-Disposition` 取文件名（优先 RFC 5987 的 `filename*`），不做兜底猜测以外的推断。 */
 export function filenameFromDisposition(
   disposition: string | null,
@@ -192,6 +207,7 @@ export async function downloadGradesExport(
   columns: readonly string[] = [],
 ): Promise<{ filename: string; requestId: string; bytes: number }> {
   const requestId = newRequestId();
+  const requestedColumns = [...new Set([...REQUIRED_EXPORT_FIELDS, ...columns])];
   const { response } = await apiRequestRaw("/api/v1/grades/export", {
     query: {
       course_id: filter.courseId as string,
@@ -201,7 +217,7 @@ export async function downloadGradesExport(
       from: filter.fromUtc ?? undefined,
       to: filter.toUtc ?? undefined,
       evaluation_run_id: filter.evaluationRunId ?? undefined,
-      columns: columns.length === 0 ? undefined : columns.join(","),
+      columns: requestedColumns.join(","),
       format,
     },
     accept:

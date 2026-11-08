@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
+from urllib.parse import urlparse
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol
@@ -58,10 +59,17 @@ class CommentaryProviderConfig:
     @property
     def endpoint(self) -> str:
         base = self.base_url.rstrip("/")
-        # A deployment may store the complete endpoint instead of a base URL;
-        # appending the path again would turn a valid URL into a 404.
         if base.endswith(CHAT_COMPLETIONS_PATH):
             return base
+        # MiMo's OpenAI-compatible endpoint is fixed at /v1/chat/completions.
+        # If the vault stores only the host (or a malformed path), normalize it
+        # instead of guessing from the raw string.
+        parsed = urlparse(base)
+        if parsed.netloc == "api.xiaomimimo.com":
+            base = "https://api.xiaomimimo.com/v1"
+        elif parsed.path in ("", "/"):
+            # LLM_BASE_URL 常被写成服务的根地址；这种形状下补 /v1。
+            base = f"{base}/v1"
         return f"{base}{CHAT_COMPLETIONS_PATH}"
 
 
