@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { t } from "../../i18n";
 import type { GradeRow } from "../../api/types";
-import { isApiError } from "../../api/problem";
+import { describeApiError, isApiError } from "../../api/problem";
 import { loadedCourses, useCourses, useSections } from "../../api/directory";
 import { courseLabel as formatCourseLabel } from "../../api/directory";
 import { useLoadAllPages } from "../../api/pagination";
@@ -107,8 +107,6 @@ export function GradesPage({
   const [questionVersionId, setQuestionVersionId] = useState("");
   const [fromInput, setFromInput] = useState("");
   const [toInput, setToInput] = useState("");
-  const [fromFocused, setFromFocused] = useState(false);
-  const [toFocused, setToFocused] = useState(false);
   const [drilldownRunId, setDrilldownRunId] = useState<string | null>(initialRunId);
   const [tab, setTab] = useState<GradesTab>("detail");
   const [exportOpen, setExportOpen] = useState(false);
@@ -164,7 +162,7 @@ export function GradesPage({
   const fromUtc = timeProblem === null ? localInputToUtc(fromInput) : null;
   // 结束日期按当天最后一刻处理：否则 `2026-11-08` 会被当成当天 00:00，当天的提交被排除。
   const toBoundary =
-    /^\d{4}-\d{2}-\d{2}$/.test(toInput) ? `${toInput}T23:59:59` : toInput;
+    /^\d{4}[-/]\d{2}[-/]\d{2}$/.test(toInput) ? `${toInput.replace(/\//g, "-")}T23:59:59` : toInput;
   const toUtc = timeProblem === null ? localInputToUtc(toBoundary) : null;
   const activeRunId = drilldownRunId;
 
@@ -466,9 +464,6 @@ export function GradesPage({
           <Banner tone="info" testId="summary-scope-notice">
             {t("grades.summaryScopeNotice")}
           </Banner>
-          <Banner tone="info" testId="unfinished-notice">
-            {t("grades.stateNotice")}
-          </Banner>
           {displayRows.length > 0 ? (
             <>
               <GradesChart buckets={buckets} loader={chartLoader} />
@@ -573,28 +568,40 @@ export function GradesPage({
                 <div style={{ position: "relative" }}>
                   <input
                     id="grades-from"
-                    type="date"
+                    type="text"
+                    placeholder="yyyy/mm/dd"
                     value={fromInput}
-                    onFocus={() => setFromFocused(true)}
-                    onBlur={() => setFromFocused(false)}
                     onChange={(event) => setFromInput(event.target.value)}
-                    style={{ color: fromInput === "" && !fromFocused ? "transparent" : undefined }}
                   />
-                  {fromInput === "" && !fromFocused ? (
-                    <span
-                      aria-hidden="true"
-                      style={{
-                        position: "absolute",
-                        left: 12,
-                        top: "50%",
-                        transform: "translateY(-50%)",
-                        pointerEvents: "none",
-                        color: "var(--color-text-faint)",
-                      }}
-                    >
-                      yyyy/mm/dd
-                    </span>
-                  ) : null}
+                  <input
+                    type="date"
+                    aria-label={t("grades.selectDate")}
+                    value={fromInput}
+                    tabIndex={-1}
+                    onChange={(event) => setFromInput(event.target.value)}
+                    style={{
+                      position: "absolute",
+                      right: 0,
+                      top: 0,
+                      width: 36,
+                      height: "100%",
+                      opacity: 0,
+                      cursor: "pointer",
+                    }}
+                  />
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      position: "absolute",
+                      right: 10,
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      pointerEvents: "none",
+                      color: "var(--color-text-faint)",
+                    }}
+                  >
+                    📅
+                  </span>
                 </div>
               </Field>
 
@@ -612,28 +619,40 @@ export function GradesPage({
                 <div style={{ position: "relative" }}>
                   <input
                     id="grades-to"
-                    type="date"
+                    type="text"
+                    placeholder="yyyy/mm/dd"
                     value={toInput}
-                    onFocus={() => setToFocused(true)}
-                    onBlur={() => setToFocused(false)}
                     onChange={(event) => setToInput(event.target.value)}
-                    style={{ color: toInput === "" && !toFocused ? "transparent" : undefined }}
                   />
-                  {toInput === "" && !toFocused ? (
-                    <span
-                      aria-hidden="true"
-                      style={{
-                        position: "absolute",
-                        left: 12,
-                        top: "50%",
-                        transform: "translateY(-50%)",
-                        pointerEvents: "none",
-                        color: "var(--color-text-faint)",
-                      }}
-                    >
-                      yyyy/mm/dd
-                    </span>
-                  ) : null}
+                  <input
+                    type="date"
+                    aria-label={t("grades.selectDate")}
+                    value={toInput}
+                    tabIndex={-1}
+                    onChange={(event) => setToInput(event.target.value)}
+                    style={{
+                      position: "absolute",
+                      right: 0,
+                      top: 0,
+                      width: 36,
+                      height: "100%",
+                      opacity: 0,
+                      cursor: "pointer",
+                    }}
+                  />
+                  <span
+                    aria-hidden="true"
+                    style={{
+                      position: "absolute",
+                      right: 10,
+                      top: "50%",
+                      transform: "translateY(-50%)",
+                      pointerEvents: "none",
+                      color: "var(--color-text-faint)",
+                    }}
+                  >
+                    📅
+                  </span>
                 </div>
               </Field>
             </>
@@ -838,8 +857,8 @@ export function GradesPage({
                       : isApiError(exportError) && exportError.status === 409
                         ? t("grades.exportIdentityMissing")
                         : isApiError(exportError) && exportError.requestId
-                          ? `${String(exportError)}（request_id ${exportError.requestId}）`
-                          : String(exportError),
+                          ? `${describeApiError(exportError)}（request_id ${exportError.requestId}）`
+                          : describeApiError(exportError),
                 })}
               </Banner>
             ) : null}

@@ -16,7 +16,7 @@ export function localInputToUtc(value: string): string | null {
   if (trimmed === "") return "";
   // `<input type="date">` 的值是 `YYYY-MM-DD`。直接 `new Date("YYYY-MM-DD")` 会按 UTC
   // 解析，而这里必须按用户本地时区解释，否则跨时区会把日期挪一天。
-  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+  const dateOnly = /^(\d{4})[-/](\d{2})[-/](\d{2})$/.exec(trimmed);
   const parsed = dateOnly
     ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]))
     : new Date(trimmed);

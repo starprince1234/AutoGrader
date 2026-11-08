@@ -1198,6 +1198,7 @@ export const messages = {
     // P11：时间范围、友好题目选择、身份关联、完整汇总与导出 Drawer。
     "grades.from": "起始时间",
     "grades.to": "结束时间",
+    "grades.selectDate": "选择日期",
     "grades.timeHint": "按本地时区填写，筛选包含起止时刻。",
     "grades.timeFromInvalid": "起始时间无法解析，请重新选择。",
     "grades.timeToInvalid": "结束时间无法解析，请重新选择。",
