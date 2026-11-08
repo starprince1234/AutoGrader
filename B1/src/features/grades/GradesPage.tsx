@@ -136,13 +136,34 @@ export function GradesPage({
     return map;
   }, [questionOptions.options]);
 
+  const selectedCourse = courseOptions.find(
+    (course) => course.course_id === effectiveCourseId,
+  );
+  const scopeSummary = t("grades.summaryScope", {
+    course: selectedCourse ? formatCourseLabel(selectedCourse) : t("grades.scopeAllCourses"),
+    section: sectionId
+      ? (sections.data?.find((option) => option.sectionId === sectionId)?.label ??
+        shortenId(sectionId))
+      : t("grades.scopeAllSections"),
+    question: questionVersionId
+      ? (questionLabels.get(questionVersionId) ?? t("grades.questionUnavailable"))
+      : t("grades.scopeAllQuestions"),
+    time:
+      fromInput === "" && toInput === ""
+        ? t("grades.scopeAllTime")
+        : `${fromInput || t("common.none")} — ${toInput || t("common.none")}`,
+  });
+
   useEffect(() => {
     setDrilldownRunId(initialRunId);
   }, [initialRunId]);
 
   const timeProblem = rangeProblem(fromInput, toInput);
   const fromUtc = timeProblem === null ? localInputToUtc(fromInput) : null;
-  const toUtc = timeProblem === null ? localInputToUtc(toInput) : null;
+  // 结束日期按当天最后一刻处理：否则 `2026-11-08` 会被当成当天 00:00，当天的提交被排除。
+  const toBoundary =
+    /^\d{4}-\d{2}-\d{2}$/.test(toInput) ? `${toInput}T23:59:59` : toInput;
+  const toUtc = timeProblem === null ? localInputToUtc(toBoundary) : null;
   const activeRunId = drilldownRunId;
 
   const filter: GradeFilter = useMemo(
@@ -422,7 +443,7 @@ export function GradesPage({
       ) : (
         <>
           <p className="muted" data-testid="summary-scope">
-            {t("grades.summaryScope")}
+            {scopeSummary}
           </p>
           <ul>
             <li>
@@ -431,12 +452,10 @@ export function GradesPage({
             <li>
               {t("grades.summaryAverage")}：
               {summary.averageScore === null ? t("grades.notScored") : summary.averageScore}
-              <span className="muted"> {t("grades.summarySample", { count: summary.scoredCount })}</span>
             </li>
             <li>
               {t("grades.summaryPassRate")}：
               {summary.passRate === null ? t("grades.notScored") : `${Math.round(summary.passRate * 100)}%`}
-              <span className="muted"> {t("grades.summaryPassDenominator", { count: summary.scoredCount })}</span>
             </li>
             <li>
               {t("grades.unfinished")}：{summary.unfinishedCount}
@@ -548,7 +567,7 @@ export function GradesPage({
               >
                 <input
                   id="grades-from"
-                  type="datetime-local"
+                  type="date"
                   value={fromInput}
                   onChange={(event) => setFromInput(event.target.value)}
                 />
@@ -567,7 +586,7 @@ export function GradesPage({
               >
                 <input
                   id="grades-to"
-                  type="datetime-local"
+                  type="date"
                   value={toInput}
                   onChange={(event) => setToInput(event.target.value)}
                 />

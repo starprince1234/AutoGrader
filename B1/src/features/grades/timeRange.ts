@@ -10,11 +10,16 @@
  * "没有筛选"会悄悄扩大范围，而用户以为自己在看某一段时间。
  */
 
-/** 本地 `datetime-local` 值 → UTC RFC 3339；空串返回 `""`（= 不筛选），非法返回 `null`。 */
+/** 本地 `date`/`datetime-local` 值 → UTC RFC 3339；空串返回 `""`（= 不筛选），非法返回 `null`。 */
 export function localInputToUtc(value: string): string | null {
   const trimmed = value.trim();
   if (trimmed === "") return "";
-  const parsed = new Date(trimmed);
+  // `<input type="date">` 的值是 `YYYY-MM-DD`。直接 `new Date("YYYY-MM-DD")` 会按 UTC
+  // 解析，而这里必须按用户本地时区解释，否则跨时区会把日期挪一天。
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+  const parsed = dateOnly
+    ? new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3]))
+    : new Date(trimmed);
   if (Number.isNaN(parsed.getTime())) return null;
   return parsed.toISOString();
 }

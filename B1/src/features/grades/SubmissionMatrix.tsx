@@ -114,7 +114,6 @@ export function SubmissionMatrix({ filter }: { filter: CohortFilter }) {
               unbound: cohort.counts.unbound,
             })}
           </Banner>
-          <p className="muted">{t("grades.missing.notSubmittedIsNotZero")}</p>
           {filter.questionVersionIds === null ? (
             <p className="muted" data-testid="cohort-version-unset">
               {t("grades.missing.versionUnset")}
