@@ -1,4 +1,5 @@
 import { t } from "../../i18n";
+import { isApiError } from "../../api/problem";
 import type { EvaluationReport, GradeRow } from "../../api/types";
 import { Banner, Panel, Spinner, StatusPill, Table } from "../../ui/components";
 import { ErrorState } from "../../ui/components";
@@ -56,16 +57,22 @@ export function GradeDrilldown({
 
   if (report.isPending) return <Spinner />;
   if (report.isError) {
-    /**
-     * 报告不可得（例如 `failed` 运行根本没有报告：本部署实测 `GET .../report` 返回 404）。
-     *
-     * **两条非确定性轨不能因此消失**：契约把两轨分开，正是因为它们各自独立——报告缺失不等于
-     * 评语或学习提示不存在。把整页替换成一个错误框，会让"B2 已实现、界面却没有出口"的缺陷以
-     * 另一种形式继续存在。证据包（内嵌报告）在这个状态下不可得，因此不渲染。
-     */
+    const missingReport = isApiError(report.error) && report.error.isNotFound;
+    const friendly =
+      runState === "rejected"
+        ? t("grades.reportMissingRejected")
+        : runState === "failed"
+          ? t("grades.reportMissingFailed")
+          : t("grades.reportMissing");
     return (
       <div className="stack" data-testid="grade-drilldown">
-        <ErrorState error={report.error} />
+        {missingReport ? (
+          <Banner tone="info" testId="report-missing">
+            {friendly}
+          </Banner>
+        ) : (
+          <ErrorState error={report.error} />
+        )}
         <CommentarySection runId={runId} />
         {studentView ? (
           <LearningHintsSection
@@ -110,7 +117,7 @@ export function GradeDrilldown({
               {t("grades.notScored")}
             </strong>
           )}
-          {false ? (
+          {!studentView ? (
             <details className="muted">
               <summary>{t("grades.technicalInfo")}</summary>
               <span>
@@ -144,7 +151,7 @@ export function GradeDrilldown({
         })}
       </p>
 
-      {false ? (
+      {!studentView ? (
         <>
       <Panel title={t("grades.staticFindings")}>
         {data.static_findings.length === 0 ? (
@@ -226,7 +233,7 @@ export function GradeDrilldown({
       </Panel>
 
       {/* 技术摘要默认收起：教师需要它来复核，但它不是学生的主阅读内容。 */}
-      {false ? (
+      {!studentView ? (
         <>
           <details data-testid="binding-details">
             <summary>{t("grades.technicalDetails")}</summary>

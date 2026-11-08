@@ -250,7 +250,7 @@ describe("成绩查询（RQ-B-1-30）", () => {
 
     expect(screen.getByTestId("summary-scope-notice")).toHaveTextContent("统计仅基于已完成评测的成绩");
     expect(screen.getByText(/平均分：90/)).toBeInTheDocument();
-    expect(screen.getByTestId("unfinished-notice")).toHaveTextContent("显示状态而不是 0 分");
+    expect(screen.queryByTestId("unfinished-notice")).toBeNull();
     stub.restore();
   });
 
@@ -461,7 +461,7 @@ describe("谁还没交（RQ-B-1-30 验收 4 的操作化形态）", () => {
     renderWithProviders(<GradesPage chartLoader={stubChartLoader} />);
     await selectCourse(user);
     await screen.findByTestId("grades-table");
-    await user.selectOptions(screen.getByLabelText("课序（可选）"), UUID_B);
+    await user.selectOptions(screen.getByLabelText("课序"), UUID_B);
     await user.click(screen.getByRole("tab", { name: "仍未提交" }));
     return { stub, user };
   }

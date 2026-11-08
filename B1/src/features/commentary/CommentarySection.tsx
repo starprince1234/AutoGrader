@@ -177,9 +177,6 @@ export function CommentarySection({
         ) : notGenerated ? (
           <Banner tone="info" testId="commentary-not-generated">
             {t("commentary.notGenerated")}
-            {notGenerated.problem?.detail ? (
-              <span className="muted"> {notGenerated.problem.detail}</span>
-            ) : null}
           </Banner>
         ) : commentary.isError ? (
           <ErrorState error={commentary.error} testId="commentary-error" />

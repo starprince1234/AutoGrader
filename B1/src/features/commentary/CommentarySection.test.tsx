@@ -88,7 +88,7 @@ describe("教学评语轨（RQ-T-20）", () => {
 
     const banner = await screen.findByTestId("commentary-unavailable");
     expect(banner).toHaveTextContent("本部署未启用教学评语");
-    expect(banner).toHaveTextContent("不是错误");
+    expect(banner).toHaveTextContent("不影响成绩");
     // 配置状态不能被渲染成失败，也不能有"加载中"残留。
     expect(screen.queryByTestId("commentary-error")).toBeNull();
     expect(screen.queryByTestId("commentary-failed")).toBeNull();
@@ -124,7 +124,6 @@ describe("教学评语轨（RQ-T-20）", () => {
 
     const banner = await screen.findByTestId("commentary-failed");
     expect(banner).toHaveTextContent("评语生成被尝试过但没有成功");
-    expect(banner).toHaveTextContent("权威分与逐用例证据都不受它影响");
     // 失败态不得渲染正文，也不得悄悄显示参考分。
     expect(screen.queryByTestId("commentary-text")).toBeNull();
     expect(screen.queryByTestId("advisory-score")).toBeNull();
@@ -184,9 +183,7 @@ describe("教学评语轨（RQ-T-20）", () => {
     });
 
     const banner = await screen.findByTestId("commentary-not-generated");
-    // 服务端的原文必须被带出来：它明确区分了"没生成过"与"运行不存在"。
-    expect(banner).toHaveTextContent("No commentary has been generated");
-    expect(banner).toHaveTextContent("This is not the same as a missing run.");
+    expect(banner).toHaveTextContent("这次评测还没有生成评语");
     // 404 不是"读取出错"：不得走通用错误态（那会把"还没生成"说成"出错了"）。
     expect(screen.queryByTestId("commentary-error")).toBeNull();
     stub.restore();

@@ -36,7 +36,9 @@ export function ProgressPanel({
           <span className="muted" data-testid="progress-stage">
             {progress.terminal === "completed"
               ? t("submit.progressDone", { done: done ?? 0, total: total ?? 0 })
-              : t("submit.progressRunning", { done: done ?? 0, total: total ?? 0 })}
+              : progress.terminal === "failed" || progress.terminal === "rejected"
+                ? t("submit.progressStopped")
+                : t("submit.progressRunning", { done: done ?? 0, total: total ?? 0 })}
           </span>
         ) : (
           <span className="muted">{t("submit.noTerminalYet")}</span>
