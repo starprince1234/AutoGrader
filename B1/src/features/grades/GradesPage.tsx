@@ -445,6 +445,9 @@ export function GradesPage({
           <Banner tone="info" testId="summary-scope-notice">
             {t("grades.summaryScopeNotice")}
           </Banner>
+          <Banner tone="info" testId="unfinished-notice">
+            {t("grades.stateNotice")}
+          </Banner>
           {displayRows.length > 0 ? (
             <>
               <GradesChart buckets={buckets} loader={chartLoader} />

@@ -810,22 +810,25 @@ class TestB3FixtureSource:
 
     def test_rejects_a_non_input_mount(self) -> None:
         document = _bundle([_item("expected.txt", b"x", mount="expected_output")])
-        with package_endpoint(payload=json.dumps(document).encode("utf-8")) as (base_url, _):
-            with pytest.raises(PackageUnavailableError):
-                _fixture_source(base_url).fetch_inputs(question_version_id=QUESTION_ID)
+        with package_endpoint(
+            payload=json.dumps(document).encode("utf-8")
+        ) as (base_url, _), pytest.raises(PackageUnavailableError):
+            _fixture_source(base_url).fetch_inputs(question_version_id=QUESTION_ID)
 
     def test_rejects_a_digest_that_does_not_match_the_bytes(self) -> None:
         bad = _item("week6_1.txt", b"actual", digest="0" * 64)
-        with package_endpoint(payload=json.dumps(_bundle([bad])).encode("utf-8")) as (base_url, _):
-            with pytest.raises(PackageUnavailableError):
-                _fixture_source(base_url).fetch_inputs(question_version_id=QUESTION_ID)
+        with package_endpoint(
+            payload=json.dumps(_bundle([bad])).encode("utf-8")
+        ) as (base_url, _), pytest.raises(PackageUnavailableError):
+            _fixture_source(base_url).fetch_inputs(question_version_id=QUESTION_ID)
 
     def test_rejects_invalid_base64_and_size_mismatch(self) -> None:
         invalid = _item("week6_1.txt", b"abc")
         invalid["content_base64"] = "not-base64!!"
-        with package_endpoint(payload=json.dumps(_bundle([invalid])).encode("utf-8")) as (base_url, _):
-            with pytest.raises(PackageUnavailableError):
-                _fixture_source(base_url).fetch_inputs(question_version_id=QUESTION_ID)
+        with package_endpoint(
+            payload=json.dumps(_bundle([invalid])).encode("utf-8")
+        ) as (base_url, _), pytest.raises(PackageUnavailableError):
+            _fixture_source(base_url).fetch_inputs(question_version_id=QUESTION_ID)
         wrong_size = _item("week6_1.txt", b"abc")
         wrong_size["size_bytes"] = 99
         with package_endpoint(
@@ -835,9 +838,10 @@ class TestB3FixtureSource:
 
     def test_rejects_another_question_version(self) -> None:
         document = _bundle([_item("a.txt", b"x")], version=str(uuid.uuid4()))
-        with package_endpoint(payload=json.dumps(document).encode("utf-8")) as (base_url, _):
-            with pytest.raises(PackageUnavailableError):
-                _fixture_source(base_url).fetch_inputs(question_version_id=QUESTION_ID)
+        with package_endpoint(
+            payload=json.dumps(document).encode("utf-8")
+        ) as (base_url, _), pytest.raises(PackageUnavailableError):
+            _fixture_source(base_url).fetch_inputs(question_version_id=QUESTION_ID)
 
     def test_rejects_paths_outside_the_workspace_whitelist(self) -> None:
         for bad_path in ("../escape.txt", "/absolute.txt", "a/../../b.txt"):
@@ -849,38 +853,44 @@ class TestB3FixtureSource:
 
     def test_rejects_duplicate_paths_and_too_many_items_and_unknown_fields(self) -> None:
         duplicate = _bundle([_item("a.txt", b"x"), _item("a.txt", b"y")])
-        with package_endpoint(payload=json.dumps(duplicate).encode("utf-8")) as (base_url, _):
-            with pytest.raises(PackageUnavailableError):
-                _fixture_source(base_url).fetch_inputs(question_version_id=QUESTION_ID)
+        with package_endpoint(
+            payload=json.dumps(duplicate).encode("utf-8")
+        ) as (base_url, _), pytest.raises(PackageUnavailableError):
+            _fixture_source(base_url).fetch_inputs(question_version_id=QUESTION_ID)
         too_many = _bundle([_item(f"f{index}.txt", b"x") for index in range(51)])
-        with package_endpoint(payload=json.dumps(too_many).encode("utf-8")) as (base_url, _):
-            with pytest.raises(PackageUnavailableError):
-                _fixture_source(base_url).fetch_inputs(question_version_id=QUESTION_ID)
+        with package_endpoint(
+            payload=json.dumps(too_many).encode("utf-8")
+        ) as (base_url, _), pytest.raises(PackageUnavailableError):
+            _fixture_source(base_url).fetch_inputs(question_version_id=QUESTION_ID)
         extras = _bundle([_item("a.txt", b"x")])
         extras["unexpected"] = True
-        with package_endpoint(payload=json.dumps(extras).encode("utf-8")) as (base_url, _):
-            with pytest.raises(PackageUnavailableError):
-                _fixture_source(base_url).fetch_inputs(question_version_id=QUESTION_ID)
+        with package_endpoint(
+            payload=json.dumps(extras).encode("utf-8")
+        ) as (base_url, _), pytest.raises(PackageUnavailableError):
+            _fixture_source(base_url).fetch_inputs(question_version_id=QUESTION_ID)
 
     def test_refuses_an_oversized_response_instead_of_truncating_it(self) -> None:
         document = _bundle([_item("a.txt", b"x")])
-        with package_endpoint(payload=json.dumps(document).encode("utf-8")) as (base_url, _):
-            with pytest.raises(PackageUnavailableError):
-                _fixture_source(base_url, limit=8).fetch_inputs(question_version_id=QUESTION_ID)
+        with package_endpoint(
+            payload=json.dumps(document).encode("utf-8")
+        ) as (base_url, _), pytest.raises(PackageUnavailableError):
+            _fixture_source(base_url, limit=8).fetch_inputs(question_version_id=QUESTION_ID)
 
     def test_refuses_an_item_over_one_mebibyte(self) -> None:
         blob = b"x" * (1024 * 1024 + 1)
         document = _bundle([_item("big.bin", blob)])
-        with package_endpoint(payload=json.dumps(document).encode("utf-8")) as (base_url, _):
-            with pytest.raises(PackageUnavailableError):
-                _fixture_source(base_url, limit=1 << 23).fetch_inputs(
-                    question_version_id=QUESTION_ID
-                )
+        with package_endpoint(
+            payload=json.dumps(document).encode("utf-8")
+        ) as (base_url, _), pytest.raises(PackageUnavailableError):
+            _fixture_source(base_url, limit=1 << 23).fetch_inputs(
+                question_version_id=QUESTION_ID
+            )
 
     def test_maps_upstream_http_errors_to_package_unavailable(self) -> None:
-        with package_endpoint(status=413, payload=b'{"detail": "too large"}') as (base_url, _):
-            with pytest.raises(PackageUnavailableError) as caught:
-                _fixture_source(base_url).fetch_inputs(question_version_id=QUESTION_ID)
+        with package_endpoint(
+            status=413, payload=b'{"detail": "too large"}'
+        ) as (base_url, _), pytest.raises(PackageUnavailableError) as caught:
+            _fixture_source(base_url).fetch_inputs(question_version_id=QUESTION_ID)
         assert caught.value.status_code == 413
         assert caught.value.upstream_detail == "too large"
 

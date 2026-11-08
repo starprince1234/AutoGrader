@@ -27,6 +27,7 @@ from typing import Any
 
 from sqlalchemy import Connection, Engine, and_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 
 from ..audit import (
     ACTION_ROSTER_IMPORT_COMMITTED,
@@ -39,12 +40,17 @@ from ..audit import (
     AuditLog,
     change_digest,
 )
+from ..classes import (
+    account_name_mismatches,
+    active_enrollment_conflicts,
+    bound_accounts,
+    translate_integrity_error,
+)
 from ..db.tables import (
     enrollments,
     roster_import_files,
     roster_import_rows,
     roster_imports,
-    users,
 )
 from ..errors import conflict, not_found, unprocessable
 from ..logging import get_logger
@@ -63,7 +69,12 @@ from .table import (
     RosterParseError,
     RosterTable,
 )
-from .validation import STATUS_ACCEPTED, validate_rows
+from .validation import (
+    STATUS_ACCEPTED,
+    ValidatedRow,
+    validate_rows,
+)
+from .validation import STATUS_REJECTED as ROW_STATUS_REJECTED
 
 logger = get_logger("roster")
 
@@ -95,6 +106,7 @@ class RosterImportView:
     status: str
     course_id: uuid.UUID
     section_id: uuid.UUID
+    class_id: uuid.UUID
     filename: str
     media_type: str
     detected_columns: list[str]
@@ -128,6 +140,7 @@ def create_import(
     content: bytes,
     course_id: uuid.UUID,
     section_id: uuid.UUID,
+    class_id: uuid.UUID,
     course_code: str,
     section_code: str,
     actor: AuditActor,
@@ -152,6 +165,7 @@ def create_import(
                 roster_import_id=roster_import_id,
                 course_id=course_id,
                 section_id=section_id,
+                class_id=class_id,
                 status=STATUS_UPLOADED,
                 filename=filename,
                 media_type=media_type,
@@ -273,6 +287,7 @@ def _view(connection: Connection, roster_import_id: uuid.UUID) -> RosterImportVi
         status=row.status,
         course_id=row.course_id,
         section_id=row.section_id,
+        class_id=row.class_id,
         filename=row.filename,
         media_type=row.media_type,
         detected_columns=list(row.detected_columns or []),
@@ -429,6 +444,16 @@ def confirm_import(
         validated = validate_rows(
             table, mapping, course_code=course_code, section_code=section_code
         )
+        if row.class_id is None:
+            raise conflict(
+                "This roster import has no target class; re-upload it after choosing a class."
+            )
+        validated = _apply_binding_constraints(
+            connection,
+            validated=validated,
+            course_id=row.course_id,
+            class_id=row.class_id,
+        )
         accepted = [item for item in validated if item.accepted]
         rejected = [item for item in validated if not item.accepted]
         _replace_rows(connection, roster_import_id, validated)
@@ -464,12 +489,19 @@ def confirm_import(
             rejected_all = True
         else:
             rejected_all = False
-            written = _upsert_enrollments(
-                connection,
-                roster_import_id=roster_import_id,
-                section_id=row.section_id,
-                accepted=accepted,
-            )
+            try:
+                written = _upsert_enrollments(
+                    connection,
+                    roster_import_id=roster_import_id,
+                    course_id=row.course_id,
+                    section_id=row.section_id,
+                    class_id=row.class_id,
+                    accepted=accepted,
+                )
+            except IntegrityError as error:
+                # The one-active-enrollment index rejecting a concurrent confirm: report a
+                # clear 409 and roll the whole import back instead of a 500 or a silent pick.
+                raise translate_integrity_error(error) from error
             committed_at = _now()
             connection.execute(
                 update(roster_imports)
@@ -531,27 +563,90 @@ def confirm_import(
     return result
 
 
+def _apply_binding_constraints(
+    connection: Connection,
+    *,
+    validated: list[ValidatedRow],
+    course_id: uuid.UUID,
+    class_id: uuid.UUID,
+) -> list[ValidatedRow]:
+    """Turn rows that would violate the one-active-section rule into rejected rows.
+
+    This happens at confirmation time, not at parse time, because the answer depends on what
+    is already in `b4.enrollments`. A row that is already active in **the same class** is a
+    normal re-import (an updated list for that class) and stays accepted; a row active in
+    another section/class of the same course is rejected with a reason the preview shows,
+    and an existing account whose name disagrees is rejected rather than merged.
+    """
+    accepted = [item for item in validated if item.accepted]
+    if not accepted:
+        return validated
+    numbers = [item.values[FIELD_STUDENT_NUMBER] for item in accepted]
+    conflicts = {
+        item.student_number: item
+        for item in active_enrollment_conflicts(
+            connection, course_id=course_id, student_numbers=numbers
+        )
+    }
+    mismatched = set(
+        account_name_mismatches(
+            connection,
+            rows=[
+                (item.values[FIELD_STUDENT_NUMBER], item.values[FIELD_DISPLAY_NAME])
+                for item in accepted
+            ],
+        )
+    )
+    result: list[ValidatedRow] = []
+    for item in validated:
+        if not item.accepted:
+            result.append(item)
+            continue
+        number = item.values[FIELD_STUDENT_NUMBER]
+        existing = conflicts.get(number)
+        if existing is not None and existing.class_id != str(class_id):
+            result.append(
+                ValidatedRow(
+                    item.row_number,
+                    ROW_STATUS_REJECTED,
+                    item.values,
+                    "conflict_other_section: 该学生已在本课程的其他课序/班级有效在册"
+                    "(同一课程只能属于一个有效课序; 请先从原班级移出)",
+                )
+            )
+            continue
+        if number in mismatched:
+            result.append(
+                ValidatedRow(
+                    item.row_number,
+                    ROW_STATUS_REJECTED,
+                    item.values,
+                    "account_name_mismatch: 已有账号的姓名与名单不一致, 未绑定(请先核对)",
+                )
+            )
+            continue
+        result.append(item)
+    return result
+
+
 def _upsert_enrollments(
     connection: Connection,
     *,
     roster_import_id: uuid.UUID,
+    course_id: uuid.UUID,
     section_id: uuid.UUID,
+    class_id: uuid.UUID,
     accepted: list,
 ) -> int:
-    """Insert the accepted rows, matching an existing platform user by student number.
+    """Insert the accepted rows into the class they were imported for.
 
-    The unique key `(section_id, student_number)` makes a duplicate enrollment
-    unrepresentable, so even a concurrent confirmation cannot double-write a student.
+    The conflict target is the **course-level** partial unique index, not the old
+    `(section_id, student_number)` one: that is the rule ("one active section per course")
+    and it is what makes a concurrent confirmation fail loudly instead of creating a second
+    active section. Re-importing the same class updates the existing row in place.
     """
     numbers = [item.values[FIELD_STUDENT_NUMBER] for item in accepted]
-    linked: dict[str, uuid.UUID] = {}
-    if numbers:
-        rows = connection.execute(
-            select(users.c.student_number, users.c.user_id).where(
-                and_(users.c.student_number.in_(numbers), users.c.is_active.is_(True))
-            )
-        ).fetchall()
-        linked = {row[0]: row[1] for row in rows}
+    linked = bound_accounts(connection, student_numbers=numbers)
     now = _now()
     written = 0
     for item in accepted:
@@ -560,7 +655,9 @@ def _upsert_enrollments(
             pg_insert(enrollments)
             .values(
                 enrollment_id=uuid.uuid4(),
+                course_id=course_id,
                 section_id=section_id,
+                class_id=class_id,
                 user_id=linked.get(number),
                 student_number=number,
                 display_name=item.values[FIELD_DISPLAY_NAME],
@@ -571,7 +668,11 @@ def _upsert_enrollments(
                 updated_at=now,
             )
             .on_conflict_do_update(
-                index_elements=["section_id", "student_number"],
+                index_elements=["course_id", "student_number"],
+                # Must match the migration's predicate text (`WHERE is_active`); writing
+                # `is_active IS true` here is not the same predicate to PostgreSQL and makes
+                # it reject the inference.
+                index_where=enrollments.c.is_active,
                 set_={
                     "display_name": item.values[FIELD_DISPLAY_NAME],
                     "user_id": linked.get(number),
@@ -579,6 +680,12 @@ def _upsert_enrollments(
                     "is_active": True,
                     "updated_at": now,
                 },
+                # A concurrent transaction may have inserted this student into a *different*
+                # class of the same course between our pre-check and this statement. Moving
+                # that row silently would violate "one active section per course" and hide a
+                # conflict from the teacher, so only the same class may be updated; anything
+                # else returns no row and is reported as a conflict below.
+                where=enrollments.c.class_id == class_id,
             )
             # `RETURNING` rather than `rowcount`: psycopg3 reports -1 for inserts through
             # SQLAlchemy, so counting affected rows would report a negative write count.
@@ -586,6 +693,11 @@ def _upsert_enrollments(
         )
         if connection.execute(statement).fetchone() is not None:
             written += 1
+        else:
+            raise conflict(
+                "同一课程中该学生已于并发导入中被写入另一个课序/班级; "
+                "本次导入已回滚, 不会静默改写既有归属."
+            )
     return written
 
 

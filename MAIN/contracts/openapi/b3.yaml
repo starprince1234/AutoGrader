@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AutoGrader B3 Question Bank API
-  version: 0.31.0
+  version: 0.32.0
   description: |
     Question bank: stems with graphics, reference answers, immutable question
     versions, assignments, three test-suite adapters and de-identified statistics.
@@ -1024,20 +1024,20 @@ paths:
       operationId: listAssignments
       summary: List assignments (作业集合) in the caller's course scope
       description: |
-        Teachers see assignments in the courses they are staff on. Students see only
-        assignments whose target sections include their course section and, when the
-        assignment narrows its audience to named students, whose student list contains them
-        (CHG-0032). The list is keyset-paginated by `(created_at, assignment_id)`.
+        An assignment belongs to exactly one course and applies to **every** section (课序) and
+        class (班级) of that course (v0.32.0): there is no hand-picked target list left. The
+        audience is evaluated against the caller's current effective membership, read from B4
+        on each request, so a student added to a course after sign-in sees its assignments and
+        a student removed from a course stops seeing them without waiting for a token refresh.
+
+        Teachers see assignments in the courses they are staff on; students see assignments of
+        the courses they are currently enrolled in. The list is keyset-paginated by
+        `(created_at, assignment_id)`.
       tags: [assignments]
       parameters:
         - $ref: './common.yaml#/components/parameters/Cursor'
         - $ref: './common.yaml#/components/parameters/Limit'
         - {name: course_id, in: query, required: false, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
-        - name: section_id
-          in: query
-          required: false
-          schema: {$ref: './common.yaml#/components/schemas/Uuid'}
-          description: "Only assignments whose target sections include this section."
       responses:
         '200':
           description: Page of assignments.
@@ -1057,11 +1057,16 @@ paths:
       operationId: createAssignment
       summary: Create an assignment from published question versions
       description: |
-        Only published versions may be referenced; a draft reference returns 409. The assignment
-        must target at least one section of `course_id`; `student_ids` optionally narrows the
-        audience to named students inside those sections (empty means the whole sections).
-        Sections and students are validated against B4 server-side; invalid targets are 422 and
-        are never silently narrowed.
+        Only published versions of questions in `course_id` may be referenced; a draft
+        reference returns 409 and a question from another course is 404. The assignment is
+        course-scoped (v0.32.0): it automatically applies to every section and class of the
+        course, including sections/classes added later while the assignment is open. There is
+        no section or student target list any more.
+
+        Publishing also schedules the publication notification to the course's current roster
+        (B4). The notification is a separate, idempotent step: its state is reported as
+        `notification_state` on the returned assignment, and a failure never rolls the
+        assignment back but is visible as `unavailable` and can be retried.
       tags: [assignments]
       requestBody:
         required: true
@@ -1069,23 +1074,9 @@ paths:
           application/json:
             schema:
               type: object
-              required: [course_id, section_ids, title, question_version_ids]
+              required: [course_id, title, question_version_ids]
               properties:
                 course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
-                section_ids:
-                  type: array
-                  minItems: 1
-                  maxItems: 50
-                  uniqueItems: true
-                  items: {$ref: './common.yaml#/components/schemas/Uuid'}
-                  description: "Target sections of this course (1-based class ordinals are per course)."
-                student_ids:
-                  type: array
-                  maxItems: 2000
-                  uniqueItems: true
-                  default: []
-                  items: {$ref: './common.yaml#/components/schemas/Uuid'}
-                  description: "Optional narrowing: exactly these students (each validated as actively enrolled in one of `section_ids`). Empty means every student in the target sections."
                 title: {type: string, minLength: 1, maxLength: 200}
                 due_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
                 question_version_ids:
@@ -1130,6 +1121,33 @@ paths:
         '403': {$ref: './common.yaml#/components/responses/Forbidden'}
         '404': {$ref: './common.yaml#/components/responses/NotFound'}
 
+  /api/v1/assignments/{assignment_id}/notifications:
+    parameters:
+      - {name: assignment_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    post:
+      operationId: scheduleAssignmentNotifications
+      summary: Schedule (or retry) the publication notification of an assignment
+      description: |
+        Idempotent by assignment: B4 materialises the recipient list once and returns the
+        existing state on every repeat, so calling this again never duplicates recipients or
+        re-sends a message. A teacher uses it when `notification_state` is `unavailable`
+        (B4 could not be reached while publishing). The response is the assignment with its
+        updated `notification_state`; per-recipient delivery results are read from B4
+        (`GET /api/v1/courses/{course_id}/assignments/{assignment_id}/notifications`), not
+        from this endpoint -- scheduling is not delivery.
+      tags: [assignments]
+      responses:
+        '200':
+          description: The assignment with its current notification scheduling state.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AssignmentPublic'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
+        '503': {$ref: './common.yaml#/components/responses/ServiceUnavailable'}
+
   /api/v1/assignment-audiences/{assignment_id}:
     parameters:
       - {name: assignment_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
@@ -1137,13 +1155,15 @@ paths:
       operationId: getInternalAssignment
       summary: Read an assignment's audience for submission admission (service-to-service)
       description: |
-        Consumed by B2 when accepting a web or mail submission (CHG-0032). Being internal is not a
-        substitute for authorization: the caller must present the pre-shared `serviceToken`, not a
-        student or teacher access token. The response is the minimum needed for admission:
-        identity, status, target sections/students and the ordered question list. A missing
-        assignment is `404`; missing/wrong credentials are `401`; a deployment with no service
-        credential configured refuses the endpoint with `503` instead of treating it as open
-        (an unconfigured internal channel must fail closed, not degrade).
+        Consumed by B2 when accepting a web or mail submission (v0.32.0: course-level audience).
+        Being internal is not a substitute for authorization: the caller must present the
+        pre-shared `serviceToken`, not a student or teacher access token. The response carries
+        the assignment's course, status and ordered question list; **membership in the course**
+        is not asserted here because only B4 is authoritative for it -- B2 asks B4 for the
+        submitting student's current enrollment separately. A missing assignment is `404`;
+        missing/wrong credentials are `401`; a deployment with no service credential
+        configured refuses the endpoint with `503` instead of treating it as open (an
+        unconfigured internal channel must fail closed, not degrade).
       tags: [internal]
       security:
         - serviceToken: []
@@ -2041,29 +2061,25 @@ components:
     AssignmentPublic:
       type: object
       description: |
-        A homework set that groups published question versions for one course and one or more
-        target sections, optionally narrowed to named students (CHG-0032). `question_version_ids`
-        is in assignment order (item ordinal 0..n-1); answer files are named by 1-based position
-        (`1.txt`, `2.txt`, ...). `student_ids` empty means "every student in the target
-        sections"; non-empty means exactly those students.
-      required: [assignment_id, course_id, section_ids, student_ids, title, status, question_version_ids]
+        A homework set that groups published question versions for exactly one course and
+        applies to every section (课序) and class (班级) of that course (v0.32.0). There is no
+        target list: the audience is "the course's current effective students", evaluated at
+        read/submission time. `question_version_ids` is in assignment order (item ordinal
+        0..n-1); answer files are named by 1-based position (`1.txt`, `2.txt`, ...).
+        `notification_state` reports the publication-notification hand-off:
+        `scheduled` (B4 received the audience), `unavailable` (it did not; retry is possible),
+        `pending` (never attempted, only transitional).
+      required: [assignment_id, course_id, title, status, question_version_ids, notification_state]
       properties:
         assignment_id: {$ref: './common.yaml#/components/schemas/Uuid'}
         course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
-        section_ids:
-          type: array
-          minItems: 1
-          items: {$ref: './common.yaml#/components/schemas/Uuid'}
-        student_ids:
-          type: array
-          description: "Optional audience narrowing. Empty = all students in the target sections."
-          items: {$ref: './common.yaml#/components/schemas/Uuid'}
         title: {type: string, minLength: 1, maxLength: 200}
         status: {type: string, enum: [open, archived]}
         due_at: {anyOf: [{$ref: './common.yaml#/components/schemas/Timestamp'}, {type: "null"}]}
         question_version_ids:
           type: array
           items: {$ref: './common.yaml#/components/schemas/Uuid'}
+        notification_state: {type: string, enum: [pending, scheduled, unavailable]}
         created_at: {anyOf: [{$ref: './common.yaml#/components/schemas/Timestamp'}, {type: "null"}]}
         updated_at: {anyOf: [{$ref: './common.yaml#/components/schemas/Timestamp'}, {type: "null"}]}
       additionalProperties: false
@@ -2071,21 +2087,16 @@ components:
     AssignmentInternal:
       type: object
       description: |
-        The assignment audience served to B2 over the internal channel (serviceToken only). It
-        is the minimum B2 needs to admit or refuse a submission: identity, target sections and
-        students, and the ordered question list. Timestamps are not needed for admission and are
-        therefore not exposed here.
-      required: [assignment_id, course_id, title, status, section_ids, student_ids, question_version_ids]
+        The assignment facts served to B2 over the internal channel (serviceToken only). It is
+        the minimum B2 needs to admit or refuse a submission: which course the assignment
+        belongs to, whether it is open, and the ordered question list. Course membership is
+        **not** asserted here -- B4 is the only authority for it, so B2 reads the submitting
+        student's current enrollment from B4 and combines the two facts. Timestamps are not
+        needed for admission and are therefore not exposed.
+      required: [assignment_id, course_id, title, status, question_version_ids]
       properties:
         assignment_id: {$ref: './common.yaml#/components/schemas/Uuid'}
         course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
-        section_ids:
-          type: array
-          minItems: 1
-          items: {$ref: './common.yaml#/components/schemas/Uuid'}
-        student_ids:
-          type: array
-          items: {$ref: './common.yaml#/components/schemas/Uuid'}
         title: {type: string, minLength: 1, maxLength: 200}
         status: {type: string, enum: [open, archived]}
         question_version_ids:

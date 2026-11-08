@@ -12,6 +12,50 @@
 
 ---
 
+## 0.32.0 — 课程→课序→班级→名单模型、课程级作业与作业发布通知
+
+- **类型**：P2 模型重构（新增班级实体与班级/全课程名单端点；删除作业目标模型与目标校验端点；
+  新增内部授权查询、作业通知端点；`CurrentUser` 增加本人 membership）
+- **状态**：有效
+- **背景**：CHG-0032 把“班级”当成课序：挂一个已注册班级就隐式新建一个课序，同一课序无法容纳多个
+  班级；作业受众是教师手选的课序/学生列表。生产数据里 5 个课程只有 3 个课序、3 条作业中 2 条
+  `b3.assignment_sections` 为 0 行（历史作业没有目标），教师详情/受众只能得到空名单；而 106/107
+  名学生尚未注册账号，前端又只把“已绑定账号”的学生当作存在，于是界面显示“没有学生”。本轮按真实
+  业务建立 课程→课序→班级→名单 四级关系，作业改为课程级规则，并为发布提供可核对的真实邮件通知。
+- **变更**：
+  - `openapi/b4.yaml`：新增 `ClassPublic`/`ClassCreate`/`ClassRename`、`RosterSummary`、
+    `MyMembership`、`InternalUserAuthorization`、`AssignmentNotificationRequest`/`Summary`/`Delivery`；
+    `SectionPublic` 增加 `class_count` 并删除 `class_name`（课序不再等同班级）；`EnrollmentPublic`
+    增加 `course_id/class_id/class_name`；`CurrentUser` 增加 `memberships`；`RosterImportPreview` 增加
+    `class_id`；名单导入 multipart 增加 `class_id`。
+  - `openapi/b4.yaml` 路径：删除 `POST /courses/{course_id}/classes`（隐式新建课序）与
+    `POST /internal/course-targets/validate`；新增 `GET/POST /sections/{section_id}/classes`、
+    `PATCH/DELETE /classes/{class_id}`、`GET /classes/{class_id}/enrollments`、
+    `GET /courses/{course_id}/enrollments`、`GET /courses/{course_id}/roster-summary`、
+    `GET /courses/{course_id}/assignments/{assignment_id}/notifications`（+ `/retry`）、
+    `POST /internal/assignment-notifications`、`GET /internal/users/{user_id}/authorization`。
+    注册响应增加 `bound_course_count`/`identity_mismatch_count`。
+  - `openapi/b3.yaml`：`AssignmentPublic` 删除 `section_ids`/`student_ids`，增加 `notification_state`；
+    `CreateAssignment` 删除 `section_ids`/`student_ids`；`AssignmentInternal` 只保留课程/状态/题目顺序；
+    `listAssignments` 删除 `section_id` 过滤；新增
+    `POST /assignments/{assignment_id}/notifications`（幂等重排通知）。
+  - `openapi/b2.yaml`：`createSubmission` 与 `EmailVerificationChallengeRequest` 描述改为“课程成员资格
+    由 B4 权威判定、客户端 section 不被信任”；响应结构与请求字段不变（服务端改写为权威值）。
+  - `openapi/common.yaml`、`openapi/b5.yaml`、`asyncapi/events.yaml`：版本同步。
+  - 签名与数据：B4 迁移 `20261108_0010`（`b4.classes`、`enrollments.course_id/class_id`、
+    同课程同学生部分唯一索引、通知两张表、存量 section→class 回填）；B3 迁移 `20261108_0009`
+    （删除作业目标表、赋值 `notification_state`）；B2 无 schema 变更。
+- **受影响模块**：
+  - **B4**：课程/课序/班级维护、名单导入按班级、注册/导入双向绑定与冲突提示、`/me` memberships、
+    内部授权查询、作业通知投递（真实 SMTP）与发送进程。
+  - **B3**：作业改为课程级、删目标校验、学生读取按 B4 权威归属、发布后通知编排。
+  - **B2**：提交/邮件/成绩按 B4 权威归属判定，客户端 section 不再可信。
+  - **B1**：作业创建/详情、名单页与导入、学生本人课程/课序/班级展示与课程切换。
+- **兼容性**：有意破坏性变更。作业创建/响应删除目标字段；`/courses/{id}/classes` 与目标校验端点删除；
+  班级成为独立实体。不保留别名、双写或降级路径。
+- **验证**：静态检查 + CI verify + 自动部署 + 线上验收（见交付报告）。
+- **摘要**：见五份 `contracts.lock`（按 `MAIN/contracts` 逐文件字节计算，工具生成）。
+
 ## 0.31.0 — 作业目标模型、assignment_id 全链路与多题 .txt 网页/邮件提交（CHG-0032）
 
 - **类型**：P2 语义扩展 + 少量字段删除（多课序/指定学生目标模型、提交与成绩强制 `assignment_id`、

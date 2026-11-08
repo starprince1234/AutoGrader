@@ -1,21 +1,28 @@
-"""The identity/course target-validation client, without a database or a network.
+"""B4's two internal clients, without a database or a network.
 
-The production client builds the HTTP request, parses the contract's
-``CourseTargetValidation`` body and classifies every failure as "unavailable". Only the
-opener is replaced, so these tests exercise the real request/response handling -- the
-same allowance the JWKS fetch gets in ``test_auth.py``.
+The production clients build the HTTP requests, parse the contract's
+``InternalUserAuthorization`` body and classify every failure. Only the opener is
+replaced, so these tests exercise the real request/response handling -- the same allowance
+the JWKS fetch gets in ``test_auth.py``.
 """
 
 from __future__ import annotations
 
 import json
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 
-from autograder_b3.integration.b4 import B4TargetClient, TargetsUnavailable
+from autograder_b3.integration.b4 import (
+    B4AssignmentNotifier,
+    B4AuthorizationClient,
+    AuthorizationUnavailable,
+    NotificationRejected,
+    NotificationUnavailable,
+)
 
-from .conftest import COURSE_A, COURSE_B, SECTION_A, SECTION_A2, SECTION_B, STUDENT_A
+from .conftest import COURSE_A, COURSE_B, SECTION_A, STUDENT_A
 
 
 class _Response:
@@ -37,44 +44,145 @@ def _json_response(payload: dict, *, status: int = 200) -> _Response:
     return _Response(json.dumps(payload).encode("utf-8"), status=status)
 
 
-def _payload(
+def _authorization_payload(
     *,
-    course_id=COURSE_A,
-    sections=(),
-    students=(),
-    unknown_sections=(),
-    unknown_students=(),
+    user_id=STUDENT_A,
+    roles=("student",),
+    course_grants=(),
+    enrollments=((COURSE_A, SECTION_A),),
 ) -> dict:
     return {
-        "course_id": str(course_id),
-        "sections": [
+        "user_id": str(user_id),
+        "platform_roles": list(roles),
+        "course_grants": [str(course) for course in course_grants],
+        "enrollments": [
             {
+                "course_id": str(course),
                 "section_id": str(section),
-                "course_id": str(course_id),
-                "section_code": f"S{index}",
-                "term": None,
+                "class_id": str(uuid.uuid4()),
             }
-            for index, section in enumerate(sections, start=1)
+            for course, section in enrollments
         ],
-        "unknown_section_ids": [str(section) for section in unknown_sections],
-        "students": [
-            {"student_id": str(student), "section_id": str(section)}
-            for student, section in students
-        ],
-        "unknown_student_ids": [str(student) for student in unknown_students],
     }
 
 
-def _client(opener, *, base_url: str = "http://identity.invalid", token: str = "service-token"):
-    return B4TargetClient(
+def _authorization_client(opener, *, base_url: str = "http://identity.invalid"):
+    return B4AuthorizationClient(
         base_url=base_url,
-        service_token=token,
+        service_token="service-token",
         timeout_seconds=2.5,
         opener=opener,
     )
 
 
-def test_validate_targets_sends_the_documented_request():
+def _notifier(opener, *, base_url: str = "http://identity.invalid"):
+    return B4AssignmentNotifier(
+        base_url=base_url,
+        service_token="service-token",
+        timeout_seconds=2.5,
+        opener=opener,
+    )
+
+
+# --- authorization directory ---------------------------------------------
+
+
+def test_authorization_sends_the_documented_request():
+    captured: dict = {}
+
+    def opener(request, timeout):
+        captured["url"] = request.full_url
+        captured["method"] = request.get_method()
+        captured["headers"] = {key.lower(): value for key, value in request.headers.items()}
+        captured["timeout"] = timeout
+        return _json_response(_authorization_payload())
+
+    authorization = _authorization_client(
+        opener, base_url="http://identity.invalid/"
+    ).user_authorization(STUDENT_A)
+    assert (
+        captured["url"]
+        == f"http://identity.invalid/api/v1/internal/users/{STUDENT_A}/authorization"
+    )
+    assert captured["method"] == "GET"
+    assert captured["headers"]["authorization"] == "Bearer service-token"
+    assert captured["timeout"] == 2.5
+    assert authorization.user_id == STUDENT_A
+    assert authorization.platform_roles == frozenset({"student"})
+    assert authorization.enrolled_course_ids == frozenset({COURSE_A})
+    assert authorization.is_enrolled_in(COURSE_A) is True
+    assert authorization.is_enrolled_in(COURSE_B) is False
+
+
+def test_authorization_projects_course_grants_and_enrollments():
+    def opener(request, timeout):
+        return _json_response(
+            _authorization_payload(
+                roles=("teacher",),
+                course_grants=(COURSE_A, COURSE_B),
+                enrollments=((COURSE_B, SECTION_A),),
+            )
+        )
+
+    authorization = _authorization_client(opener).user_authorization(STUDENT_A)
+    assert authorization.course_grants == frozenset({COURSE_A, COURSE_B})
+    assert authorization.enrolled_course_ids == frozenset({COURSE_B})
+
+
+def test_authorization_non_200_is_unavailable_not_an_empty_answer():
+    """A 404 is an outage signal, never "this account has no memberships"."""
+    client = _authorization_client(
+        lambda request, timeout: _json_response(_authorization_payload(), status=404)
+    )
+    with pytest.raises(AuthorizationUnavailable):
+        client.user_authorization(STUDENT_A)
+
+
+def test_authorization_network_error_is_unavailable():
+    def opener(request, timeout):
+        raise OSError("connection refused")
+
+    with pytest.raises(AuthorizationUnavailable):
+        _authorization_client(opener).user_authorization(STUDENT_A)
+
+
+def test_authorization_malformed_json_is_unavailable():
+    client = _authorization_client(lambda request, timeout: _Response(b"not json at all"))
+    with pytest.raises(AuthorizationUnavailable):
+        client.user_authorization(STUDENT_A)
+
+
+def test_authorization_incomplete_body_is_unavailable():
+    payload = _authorization_payload()
+    del payload["enrollments"]
+    client = _authorization_client(lambda request, timeout: _json_response(payload))
+    with pytest.raises(AuthorizationUnavailable):
+        client.user_authorization(STUDENT_A)
+
+
+def test_authorization_answer_for_a_different_account_is_unavailable():
+    other = uuid.uuid4()
+    client = _authorization_client(
+        lambda request, timeout: _json_response(_authorization_payload(user_id=other))
+    )
+    with pytest.raises(AuthorizationUnavailable):
+        client.user_authorization(STUDENT_A)
+
+
+# --- assignment notification hand-off ------------------------------------
+
+
+def _notify(client: B4AssignmentNotifier, *, assignment_id=None, due_at=None):
+    return client.notify(
+        assignment_id=assignment_id or uuid.uuid4(),
+        course_id=COURSE_A,
+        title="Week 1",
+        due_at=due_at,
+        published_at=datetime(2026, 11, 8, 9, 30, tzinfo=UTC),
+    )
+
+
+def test_notification_sends_the_documented_request():
     captured: dict = {}
 
     def opener(request, timeout):
@@ -83,81 +191,63 @@ def test_validate_targets_sends_the_documented_request():
         captured["headers"] = {key.lower(): value for key, value in request.headers.items()}
         captured["body"] = json.loads(bytes(request.data).decode("utf-8"))
         captured["timeout"] = timeout
-        return _json_response(_payload(sections=(SECTION_A,)))
+        return _json_response({"status": "pending"}, status=201)
 
-    validation = _client(opener, base_url="http://identity.invalid/").validate_targets(
-        course_id=COURSE_A,
-        section_ids=(SECTION_A,),
-        student_ids=(STUDENT_A,),
+    assignment_id = uuid.uuid4()
+    _notify(
+        _notifier(opener, base_url="http://identity.invalid/"),
+        assignment_id=assignment_id,
+        due_at=datetime(2026, 11, 20, 23, 59, tzinfo=UTC),
     )
-    assert captured["url"] == "http://identity.invalid/api/v1/internal/course-targets/validate"
+    assert captured["url"] == "http://identity.invalid/api/v1/internal/assignment-notifications"
     assert captured["method"] == "POST"
     assert captured["headers"]["authorization"] == "Bearer service-token"
     assert captured["headers"]["content-type"] == "application/json"
     assert captured["body"] == {
+        "assignment_id": str(assignment_id),
         "course_id": str(COURSE_A),
-        "section_ids": [str(SECTION_A)],
-        "student_ids": [str(STUDENT_A)],
+        "title": "Week 1",
+        "due_at": "2026-11-20T23:59:00.000Z",
+        "published_at": "2026-11-08T09:30:00.000Z",
     }
     assert captured["timeout"] == 2.5
-    assert validation.valid_section_ids == frozenset({SECTION_A})
 
 
-def test_validate_targets_projects_valid_and_unknown_ids():
-    student_be = uuid.uuid4()
+def test_notification_without_a_due_date_sends_null():
+    captured: dict = {}
 
     def opener(request, timeout):
-        return _json_response(
-            _payload(
-                sections=(SECTION_A, SECTION_A2),
-                students=((STUDENT_A, SECTION_A),),
-                unknown_sections=(SECTION_B,),
-                unknown_students=(student_be,),
-            )
-        )
+        captured["body"] = json.loads(bytes(request.data).decode("utf-8"))
+        return _json_response({"status": "pending"}, status=201)
 
-    validation = _client(opener).validate_targets(
-        course_id=COURSE_A,
-        section_ids=(SECTION_A, SECTION_A2, SECTION_B),
-        student_ids=(STUDENT_A, student_be),
-    )
-    assert validation.valid_section_ids == frozenset({SECTION_A, SECTION_A2})
-    assert validation.unknown_section_ids == (SECTION_B,)
-    assert validation.valid_student_ids == frozenset({STUDENT_A})
-    assert validation.unknown_student_ids == (student_be,)
+    _notify(_notifier(opener))
+    assert captured["body"]["due_at"] is None
 
 
-def test_non_200_response_is_unavailable():
-    client = _client(lambda request, timeout: _json_response(_payload(), status=500))
-    with pytest.raises(TargetsUnavailable):
-        client.validate_targets(course_id=COURSE_A, section_ids=(SECTION_A,), student_ids=())
+def test_notification_accepts_a_repeat_answer():
+    for status in (200, 201):
+
+        def opener(request, timeout, _status=status):
+            return _json_response({}, status=_status)
+
+        _notify(_notifier(opener))
 
 
-def test_network_error_is_unavailable():
+@pytest.mark.parametrize("status", sorted((404, 409, 422)))
+def test_notification_rejection_keeps_the_declared_status(status: int):
+    with pytest.raises(NotificationRejected) as error:
+        _notify(_notifier(lambda request, timeout: _json_response({}, status=status)))
+    assert error.value.status_code == status
+
+
+def test_notification_server_error_is_unavailable():
+    with pytest.raises(NotificationUnavailable):
+        _notify(_notifier(lambda request, timeout: _json_response({}, status=500)))
+
+
+def test_notification_network_error_is_unavailable():
     def opener(request, timeout):
         raise OSError("connection refused")
 
-    with pytest.raises(TargetsUnavailable):
-        _client(opener).validate_targets(
-            course_id=COURSE_A, section_ids=(SECTION_A,), student_ids=()
-        )
-
-
-def test_malformed_json_is_unavailable():
-    client = _client(lambda request, timeout: _Response(b"not json at all"))
-    with pytest.raises(TargetsUnavailable):
-        client.validate_targets(course_id=COURSE_A, section_ids=(SECTION_A,), student_ids=())
-
-
-def test_incomplete_response_is_unavailable():
-    payload = _payload(sections=(SECTION_A,))
-    del payload["students"]
-    client = _client(lambda request, timeout: _json_response(payload))
-    with pytest.raises(TargetsUnavailable):
-        client.validate_targets(course_id=COURSE_A, section_ids=(SECTION_A,), student_ids=())
-
-
-def test_answer_for_a_different_course_is_unavailable():
-    client = _client(lambda request, timeout: _json_response(_payload(course_id=COURSE_B)))
-    with pytest.raises(TargetsUnavailable):
-        client.validate_targets(course_id=COURSE_A, section_ids=(SECTION_A,), student_ids=())
+    with pytest.raises(NotificationUnavailable):
+        _notify(_notifier(opener))

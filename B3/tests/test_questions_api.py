@@ -27,8 +27,6 @@ from .conftest import (
     COURSE_A,
     COURSE_B,
     COURSE_C,
-    SECTION_A,
-    SECTION_A2,
     draft_payload,
 )
 from .support import PNG_BYTES, b64, http_attestation, http_publish
@@ -1864,7 +1862,6 @@ def test_assignment_create_and_list(client, auth_headers, published_question):
         "/api/v1/assignments",
         json={
             "course_id": str(COURSE_A),
-            "section_ids": [str(SECTION_A), str(SECTION_A2)],
             "title": "Week 1",
             "question_version_ids": [version["question_version_id"]],
         },
@@ -1873,8 +1870,10 @@ def test_assignment_create_and_list(client, auth_headers, published_question):
     assert response.status_code == 201, response.text
     body = response.json()
     assert body["question_version_ids"] == [version["question_version_id"]]
-    assert body["section_ids"] == [str(SECTION_A), str(SECTION_A2)]
-    assert body["student_ids"] == []
+    # v0.32.0: course-level assignment, no target lists, and a notification hand-off state.
+    assert "section_ids" not in body
+    assert "student_ids" not in body
+    assert body["notification_state"] == "scheduled"
     assert collect_keys(body) & PROTECTED_KEYS == set()
 
     listing = client.get(
@@ -1897,7 +1896,6 @@ def test_assignment_with_a_draft_version_is_conflict(client, auth_headers):
         "/api/v1/assignments",
         json={
             "course_id": str(COURSE_A),
-            "section_ids": [str(SECTION_A)],
             "title": "Draft reference",
             "question_version_ids": [version_id],
         },
@@ -1912,7 +1910,6 @@ def test_assignment_detail_reads_one_assignment_by_id(client, auth_headers, publ
         "/api/v1/assignments",
         json={
             "course_id": str(COURSE_A),
-            "section_ids": [str(SECTION_A), str(SECTION_A2)],
             "title": "Detail read",
             "question_version_ids": [version["question_version_id"]],
         },
@@ -1926,7 +1923,6 @@ def test_assignment_detail_reads_one_assignment_by_id(client, auth_headers, publ
     body = detail.json()
     assert body["assignment_id"] == assignment_id
     assert body["course_id"] == str(COURSE_A)
-    assert body["section_ids"] == [str(SECTION_A), str(SECTION_A2)]
     assert body["question_version_ids"] == [version["question_version_id"]]
     assert collect_keys(body) & PROTECTED_KEYS == set()
 
@@ -1939,7 +1935,6 @@ def test_assignment_detail_outside_the_course_scope_is_forbidden(
         "/api/v1/assignments",
         json={
             "course_id": str(COURSE_A),
-            "section_ids": [str(SECTION_A)],
             "title": "Out of scope",
             "question_version_ids": [version["question_version_id"]],
         },

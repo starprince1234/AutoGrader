@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, text
-from sqlalchemy.exc import ProgrammingError
+from sqlalchemy.exc import DBAPIError, ProgrammingError
 
 from autograder_b3.infra.models import PROTECTED_TABLES
 
@@ -33,8 +33,6 @@ REQUIRED_TABLES = {
     "reference_attestations",
     "assignments",
     "assignment_items",
-    "assignment_sections",
-    "assignment_students",
     "event_inbox",
     "event_outbox",
     "consumption_counters",
@@ -320,22 +318,15 @@ def test_constraint_names_follow_the_convention(owner_engine):
         assert name.startswith(prefix), f"{name} should start with {prefix}"
 
 
-def test_assignment_targets_replace_the_single_section_column(owner_engine):
-    """Migration 0008: the target model is two tables, not a column on ``assignments``.
+def test_course_level_assignments_replace_the_target_tables(owner_engine):
+    """Migration 0010: the hand-picked target model is gone; the hand-off state is in.
 
-    The rework cannot keep ``assignments.section_id``: a set of target sections plus an
-    optional student narrowing list is not representable in one value, and a leftover
-    column would become a second, silently diverging answer to "who is this for".
+    v0.32.0 makes an assignment course-level: keeping ``assignment_sections`` /
+    ``assignment_students`` would leave a second answer to "who is this for", and keeping
+    ``assignments.section_id`` would leave a third. The notification columns are the only
+    new state -- delivery lives in B4.
     """
     with owner_engine.connect() as connection:
-        columns = set(
-            connection.execute(
-                text(
-                    "SELECT column_name FROM information_schema.columns "
-                    "WHERE table_schema = 'b3' AND table_name = 'assignments'"
-                )
-            ).scalars()
-        )
         tables = set(
             connection.execute(
                 text(
@@ -343,57 +334,70 @@ def test_assignment_targets_replace_the_single_section_column(owner_engine):
                 )
             ).scalars()
         )
-        indexes = set(
-            connection.execute(
-                text("SELECT indexname FROM pg_indexes WHERE schemaname = 'b3'")
-            ).scalars()
-        )
+        columns = {
+            row.column_name: (row.data_type, row.is_nullable, row.column_default)
+            for row in connection.execute(
+                text(
+                    "SELECT column_name, data_type, is_nullable, column_default "
+                    "FROM information_schema.columns "
+                    "WHERE table_schema = 'b3' AND table_name = 'assignments'"
+                )
+            )
+        }
         constraints = {
             row.conname
             for row in connection.execute(
                 text(
                     "SELECT conname FROM pg_constraint "
                     "WHERE connamespace = 'b3'::regnamespace AND conname IN ("
-                    "'pk_assignment_sections', 'pk_assignment_students', "
-                    "'fk_assignment_sections_assignment_id', "
-                    "'fk_assignment_students_assignment_id')"
+                    "'ck_assignments_notification_state')"
                 )
             )
         }
+        indexes = set(
+            connection.execute(
+                text("SELECT indexname FROM pg_indexes WHERE schemaname = 'b3'")
+            ).scalars()
+        )
+    assert {"assignment_sections", "assignment_students"} & tables == set()
     assert "section_id" not in columns
-    assert "ix_assignments_section_id" not in indexes
-    assert {"assignment_sections", "assignment_students"} <= tables
-    assert {
-        "pk_assignment_sections",
-        "pk_assignment_students",
-        "fk_assignment_sections_assignment_id",
-        "fk_assignment_students_assignment_id",
-    } == constraints
-    assert "ix_assignment_sections_section_id" in indexes
-    assert "ix_assignment_students_student_id" in indexes
+    assert columns["notification_state"] == ("text", "NO", "'pending'::text")
+    assert columns["notification_scheduled_at"] == (
+        "timestamp with time zone",
+        "YES",
+        None,
+    )
+    assert constraints == {"ck_assignments_notification_state"}
+    assert "ix_assignment_sections_section_id" not in indexes
+    assert "ix_assignment_students_student_id" not in indexes
+    assert "ix_assignments_course_id" in indexes
 
 
-def test_app_role_reads_but_cannot_write_assignment_targets(database):
-    """The create path runs on the internal role; the ordinary role only reads targets."""
-    with database.app_session() as session:
-        session.execute(text("SELECT * FROM b3.assignment_sections LIMIT 1"))
-        session.execute(text("SELECT * FROM b3.assignment_students LIMIT 1"))
-
-    for table, student_column in (
-        ("assignment_sections", "section_id"),
-        ("assignment_students", "student_id"),
-    ):
-        with pytest.raises(ProgrammingError) as error:
-            with database.app_session() as session:
-                session.execute(
-                    text(
-                        f"INSERT INTO b3.{table} (assignment_id, {student_column}, created_at) "
-                        "VALUES (gen_random_uuid(), gen_random_uuid(), now())"
-                    )
+def test_notification_state_only_moves_through_the_declared_values(owner_engine):
+    """The CHECK constraint is the database half of the closed enum."""
+    with pytest.raises(DBAPIError):
+        with owner_engine.connect() as connection:
+            connection.execute(
+                text(
+                    "INSERT INTO b3.assignments (assignment_id, course_id, title, status, "
+                    "notification_state, created_at, updated_at) VALUES "
+                    "(gen_random_uuid(), gen_random_uuid(), 'bad state', 'open', "
+                    "'delivered', now(), now())"
                 )
-        assert "permission denied" in str(error.value).lower(), table
+            )
+
+
+def test_app_role_reads_but_cannot_change_the_notification_state(database):
+    """The hand-off runs on the internal role; the ordinary role only reads assignments."""
+    with database.app_session() as session:
+        session.execute(text("SELECT * FROM b3.assignments LIMIT 1"))
+
+    with pytest.raises(ProgrammingError) as error:
         with database.app_session() as session:
-            session.rollback()
+            session.execute(text("UPDATE b3.assignments SET notification_state = 'unavailable'"))
+    assert "permission denied" in str(error.value).lower()
+    with database.app_session() as session:
+        session.rollback()
 
 
 def test_migration_downgrade_then_upgrade_round_trips(postgres_owner_url):

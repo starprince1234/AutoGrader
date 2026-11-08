@@ -66,6 +66,7 @@ from autograder_b2.grades import (
     parse_timestamp,
     resolve_export_columns,
 )
+from autograder_b2.integration.b4_authorization import AuthorizationUnavailable
 from autograder_b2.logging.logger import log_dependency_unavailable, log_event
 from autograder_b2.runtime import B2Runtime
 
@@ -128,6 +129,14 @@ def build_grades_router(runtime: B2Runtime) -> APIRouter:
             )
         except AuthorizationError:
             return problem_response(FORBIDDEN, instance)
+        except AuthorizationUnavailable as error:
+            # 学生读者的"当前归属"查不了（B4 授权目录未配置/不可达）：503，不是 403。
+            # 教师/管理员读者不受影响（不查该目录）。
+            log_dependency_unavailable(
+                logger, dependency="b4-authorization", error=error, stage="grades"
+            )
+            runtime.record_failure()
+            return problem_response(SERVICE_UNAVAILABLE, instance)
         except (InvalidFilterError, InvalidCursorError) as error:
             # 过滤与游标的校验**只有**服务层这一处；这里只做状态码映射。
             return _unprocessable(instance, str(error))
@@ -193,6 +202,13 @@ def build_grades_router(runtime: B2Runtime) -> APIRouter:
             )
         except AuthorizationError:
             return problem_response(FORBIDDEN, instance)
+        except AuthorizationUnavailable as error:
+            # 与查询同一口径：学生读者的当前归属查不了 ⇒ 503（导出同样不得放宽）。
+            log_dependency_unavailable(
+                logger, dependency="b4-authorization", error=error, stage="grades export"
+            )
+            runtime.record_failure()
+            return problem_response(SERVICE_UNAVAILABLE, instance)
         except UnsupportedExportFormat as error:
             return _unprocessable(instance, str(error))
         except (InvalidFilterError, InvalidCursorError) as error:

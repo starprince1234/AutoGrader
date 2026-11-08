@@ -15,9 +15,11 @@
 | **总体评价 / 细节评价** | 课程需求的措辞：总体评价 = 分数、通过与否、结论摘要；细节评价 = 逐规则与逐用例的结论 | 对应 `evaluation-report.schema.json` 的 `overall` 与 `static_findings`/`case_evidence` |
 | **题目（question）** | 逻辑实体，跨版本稳定 | `question_id`；其内容在版本中 |
 | **题目版本（question version）** | 题目某一次发布的**不可变**内容快照 | `question_version_id`；发布后不可修改，改必须出新版本 |
-| **作业集合（assignment）** | 布置给某个课序的一组已发布题目版本 | `assignment_id`；只能引用已发布版本 |
-| **课序（section）** | 课程下的一个开班 | `section_id`；名单、作业、成绩都按课序组织 |
-| **选课关系（enrollment）** | 学生与课序的关联 | `enrollment_id`；名单导入产生 |
+| **作业集合（assignment）** | 属于**一门课程**、覆盖该课程全部课序（section）与班级（class）的一组已发布题目版本 | `assignment_id`；只能引用已发布版本；没有手选课序/学生名单（v0.32.0） |
+| **课序（section）** | 课程下的一个开班（课序） | `section_id`；一个课序含一个或多个班级；名单按课序/班级组织，作业按课程组织 |
+| **班级（class）** | 课序下的一个学生分组 | `class_id`；名单行属于某个班级；同一课序可含多个班级，旧模型「一个班 = 一个课序」已移除 |
+| **选课关系（enrollment）** | 学生在一门课程的一个课序的一个班级中的有效在册行 | `enrollment_id`；同一学生同一课程最多一条有效行（数据库部分唯一索引兜底）；`user_id` 为空表示尚未注册 |
+| **作业通知（assignment notification）** | 作业发布时按课程有效名单生成的收件人快照与逐人投递状态 | `notification_id`；「已安排（scheduled）」不等于「已送达（sent）」；skipped 原因与失败投递必须可区分 |
 | **题目回答次数分布** | 课程需求 `RQ-B-3-30` 的措辞 | 实现为作答次数、通过率、得分分布、失败类别分布（见 `api/events.md` §3.4 的口径说明） |
 
 ## 2. 运行时与架构

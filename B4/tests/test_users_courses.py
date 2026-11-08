@@ -11,9 +11,17 @@ import uuid
 from datetime import UTC, datetime
 
 import pytest
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 
-from autograder_b4.db.tables import audit_records, courses, enrollments, roles, users
+from autograder_b4.db.tables import (
+    audit_records,
+    classes,
+    courses,
+    enrollments,
+    roles,
+    sections,
+    users,
+)
 
 PASSWORD = "correct horse battery staple"
 
@@ -517,9 +525,19 @@ def test_create_course_returns_the_stored_course(client, teacher, sign_in_as) ->
     )
     assert response.status_code == 201, response.text
     body = response.json()
-    assert set(body) == {"course_id", "course_code", "title"}
+    # `CoursePublic` also carries the concurrency stamp and the section count; the create
+    # response and the list rows must agree on the schema the client renders.
+    assert set(body) == {
+        "course_id",
+        "course_code",
+        "title",
+        "updated_at",
+        "section_count",
+    }
     assert body["course_code"] == "CS102"
     assert body["title"] == "Data Structures"
+    assert body["section_count"] == 0
+    assert body["updated_at"]
 
 
 def test_create_section_returns_the_stored_section(client, teacher, sign_in_as, factory) -> None:
@@ -532,18 +550,93 @@ def test_create_section_returns_the_stored_section(client, teacher, sign_in_as, 
     )
     assert response.status_code == 201, response.text
     body = response.json()
-    assert set(body) == {"section_id", "course_id", "section_code", "term", "created_at"}
+    # `SectionPublic` replaces the old borrowed `class_name` with `class_count`: a section is
+    # a teaching group that may hold several classes (v0.32.0).
+    assert set(body) <= {
+        "section_id",
+        "course_id",
+        "section_code",
+        "term",
+        "class_count",
+        "enrollment_count",
+        "created_at",
+    }
+    assert {"section_id", "course_id", "section_code", "term", "created_at"} <= set(body)
     assert body["course_id"] == str(course_id)
     assert body["section_code"] == "02"
     assert body["term"] == "2027S"
+    assert body["enrollment_count"] == 0
 
-    # The read shape and the create shape must stay identical: the client renders both with
-    # one type, so a field that only one of them carries becomes a silent undefined.
     listed = client.get(
         f"/api/v1/courses/{course_id}/sections", headers=sign_in_as("teacher").headers
     ).json()
-    assert set(listed["items"][0]) == set(body)
-    assert listed["items"][0]["section_id"] == body["section_id"]
+    row = listed["items"][0]
+    assert set(row) == {
+        "section_id",
+        "course_id",
+        "section_code",
+        "term",
+        "class_count",
+        "enrollment_count",
+        "created_at",
+    }
+    assert row["section_id"] == body["section_id"]
+    assert row["class_count"] == 0
+    assert row["enrollment_count"] == 0
+
+
+def test_section_listing_reports_class_and_roster_counts(
+    client, teacher, sign_in_as, factory
+) -> None:
+    """`SectionPublic` carries `class_count` instead of borrowing one class's name."""
+    course_id = factory.course(code="CS104")
+    factory.grant(user_id=teacher, course_id=course_id, role="teacher")
+    created = client.post(
+        f"/api/v1/courses/{course_id}/sections",
+        headers=sign_in_as("teacher").headers,
+        json={"section_code": "01"},
+    )
+    assert created.status_code == 201, created.text
+    section_id = uuid.UUID(created.json()["section_id"])
+
+    empty = client.get(
+        f"/api/v1/courses/{course_id}/sections", headers=sign_in_as("teacher").headers
+    ).json()["items"][0]
+    assert empty["class_count"] == 0
+    assert empty["enrollment_count"] == 0
+
+    first = client.post(
+        f"/api/v1/sections/{section_id}/classes",
+        headers=sign_in_as("teacher").headers,
+        json={"class_name": "甲班"},
+    )
+    second = client.post(
+        f"/api/v1/sections/{section_id}/classes",
+        headers=sign_in_as("teacher").headers,
+        json={"class_name": "乙班"},
+    )
+    assert first.status_code == 201 and second.status_code == 201
+    factory.enrollment(
+        class_id=uuid.UUID(first.json()["class_id"]),
+        student_number="20230001",
+        display_name="学生一",
+    )
+    factory.enrollment(
+        class_id=uuid.UUID(first.json()["class_id"]),
+        student_number="20230002",
+        display_name="学生二",
+    )
+    factory.enrollment(
+        class_id=uuid.UUID(second.json()["class_id"]),
+        student_number="20230003",
+        display_name="学生三",
+    )
+
+    listed = client.get(
+        f"/api/v1/courses/{course_id}/sections", headers=sign_in_as("teacher").headers
+    ).json()["items"][0]
+    assert listed["class_count"] == 2
+    assert listed["enrollment_count"] == 3
 
 
 # --------------------------------------------------------------------- enrollments
@@ -585,20 +678,34 @@ def test_update_enrollment_honours_optimistic_concurrency(
     assert name == "New Name"
 
 
-def test_update_enrollment_rejects_a_duplicate_student_number(
+def test_update_enrollment_rejects_a_number_already_active_in_the_course(
     client, teacher, sign_in_as, factory
 ):
+    """Uniqueness is per course since v0.32.0: a student has one active 课序 per course."""
     course_id = factory.course(code="CS101")
     factory.grant(user_id=teacher, course_id=course_id, role="teacher")
-    section_id = factory.section(course_id=course_id, code="01")
-    first = factory.enrollment(section_id=section_id, student_number="20230001")
-    factory.enrollment(section_id=section_id, student_number="20230002")
+    first_section = factory.section(course_id=course_id, code="01")
+    second_section = factory.section(course_id=course_id, code="02")
+    first = factory.enrollment(section_id=first_section, student_number="20230001")
+    factory.enrollment(section_id=second_section, student_number="20230002")
     response = client.patch(
         f"/api/v1/enrollments/{first}",
         headers=sign_in_as("teacher").headers,
         json={"student_number": "20230002"},
     )
     assert response.status_code == 409
+
+    # Another course is a different enrollment: the same student may take two courses.
+    other_course = factory.course(code="CS201")
+    factory.grant(user_id=teacher, course_id=other_course, role="teacher")
+    other_section = factory.section(course_id=other_course, code="01")
+    factory.enrollment(section_id=other_section, student_number="20230003")
+    allowed = client.patch(
+        f"/api/v1/enrollments/{first}",
+        headers=sign_in_as("teacher").headers,
+        json={"student_number": "20230003"},
+    )
+    assert allowed.status_code == 200, allowed.text
 
 
 def test_delete_enrollment_removes_the_row_and_audits(client, teacher, sign_in_as, factory, engine):
@@ -630,6 +737,78 @@ def test_enrollment_update_on_a_missing_row_is_404(client, teacher, sign_in_as):
     assert response.status_code == 404
 
 
+def test_delete_section_cascades_its_classes_and_roster(
+    client, teacher, sign_in_as, factory, engine
+) -> None:
+    """Deleting a 课序 removes its 班级 and their roster rows; the course stays."""
+    course_id = factory.course(code="CS101")
+    factory.grant(user_id=teacher, course_id=course_id, role="teacher")
+    section_id = factory.section(course_id=course_id, code="01")
+    first_class = factory.default_class(section_id)
+    second_class = factory.class_(section_id=section_id, class_name="二班")
+    factory.enrollment(
+        class_id=first_class, student_number="20230001", display_name="学生一"
+    )
+    factory.enrollment(class_id=second_class, student_number="20230002", display_name="学生二")
+
+    response = client.delete(
+        f"/api/v1/courses/{course_id}/sections/{section_id}",
+        headers=sign_in_as("teacher").headers,
+    )
+    assert response.status_code == 204, response.text
+
+    with engine.connect() as connection:
+        assert connection.execute(
+            select(func.count()).select_from(sections).where(sections.c.section_id == section_id)
+        ).scalar_one() == 0
+        assert connection.execute(
+            select(func.count()).select_from(classes).where(classes.c.section_id == section_id)
+        ).scalar_one() == 0
+        assert connection.execute(
+            select(func.count())
+            .select_from(enrollments)
+            .where(enrollments.c.course_id == course_id)
+        ).scalar_one() == 0
+        assert connection.execute(
+            select(func.count()).select_from(courses).where(courses.c.course_id == course_id)
+        ).scalar_one() == 1
+
+
+def test_delete_course_cascades_its_sections_classes_and_roster(
+    client, teacher, sign_in_as, factory, engine
+) -> None:
+    """Deleting a course removes the whole hierarchy; nothing is left pointing at it."""
+    course_id = factory.course(code="CS101")
+    factory.grant(user_id=teacher, course_id=course_id, role="teacher")
+    first_section = factory.section(course_id=course_id, code="01")
+    second_section = factory.section(course_id=course_id, code="02")
+    factory.enrollment(section_id=first_section, student_number="20230001", display_name="学生一")
+    factory.enrollment(section_id=second_section, student_number="20230002", display_name="学生二")
+
+    response = client.delete(
+        f"/api/v1/courses/{course_id}", headers=sign_in_as("teacher").headers
+    )
+    assert response.status_code == 204, response.text
+
+    with engine.connect() as connection:
+        assert connection.execute(
+            select(func.count()).select_from(courses).where(courses.c.course_id == course_id)
+        ).scalar_one() == 0
+        assert connection.execute(
+            select(func.count()).select_from(sections).where(sections.c.course_id == course_id)
+        ).scalar_one() == 0
+        assert connection.execute(
+            select(func.count())
+            .select_from(classes)
+            .where(classes.c.section_id.in_([first_section, second_section]))
+        ).scalar_one() == 0
+        assert connection.execute(
+            select(func.count())
+            .select_from(enrollments)
+            .where(enrollments.c.course_id == course_id)
+        ).scalar_one() == 0
+
+
 def test_enrollment_listing_exposes_the_platform_student_id(
     client, teacher, sign_in_as, factory
 ):
@@ -653,11 +832,20 @@ def test_enrollment_listing_exposes_the_platform_student_id(
     items = {item["student_number"]: item for item in listed["items"]}
     assert items["20230001"]["student_id"] == str(matched)
     assert items["20230002"]["student_id"] is None
-    # `EnrollmentPublic` is `additionalProperties: false`, so the exact key set is the
-    # contract: a field added or dropped without a contract change fails here.
+    # v0.32.0: a row names the whole hierarchy, so a client can render 课程/课序/班级 without
+    # a second lookup. `EnrollmentPublic` is `additionalProperties: false`, so the exact key
+    # set is the contract: a field added or dropped without a contract change fails here.
+    class_id = factory.default_class(section_id)
+    assert {item["course_id"] for item in items.values()} == {str(course_id)}
+    assert {item["section_id"] for item in items.values()} == {str(section_id)}
+    assert {item["class_id"] for item in items.values()} == {str(class_id)}
+    assert {item["class_name"] for item in items.values()} == {"01班"}
     assert set(items["20230001"]) == {
         "enrollment_id",
+        "course_id",
         "section_id",
+        "class_id",
+        "class_name",
         "student_id",
         "student_number",
         "display_name",
@@ -726,6 +914,21 @@ def test_every_management_write_leaves_an_audit_record(
         json={"section_code": "01"},
     ).json()
     section_id = uuid.UUID(created["section_id"])
+    class_created = client.post(
+        f"/api/v1/sections/{section_id}/classes",
+        headers=sign_in_as("teacher").headers,
+        json={"class_name": "一班"},
+    )
+    assert class_created.status_code == 201, class_created.text
+    class_id = class_created.json()["class_id"]
+    assert client.patch(
+        f"/api/v1/classes/{class_id}",
+        headers=sign_in_as("teacher").headers,
+        json={"class_name": "二班"},
+    ).status_code == 200
+    assert client.delete(
+        f"/api/v1/classes/{class_id}", headers=sign_in_as("teacher").headers
+    ).status_code == 204
     enrollment_id = factory.enrollment(section_id=section_id, student_number="20230001")
     client.patch(
         f"/api/v1/enrollments/{enrollment_id}",
@@ -740,6 +943,9 @@ def test_every_management_write_leaves_an_audit_record(
         "user.updated",
         "user.deactivated",
         "section.created",
+        "class.created",
+        "class.renamed",
+        "class.deleted",
         "enrollment.updated",
     } <= actions
 

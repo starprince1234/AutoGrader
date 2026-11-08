@@ -92,7 +92,9 @@ from autograder_b2.integration.assignments import (
     AssignmentAudience,
     AssignmentUnavailable,
 )
+from autograder_b2.integration.b4_authorization import AuthorizationUnavailable
 from autograder_b2.storage.cas import ContentAddressedStore
+from tests.authorization_fixture import FakeAuthorizationDirectory
 from tests.conftest import requires_postgres
 from tests.imap_fixture import FixtureMessage, ImapFixtureServer
 
@@ -186,8 +188,6 @@ def assignment_audience(
     *,
     status: str = "open",
     course_id: str = COURSE_ID,
-    section_ids: Sequence[str] = (SECTION_ID,),
-    student_ids: Sequence[str] = (),
     question_version_ids: Sequence[str] = (Q1, Q2),
 ) -> AssignmentAudience:
     return AssignmentAudience(
@@ -195,8 +195,6 @@ def assignment_audience(
         course_id=course_id,
         title="unix homework",
         status=status,
-        section_ids=tuple(section_ids),
-        student_ids=tuple(student_ids),
         question_version_ids=tuple(question_version_ids),
     )
 
@@ -261,6 +259,7 @@ class Harness:
     intake: SubmissionIntakeService
     directory: FakeSenderDirectory
     assignments: FakeAssignmentDirectory
+    authorization: FakeAuthorizationDirectory
     verification: EmailVerificationService
     signer: _Signer
     clock: Clock
@@ -274,6 +273,7 @@ class Harness:
             quarantines=QuarantineStore(self.engine),
             verification=self.verification,
             assignment_directory=self.assignments,
+            authorization_directory=self.authorization,
         )
 
 
@@ -324,22 +324,31 @@ def harness(
             ),
         }
     )
+    authorization = FakeAuthorizationDirectory()
+    # 默认：STUDENT 当前在 COURSE_ID 的 SECTION_ID 课序（绝大多数用例的前提）。
+    authorization.enroll(STUDENT_ID, course_id=COURSE_ID, section_id=SECTION_ID)
     authenticator = JwksAuthenticator(signer.jwks, issuer=ISSUER, audience=AUDIENCE)
     verification = EmailVerificationService(
         engine=engine,
         authenticator=authenticator,
         directory=directory,
         assignment_directory=assignments,
+        authorization_directory=authorization,
         now=clock,
     )
     return Harness(
         engine=engine,
         store=store,
         intake=SubmissionIntakeService(
-            engine, store, LIMITS, assignment_directory=assignments
+            engine,
+            store,
+            LIMITS,
+            assignment_directory=assignments,
+            authorization_directory=authorization,
         ),
         directory=directory,
         assignments=assignments,
+        authorization=authorization,
         verification=verification,
         signer=signer,
         clock=clock,
@@ -559,28 +568,47 @@ def test_issued_challenge_is_bound_to_the_assignment_and_stores_only_a_digest(
 
 
 def test_challenge_audience_checks(harness: Harness) -> None:
-    # 课程不符 → 403（令牌本身覆盖请求的课程/课序，作业却属于另一门课）。
+    # 作业属于另一门课 → 403（令牌覆盖请求课程，但作业不在该课程）。
     other_course = "99999999-9999-4999-8999-999999999999"
     harness.assignments.audience = assignment_audience(course_id=other_course)
     with pytest.raises(AuthorizationError):
         issue(harness)
 
-    # 课序不在作业目标内 → 403。
-    harness.assignments.audience = assignment_audience(
-        section_ids=("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",)
-    )
+    # 作业恢复为本课程；学生**当前不在课程里** → 403（课程级受众的唯一依据是 B4 当前选课）。
+    harness.assignments.audience = assignment_audience()
+    harness.authorization.unenroll(STUDENT_ID, COURSE_ID)
     with pytest.raises(AuthorizationError):
         issue(harness)
+    assert table_count(harness.engine, email_verification_challenges) == 0
 
-    # 作业收窄到名单，本人不在名单 → 403。
-    harness.assignments.audience = assignment_audience(student_ids=(OTHER_STUDENT_ID,))
-    with pytest.raises(AuthorizationError):
-        issue(harness)
-
-    # 本人在名单 → 可以签发。
-    harness.assignments.audience = assignment_audience(student_ids=(STUDENT_ID,))
-    assert issue(harness).assignment_id == ASSIGNMENT_ID
+    # 学生重新在课程里（另一个课序）→ 可以签发，且挑战绑定的是**权威** section。
+    other_section = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    harness.authorization.enroll(STUDENT_ID, course_id=COURSE_ID, section_id=other_section)
+    issued = issue(harness)
+    assert issued.assignment_id == ASSIGNMENT_ID
+    row = only_row(harness.engine, email_verification_challenges)
+    assert row["section_id"] == uuid.UUID(other_section)
     assert table_count(harness.engine, email_verification_challenges) == 1
+
+
+def test_challenge_is_bound_to_the_authoritative_section_not_the_requested_one(
+    harness: Harness,
+) -> None:
+    """请求里的 section 被忽略：挑战绑定 B4 当前 enrollment 的 section。"""
+    authoritative = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+    harness.authorization.enroll(STUDENT_ID, course_id=COURSE_ID, section_id=authoritative)
+    issued = issue(harness)  # 请求/令牌作用域仍用 SECTION_ID
+    assert table_count(harness.engine, email_verification_challenges) == 1
+    row = only_row(harness.engine, email_verification_challenges)
+    assert row["section_id"] == uuid.UUID(authoritative)
+    assert issued.code not in str(row)
+
+
+def test_authorization_directory_outage_is_an_infrastructure_error(harness: Harness) -> None:
+    harness.authorization.set_unavailable(True)
+    with pytest.raises(AuthorizationUnavailable):
+        issue(harness)
+    assert table_count(harness.engine, email_verification_challenges) == 0
 
 
 def test_challenge_requires_an_existing_open_assignment(harness: Harness) -> None:
@@ -594,7 +622,8 @@ def test_challenge_requires_an_existing_open_assignment(harness: Harness) -> Non
     assert table_count(harness.engine, email_verification_challenges) == 0
 
 
-def test_issuing_requires_submission_authority_for_the_scope(harness: Harness) -> None:
+def test_issuing_requires_current_enrollment_in_the_requested_course(harness: Harness) -> None:
+    """请求的课程没有 B4 当前归属 → 403（令牌 scope 不再参与判定）。"""
     other_course = "99999999-9999-4999-8999-999999999999"
     with pytest.raises(AuthorizationError):
         harness.verification.issue_challenge(
@@ -1185,6 +1214,54 @@ def test_assignment_directory_outage_fails_the_pull_without_quarantining(
     assert table_count(harness.engine, submissions) == 1
 
 
+def test_authorization_directory_outage_fails_the_pull_without_quarantining(
+    harness: Harness,
+) -> None:
+    """B4 授权目录不可用 → 本轮拉取失败（不写 checkpoint、不隔离），绝不记成"学生不在课程里"。"""
+    issued = issue(harness)
+    harness.authorization.set_unavailable(True)
+    with pytest.raises(AuthorizationUnavailable):
+        pull(harness, [verification_mail(issued.code)])
+    assert table_count(harness.engine, intake_quarantines) == 0
+    assert table_count(harness.engine, email_verifications) == 0
+    assert table_count(harness.engine, email_checkpoints) == 0
+    assert only_row(harness.engine, email_verification_challenges)["consumed_at"] is None
+    assert only_row(harness.engine, intake_state)["last_error_code"] == "identity_unavailable"
+
+    # 依赖恢复后同一封邮件可以被正常处理。
+    harness.authorization.set_unavailable(False)
+    report, _server = pull(harness, [verification_mail(issued.code)])
+    assert report.count("processed") == 1, report.outcomes
+    assert table_count(harness.engine, submissions) == 1
+
+
+def test_a_student_removed_from_the_course_cannot_submit_by_mail(harness: Harness) -> None:
+    """移出课程后邮件同样不能变成提交：可解释隔离（IMAP 没有 HTTP 403 通道），不消费挑战。"""
+    issued = issue(harness)
+    harness.authorization.unenroll(STUDENT_ID, COURSE_ID)
+    report, _server = pull(harness, [verification_mail(issued.code)])
+    assert report.count("quarantined") == 1, report.outcomes
+    quarantine = only_row(harness.engine, intake_quarantines)
+    assert quarantine["reason_code"] == "email_verification_rejected"
+    assert "no longer enrolled" in quarantine["detail"]
+    assert table_count(harness.engine, submissions) == 0
+    assert table_count(harness.engine, email_verifications) == 0
+    assert only_row(harness.engine, email_verification_challenges)["consumed_at"] is None
+
+
+def test_mail_submission_uses_the_current_enrollment_section(harness: Harness) -> None:
+    """邮件提交的 section 取**当前**权威归属（可能与挑战签发时的课序不同）。"""
+    issued = issue(harness)  # 签发时绑定 SECTION_ID
+    new_section = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+    harness.authorization.enroll(STUDENT_ID, course_id=COURSE_ID, section_id=new_section)
+    report, _server = pull(harness, [verification_mail(issued.code)])
+    assert report.count("processed") == 1, report.outcomes
+    rows = table_rows(harness.engine, submissions)
+    assert len(rows) == 1
+    assert str(rows[0]["section_id"]) == new_section
+    assert str(rows[0]["course_id"]) == COURSE_ID
+
+
 def test_a_closed_assignment_is_rejected_when_the_mail_arrives(harness: Harness) -> None:
     issued = issue(harness)
     harness.assignments.audience = assignment_audience(status="closed")
@@ -1339,22 +1416,11 @@ def test_create_challenge_endpoint_returns_the_code_once(
     assert row["assignment_id"] == uuid.UUID(ASSIGNMENT_ID)
 
 
-def test_create_challenge_endpoint_enforces_auth_scope_and_body(
+def test_create_challenge_endpoint_enforces_authentication_and_body(
     api_client: TestClient, harness: Harness
 ) -> None:
     endpoint = "/api/v1/email-verification/challenges"
     assert api_client.post(endpoint, json=_challenge_payload()).status_code == 401
-
-    uncovered = harness.signer.token(
-        user_id=STUDENT_ID,
-        scope=[{"course_id": "88888888-8888-4888-8888-888888888888"}],
-    )
-    assert (
-        api_client.post(
-            endpoint, json=_challenge_payload(), headers=_auth(uncovered)
-        ).status_code
-        == 403
-    )
 
     malformed = harness.signer.token(user_id=STUDENT_ID)
     assert (
@@ -1384,6 +1450,24 @@ def test_create_challenge_endpoint_enforces_auth_scope_and_body(
     assert table_count(harness.engine, email_verification_challenges) == 0
 
 
+def test_challenge_does_not_use_the_token_course_scope(
+    api_client: TestClient, harness: Harness
+) -> None:
+    """令牌的课程 `scope` 只是签发时的快照：学生当前在课程里即可签发（v0.32.0 契约）。"""
+    token = harness.signer.token(
+        user_id=STUDENT_ID,
+        scope=[{"course_id": "88888888-8888-4888-8888-888888888888"}],
+    )
+    response = api_client.post(
+        "/api/v1/email-verification/challenges",
+        json=_challenge_payload(),
+        headers=_auth(token),
+    )
+    assert response.status_code == 201, response.text
+    row = only_row(harness.engine, email_verification_challenges)
+    assert row["section_id"] == uuid.UUID(SECTION_ID)
+
+
 def test_create_challenge_endpoint_maps_assignment_states(
     api_client: TestClient, harness: Harness
 ) -> None:
@@ -1402,15 +1486,25 @@ def test_create_challenge_endpoint_maps_assignment_states(
         == 409
     )
 
-    harness.assignments.audience = assignment_audience(student_ids=(OTHER_STUDENT_ID,))
+    # 学生当前不在课程里 → 403（课程级受众的唯一依据是 B4 当前选课）。
+    harness.assignments.audience = assignment_audience()
+    harness.authorization.unenroll(STUDENT_ID, COURSE_ID)
     assert (
         api_client.post(endpoint, json=_challenge_payload(), headers=_auth(token)).status_code
         == 403
     )
+    harness.authorization.enroll(STUDENT_ID, course_id=COURSE_ID, section_id=SECTION_ID)
 
-    # 目录不可达是**基础设施**故障，必须 503；此时作业受众本身仍可读，只是目录服务挂了。
-    harness.assignments.audience = assignment_audience()
+    # 目录不可达是**基础设施**故障，必须 503；此时作业本身仍可读，只是目录服务挂了。
     harness.assignments.unavailable = True
+    assert (
+        api_client.post(endpoint, json=_challenge_payload(), headers=_auth(token)).status_code
+        == 503
+    )
+
+    # B4 授权目录不可达同样是基础设施故障 → 503（不是 403"你不在课程里"）。
+    harness.assignments.unavailable = False
+    harness.authorization.set_unavailable(True)
     assert (
         api_client.post(endpoint, json=_challenge_payload(), headers=_auth(token)).status_code
         == 503
@@ -1489,6 +1583,8 @@ def test_database_outage_maps_to_503(
         engine=broken_engine,
         authenticator=JwksAuthenticator(harness.signer.jwks, issuer=ISSUER, audience=AUDIENCE),
         assignment_directory=harness.assignments,
+        # 权威归属用可用的替身：本用例要验证的是"库不可用 ⇒ 503"，不是归属判定。
+        authorization_directory=harness.authorization,
     )
     app = FastAPI()
     install_problem_handlers(app)

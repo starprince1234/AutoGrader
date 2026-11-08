@@ -4,7 +4,7 @@
 
 ## 契约权威
 
-- OpenAPI：`../../MAIN/contracts/openapi/b4.yaml`（版本与摘要以 `../contracts.lock` 为准，本模块不写死；**已覆盖 B4 全部端点**：`createSession`、`refreshSession`、`deleteSession`、`getJwks`、`requestRegistrationCode`、`createRegistration`、`requestPasswordResetCode`、`completePasswordReset`、`listUsers`/`createUser`/`updateUser`/`deleteUser`/`activateUser`、`listCourses`/`createCourse`、`listSections`/`createSection`、`listEnrollments`/`updateEnrollment`/`deleteEnrollment`、`createRosterImport`/`getRosterImport`/`setRosterColumnMapping`/`confirmRosterImport`、`listAuditRecords`、`listRegisteredModules`/`getModuleHealth`）。
+- OpenAPI：`../../MAIN/contracts/openapi/b4.yaml`（版本与摘要以 `../contracts.lock` 为准，本模块不写死；**已覆盖 B4 全部端点**：`createSession`、`refreshSession`、`deleteSession`、`getJwks`、`requestRegistrationCode`、`createRegistration`、`requestPasswordResetCode`、`completePasswordReset`、`listUsers`/`createUser`/`updateUser`/`deleteUser`/`activateUser`、`listCourses`/`createCourse`/`updateCourse`/`deleteCourse`、`listSections`/`createSection`/`deleteSection`、`listClasses`/`createClass`/`renameClass`/`deleteClass`/`listClassEnrollments`、`listEnrollments`/`updateEnrollment`/`deleteEnrollment`、`listCourseEnrollments`/`getCourseRosterSummary`、`getAssignmentNotifications`/`retryAssignmentNotifications`、`createRosterImport`/`getRosterImport`/`setRosterColumnMapping`/`confirmRosterImport`、`getCurrentUser`、`getInternalUserAuthorization`/`createAssignmentNotifications`、`listAuditRecords`、`listRegisteredModules`/`getModuleHealth`）。
 - 通用错误：`../../MAIN/contracts/openapi/common.yaml`（`ProblemDetails`）。
 - 名单导入载荷：`../../MAIN/contracts/schemas/roster-import.schema.json`。
 - 事件 envelope：`../../MAIN/contracts/schemas/event-envelope.schema.json`。
@@ -39,9 +39,22 @@
 | `POST /api/v1/users/{user_id}/activate` | `activateUser` | 启用（软启用）：清空停用时间、账号恢复登录，历史与课程名单不变；启用**自己**同样返回 `409` | 是 | 管理员 | `已完成` |
 | `GET /api/v1/courses` | `listCourses` | 列出调用者作用域内课程 | 是 | 按作用域 | `已完成` |
 | `POST /api/v1/courses` | `createCourse` | 创建课程（同时为创建者写入课程级授予） | 是 | 教师/管理员 | `已完成` |
-| `GET /api/v1/courses/{course_id}/sections` | `listSections` | 课序列表 | 是 | 课程读 | `已完成` |
+| `GET /api/v1/courses/{course_id}/sections` | `listSections` | 课序列表（含班级数/名单人数） | 是 | 课程读 | `已完成` |
 | `POST /api/v1/courses/{course_id}/sections` | `createSection` | 创建课序 | 是 | 课程写 | `已完成` |
+| `DELETE /api/v1/courses/{course_id}/sections/{section_id}` | `deleteSection` | 删除课序及其班级/名单 | 是 | 课程写 | `已完成` |
+| `GET /api/v1/sections/{section_id}/classes` | `listClasses` | 课序下的班级列表 | 是 | 课程读 | `已完成` |
+| `POST /api/v1/sections/{section_id}/classes` | `createClass` | 在既有课序下建班级（可挂已注册名单班；冲突 409） | 是 | 课程写 | `已完成` |
+| `PATCH /api/v1/classes/{class_id}` | `renameClass` | 班级改名 | 是 | 课程写 | `已完成` |
+| `DELETE /api/v1/classes/{class_id}` | `deleteClass` | 删除班级及其名单行 | 是 | 课程写 | `已完成` |
+| `GET /api/v1/classes/{class_id}/enrollments` | `listClassEnrollments` | 班级名单 | 是 | 课程读 | `已完成` |
 | `GET /api/v1/sections/{section_id}/enrollments` | `listEnrollments` | 课序名单 | 是 | 课程读 | `已完成` |
+| `GET /api/v1/courses/{course_id}/enrollments` | `listCourseEnrollments` | 全课程名单（分页，含未注册） | 是 | 课程读 | `已完成` |
+| `GET /api/v1/courses/{course_id}/roster-summary` | `getCourseRosterSummary` | 服务端聚合人数（课序/班级/已绑定） | 是 | 课程读 | `已完成` |
+| `GET /api/v1/courses/{cid}/assignments/{aid}/notifications` | `getAssignmentNotifications` | 作业通知汇总 + 逐人投递状态 | 是 | 课程写 | `已完成` |
+| `POST /api/v1/courses/{cid}/assignments/{aid}/notifications/retry` | `retryAssignmentNotifications` | 重排 failed 投递（skipped 不重试） | 是 | 课程写 | `已完成` |
+| `GET /api/v1/me` | `getCurrentUser` | 本人资料 + 课程/课序/班级 memberships | 是 | 本人 | `已完成` |
+| `GET /api/v1/internal/users/{user_id}/authorization` | `getInternalUserAuthorization` | 服务间：当前角色与选课（只含 ID） | serviceToken | — | `已完成` |
+| `POST /api/v1/internal/assignment-notifications` | `createAssignmentNotifications` | 服务间：作业发布通知受众快照（幂等） | serviceToken | — | `已完成` |
 | `PATCH /api/v1/enrollments/{enrollment_id}` | `updateEnrollment` | 编辑名单行（乐观并发） | 是 | 课程写 | `已完成` |
 | `DELETE /api/v1/enrollments/{enrollment_id}` | `deleteEnrollment` | 删除名单行 | 是 | 课程写 | `已完成` |
 | `POST /api/v1/roster-imports` | `createRosterImport` | 上传并解析名单（进入预览） | 是 | 课程写 | `已完成` |
@@ -61,7 +74,8 @@
    验证码的 SHA-256 摘要，且摘要绑定本条注册意图的 id。
 2. `createRegistration`：校验验证码（单次使用、10 分钟、错 5 次作废），在**一个事务**内建
    `users`（`created_via='self'`）、`credentials`（Argon2id）、平台级 `student` 角色，并把该学号
-   名下**尚未关联**的 `enrollments.user_id` 回填——否则"先导名单、后注册"的学生会在登录后看不到课程。
+   名下**全部**尚未关联且姓名一致的 `enrollments.user_id` 回填（v0.32.0：跨课程一起绑定；姓名不一致的
+   行不绑定并计入响应 `identity_mismatch_count`，避免按学号把两个人合并）。
 
 几个刻意的取舍：
 
@@ -89,8 +103,9 @@ access token 只在剩余短 TTL 内有效（JWT 无状态），下一次 refres
 
 ## 复核发现（只读复核，未修改 `MAIN/contracts/**`）
 
-复核对象：本文件上一版 + `../../MAIN/contracts/openapi/b4.yaml`。**operation 清单一致**：上表 28 条
-与 `b4.yaml` 中 28 个 operation 逐条对应，无缺漏、无多余。其余发现如下。
+复核对象：本文件上一版 + `../../MAIN/contracts/openapi/b4.yaml`。**operation 清单一致**：上表与
+`b4.yaml` 的 operation 逐条对应，无缺漏、无多余（v0.32.0 删除了 `attachRegisteredClass` 与内部
+`validateCourseTargets`，新增班级/全课程名单/通知/内部授权端点）。其余发现如下。
 
 ### 1. 路径前缀覆盖不一致（B4 侧已修正）
 

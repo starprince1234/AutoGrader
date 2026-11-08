@@ -14,6 +14,13 @@ import {
 } from "../../ui/components";
 import { describeApiError, isApiError } from "../../api/problem";
 import {
+  courseLabel,
+  loadedCourses,
+  useClasses,
+  useCourses,
+  useSections,
+} from "../../api/directory";
+import {
   TARGET_FIELDS,
   duplicateAssignments,
   fieldMessageKey,
@@ -33,11 +40,14 @@ import {
 import { Select } from "../../ui/Select";
 
 /**
- * 名单导入（P12 的第二个标签，不再是独立页面）。
+ * 名单导入（P12 的「导入名单」标签 / v0.32.0 班级级导入）。
  *
  * 流程身份是服务端的 `roster_import_id`，由调用方放进 URL：
  * 刷新、复制链接、浏览器后退都能恢复同一个任务，而组件里的 state 只保存还没提交的文件。
  * 确认前的一切（解析、列映射、逐行校验）都只写任务暂存区，不写正式名单。
+ *
+ * 上传前必须选清 **课程 → 课序 → 班级**：三者是服务端校验归属的依据，关系不清时
+ * （任何一层为空）页面不发请求，而不是让服务端用 422 再告诉用户。
  */
 
 const STATUS_TONE: Record<RosterImportPreview["status"], "ok" | "warn" | "bad" | "idle"> = {
@@ -260,23 +270,37 @@ function PreviewAndConfirm({ preview }: { preview: RosterImportPreview }) {
 }
 
 export function RosterImportPanel({
-  courseId,
-  sectionId,
   importId,
+  initialCourseId = "",
+  initialSectionId = "",
   onImportId,
 }: {
-  courseId: string;
-  sectionId: string;
   importId: string | null;
+  initialCourseId?: string;
+  initialSectionId?: string;
   /** 任务 ID 由 URL 持有：这里只把服务端返回的 id 交回去写进 query。 */
   onImportId: (id: string | null) => void;
 }) {
+  const [courseId, setCourseId] = useState(initialCourseId);
+  const [sectionId, setSectionId] = useState(initialSectionId);
+  const [classId, setClassId] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [uploadError, setUploadError] = useState<unknown>(null);
+
+  const courses = useCourses();
+  const courseOptions = useMemo(() => loadedCourses(courses.data?.pages), [courses.data]);
+  const sections = useSections(courseId === "" ? null : courseId);
+  const classes = useClasses(sectionId === "" ? null : sectionId);
   const createImport = useCreateRosterImport();
   const previewQuery = useRosterImport(importId);
   const preview = previewQuery.data;
-  const ready = courseId !== "" && sectionId !== "";
+  const ready = courseId !== "" && sectionId !== "" && classId !== "";
+
+  const selectedCourse = courseOptions.find((course) => course.course_id === courseId);
+  const selectedSection = (sections.data ?? []).find(
+    (option) => option.sectionId === sectionId,
+  );
+  const selectedClass = (classes.data ?? []).find((row) => row.class_id === classId);
 
   const expired =
     previewQuery.isError &&
@@ -285,13 +309,89 @@ export function RosterImportPanel({
 
   return (
     <div className="stack">
-      <Panel title={t("import.uploadTitle")}>
-        {ready ? null : (
-          <Banner tone="warn" testId="import-needs-scope">
+      <Panel title={t("import.scopeTitle")} testId="import-scope">
+        <Banner tone="info" testId="import-scope-hint">
+          {t("import.scopeHint")}
+        </Banner>
+        <div className="form-grid">
+          <Field label={t("import.course")} htmlFor="import-course">
+            <Select
+              id="import-course"
+              value={courseId}
+              data-testid="import-course"
+              onChange={(event) => {
+                setCourseId(event.target.value);
+                // 换课程 = 换课序与班级的候选集合，已选的两层都不能沿用。
+                setSectionId("");
+                setClassId("");
+              }}
+            >
+              <option value="">{t("import.coursePrompt")}</option>
+              {courseOptions.map((course) => (
+                <option key={course.course_id} value={course.course_id}>
+                  {courseLabel(course)}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label={t("import.section")} htmlFor="import-section">
+            <Select
+              id="import-section"
+              value={sectionId}
+              data-testid="import-section"
+              disabled={courseId === ""}
+              onChange={(event) => {
+                setSectionId(event.target.value);
+                setClassId("");
+              }}
+            >
+              <option value="">{t("import.sectionPrompt")}</option>
+              {(sections.data ?? []).map((option) => (
+                <option key={option.sectionId} value={option.sectionId}>
+                  {option.label}
+                </option>
+              ))}
+            </Select>
+          </Field>
+          <Field label={t("import.class")} htmlFor="import-class">
+            <Select
+              id="import-class"
+              value={classId}
+              data-testid="import-class"
+              disabled={sectionId === ""}
+              onChange={(event) => setClassId(event.target.value)}
+            >
+              <option value="">{t("import.classPrompt")}</option>
+              {(classes.data ?? []).map((row) => (
+                <option key={row.class_id} value={row.class_id}>
+                  {t("roster.import.classOption", {
+                    name: row.class_name,
+                    count: row.enrollment_count,
+                  })}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        </div>
+        {courses.isError ? <ErrorState error={courses.error} testId="import-courses-error" /> : null}
+        {sections.isError ? <ErrorState error={sections.error} testId="import-sections-error" /> : null}
+        {classes.isError ? <ErrorState error={classes.error} testId="import-classes-error" /> : null}
+        {ready ? (
+          <p className="muted" data-testid="import-scope-summary">
+            {t("import.uploadedTo", {
+              course: selectedCourse ? courseLabel(selectedCourse) : courseId,
+              section: selectedSection?.label ?? sectionId,
+              class: selectedClass?.class_name ?? classId,
+            })}
+          </p>
+        ) : (
+          <p className="muted" data-testid="import-scope-incomplete">
             {t("import.needsScope")}
-          </Banner>
+          </p>
         )}
+      </Panel>
 
+      <Panel title={t("import.uploadTitle")}>
         <form
           className="form-grid"
           data-testid="upload-form"
@@ -300,7 +400,7 @@ export function RosterImportPanel({
             setUploadError(null);
             if (!file || !ready) return;
             createImport.mutate(
-              { file, courseId, sectionId },
+              { file, courseId, sectionId, classId },
               {
                 onSuccess: (created) => onImportId(created.roster_import_id),
                 onError: (error) => setUploadError(error),

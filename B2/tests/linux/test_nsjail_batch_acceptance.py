@@ -554,7 +554,7 @@ def _run_ssh(payload: dict, *, script: str):
 def test_ssh_real_login_closes_all_three_checks() -> None:
     """⑧ 真实登录：`ssh user01@127.0.0.1` / `exit` ⇒ service_ready、auth_succeeded、session_closed 全通过。"""
     _, evidences, messages = _run_ssh(
-        _ssh_payload(), script=f"ssh user01@127.0.0.1\nexit\n"
+        _ssh_payload(), script="ssh user01@127.0.0.1\nexit\n"
     )
     del messages
     assert [item.passed for item in evidences] == [True, True, True], [

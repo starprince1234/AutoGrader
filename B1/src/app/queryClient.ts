@@ -27,14 +27,20 @@ export const queryKeys = {
   courses: ["courses"] as const,
   sections: (courseId: string) => ["sections", courseId] as const,
   enrollments: (sectionId: string) => ["enrollments", sectionId] as const,
+  /** 一个课序下的班级列表（v0.32.0：课序 ≠ 班级）。 */
+  classes: (sectionId: string) => ["classes", sectionId] as const,
+  /** 一个班级的名单（v0.32.0）。 */
+  classEnrollments: (classId: string) => ["class-enrollments", classId] as const,
   /**
-   * 一次取完的课序名单（作业受众/指定学生用）。
+   * 全课程名单（教师作业详情 / 名单统计用）。
    *
-   * 与 `enrollments`（无限查询、逐页翻）**必须分开缓存**：同一个键下两种数据形状会让
-   * 一个页面的缓存被另一个页面读成错误结构。这里把"取完全部页"封装在单次 queryFn 里，
-   * 因此结果就是完整名单 + 是否被翻页上限截断。
+   * 与 `enrollments`（按课序）分开缓存：同一个键下两种数据形状会让一个页面把另一个页面的
+   * 缓存读成错误结构；这里把"取完全部页"封装在单次 queryFn 里，结果就是完整名单 +
+   * 是否被翻页上限截断。
    */
-  sectionRoster: (sectionId: string) => ["section-roster", sectionId] as const,
+  courseEnrollments: (courseId: string) => ["course-enrollments", courseId] as const,
+  /** 服务端聚合的课程受众计数（`roster-summary`）。 */
+  rosterSummary: (courseId: string) => ["roster-summary", courseId] as const,
   rosterImport: (id: string) => ["roster-import", id] as const,
   users: (role: string | null) => ["users", role] as const,
   /** 当前生效的注册名单批次（P14）。只有一个对象，没有筛选维度可进键。 */
@@ -52,6 +58,12 @@ export const queryKeys = {
   assignments: (filter: Record<string, string | undefined>) =>
     ["assignments", filter] as const,
   assignment: (assignmentId: string) => ["assignment", assignmentId] as const,
+  /**
+   * 作业发布通知（B4 拥有投递状态）。键含课程与作业：两个 id 共同确定唯一记录，
+   * 同一作业在不同课程下不是同一条通知。
+   */
+  assignmentNotifications: (courseId: string, assignmentId: string) =>
+    ["assignment-notifications", courseId, assignmentId] as const,
   question: (questionId: string) => ["question", questionId] as const,
   questionVersion: (versionId: string) => ["question-version", versionId] as const,
   questionDiagnostics: (questionId: string) =>

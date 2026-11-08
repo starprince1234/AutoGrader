@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import Connection, select
 
 from ..authorization import resolve_principal
-from ..db.tables import courses, sections
+from ..db.tables import classes, courses, sections
 from ..errors import not_found, payload_too_large, unprocessable
 from ..logging import get_logger
 from ..roster import parsers
@@ -58,6 +58,7 @@ def _view_document(view: RosterImportView) -> dict[str, object]:
         "status": view.status,
         "course_id": str(view.course_id),
         "section_id": str(view.section_id),
+        "class_id": str(view.class_id),
         "detected_columns": view.detected_columns,
         "proposed_mapping": view.proposed_mapping,
         "accepted_rows": [_row_document(row) for row in view.accepted_rows],
@@ -87,8 +88,18 @@ def build_roster_router(state: B4State, dependencies: Dependencies) -> APIRouter
     router = APIRouter(route_class=ProblemRoute)
     engine = state.engine
 
-    def _resolve_target(connection: Connection, course_id: uuid.UUID, section_id: uuid.UUID):
-        """Load the target section and course, or report the mismatch explicitly."""
+    def _resolve_target(
+        connection: Connection,
+        course_id: uuid.UUID,
+        section_id: uuid.UUID,
+        class_id: uuid.UUID,
+    ):
+        """Load the target class/section/course, or report the mismatch explicitly.
+
+        A roster import names all three: the class is the row's owner (v0.32.0), the section
+        is its group, and the course scopes authorization. Checking containment here keeps a
+        class id from another section/course out before any artifact is stored.
+        """
         row = connection.execute(
             select(sections.c.section_id, sections.c.section_code, sections.c.course_id).where(
                 sections.c.section_id == section_id
@@ -96,6 +107,13 @@ def build_roster_router(state: B4State, dependencies: Dependencies) -> APIRouter
         ).fetchone()
         if row is None or row.course_id != course_id:
             raise not_found("The section does not exist in the given course.")
+        target_class = connection.execute(
+            select(classes.c.class_id).where(
+                classes.c.class_id == class_id, classes.c.section_id == section_id
+            )
+        ).fetchone()
+        if target_class is None:
+            raise unprocessable("The class does not belong to the given section.")
         course = connection.execute(
             select(courses.c.course_code).where(courses.c.course_id == course_id)
         ).fetchone()
@@ -109,6 +127,7 @@ def build_roster_router(state: B4State, dependencies: Dependencies) -> APIRouter
         file: Annotated[UploadFile, File()],
         course_id: Annotated[uuid.UUID, Form()],
         section_id: Annotated[uuid.UUID, Form()],
+        class_id: Annotated[uuid.UUID, Form()],
         caller=Depends(dependencies.principal),
     ) -> dict[str, object]:
         content = await _read_bounded(file, state.settings.roster_upload_max_bytes)
@@ -120,7 +139,7 @@ def build_roster_router(state: B4State, dependencies: Dependencies) -> APIRouter
         if not filename:
             raise unprocessable("The uploaded roster has no filename.")
         with engine.begin() as connection:
-            section, course_code = _resolve_target(connection, course_id, section_id)
+            section, course_code = _resolve_target(connection, course_id, section_id, class_id)
             caller = resolve_principal(connection, caller.user_id)
             ensure_course_write(principal=caller, course_id=course_id, dependencies=dependencies)
         view = create_import(
@@ -129,6 +148,7 @@ def build_roster_router(state: B4State, dependencies: Dependencies) -> APIRouter
             content=content,
             course_id=course_id,
             section_id=section_id,
+            class_id=class_id,
             course_code=course_code,
             section_code=section.section_code,
             actor=actor_of(caller),
@@ -165,7 +185,9 @@ def build_roster_router(state: B4State, dependencies: Dependencies) -> APIRouter
         view = load_view(engine, roster_import_id)
         ensure_course_write(principal=caller, course_id=view.course_id, dependencies=dependencies)
         with engine.connect() as connection:
-            _, course_code = _resolve_target(connection, view.course_id, view.section_id)
+            _, course_code = _resolve_target(
+                connection, view.course_id, view.section_id, view.class_id
+            )
             section_code = connection.execute(
                 select(sections.c.section_code).where(sections.c.section_id == view.section_id)
             ).scalar_one()
@@ -190,7 +212,9 @@ def build_roster_router(state: B4State, dependencies: Dependencies) -> APIRouter
         view = load_view(engine, roster_import_id)
         ensure_course_write(principal=caller, course_id=view.course_id, dependencies=dependencies)
         with engine.connect() as connection:
-            _, course_code = _resolve_target(connection, view.course_id, view.section_id)
+            _, course_code = _resolve_target(
+                connection, view.course_id, view.section_id, view.class_id
+            )
             section_code = connection.execute(
                 select(sections.c.section_code).where(sections.c.section_id == view.section_id)
             ).scalar_one()

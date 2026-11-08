@@ -1,0 +1,14 @@
+[Unit]
+# 每分钟触发一次通知发送（每次单趟、有界）。发布通知在数据库里已是持久状态，
+# 因此错过一次 tick 不会丢消息；进程崩溃遗留的 sending 行由下一趟恢复。
+Description=AutoGrader assignment notification sender timer
+Requires=autograder-notifications.service
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=15s
+Unit=autograder-notifications.service
+
+[Install]
+WantedBy=timers.target

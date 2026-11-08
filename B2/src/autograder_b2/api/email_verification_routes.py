@@ -7,7 +7,8 @@
 
 分层：本模块只做 HTTP 关注点（认证头、请求体形状、状态码映射、Problem Details、时间序列化）；
 签发/状态查询/消费全部在 `intake.email_verification`，认证复用 `auth.tokens`，授权复用
-`auth.authorization.require_submission_authority`（不新造权限模型）；作业受众经
+`auth.authorization.require_submission_identity`（令牌身份层；不新造权限模型），当前课程归属由
+B4 的权威授权查询判定（`integration.b4_authorization`）；作业本身经
 `EmailVerificationService.assignment_directory`（B3 internal 端点）判定。
 
 错误码语义与同模块其它端点一致：未认证 `401`；已认证但越权/非受众/非所有者 `403`；请求体不合法
@@ -49,6 +50,7 @@ from autograder_b2.intake.email_verification import (
     EmailVerificationService,
 )
 from autograder_b2.integration.assignments import AssignmentUnavailable
+from autograder_b2.integration.b4_authorization import AuthorizationUnavailable
 from autograder_b2.logging.logger import log_dependency_unavailable, log_event
 
 #: 路由层 logger（日志名即身份；`logger` 是白名单字段）。
@@ -132,6 +134,15 @@ def build_router(service: EmailVerificationService | None) -> APIRouter:
             log_dependency_unavailable(
                 logger,
                 dependency="b3-assignments",
+                error=error,
+                stage="email verification challenge",
+            )
+            return problem_response(SERVICE_UNAVAILABLE, instance)
+        except AuthorizationUnavailable as error:
+            # B4 权威授权目录未配置/不可达：签不出绑定"当前归属"的挑战，503（不是 403）。
+            log_dependency_unavailable(
+                logger,
+                dependency="b4-authorization",
                 error=error,
                 stage="email verification challenge",
             )

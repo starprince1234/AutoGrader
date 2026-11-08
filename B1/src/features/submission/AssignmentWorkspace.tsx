@@ -5,9 +5,7 @@ import { t } from "../../i18n";
 import { describeApiError, isApiError } from "../../api/problem";
 import { newIdempotencyKey } from "../../api/client";
 import type { AssignmentPublic } from "../../api/types";
-import { useSections } from "../../api/directory";
 import { useCurrentUser } from "../../api/currentUser";
-import { useSession } from "../../auth/sessionContext";
 import { log, newRequestId } from "../../logging/logger";
 import {
   Banner,
@@ -30,7 +28,6 @@ import { useQuestionAsset } from "../questions/useQuestionAsset";
 import { useQuestionVersionRows } from "../questions/useQuestions";
 import { EmailSubmissionPanel } from "./EmailSubmissionPanel";
 import { clearDraft, loadDraft, saveDraft } from "./draft";
-import { useStudentIdentity } from "./identity";
 import { ProgressPanel } from "./ProgressPanel";
 import { useEvaluationStream } from "./useEvaluationStream";
 import { useCreateSubmission, useEvaluationRunId } from "./useSubmission";
@@ -123,30 +120,26 @@ export function AssignmentWorkspace({
   assignment: AssignmentPublic;
   initialQuestionVersionId?: string | null;
 }) {
-  const session = useSession();
   const queryClient = useQueryClient();
   const currentUser = useCurrentUser();
-  const sections = useSections(assignment.course_id);
   const rows = useQuestionVersionRows(assignment.question_version_ids);
   const submit = useCreateSubmission();
 
-  const courseId = assignment.course_id;
-  const mySectionId = useMemo(() => {
-    const match = session.scope.find(
-      (scope) =>
-        scope.course_id === courseId &&
-        (scope.section_id ?? null) !== null &&
-        assignment.section_ids.includes(scope.section_id as string),
-    );
-    return match?.section_id ?? null;
-  }, [session.scope, courseId, assignment.section_ids]);
-  const sectionLabel = useMemo(
-    () => sections.data?.find((option) => option.sectionId === mySectionId)?.label ?? null,
-    [sections.data, mySectionId],
+  // 提交信封的 course_id/section_id 来自**本人当前有效选课**（`GET /me` 的 memberships）：
+  // 服务端会用自己的权威 section 覆盖请求值，但前端也不该拿令牌里的旧 scope 或作业目标去猜。
+  const membership = useMemo(
+    () =>
+      currentUser.data?.memberships.find(
+        (row) => row.course_id === assignment.course_id,
+      ) ?? null,
+    [currentUser.data?.memberships, assignment.course_id],
   );
+  const courseId = membership?.course_id ?? assignment.course_id;
+  const mySectionId = membership?.section_id ?? null;
+  const sectionLabel = membership?.section_code ?? null;
 
-  const identity = useStudentIdentity(courseId, mySectionId);
-  const progress = useStudentAssignmentProgress(assignment, courseId, mySectionId);
+  const ownerId = currentUser.data?.user_id ?? null;
+  const progress = useStudentAssignmentProgress(assignment, courseId, null);
   const progressByQuestion = useMemo(
     () => new Map(progress.questions.map((question) => [question.questionVersionId, question])),
     [progress.questions],
@@ -173,10 +166,6 @@ export function AssignmentWorkspace({
     ? (progressByQuestion.get(currentRow.questionVersionId) ?? null)
     : null;
   const currentSubmission = currentProgress?.submission ?? null;
-  // 终态后不再挂着"正在准备评测"：成绩行已经给出结论，继续显示会让用户以为还在跑。
-  const currentSettled =
-    currentSubmission !== null &&
-    ["completed", "rejected", "failed"].includes(currentSubmission.state);
 
   // ---- 本地草稿 v2 -------------------------------------------------------
   const [content, setContent] = useState("");
@@ -191,7 +180,6 @@ export function AssignmentWorkspace({
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadedDraftKey = useRef<string | null>(null);
   const idempotencyKeys = useRef<Map<string, string>>(new Map());
-  const ownerId = identity.studentId;
 
   // 切题时读取该题的草稿：先问再恢复，绝不覆盖学生已经敲进去的内容。
   useEffect(() => {
@@ -545,6 +533,12 @@ export function AssignmentWorkspace({
                 </label>
               </div>
 
+              {uploadedFileName !== null ? (
+                <span className="muted" data-testid="workspace-uploaded-file">
+                  {t("workspace.uploadedFile", { name: uploadedFileName })}
+                </span>
+              ) : null}
+
               <label className="field" htmlFor="workspace-answer-text">
                 <span>{t("workspace.answerLabel")}</span>
                 <textarea
@@ -617,7 +611,7 @@ export function AssignmentWorkspace({
               {submit.isError ? (
                 <ApiErrorBanner error={submit.error} testId="workspace-submit-error" />
               ) : null}
-              {submit.isSuccess && !currentSettled && terminal === null ? (
+              {submit.isSuccess ? (
                 <Banner tone="success" testId="workspace-submit-accepted">
                   {t("workspace.submitted")}
                   {submit.data.idempotent_replay ? ` · ${t("submit.idempotentReplay")}` : ""}

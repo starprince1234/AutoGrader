@@ -104,18 +104,19 @@ class ServiceUnavailable(B3Error):
     slug = "service-unavailable"
 
 
-class AssignmentTargetsUnavailable(ServiceUnavailable):
-    """The target-section/student validator could not be asked, so nothing was created.
+class AuthorizationUnavailable(ServiceUnavailable):
+    """The authoritative current-membership directory could not answer, so nothing was decided.
 
-    An assignment's sections and enrolled students are owned by the identity/course
-    module, so creating an assignment requires a service-to-service validation call. When
-    that call is unconfigured, unreachable, times out or answers a malformed body, the
-    assignment is **not** created and the caller gets ``503``. Silently accepting the ids
-    would let a teacher publish to another course's class or to a student who is not
-    enrolled, which is the whole failure mode server-side validation exists to prevent.
+    Since v0.32.0 a student's access to assignments is decided from the identity/course
+    module's **live** authorization (who is enrolled in which course right now), not from
+    the token's ``scope`` snapshot. When that service call is unconfigured, unreachable,
+    times out or answers a malformed body, the request is refused with ``503`` -- never
+    treated as "not a member" (``403``) or "no assignments" (an empty page). A silent
+    downgrade here would deny every student during an identity outage and call it
+    authorization.
     """
 
-    slug = "assignment-targets-unavailable"
+    slug = "authorization-unavailable"
 
 
 class TooManyRequests(B3Error):
@@ -289,18 +290,6 @@ class StatisticsWindowTooLarge(UnprocessableEntity):
     """
 
     slug = "statistics-window-too-large"
-
-
-class AssignmentTargetsInvalid(UnprocessableEntity):
-    """A target section or student is not valid for the assignment's course.
-
-    The validation answer comes from the identity/course module, which is the only owner
-    of \"does this section belong to this course\" and \"is this student actively
-    enrolled\". The detail reports **counts only**: naming the rejected students would
-    turn a creation error into a lookup channel for enrollment data.
-    """
-
-    slug = "invalid-assignment-target"
 
 
 # --- Event pipeline signals (never rendered as HTTP) ----------------------

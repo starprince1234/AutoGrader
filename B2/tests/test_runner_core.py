@@ -537,7 +537,7 @@ class TestPolicyDigest:
         旧证据的 `input_digest`（含 `runner_policy_digest`）因此仍可重放。
         """
         payload: dict[str, object] = {}
-        for name, field in RunnerPolicy.__dataclass_fields__.items():
+        for name in RunnerPolicy.__dataclass_fields__:
             if name == "sandbox_profile":
                 continue
             value = getattr(RunnerPolicy(), name)
@@ -1569,8 +1569,10 @@ class TestNoDegradation:
             (
                 "cpu memory pids",
                 "1234",
-                "590 582 0:26 / /sys/fs/cgroup rw - cgroup2 cgroup2 rw\n"
-                "624 590 0:26 /system.slice/autograder.service /sys/fs/cgroup rw - cgroup2 cgroup2 rw",
+                (
+                    "590 582 0:26 / /sys/fs/cgroup rw - cgroup2 cgroup2 rw\n"
+                    "624 590 0:26 /system.slice/autograder.service /sys/fs/cgroup rw - cgroup2 cgroup2 rw"
+                ),
                 "",
                 False,
             ),

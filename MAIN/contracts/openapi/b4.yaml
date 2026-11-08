@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AutoGrader B4 Platform API
-  version: 0.31.0
+  version: 0.32.0
   description: |
     Identity, courses, sections, enrollments, roster import, audit and the runtime
     module registry. Owned by B4 (RQ-B-4-10/20/30/40/50/99).
@@ -251,15 +251,24 @@ paths:
               additionalProperties: false
       responses:
         '201':
-          description: Account created; the caller can sign in immediately.
+          description: |
+            Account created; the caller can sign in immediately. The response also reports
+            what the account was bound to, so "registered but sees no course" is answerable
+            without a second call: `bound_course_count` is the number of active roster rows
+            linked to this account (one per course), `identity_mismatch_count` counts rows
+            whose recorded name differs from the verified registration name. Mismatched rows
+            are deliberately **not** bound: binding two differently-named records by student
+            number alone would merge two people, so the teacher must correct the roster.
           content:
             application/json:
               schema:
                 type: object
-                required: [user_id, username]
+                required: [user_id, username, bound_course_count, identity_mismatch_count]
                 properties:
                   user_id: {type: string, format: uuid}
                   username: {type: string}
+                  bound_course_count: {type: integer, minimum: 0}
+                  identity_mismatch_count: {type: integer, minimum: 0}
                 additionalProperties: false
         '409': {$ref: './common.yaml#/components/responses/Conflict'}
         '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
@@ -546,48 +555,146 @@ paths:
         '404': {$ref: './common.yaml#/components/responses/NotFound'}
         '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
 
-  /api/v1/internal/course-targets/validate:
-    post:
-      operationId: validateCourseTargets
-      summary: Validate an assignment's target sections and students (internal)
+  /api/v1/internal/users/{user_id}/authorization:
+    parameters:
+      - {name: user_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    get:
+      operationId: getInternalUserAuthorization
+      summary: Current effective roles and course membership of one account (internal)
       description: |
-        Purpose: B3 owns assignments and stores target section/student ids, but B4 owns the
-        sections and enrollments that make those ids meaningful. Before an assignment is
-        created, B3 therefore asks this endpoint whether the chosen sections belong to the course
-        and whether the chosen students are actively enrolled in those sections (CHG-0032).
-        Server-side validation is mandatory: accepting ids on the client's word would let a
-        teacher publish to a class of another course, or name a student who is not enrolled.
+        Purpose (v0.32.0): the assignment, submission and grade APIs must decide access from
+        the caller's **current** effective membership, but the authoritative facts (roles,
+        active course enrollment, section, class) belong to B4. A JWT `scope` claim is only a
+        snapshot taken when the token was issued: a student added to a course after sign-in
+        would be invisible to the token, and a student removed from a course would keep access
+        until the token expires. B3 and B2 therefore ask this endpoint at request time instead
+        of trusting the token's scope.
 
-        Being internal is not authorization: the caller must present the pre-shared
-        `serviceToken`, never a user session. The response intentionally returns only ids and
-        section labels (no student names/numbers): B3 needs a decision, not a second copy of
-        identity data.
-      tags: [internal, courses]
+        Returns identifiers only -- no name, e-mail address or student number. Being internal
+        is not authorization: the caller must present the pre-shared `serviceToken`.
+      tags: [internal]
+      security: [{serviceToken: []}]
+      responses:
+        '200':
+          description: The account's current roles and memberships.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/InternalUserAuthorization'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
+  /api/v1/internal/assignment-notifications:
+    post:
+      operationId: createAssignmentNotifications
+      summary: Materialise the publication notification of one assignment (internal)
+      description: |
+        Called by B3 once an assignment is published; the B3 side retries because a transient
+        failure must not lose the notification. The call is **idempotent by `assignment_id`**:
+        a repeat returns the already materialised summary and never duplicates recipients or
+        sends anything twice. Delivery itself is performed by the B4 notification sender
+        (`python -m autograder_b4.ops.notifications`), which is why this endpoint only records
+        what must be sent and every recipient's status.
+
+        The audience is the course's current active roster. Unregistered students, students
+        whose account has no e-mail address, and deactivated accounts are recorded with
+        distinct skipped statuses and reason codes; "no notification" is therefore never
+        reported as "delivered".
+      tags: [internal, notifications]
       security: [{serviceToken: []}]
       requestBody:
         required: true
         content:
           application/json:
-            schema: {$ref: '#/components/schemas/CourseTargetValidationRequest'}
+            schema: {$ref: '#/components/schemas/AssignmentNotificationRequest'}
       responses:
         '200':
-          description: Which requested sections/students are valid for this course.
+          description: A notification for this assignment already existed; nothing changed.
           content:
             application/json:
-              schema: {$ref: '#/components/schemas/CourseTargetValidation'}
+              schema: {$ref: '#/components/schemas/AssignmentNotificationSummary'}
+        '201':
+          description: Recipients materialised; delivery is pending.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AssignmentNotificationSummary'}
         '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
         '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+
+  /api/v1/courses/{course_id}/assignments/{assignment_id}/notifications:
+    parameters:
+      - {name: course_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+      - {name: assignment_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    get:
+      operationId: getAssignmentNotifications
+      summary: Delivery status of one assignment notification (staff)
+      description: |
+        Staff-only (write access to the course). Returns the campaign summary plus one row per
+        intended recipient, including the students that could not be notified and why. The
+        delivery list is a cursor page so a large course is never presented as a partial list.
+        `404` means B4 has no notification for this assignment id; it does not say whether the
+        assignment exists -- assignments are owned by B3 and are not checked here.
+      tags: [notifications]
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Cursor'
+        - $ref: './common.yaml#/components/parameters/Limit'
+      responses:
+        '200':
+          description: The notification summary and one delivery page.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [summary, deliveries]
+                properties:
+                  summary: {$ref: '#/components/schemas/AssignmentNotificationSummary'}
+                  deliveries:
+                    allOf:
+                      - $ref: './common.yaml#/components/schemas/CursorPage'
+                      - type: object
+                        properties:
+                          items:
+                            type: array
+                            items: {$ref: '#/components/schemas/AssignmentNotificationDelivery'}
+                additionalProperties: false
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
+  /api/v1/courses/{course_id}/assignments/{assignment_id}/notifications/retry:
+    parameters:
+      - {name: course_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+      - {name: assignment_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    post:
+      operationId: retryAssignmentNotifications
+      summary: Re-arm failed deliveries of one assignment notification (staff)
+      description: |
+        Only rows in `failed` are reset to `pending` (attempts cleared, `next_attempt_at` set
+        to now); the sender will try them again on its next pass. Rows skipped because the
+        student has no account, no address or an inactive account are **not** retried: sending
+        again cannot fix those reasons, and pretending otherwise would hide them. Returns the
+        updated summary.
+      tags: [notifications]
+      responses:
+        '200':
+          description: The updated notification summary.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AssignmentNotificationSummary'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
 
   /api/v1/me:
     get:
       operationId: getCurrentUser
       summary: Read the caller's own account facts
       description: |
-        Added by CHG-0032 for the assignment workspace: the mail-submission body must carry the
-        student's display name and student number, and the browser cannot derive them from the
-        access token (identity + scope only) or from the staff-only roster. This endpoint returns
-        exactly the caller's own row: no e-mail address, no other user's data. Every
-        authenticated caller may read only themselves.
+        Returns the caller's own row only: no e-mail address and no other user's data. Since
+        v0.32.0 it also carries `memberships` (the caller's active course/section/class
+        enrollments), which is the only way a student can be shown "which courses, which
+        课序 and which 班级 am I in" without a staff-only roster endpoint.
+        Every authenticated caller may read only themselves.
       tags: [auth, users]
       responses:
         '200':
@@ -855,36 +962,6 @@ paths:
         '403': {$ref: './common.yaml#/components/responses/Forbidden'}
         '404': {$ref: './common.yaml#/components/responses/NotFound'}
 
-  /api/v1/courses/{course_id}/classes:
-    parameters:
-      - {name: course_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
-    post:
-      operationId: attachRegisteredClass
-      summary: Create a class in this course from an already-registered class
-      description: |
-        Copies the students of an existing registration allowlist batch ("已注册名单" 里的一个班级)
-        into a new section of this course. Students are stored unbound (`user_id` null) until they
-        register, which is the same state a CSV roster import leaves them in.
-
-        This exists so a teacher does not upload the same file twice: the class was already
-        imported once for registration, and the course only needs to reference it.
-      tags: [courses]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: {$ref: '#/components/schemas/RegisteredClassImport'}
-      responses:
-        '201':
-          description: The created section, with its student count.
-          content:
-            application/json:
-              schema: {$ref: '#/components/schemas/SectionPublic'}
-        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
-        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
-        '404': {$ref: './common.yaml#/components/responses/NotFound'}
-        '409': {$ref: './common.yaml#/components/responses/Conflict'}
-
   /api/v1/courses/{course_id}/sections:
     parameters:
       - {name: course_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
@@ -914,11 +991,11 @@ paths:
       - {name: section_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
     delete:
       operationId: deleteSection
-      summary: Delete a class (its enrollments go with it)
+      summary: Delete a section together with its classes and roster rows
       description: |
-        Deleting a class removes its roster rows and its course grants. Assignments that named
-        this section are outside B4's schema and are not checked here -- deleting a class that
-        still has assignments is the caller's call, not something B4 can validate across modules.
+        A `stop` section groups classes (班级); deleting it removes its classes and their
+        roster rows. Assignments are course-scoped since v0.32.0, so no assignment target
+        references a section any more -- there is nothing left to dangle.
       tags: [courses]
       responses:
         '204': {description: Deleted.}
@@ -951,6 +1028,178 @@ paths:
         '403': {$ref: './common.yaml#/components/responses/Forbidden'}
         '404': {$ref: './common.yaml#/components/responses/NotFound'}
         '409': {$ref: './common.yaml#/components/responses/Conflict'}
+
+  /api/v1/sections/{section_id}/classes:
+    parameters:
+      - {name: section_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    get:
+      operationId: listClasses
+      summary: List the classes (班级) of one section
+      tags: [courses]
+      responses:
+        '200':
+          description: Classes of the section, ordered by name.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/ClassPublic'}
+                additionalProperties: false
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+    post:
+      operationId: createClass
+      summary: Create one class inside an existing section
+      description: |
+        A section (课序) contains one or more classes (班级); creating a class never creates a
+        section. Several classes that were already registered (registration allowlist batches)
+        can therefore be attached to the **same** existing section.
+
+        When `batch_id` is present the class starts with that registered class's students,
+        copied as unbound roster rows; an account that already exists for a student number is
+        linked immediately. Re-attaching the same batch to the same section returns the
+        existing class (idempotent) instead of duplicating rows.
+
+        The request is refused with `409` when any of those students is already actively
+        enrolled in this course in a different section/class: one student may belong to at
+        most one active section per course, and the server never picks one silently. The
+        whole request rolls back; nothing half-written remains.
+      tags: [courses]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ClassCreate'}
+      responses:
+        '201':
+          description: The created (or already attached) class.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ClassPublic'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+
+  /api/v1/classes/{class_id}:
+    parameters:
+      - {name: class_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    patch:
+      operationId: renameClass
+      summary: Rename one class
+      tags: [courses]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ClassRename'}
+      responses:
+        '200':
+          description: The stored class.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ClassPublic'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '409': {$ref: './common.yaml#/components/responses/Conflict'}
+    delete:
+      operationId: deleteClass
+      summary: Delete one class together with its roster rows
+      tags: [courses]
+      responses:
+        '204': {description: Deleted.}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
+  /api/v1/classes/{class_id}/enrollments:
+    parameters:
+      - {name: class_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    get:
+      operationId: listClassEnrollments
+      summary: List the roster of one class
+      tags: [courses]
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Cursor'
+        - $ref: './common.yaml#/components/parameters/Limit'
+      responses:
+        '200':
+          description: Page of enrollments.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: './common.yaml#/components/schemas/CursorPage'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: {$ref: '#/components/schemas/EnrollmentPublic'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
+  /api/v1/courses/{course_id}/enrollments:
+    parameters:
+      - {name: course_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    get:
+      operationId: listCourseEnrollments
+      summary: Page through the complete roster of a course
+      description: |
+        The teacher's course-wide roster: every active enrollment of every section and class,
+        including students without an account (`student_id` null) and their class/section.
+        This is the read a teacher detail page must page through completely; deriving the
+        roster from one class or one section would present a partial list as the audience.
+      tags: [courses]
+      parameters:
+        - $ref: './common.yaml#/components/parameters/Cursor'
+        - $ref: './common.yaml#/components/parameters/Limit'
+        - {name: section_id, in: query, required: false, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+        - {name: class_id, in: query, required: false, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+      responses:
+        '200':
+          description: Page of enrollments.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: './common.yaml#/components/schemas/CursorPage'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items: {$ref: '#/components/schemas/EnrollmentPublic'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
+  /api/v1/courses/{course_id}/roster-summary:
+    parameters:
+      - {name: course_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    get:
+      operationId: getCourseRosterSummary
+      summary: Server-computed audience counts for one course
+      description: |
+        Counts are computed in SQL over the whole course, not summed from a client page: a
+        teacher's "how many students are in this course" answer must not depend on how many
+        pages the browser happened to load.
+      tags: [courses]
+      responses:
+        '200':
+          description: Course roster summary.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/RosterSummary'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
 
   /api/v1/sections/{section_id}/enrollments:
     parameters:
@@ -1025,9 +1274,12 @@ paths:
       operationId: createRosterImport
       summary: Upload a roster file and start parsing (RQ-B-1-10)
       description: |
-        Accepts a CSV or XLSX roster. Parsing never guesses: when a column cannot be
-        mapped unambiguously the import stops in `mapping_required` and waits for a
-        human decision. No roster row is persisted before confirmation.
+        Accepts a CSV or XLSX roster for one **class**: the caller names the course, the
+        section (课序) and the class (班级) the file belongs to, and the server verifies that
+        the class belongs to that section and the section to that course. Parsing never
+        guesses: when a column cannot be mapped unambiguously the import stops in
+        `mapping_required` and waits for a human decision. No roster row is persisted
+        before confirmation.
       tags: [roster]
       requestBody:
         required: true
@@ -1035,11 +1287,12 @@ paths:
           multipart/form-data:
             schema:
               type: object
-              required: [file, course_id, section_id]
+              required: [file, course_id, section_id, class_id]
               properties:
                 file: {type: string, format: binary}
                 course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
                 section_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+                class_id: {$ref: './common.yaml#/components/schemas/Uuid'}
               additionalProperties: false
       responses:
         '202':
@@ -1194,61 +1447,207 @@ components:
         is_active: {type: boolean}
       additionalProperties: false
 
-    CourseTargetValidationRequest:
-      type: object
-      description: "Assignment target ids to validate against the course's sections and active enrollments."
-      required: [course_id, section_ids, student_ids]
-      properties:
-        course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
-        section_ids:
-          type: array
-          maxItems: 50
-          uniqueItems: true
-          items: {$ref: './common.yaml#/components/schemas/Uuid'}
-        student_ids:
-          type: array
-          maxItems: 2000
-          uniqueItems: true
-          items: {$ref: './common.yaml#/components/schemas/Uuid'}
-      additionalProperties: false
-
-    CourseTargetValidation:
+    ClassPublic:
       type: object
       description: |
-        Validation result for one assignment's target ids. `sections` contains the requested
-        sections that actually belong to `course_id`; `unknown_section_ids` lists the rest.
-        `students` contains (student_id, section_id) pairs for requested students that are
-        actively enrolled in one of the requested sections; `unknown_student_ids` lists the
-        rest (not enrolled, not active, or not matched to an account).
-      required: [course_id, sections, unknown_section_ids, students, unknown_student_ids]
+        One class (班级) inside a section (课序). A class is deliberately not a section: a
+        section contains one or more classes, and a course can therefore have several student
+        groups in the same 课序 (v0.32.0). `enrollment_count`/`bound_count` are computed over
+        the class's active roster rows; `bound_count` is the subset linked to an account.
+      required: [class_id, course_id, section_id, class_name, source, enrollment_count, bound_count]
+      properties:
+        class_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        section_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        class_name: {type: string, minLength: 1, maxLength: 64}
+        source:
+          type: string
+          enum: [registered_class, roster_import, manual]
+          description: "Where the class came from: a registered class (allowlist batch), an uploaded roster file, or manual creation."
+        allowlist_batch_id:
+          anyOf: [{$ref: './common.yaml#/components/schemas/Uuid'}, {type: "null"}]
+          description: "The registration allowlist batch this class was attached from; null for uploaded/manual classes."
+        enrollment_count: {type: integer, minimum: 0}
+        bound_count: {type: integer, minimum: 0}
+        created_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+      additionalProperties: false
+
+    ClassCreate:
+      type: object
+      description: |
+        Create one class inside an existing section. With `batch_id`, the class starts as a
+        copy of that registered class's roster (accounts already existing for a student number
+        are linked immediately); without it the class starts empty. `class_name` defaults to
+        the registered class name (file name without extension) when a batch is given.
+      required: [class_name]
+      properties:
+        class_name: {type: string, minLength: 1, maxLength: 64}
+        batch_id: {anyOf: [{$ref: './common.yaml#/components/schemas/Uuid'}, {type: "null"}]}
+      additionalProperties: false
+
+    ClassRename:
+      type: object
+      required: [class_name]
+      properties:
+        class_name: {type: string, minLength: 1, maxLength: 64}
+      additionalProperties: false
+
+    RosterSummary:
+      type: object
+      description: |
+        Server-computed audience counts for one course (v0.32.0). Every number is aggregated
+        in SQL over all active enrollments; none of it is summed from a client page, so a
+        teacher's "how big is this audience" answer cannot silently depend on pagination.
+      required: [course_id, section_count, class_count, student_total, bound_count, unbound_count, sections]
       properties:
         course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        section_count: {type: integer, minimum: 0}
+        class_count: {type: integer, minimum: 0}
+        student_total: {type: integer, minimum: 0}
+        bound_count: {type: integer, minimum: 0}
+        unbound_count: {type: integer, minimum: 0}
         sections:
           type: array
           items:
             type: object
-            required: [section_id, course_id, section_code, term]
+            required: [section_id, section_code, term, class_count, student_total, bound_count, unbound_count, classes]
             properties:
               section_id: {$ref: './common.yaml#/components/schemas/Uuid'}
-              course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
               section_code: {type: string}
               term: {type: [string, "null"]}
+              class_count: {type: integer, minimum: 0}
+              student_total: {type: integer, minimum: 0}
+              bound_count: {type: integer, minimum: 0}
+              unbound_count: {type: integer, minimum: 0}
+              classes:
+                type: array
+                items:
+                  type: object
+                  required: [class_id, class_name, student_total, bound_count, unbound_count]
+                  properties:
+                    class_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+                    class_name: {type: string}
+                    student_total: {type: integer, minimum: 0}
+                    bound_count: {type: integer, minimum: 0}
+                    unbound_count: {type: integer, minimum: 0}
+                  additionalProperties: false
             additionalProperties: false
-        unknown_section_ids:
+      additionalProperties: false
+
+    MyMembership:
+      type: object
+      description: |
+        One active course enrollment of the caller, with the section and class they belong to.
+        This is what lets a student see "which course, which 课序, which 班级 am I in" and
+        switch between several courses; it contains no other student's data.
+      required: [course_id, course_title, section_id, section_code, class_id, class_name]
+      properties:
+        course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        course_code: {type: [string, "null"]}
+        course_title: {type: string}
+        section_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        section_code: {type: string}
+        term: {type: [string, "null"]}
+        class_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        class_name: {type: string}
+      additionalProperties: false
+
+    InternalUserAuthorization:
+      type: object
+      description: |
+        Authoritative access facts for one account, read by B3/B2 on every request that decides
+        assignment/submission/grade access. Ids only: a name, e-mail address or student number
+        must never travel through this internal channel.
+      required: [user_id, platform_roles, course_grants, enrollments]
+      properties:
+        user_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        platform_roles:
           type: array
+          items: {$ref: './common.yaml#/components/schemas/Role'}
+        course_grants:
+          type: array
+          description: "Course ids this account is staff (teacher) on."
           items: {$ref: './common.yaml#/components/schemas/Uuid'}
-        students:
+        enrollments:
           type: array
+          description: "Active student enrollments: the courses this account may see and submit in, and where."
           items:
             type: object
-            required: [student_id, section_id]
+            required: [course_id, section_id, class_id]
             properties:
-              student_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+              course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
               section_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+              class_id: {$ref: './common.yaml#/components/schemas/Uuid'}
             additionalProperties: false
-        unknown_student_ids:
-          type: array
-          items: {$ref: './common.yaml#/components/schemas/Uuid'}
+      additionalProperties: false
+
+    AssignmentNotificationRequest:
+      type: object
+      description: |
+        What B3 hands to B4 when an assignment is published. B4 snapshots the course roster
+        into recipients; the assignment facts are copied only for the message body (B4 does
+        not own assignments and cannot read B3's schema).
+      required: [assignment_id, course_id, title, published_at]
+      properties:
+        assignment_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        title: {type: string, minLength: 1, maxLength: 200}
+        due_at:
+          anyOf: [{$ref: './common.yaml#/components/schemas/Timestamp'}, {type: "null"}]
+        published_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+      additionalProperties: false
+
+    AssignmentNotificationSummary:
+      type: object
+      description: |
+        Delivery counts of one assignment's publication notification. The counts are the
+        checked result: `sent_count` counts messages the SMTP server accepted, `failed_count`
+        counts attempted deliveries that failed, and the three `skipped_*` counts name the
+        students that had no usable channel at publication time. A summary with `sent_count`
+        0 and `skipped_unbound_count` > 0 means "nothing was delivered", never "delivered".
+      required: [assignment_id, course_id, status, recipient_total, sent_count, pending_count, failed_count, skipped_unbound_count, skipped_no_contact_count, skipped_inactive_count, created_at, updated_at]
+      properties:
+        assignment_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        status:
+          type: string
+          enum: [pending, sending, completed, partial, failed]
+        recipient_total: {type: integer, minimum: 0}
+        sent_count: {type: integer, minimum: 0}
+        pending_count: {type: integer, minimum: 0}
+        failed_count: {type: integer, minimum: 0}
+        skipped_unbound_count: {type: integer, minimum: 0}
+        skipped_no_contact_count: {type: integer, minimum: 0}
+        skipped_inactive_count: {type: integer, minimum: 0}
+        created_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+        updated_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+      additionalProperties: false
+
+    AssignmentNotificationDelivery:
+      type: object
+      description: |
+        One intended recipient of an assignment notification. `student_number`/`display_name`
+        are the roster values recorded at publication time, so the row stays meaningful after
+        the roster changes. `reason_code`/`reason_detail` explain skipped and failed rows; a
+        skipped row is never presented as sent.
+      required: [delivery_id, student_number, display_name, section_id, class_id, status, attempts, updated_at]
+      properties:
+        delivery_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        student_number: {type: string}
+        display_name: {type: string}
+        section_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        class_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        user_id: {anyOf: [{$ref: './common.yaml#/components/schemas/Uuid'}, {type: "null"}]}
+        status:
+          type: string
+          enum: [pending, sending, sent, failed, skipped_unbound, skipped_no_contact, skipped_inactive]
+        reason_code:
+          type: [string, "null"]
+          enum: [null, smtp_error, mail_not_configured, no_account, no_email, inactive_account]
+        reason_detail: {type: [string, "null"], maxLength: 200}
+        attempts: {type: integer, minimum: 0}
+        sent_at: {anyOf: [{$ref: './common.yaml#/components/schemas/Timestamp'}, {type: "null"}]}
+        updated_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
       additionalProperties: false
 
     EnrollmentPublic:
@@ -1265,10 +1664,13 @@ components:
         answer "who has not submitted yet" without dumping the admin-only user list.
         `student_id` is the platform user id and is **nullable**: a roster row that was
         never matched to a user account has none (the column is nullable in `b4`).
-      required: [enrollment_id, section_id, student_number, display_name, is_active]
+      required: [enrollment_id, course_id, section_id, class_id, student_number, display_name, is_active]
       properties:
         enrollment_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
         section_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        class_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        class_name: {type: string}
         student_id: {anyOf: [{$ref: './common.yaml#/components/schemas/Uuid'}, {type: "null"}]}
         student_number: {type: string, minLength: 1, maxLength: 64}
         display_name: {type: string, minLength: 1, maxLength: 200}
@@ -1282,7 +1684,7 @@ components:
         The authenticated caller's own account facts (CHG-0032). Deliberately minimal: it exists
         so a student can render the required mail-submission body fields (name/student number)
         without the roster endpoint (staff-only). No e-mail address and no other user's data.
-      required: [user_id, username, display_name, roles]
+      required: [user_id, username, display_name, roles, memberships]
       properties:
         user_id: {$ref: './common.yaml#/components/schemas/Uuid'}
         username: {type: string}
@@ -1291,6 +1693,13 @@ components:
         roles:
           type: array
           items: {$ref: './common.yaml#/components/schemas/Role'}
+        memberships:
+          type: array
+          description: |
+            The caller's own active course enrollments (v0.32.0), each with its section and
+            class. Empty for staff-only accounts. This is how a student can see -- and switch
+            between -- every course they belong to without reading a staff-only roster.
+          items: {$ref: '#/components/schemas/MyMembership'}
       additionalProperties: false
 
     UserSummary:
@@ -1346,16 +1755,6 @@ components:
         display_name: {type: string}
       additionalProperties: false
 
-    RegisteredClassImport:
-      type: object
-      description: Which registered class to attach to the course.
-      required: [batch_id]
-      properties:
-        batch_id: {$ref: './common.yaml#/components/schemas/Uuid'}
-        #: 可选：指定课序号。省略时取班级名，重名时追加 -2、-3。
-        section_code: {type: [string, "null"], maxLength: 64}
-      additionalProperties: false
-
     CourseRename:
       type: object
       description: |
@@ -1407,10 +1806,9 @@ components:
         course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
         section_code: {type: string, minLength: 1, maxLength: 64}
         term: {type: [string, 'null'], maxLength: 64}
-        #: 该课序最近一次成功导入的名单文件名；从未导入过时为 null（界面退回课序号）。
-        class_name:
-          type: [string, "null"]
-        #: 该课序下已导入的学生人数。
+        #: 该课序下的班级（班级）数量。课序与班级自 v0.32.0 起是两个概念：一个课序可含多个班级。
+        class_count: {type: integer, minimum: 0}
+        #: 该课序下全部班级的有效名单人数。
         enrollment_count: {type: integer, minimum: 0}
         created_at:
           anyOf: [{$ref: './common.yaml#/components/schemas/Timestamp'}, {type: 'null'}]
@@ -1422,7 +1820,7 @@ components:
         Parse preview for a roster import. `database.schema` of B4 is untouched while
         the import sits in `previewed`. Rows that fail validation appear in `rejected`
         with a reason; they are never dropped silently.
-      required: [roster_import_id, status, course_id, section_id, detected_columns]
+      required: [roster_import_id, status, course_id, section_id, class_id, detected_columns]
       properties:
         roster_import_id: {$ref: './common.yaml#/components/schemas/Uuid'}
         status:
@@ -1430,6 +1828,7 @@ components:
           enum: [uploaded, parsed, mapping_required, validating, previewed, committed, rejected, failed_parse]
         course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
         section_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        class_id: {$ref: './common.yaml#/components/schemas/Uuid'}
         detected_columns:
           type: array
           items: {type: string}

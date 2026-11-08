@@ -51,6 +51,7 @@ from autograder_b2.grades.query import (
     GradeQueryService,
     GradeRow,
 )
+from autograder_b2.integration.b4_authorization import UserAuthorizationDirectory
 
 ExportFormat = Literal["xlsx", "csv"]
 
@@ -335,9 +336,14 @@ class GradesExportService:
         engine: Engine,
         *,
         directory: EnrollmentDirectory | None = None,
+        authorization_directory: UserAuthorizationDirectory | None = None,
         batch_size: int = DEFAULT_BATCH_SIZE,
     ) -> None:
-        self._query = GradeQueryService(engine, batch_size=batch_size)
+        # 查询侧（`GradeQueryService`）自己持有 B4 权威授权目录：导出复用同一次 `iter_grades`，
+        # 因此"学生移出课程后导出也 403"与 `GET /api/v1/grades` 是同一处判定，不是两套口径。
+        self._query = GradeQueryService(
+            engine, batch_size=batch_size, authorization_directory=authorization_directory
+        )
         self._directory = directory
 
     def export(

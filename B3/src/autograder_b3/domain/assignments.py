@@ -1,22 +1,32 @@
 """Assignment maintenance (``RQ-B-3-20``).
 
-An assignment is a course-scoped, **multi-section** set of published question versions,
-optionally narrowed to named students inside those sections. Two facts follow and shape
-this module:
+Since v0.32.0 an assignment is **course-level**: it belongs to exactly one course and
+automatically applies to every section (课序), class (班级) and student of that course,
+including the ones added later while it is open. The hand-picked target list is gone --
+it was a second, silently diverging answer to "who is this assignment for", and the
+authoritative audience is the course's current effective students.
 
-* referencing a draft is refused with ``409`` (the contract's own wording); the rule is
-  checked here and is intentionally *not* a database CHECK, because "is the referenced
-  version published?" is a cross-row condition and a trigger would fire on the version's
-  own lifecycle updates;
-* "does this section belong to this course" and "is this student actively enrolled" are
-  owned by the identity/course module, so the target ids are validated through the
-  :class:`~autograder_b3.integration.b4.TargetValidator` port before anything is written.
-  An unavailable validator refuses creation (``503``) rather than accepting the ids.
+Two rules follow and shape this module:
 
-Reads are audience-aware: a teacher reads assignments in the courses they are staff on
-(with section-scoped tokens restricted to the target sections), a student only reads
-assignments whose target sections contain their class and, when the assignment narrows
-its audience, whose student list contains them.
+* referencing a draft is refused with ``409`` (the contract's own wording), and a version
+  whose question belongs to another course is reported as absent (``404``). Both are
+  checked here; "is the referenced version published?" is a cross-row condition and
+  intentionally not a database CHECK.
+* publication also hands the audience to B4 (which owns delivery). The hand-off is a
+  separate, idempotent step **after** the assignment transaction commits: the assignment
+  being published is a fact, so a failed hand-off never rolls it back. The truthful state
+  is ``notification_state = unavailable`` and a teacher can retry.
+
+Reads are audience-aware:
+
+* a teacher/admin authorizes from the token role plus the token's course scope
+  (``require_course_read`` / ``require_course_write``), the same path as the rest of B3;
+* a **student** authorizes from B4's live authorization directory, not from the token's
+  ``scope`` snapshot: a student added to a course after sign-in sees its assignments, and a
+  student removed from a course stops seeing them immediately. The list filters by that
+  advisory's course set **in SQL**, so keyset pages are never left short by a post-filter.
+  When the directory cannot answer the request is ``503`` -- never "not a member" (``403``)
+  and never an empty list.
 """
 
 from __future__ import annotations
@@ -26,40 +36,55 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from ..auth import (
-    READ_ROLES,
+    WRITE_ROLES,
     Principal,
-    require_assignment_read,
     require_authenticated,
+    require_course_read,
     require_course_write,
 )
 from ..dto.internal import AssignmentCreateInputModel
 from ..errors import (
-    AssignmentTargetsInvalid,
-    AssignmentTargetsUnavailable,
+    AuthorizationUnavailable,
+    Conflict,
     DraftAssignmentReference,
     Forbidden,
     NotFound,
+    UnprocessableEntity,
 )
 from ..infra.db import Database
 from ..infra.models import Assignment
 from ..infra.repositories import QuestionBankRepository
-from ..integration.b4 import TargetValidator, TargetsUnavailable
+from ..integration.b4 import (
+    AssignmentNotifier,
+    AuthorizationDirectory,
+    NotificationRejected,
+    NotificationUnavailable,
+    UserAuthorization,
+)
+from ..integration.b4 import AuthorizationUnavailable as DirectoryUnavailable
 from ..logging import get_logger, log_event
+
+#: B4 statuses an explicit notification rejection is mapped back onto. Every one of them is
+#: a statement about the request (assignment unknown to B4, conflict, unprocessable body),
+#: so repeating the retry would fail identically and the caller must see the real status.
+_REJECTION_ERRORS = {
+    404: NotFound,
+    409: Conflict,
+    422: UnprocessableEntity,
+}
 
 
 @dataclass(frozen=True)
 class AssignmentView:
     """One assignment plus the rows that live outside it.
 
-    The targets are separate tables and the question list is ordered by item ordinal, so
-    a plain ``Assignment`` row cannot be serialized on its own. Keeping the three lists
-    together here means every caller (create, detail, list) answers from the same shape.
+    The ordered question list is a separate table, so a plain ``Assignment`` row cannot be
+    serialized on its own. ``question_version_ids`` keeps creation order: the 1-based
+    position names each answer file (``1.txt``), which is why it must not be re-sorted.
     """
 
     assignment: Assignment
     question_version_ids: tuple[uuid.UUID, ...]
-    section_ids: tuple[uuid.UUID, ...]
-    student_ids: tuple[uuid.UUID, ...]
 
 
 def create_assignment(
@@ -67,15 +92,16 @@ def create_assignment(
     *,
     principal: Principal | None,
     payload: AssignmentCreateInputModel,
-    targets: TargetValidator | None,
+    notifier: AssignmentNotifier | None,
     now: datetime,
 ) -> AssignmentView:
-    """Create an assignment with its items and target rows in one transaction.
+    """Create a course-level assignment and hand its audience to B4.
 
     Order matters and is the contract's: course write authorization, then the referenced
-    versions (``404``/``409``/``422``), then target validation against the identity/course
-    module (``422``/``503``), then the write. Nothing is persisted before every check has
-    passed, so a refused request leaves no partial assignment behind.
+    versions (``404``/``409``/``422``), then the write, then the notification hand-off.
+    Nothing is persisted before every check has passed, so a refused request leaves no
+    partial assignment behind. The hand-off runs after the write commits and cannot undo
+    it -- see ``_schedule_notification``.
     """
     actor = require_course_write(principal, payload.course_id)
     with database.protected_session() as session:
@@ -89,9 +115,9 @@ def create_assignment(
             if question is None:  # pragma: no cover
                 raise NotFound(f"question {version.question_id} not found")
             if question.course_id != payload.course_id:
-                # Cross-course reference: the caller is authorized for
-                # payload.course_id, so the *referenced* question is simply not
-                # part of this course - refuse rather than leak its existence.
+                # Cross-course reference: the caller is authorized for payload.course_id,
+                # so the *referenced* question is simply not part of this course - refuse
+                # rather than leak its existence.
                 raise NotFound(f"question version {version_id} not found")
             if version.status != "published":
                 drafts.append(str(version_id))
@@ -100,8 +126,6 @@ def create_assignment(
                 "an assignment may only reference published versions; "
                 f"draft version(s): {', '.join(sorted(drafts))}"
             )
-
-        _require_valid_targets(targets, payload)
 
         assignment = bank.create_assignment(
             course_id=payload.course_id,
@@ -119,34 +143,63 @@ def create_assignment(
             )
             for index, version_id in enumerate(payload.question_version_ids)
         ]
-        for section_id in payload.section_ids:
-            bank.add_assignment_section(
-                assignment_id=assignment.assignment_id, section_id=section_id, now=now
-            )
-        for student_id in payload.student_ids:
-            bank.add_assignment_student(
-                assignment_id=assignment.assignment_id, student_id=student_id, now=now
-            )
+        version_ids = tuple(item.question_version_id for item in items)
         log_event(
             get_logger("domain.assignments"),
             "assignment.created",
             assignment_id=str(assignment.assignment_id),
             course_id=str(payload.course_id),
             attempt_count=len(items),
-            section_count=len(payload.section_ids),
-            narrowed_student_count=len(payload.student_ids),
-        )
-        view = AssignmentView(
-            assignment=assignment,
-            question_version_ids=tuple(item.question_version_id for item in items),
-            section_ids=tuple(sorted(payload.section_ids)),
-            student_ids=tuple(sorted(payload.student_ids)),
         )
         session.flush()
         session.expunge(assignment)
         for item in items:
             session.expunge(item)
-        return view
+    # The hand-off runs only after the write has committed: publishing is a fact, and a
+    # B4 failure must not roll it back (it is recorded as `unavailable` instead).
+    return _schedule_notification(
+        database,
+        view=AssignmentView(assignment=assignment, question_version_ids=version_ids),
+        notifier=notifier,
+        now=now,
+        raise_on_rejection=False,
+    )
+
+
+def retry_assignment_notification(
+    database: Database,
+    *,
+    principal: Principal | None,
+    assignment_id: uuid.UUID,
+    notifier: AssignmentNotifier | None,
+    now: datetime,
+) -> AssignmentView:
+    """Re-run the publication-notification hand-off for one assignment (teacher retry).
+
+    Authorization is the assignment's course write permission. The call is idempotent on
+    B4's side, so repeating it never duplicates recipients or re-sends a message; the
+    returned view carries the state this attempt produced.
+
+    A B4 rejection with a declared status (404/409/422) is mapped onto the same B3 status:
+    that answer is about this request, and reporting ``200 unavailable`` would hide a
+    permanent problem behind a button that never works. A transport/5xx failure instead
+    leaves ``notification_state = unavailable`` and answers ``200`` with the assignment,
+    because the assignment itself is fine and the retry is the fix.
+    """
+    with database.app_session() as session:
+        bank = QuestionBankRepository(session)
+        assignment = bank.get_assignment(assignment_id)
+        if assignment is None:
+            raise NotFound(f"assignment {assignment_id} not found")
+        version_ids = tuple(
+            item.question_version_id for item in bank.list_assignment_items(assignment_id)
+        )
+        session.expunge(assignment)
+    require_course_write(principal, assignment.course_id)
+    view = AssignmentView(assignment=assignment, question_version_ids=version_ids)
+    return _schedule_notification(
+        database, view=view, notifier=notifier, now=now, raise_on_rejection=True
+    )
 
 
 def get_assignment_detail(
@@ -154,42 +207,26 @@ def get_assignment_detail(
     *,
     principal: Principal | None,
     assignment_id: uuid.UUID,
+    directory: AuthorizationDirectory | None,
 ) -> AssignmentView:
-    """Read one assignment inside the caller's audience.
+    """Read one assignment inside the caller's authorization.
 
     The detail page must not walk the list and match locally: once the list paginates, a
     missing page silently becomes "this assignment does not exist". Absent records are
-    ``404``; a record whose audience excludes the caller is ``403`` - the caller does not
-    get to learn whether an id exists elsewhere.
+    ``404``; a record the caller may not read is ``403`` - the caller does not get to learn
+    whether an id exists elsewhere.
     """
     with database.app_session() as session:
         bank = QuestionBankRepository(session)
         assignment = bank.get_assignment(assignment_id)
         if assignment is None:
             raise NotFound(f"assignment {assignment_id} not found")
-        sections = [
-            row.section_id for row in bank.list_assignment_sections(assignment_id)
-        ]
-        students = [
-            row.student_id for row in bank.list_assignment_students(assignment_id)
-        ]
-        require_assignment_read(
-            principal,
-            course_id=assignment.course_id,
-            section_ids=sections,
-            student_ids=students,
-        )
-        version_ids = [
+        version_ids = tuple(
             item.question_version_id for item in bank.list_assignment_items(assignment_id)
-        ]
-        view = AssignmentView(
-            assignment=assignment,
-            question_version_ids=tuple(version_ids),
-            section_ids=tuple(sorted(sections)),
-            student_ids=tuple(sorted(students)),
         )
         session.expunge(assignment)
-        return view
+    _require_read_access(principal, course_id=assignment.course_id, directory=directory)
+    return AssignmentView(assignment=assignment, question_version_ids=version_ids)
 
 
 def list_assignment_versions(
@@ -197,49 +234,29 @@ def list_assignment_versions(
     *,
     principal: Principal | None,
     course_id: uuid.UUID | None,
-    section_id: uuid.UUID | None,
     limit: int,
+    directory: AuthorizationDirectory | None,
     after: tuple[datetime, uuid.UUID] | None = None,
 ) -> tuple[list[AssignmentView], bool]:
     """One keyset page of assignments the caller may read.
 
-    Reader filtering is pushed into the query rather than applied to the fetched page: a
-    row dropped after ``LIMIT`` would make the page short and the ``next_cursor`` point
-    past rows nobody served. The per-row authorization check still runs as the single
-    source of truth for "may this caller read this assignment", so a divergence between
-    the SQL prefilter and the policy fails closed.
+    The reader's course filter is pushed into the query rather than applied to the fetched
+    page: a row dropped after ``LIMIT`` would make the page short and the ``next_cursor``
+    point past rows nobody served. ``None`` means "no restriction" and is only produced for
+    admins/service callers.
     """
     actor = require_authenticated(principal)
-    visible_courses, visible_sections, audience_student = _reader_scope(actor)
+    readable_courses = _reader_courses(actor, directory)
     with database.app_session() as session:
         bank = QuestionBankRepository(session)
         rows, has_more = bank.list_assignments(
-            course_ids=actor.readable_courses(),
+            course_ids=readable_courses,
             course_id=course_id,
-            section_id=section_id,
-            visible_course_ids=visible_courses,
-            visible_section_ids=visible_sections,
-            audience_student_id=audience_student,
             limit=limit,
             after=after,
         )
         result: list[AssignmentView] = []
         for row in rows:
-            sections = [
-                target.section_id for target in bank.list_assignment_sections(row.assignment_id)
-            ]
-            students = [
-                target.student_id for target in bank.list_assignment_students(row.assignment_id)
-            ]
-            try:
-                require_assignment_read(
-                    actor,
-                    course_id=row.course_id,
-                    section_ids=sections,
-                    student_ids=students,
-                )
-            except Forbidden:
-                continue
             version_ids = [
                 item.question_version_id
                 for item in bank.list_assignment_items(row.assignment_id)
@@ -249,71 +266,177 @@ def list_assignment_versions(
                 AssignmentView(
                     assignment=row,
                     question_version_ids=tuple(version_ids),
-                    section_ids=tuple(sorted(sections)),
-                    student_ids=tuple(sorted(students)),
                 )
             )
         return result, has_more
 
 
-def _require_valid_targets(
-    targets: TargetValidator | None, payload: AssignmentCreateInputModel
+# --------------------------------------------------------------------------
+# notification hand-off
+# --------------------------------------------------------------------------
+
+
+def _schedule_notification(
+    database: Database,
+    *,
+    view: AssignmentView,
+    notifier: AssignmentNotifier | None,
+    now: datetime,
+    raise_on_rejection: bool,
+) -> AssignmentView:
+    """Attempt the hand-off once and persist exactly what happened.
+
+    ``raise_on_rejection`` separates the two callers: at creation any failure is recorded
+    as ``unavailable`` and the assignment is returned (201); on an explicit retry a B4
+    rejection is mapped back to its status after the state is persisted, because that
+    answer is about this request rather than a transient outage.
+    """
+    assignment = view.assignment
+    try:
+        if notifier is None:
+            raise NotificationUnavailable("assignment notifications are not configured")
+        notifier.notify(
+            assignment_id=assignment.assignment_id,
+            course_id=assignment.course_id,
+            title=assignment.title,
+            due_at=assignment.due_at,
+            published_at=assignment.created_at,
+        )
+    except NotificationRejected as rejection:
+        _set_notification_state(
+            database, assignment, state="unavailable", scheduled_at=None, now=now
+        )
+        log_event(
+            get_logger("domain.assignments"),
+            "assignment.notification.rejected",
+            level=30,
+            assignment_id=str(assignment.assignment_id),
+            course_id=str(assignment.course_id),
+            status_code=rejection.status_code,
+        )
+        if raise_on_rejection:
+            raise _REJECTION_ERRORS[rejection.status_code](
+                "the notification service refused the assignment notification "
+                f"with HTTP {rejection.status_code}"
+            ) from rejection
+        return AssignmentView(
+            assignment=assignment, question_version_ids=view.question_version_ids
+        )
+    except NotificationUnavailable as error:
+        _set_notification_state(
+            database, assignment, state="unavailable", scheduled_at=None, now=now
+        )
+        log_event(
+            get_logger("domain.assignments"),
+            "assignment.notification.unavailable",
+            level=30,
+            assignment_id=str(assignment.assignment_id),
+            course_id=str(assignment.course_id),
+            reason=type(error).__name__,
+        )
+    else:
+        _set_notification_state(
+            database, assignment, state="scheduled", scheduled_at=now, now=now
+        )
+        log_event(
+            get_logger("domain.assignments"),
+            "assignment.notification.scheduled",
+            assignment_id=str(assignment.assignment_id),
+            course_id=str(assignment.course_id),
+        )
+    return AssignmentView(assignment=assignment, question_version_ids=view.question_version_ids)
+
+
+def _set_notification_state(
+    database: Database,
+    assignment: Assignment,
+    *,
+    state: str,
+    scheduled_at: datetime | None,
+    now: datetime,
 ) -> None:
-    """Ask the identity/course module whether these ids mean what the caller claims.
+    with database.protected_session() as session:
+        row = session.get(Assignment, assignment.assignment_id)
+        if row is None:  # pragma: no cover - the row was committed by this request
+            raise NotFound(f"assignment {assignment.assignment_id} not found")
+        QuestionBankRepository(session).set_assignment_notification(
+            row, state=state, scheduled_at=scheduled_at, now=now
+        )
+        # The caller returns this object to the response builder; keep it in step with the
+        # committed row instead of re-reading it in a third transaction.
+        assignment.notification_state = row.notification_state
+        assignment.notification_scheduled_at = row.notification_scheduled_at
+        assignment.updated_at = row.updated_at
 
-    Running the check even when no student is named is deliberate: a section id that does
-    not belong to the course would silently create an assignment nobody can see, which is
-    worse than a ``422``. A missing/unreachable validator is a ``503`` - the ids are never
-    accepted on trust.
+
+# --------------------------------------------------------------------------
+# read authorization
+# --------------------------------------------------------------------------
+
+
+def _require_read_access(
+    principal: Principal | None,
+    *,
+    course_id: uuid.UUID,
+    directory: AuthorizationDirectory | None,
+) -> Principal:
+    """Whether this caller may read an assignment of ``course_id``.
+
+    Teacher/admin keeps the existing token-role + token-course-scope path. A student is
+    decided from B4's live enrollments; the token's role must still say ``student``, but its
+    ``scope`` snapshot is not evidence of membership (v0.32.0).
     """
-    if targets is None:
-        raise AssignmentTargetsUnavailable(
-            "assignment target validation is not configured; this deployment cannot "
-            "verify the chosen sections and students"
-        )
-    try:
-        validation = targets.validate_targets(
-            course_id=payload.course_id,
-            section_ids=payload.section_ids,
-            student_ids=payload.student_ids,
-        )
-    except TargetsUnavailable as error:
-        raise AssignmentTargetsUnavailable(str(error)) from error
-    invalid_sections = [
-        section for section in payload.section_ids if section not in validation.valid_section_ids
-    ]
-    invalid_students = [
-        student for student in payload.student_ids if student not in validation.valid_student_ids
-    ]
-    if invalid_sections or invalid_students:
-        # Counts only: the rejected student ids are enrollment data, and a creation error
-        # must not become a way to confirm which students are enrolled.
-        raise AssignmentTargetsInvalid(
-            "the assignment targets are not valid for this course: "
-            f"{len(invalid_sections)} section target(s) and "
-            f"{len(invalid_students)} student target(s) were rejected"
-        )
-
-
-def _reader_scope(
-    actor: Principal,
-) -> tuple[frozenset[uuid.UUID], frozenset[uuid.UUID] | None, uuid.UUID | None]:
-    """The SQL prefilter for one reader, matching :func:`require_assignment_read`.
-
-    Returns ``(whole_course_ids, target_section_ids, audience_student_id)``; ``None`` means
-    "no restriction on this axis" and is only produced for admins/service callers.
-    """
+    actor = require_authenticated(principal)
     if actor.is_service or actor.is_admin:
-        return frozenset(), None, None
-    if not actor.has_role(*READ_ROLES):
-        raise Forbidden("the caller's role may not read assignments")
-    if actor.has_role("teacher"):
-        return frozenset(actor.course_wide), frozenset(actor.section_ids), None
+        return actor
+    if actor.has_role(*WRITE_ROLES):
+        require_course_read(actor, course_id)
+        return actor
+    if actor.has_role("student"):
+        if not _student_authorization(actor, directory).is_enrolled_in(course_id):
+            raise Forbidden(
+                "the assignment's course is outside the caller's current enrollment"
+            )
+        return actor
+    raise Forbidden("the caller's role may not read assignments")
+
+
+def _reader_courses(
+    actor: Principal, directory: AuthorizationDirectory | None
+) -> frozenset[uuid.UUID] | None:
+    """The SQL course filter matching :func:`_require_read_access`; ``None`` = no restriction."""
+    if actor.is_service or actor.is_admin:
+        return None
+    if actor.has_role(*WRITE_ROLES):
+        return actor.readable_courses()
+    if actor.has_role("student"):
+        return _student_authorization(actor, directory).enrolled_course_ids
+    raise Forbidden("the caller's role may not read assignments")
+
+
+def _student_authorization(
+    actor: Principal, directory: AuthorizationDirectory | None
+) -> UserAuthorization:
+    """Ask B4 for the caller's live authorization, translating every outage to ``503``.
+
+    A missing directory is not "no memberships": an unconfigured deployment cannot decide
+    student access, so it must fail closed and loudly instead of silently denying everyone.
+    """
+    if directory is None:
+        raise AuthorizationUnavailable(
+            "the authorization directory is not configured; this deployment cannot "
+            "verify the caller's current course enrollment"
+        )
     try:
-        subject = uuid.UUID(actor.subject)
+        user_id = uuid.UUID(actor.subject)
     except (ValueError, AttributeError, TypeError) as error:
-        raise Forbidden("the caller's subject is not a usable student identifier") from error
-    return frozenset(), frozenset(actor.section_ids), subject
+        raise Forbidden(
+            "the caller's subject is not a usable account identifier"
+        ) from error
+    try:
+        return directory.user_authorization(user_id)
+    except DirectoryUnavailable as error:
+        raise AuthorizationUnavailable(str(error)) from error
 
 
 def _actor_id(actor: Principal) -> uuid.UUID | None:

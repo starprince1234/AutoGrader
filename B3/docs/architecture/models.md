@@ -110,3 +110,34 @@ sequenceDiagram
 - 共同语义：`language`（受限枚举 `python`/`bash`，与 B2 runner policy 同枚举，见 `RQ-B-0-10`）、`adapter.kind`、比较策略、`security_policy`（三个常量不可被题目作者关闭）。
 - 校验统一入口：`compile/manifest.py: validate_adapter_manifest`——拒绝绝对路径、`..`、盘符、shell 字符串、工作区外加载、越界枚举、重复 fixture 声明。
 - **实现**：`compile/manifest.py`、`compile/validation.py`、`compile/adapters.py`、`compile/registry.py`；冻结签名见 [../collaboration/frozen-interfaces.md](../collaboration/frozen-interfaces.md) §3。
+
+## 5. 课程级作业与通知交接（v0.32.0）
+
+作业是**课程级**对象：属于一门课程，自动覆盖该课程全部课序/班级/学生，包含发布后新增的课序、
+班级与选课。它是 `assignments` + `assignment_items` 两张表；目标列表（section/student）与
+`assignments.section_id` 都已删除，"这个作业给谁"只有一个答案——课程当前有效学生。
+
+```mermaid
+stateDiagram-v2
+    [*] --> pending: 创建 assignment（默认值）
+    pending --> scheduled: 提交后 B4 接受通知交接
+    pending --> unavailable: B4 未配置/不可达/4xx/5xx
+    scheduled --> scheduled: 教师重试（B4 幂等，不重建受众）
+    unavailable --> scheduled: 教师重试成功
+    unavailable --> unavailable: 重试仍失败（网络/5xx）
+```
+
+| 状态 | 含义 | 谁写入 |
+|---|---|---|
+| `pending` | 从未尝试交接；只在"创建后进程在调用 B4 前中断"这类窗口里可见 | 建表默认值 |
+| `scheduled` | B4 已收到受众并完成排期（**不是**已投递；投递结果在 B4） | 创建成功 / 重试成功 |
+| `unavailable` | 交接未完成，作业仍然有效可读；教师可重试 | 任意失败 |
+
+- **失败不回滚**：作业已发布是事实；通知交接是提交后的独立步骤，失败只把状态记为
+  `unavailable`。伪造 `scheduled` 被明确禁止——它必须只表示 B4 确认过。
+- **读授权**：教师走 token 角色 + 课程 scope；学生走 B4 `/api/v1/internal/users/{user_id}/authorization`
+  的**当前** `enrollments`（每请求实时查询），课程命中才可读，否则 `403`。B4 不可达 → `503`，
+  不得降级成"没有选课"或空列表。列表的课程集合下推到 SQL。
+- **实现**：`domain/assignments.py`、`integration/b4.py`、`api/router.py`、`infra/models.py`；
+  迁移 `20261108_0010`。**测试**：`tests/test_assignments_api.py`、`tests/test_b4_client.py`、
+  `tests/test_versions.py`（assignment 段）。

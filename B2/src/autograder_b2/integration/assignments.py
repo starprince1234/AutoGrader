@@ -1,12 +1,15 @@
-"""Read-only access to B3's assignment audience (service-to-service).
+"""Read-only access to B3's assignment (service-to-service).
 
-Why this module exists: a submission is now addressed by ``assignment_id`` as well as by
-``question_version_id``, and "is this question part of the assignment, and is this student in
-its audience?" is answered by B3, which owns assignments. B2 stores only the UUIDs it was
-given (no cross-schema SQL/FK), so the only correct way to validate a submission is to ask
-B3 once, through the internal endpoint::
+说明（课程级作业，v0.32.0）：作业的受众就是**整门课程**——没有手选的课序或学生名单。
+"这篇作业属于哪门课、题目是哪几道、现在还能不能交"由 B3 回答；"这个学生此刻是否属于这门课、
+当前课序是什么"由 B4 的权威授权查询回答（`integration.b4_authorization`）。B2 不读 B3/B4 的
+schema，因此只通过内部 HTTP 端点取事实::
 
     GET {B3_BASE_URL}/api/v1/assignment-audiences/{assignment_id}
+
+``AssignmentAudience`` 只保留作业自身的四个事实：所属课程、标题、状态与**有序**题目版本。
+``section_ids`` / ``student_ids`` / ``is_target`` 已随"课程级受众"整体删除——同一个学生换课序
+不改变能否提交，而"是否在课程里"由 B4 的当前选课判定，不由作业携带的名单副本判定。
 
 Failure semantics are deliberately three-valued:
 
@@ -52,17 +55,15 @@ class AssignmentUnavailable(RuntimeError):
 class AssignmentAudience:
     """One assignment as B2 needs it for admission decisions.
 
-    ``question_version_ids`` is ordered by the assignment's item ordinal. ``student_ids``
-    empty means "every student enrolled in the target sections"; non-empty narrows the
-    audience to exactly those students (they were validated against B4 by B3 at creation).
+    ``question_version_ids`` is ordered by the assignment's item ordinal. There is no target
+    section/student list any more: a course-level assignment covers every student who is
+    **currently enrolled in the course**, and that fact is owned by B4 (queried separately).
     """
 
     assignment_id: str
     course_id: str
     title: str
     status: str
-    section_ids: tuple[str, ...]
-    student_ids: tuple[str, ...]
     question_version_ids: tuple[str, ...]
 
     @property
@@ -71,19 +72,6 @@ class AssignmentAudience:
 
     def contains_question(self, question_version_id: object) -> bool:
         return _canonical(question_version_id) in self.question_version_ids
-
-    def is_target(self, *, section_id: object, student_id: object) -> bool:
-        """Whether this student/section pair is inside the assignment audience.
-
-        The section check is authoritative for "which class" and the student check is the
-        optional narrowing. Both values are canonicalised before comparison, because the
-        submission envelope may carry any UUID spelling the contract accepts.
-        """
-        if _canonical(section_id) not in self.section_ids:
-            return False
-        if not self.student_ids:
-            return True
-        return _canonical(student_id) in self.student_ids
 
     def answer_ordinal(self, question_version_id: object) -> int:
         """1-based position of the question in assignment order (used for ``N.txt``)."""
@@ -171,22 +159,18 @@ def _parse_audience(body: bytes) -> AssignmentAudience:
         course_id = _required_uuid(document, "course_id")
         title = _required_text(document, "title")
         status = _required_text(document, "status")
-        section_ids = _uuid_tuple(document, "section_ids")
-        student_ids = _uuid_tuple(document, "student_ids")
         question_version_ids = _uuid_tuple(document, "question_version_ids")
     except (ValueError, TypeError) as error:
         raise AssignmentUnavailable("assignment directory returned an invalid audience") from error
-    if not section_ids or not question_version_ids:
-        # An assignment with no target section or no question is not implementable by the
-        # platform; treating it as an audience would silently accept unsubmittable work.
-        raise AssignmentUnavailable("assignment directory returned an empty audience")
+    if not question_version_ids:
+        # 作业没有题目就不可能被实现；把它当受众会让"不可提交的作业"被静默接受。
+        # 课程级受众下**没有** section/student 列表，因此这里只校验题目非空。
+        raise AssignmentUnavailable("assignment directory returned an empty question list")
     return AssignmentAudience(
         assignment_id=assignment_id,
         course_id=course_id,
         title=title,
         status=status,
-        section_ids=section_ids,
-        student_ids=student_ids,
         question_version_ids=question_version_ids,
     )
 

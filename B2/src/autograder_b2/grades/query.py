@@ -65,6 +65,10 @@ from autograder_b2.db.schema import (
     submissions,
 )
 from autograder_b2.domain.states import COMPLETED
+from autograder_b2.integration.b4_authorization import (
+    AuthorizationUnavailable,
+    UserAuthorizationDirectory,
+)
 
 #: 人工评分的固定满分刻度（`grades.manual.MAX_SCORE`）。人工分与机器分分表存储（CHG-0024）；
 #: 当一行有人工评分时，GradeRow 报告的是**教师给的分**，满分即该刻度的 100。这是评分模型的常量，
@@ -302,11 +306,22 @@ class GradeQueryService:
     实例不持有调用者身份：`principal` 逐次传入，作用域与身份判定每次重算（令牌过期/改权后立即生效，
     不存在"实例缓存了上一个调用者的作用域"的风险）。分页为**游标（keyset）分页**，绝不使用
     `OFFSET`：`OFFSET` 在校验期间新提交到达时会重复/跳行，且随页号线性变慢。
+
+    `authorization_directory` 是 B4 的权威授权/归属端口：**学生读者**每次查询都按它确认"请求的
+    课程是否仍在自己的当前选课里"（移出课程后权限立即失效，设计 §4）。未配置/不可达时学生查询
+    以 503 拒绝（`AuthorizationUnavailable`），绝不静默放行或静默拒绝。教师/管理员读者不查它。
     """
 
-    def __init__(self, engine: Engine, *, batch_size: int = DEFAULT_BATCH_SIZE) -> None:
+    def __init__(
+        self,
+        engine: Engine,
+        *,
+        batch_size: int = DEFAULT_BATCH_SIZE,
+        authorization_directory: UserAuthorizationDirectory | None = None,
+    ) -> None:
         self._engine = engine
         self._batch_size = _validated_batch_size(batch_size)
+        self._authorization_directory = authorization_directory
 
     def list_grades(
         self,
@@ -395,8 +410,8 @@ class GradeQueryService:
                     return
                 after = decode_cursor(next_cursor)
 
-    @staticmethod
     def _resolve(
+        self,
         *,
         principal: Principal,
         course_id: str,
@@ -421,6 +436,9 @@ class GradeQueryService:
             section_id=None if section is None else str(section),
             student_id=None if requested_student is None else str(requested_student),
         )
+        # 权威归属检查在 token 层之后：**学生读者**必须仍有该课程的当前有效选课（设计 §4）。
+        # 教师/管理员沿用 token scope，不查 B4（"staff 路径保持 token scope"）。
+        self._require_current_enrollment(principal, course)
         covered = covered_sections(principal, str(course))
         if covered is None:
             sections = None if section is None else (section,)
@@ -439,6 +457,32 @@ class GradeQueryService:
             until=until,
             evaluation_run_id=run,
         )
+
+    def _require_current_enrollment(
+        self, principal: Principal, course: uuid.UUID
+    ) -> None:
+        """学生读者的权威归属检查：请求课程必须在其**当前**有效 enrollment 中。
+
+        为什么必须有这一层：token 的 `scope` 是登录时签发的（学生会被移出课程/课程也会被删除），
+        只按 token 判断会让"移出课程后成绩权限及时失效"变成一句空话。B4 的
+        `GET /internal/users/{id}/authorization` 是当前归属的唯一权威。
+
+        - 教师/管理员：沿用既有 token scope 口径，**不**查 B4（设计 §4 明示）；
+        - 学生：B4 授权目录未配置/不可达 → `AuthorizationUnavailable`（503，基础设施失败，
+          不是"越权"）；没有该课程的当前选课 → `AuthorizationError`（403）；
+        - 角色/作用域/本人判定仍先由 `require_grade_authority` 完成（不在这里重复）。
+        """
+        if principal.is_admin or principal.is_course_staff:
+            return
+        directory = self._authorization_directory
+        if directory is None:
+            raise AuthorizationUnavailable(
+                "the B4 user authorization directory is not configured;"
+                " current course membership cannot be verified"
+            )
+        authorization = directory.get(principal.user_id)
+        if authorization.enrollment_for_course(str(course)) is None:
+            raise AuthorizationError("the caller is not currently enrolled in this course")
 
 
 def _fetch_page(

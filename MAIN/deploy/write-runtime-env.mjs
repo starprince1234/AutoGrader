@@ -53,6 +53,17 @@ const imapEntries = imapEnvEntries({ ...process.env, ...intakeEntries });
 // host whose environment file already exists, and this render covers a fresh one.
 const llmEntries = llmEnvEntries(process.env);
 
+// `B2_IDENTITY_*` is B2's authoritative caller-membership lookup against B4. Since v0.32.0 the
+// web submission path, the e-mail verification challenge and the student grade read all depend
+// on it, so it must be present whenever the API runs -- not only when IMAP intake happens to be
+// configured (the previous wiring derived it from the IMAP block, which disabled every one of
+// those paths on this deployment because IMAP is intentionally off). Same service token as the
+// other internal channels.
+const identityEntries = {
+  B2_IDENTITY_URL: "http://127.0.0.1:18000",
+  B2_IDENTITY_AUTHORIZATION: "Bearer " + serviceToken,
+};
+
 const runtimeEntries = {
   B4_DATABASE_URL: "postgresql+psycopg://autograder_b4:" + b4Password + "@" + postgres,
   B4_NATS_URL: natsUrl,
@@ -92,6 +103,7 @@ const runtimeEntries = {
   ...mailEntries,
   ...imapEntries,
   ...intakeEntries,
+  ...identityEntries,
 };
 
 const setupEntries = {

@@ -57,7 +57,8 @@ const COURSES = "/api/v1/courses";
 const SECTIONS = `/api/v1/courses/${UUID_A}/sections`;
 const QUARANTINES = "/api/v1/intake/quarantines";
 const ASSIGNMENTS = "/api/v1/assignments";
-const ENROLLMENTS = `/api/v1/sections/${UUID_B}/enrollments`;
+// v0.32.0：候选学生来自**全课程**名单（作业是课程级的，没有目标课序可推断）。
+const ENROLLMENTS = `/api/v1/courses/${UUID_A}/enrollments`;
 
 function routesFor(options: {
   rows?: ReturnType<typeof intakeQuarantineView>[];
@@ -115,7 +116,6 @@ function routesFor(options: {
           assignmentPage([
             assignmentPublic({
               course_id: UUID_A,
-              section_ids: [UUID_B],
               question_version_ids: [UUID_C],
             }),
           ]),
@@ -373,7 +373,7 @@ describe("P13-A 邮件提交标签", () => {
     await user.click(await screen.findByTestId(`review-mail-resolve-${UUID_C}`));
     await chooseAssignment(user);
     expect(await screen.findByTestId("review-resolve-no-candidates")).toHaveTextContent(
-      "当前课序没有可选择的学生。",
+      "该课程名单里没有可选择的学生。",
     );
     expect(screen.getByTestId("review-resolve-continue")).toBeDisabled();
   });

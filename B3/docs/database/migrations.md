@@ -27,9 +27,11 @@
 | `20261107_0007` | **执行声明**：`question_versions.execution_manifest`、`test_cases.execution`（可空 jsonb，`NULL` = `per_case`/无声明），不可变触发器同步覆盖新列 | `20261107_0006` |
 | `20261107_0008` | **作业目标模型**（`CHG-0032`）：`assignments.section_id` 及 `ix_assignments_section_id` 删除；新增 `assignment_sections` / `assignment_students`（复合主键、各自 `ix_*_section_id` / `ix_*_student_id`、命名 FK），普通角色只读、内部角色可插入 | `20261107_0007` |
 | `20261108_0009` | **移除每题邮件附件模板的存量数据**（`CHG-0032`）：从 `question_versions.execution_manifest` 删除已由契约删除的 `email.required_attachment_template`；只重写声明，不重算 `content_digest`（派生摘要由部署后的一次性核对刷新，见生产手册） | `20261107_0008` |
+| `20261108_0010` | **课程级作业**（v0.32.0）：DROP `assignment_sections` / `assignment_students`（手选目标模型整体删除）；`assignments` 增加 `notification_state`（text NOT NULL DEFAULT `pending`，CHECK）与 `notification_scheduled_at`（timestamptz NULL），记录发布通知交接状态 | `20261108_0009` |
 
-- 当前 head：`20261108_0009`，与 `module.yaml: database.migration_head` **一致**（`tests/test_migrations.py::test_module_yaml_head_matches_alembic_head` 断言；MAIN 的 `checks.py` 亦独立校验）。
+- 当前 head：`20261108_0010`，与 `module.yaml: database.migration_head` **一致**（`tests/test_migrations.py::test_module_yaml_head_matches_alembic_head` 断言；MAIN 的 `checks.py` 亦独立校验）。
   该断言此前还钉死了字面量 `"20260915_0003"`，于是下一个合法迁移必然让它失败，而它并未因此多证明任何东西；已改为只断言 `declared == head`（与 `test_contracts_lock_is_not_hand_edited` 同一处理）。
+  设计文档把本迁移写成 `20261108_0009`，但该 revision id 已被上一条邮件模板迁移占用，Alembic revision 必须唯一，因此实际编号为 `20261108_0010`。
 - 一致性要求：每新增迁移后，`module.yaml` 的 `migration_head` 与 Alembic head 必须一致（`RQ-B-4-30` 验收 3）。
 - **`20260915_0004` 的两点如实说明**：
   1. **这是数据变更，不是 no-op**。重命名约束只重写 `pg_constraint` 一行（非表重写）；但把 `timestamptz`
@@ -61,6 +63,13 @@
 行等于伪造一次作者决策，而且新编译器/ B2 解析器都不会读它。该迁移只重写存量声明，**不**重算
 `content_digest`——派生摘要由部署后的一次性核对按 B3 自己的 `load_version_content` 刷新（见
 [生产手册](../../../MAIN/docs/runbooks/production-deployment.md) 的旧库升级说明）。
+
+## `20261108_0010` 的回滚语义（有损，dev-only）
+
+`downgrade` 重建 `assignment_sections` / `assignment_students`（空表 + 旧授权）并删除通知两列，
+schema 形状因此可逆；**数据不可逆**：课程级作业没有可回填的目标课序/学生，编造目标会把作业
+指向没人选过的班级。该迁移因此先删除 `assignment_items` 与 `assignments` 行再恢复旧形状，
+回滚到本 revision 以下仅限 dev，不得对需要保留的数据执行。docstring 同样写明了这一点。
 
 ## 生成与执行命令
 

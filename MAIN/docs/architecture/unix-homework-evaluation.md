@@ -149,7 +149,8 @@ nsjail 内以“用户命名空间内的 root”（宿主 uid 仍是服务账号
 
 - `email_received`：存在与本次提交绑定、来自真实 IMAP 拉取的验证记录（含 mailbox/uidvalidity/uid/message-id）。
 - `subject`：实际主题等于 `"{student_number}_{attempt}"`（学号来自已核验账号，attempt 来自 package）。
-- `sender`：实际发件地址等于该账号已验证邮箱，且等于该学生在该课程/课序绑定的首次发件地址。
+- `sender`：实际发件地址等于该账号已验证邮箱，且等于该学生在该课程由 B4 权威归属报告的课序下绑定的
+  首次发件地址。
 - `attachment`：该题在本次真实邮件里有一个按题号映射的 `.txt` 答案文件（作业第 N 题 = `N.txt`；
   附件模板已由 CHG-0032 删除，映射是作业维度的事实，不再由题目 package 声明）。
 
@@ -166,14 +167,17 @@ nsjail 内以“用户命名空间内的 root”（宿主 uid 仍是服务账号
 机制：
 
 1. **账号邮箱所有权**：账号邮箱在注册时已通过平台外发的一次性验证码证明归属（B4 现有注册流程），
-   本特性不新增“邮箱是否验证”的旁路；收发信身份查询走 B4 现有 internal 端点。
+   本特性不新增“邮箱是否验证”的旁路；收发信身份查询走 B4 现有 internal 端点，提交/核验码/成绩的
+   当前**课程归属**走 `GET /api/v1/internal/users/{user_id}/authorization`（只返回 id，v0.32.0）。
 2. **一次性核验码**：学生用已认证会话请求**一个作业**的核验码（随机高熵、只在响应中出现一次、库里只存 SHA-256），
    绑定 `(student_id, course_id, section_id, assignment_id)`，有效期 30 分钟（CHG-0032：核验码是作业维度，
-   一封邮件可包含该作业多个题目的答案）。
+   一封邮件可包含该作业多个题目的答案）。v0.32.0 起请求体里的 `section_id` **不被信任**：服务端按 B4
+   当前有效归属取权威 course/section 绑定。
 3. **邮件必须携带核验码与作业定位信息**：正文必须包含标签行 `核验码`、`作业编号`、`课序`、`姓名`、`学号`；
    `作业编号` 必须等于挑战绑定的 assignment id，`姓名`/`学号` 必须等于 B4 身份目录返回的账号事实
-   （`课序` 只要求非空，供人工核对）。收件端解析正文并按哈希查找挑战，校验未过期、未消费、
-   发送者账号 == 挑战所有者。校验通过后在**同一事务/行锁**中标记消费并写入
+   （`课序` 只要求非空，供人工核对）。**作业是课程级受众（v0.32.0）**：不再是“目标课序/目标学生名单”，
+   收件端按 B4 当前 enrollment 判定归属，移出课程即拒绝。收件端解析正文并按哈希查找挑战，校验未过期、
+   未消费、发送者账号 == 挑战所有者。校验通过后在**同一事务/行锁**中标记消费并写入
    `email_verifications`（同时写入发件地址、主题、附件名、message-id、mailbox/uidvalidity/uid）。
 4. **首次发件地址绑定**：首次通过验证的邮件写入 `b2.email_sender_bindings(student_id, course_id, section_id, sender)`；
    之后同一学生同一课程/课序的邮件必须使用同一地址，否则隔离（`email_sender_mismatch`）。
@@ -185,7 +189,9 @@ nsjail 内以“用户命名空间内的 root”（宿主 uid 仍是服务账号
    `received` 带按题 `submissions[]`；学生能看到“邮件没到/被拒/依赖不可用”的区别。被拒邮件进入现有隔离区
    并记录原因码，绝不冒充提交。
 7. **依赖故障**：收件拉取循环写心跳（`b2.intake_state.last_successful_pull_at`）。评测发现验证记录缺失且心跳
-   过期/未配置时判 `infrastructure_error`，不判学生失败。作业目录不可用时邮件整轮拉取失败重试，不隔离学生邮件。
+   过期/未配置时判 `infrastructure_error`，不判学生失败。作业内部目录（B3 `assignment-audiences`）不可用时
+   邮件整轮拉取失败重试，不隔离学生邮件。B4 authorization 不可达时，网页提交/核验码签发/成绩读取必须
+   返回 `503`（基础设施故障），绝不折算成 `403` 或「无课程」。
 8. **防竞态**：挑战消费用 `SELECT ... FOR UPDATE` + 唯一约束（`email_verifications.challenge_id` unique）；
    邮件重复投递由 `(mailbox, uidvalidity, uid)` / message-id 唯一约束兜底；同一封邮件重试时按已有
    verification resume 并补齐缺失的按题映射/提交（幂等键 = 邮件消息键 + question_version_id）。

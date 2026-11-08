@@ -60,12 +60,16 @@ class Settings:
     consumer_name: str = "b3-question-statistics"
     log_level: str = "INFO"
 
-    #: The identity/course module's internal endpoint that validates an assignment's target
-    #: sections and students (``MAIN/docs/architecture/assignment-workflow.md`` §2.4).
-    #: Both values are required for assignment creation: when either is absent the module
-    #: cannot validate who an assignment is for, so creation is refused with ``503`` rather
-    #: than accepting the ids on the caller's word. The service token is a pre-shared
-    #: service credential, never a user token.
+    #: The identity/course module's internal, service-to-service operations
+    #: (``MAIN/contracts/openapi/b4.yaml``): the **authoritative** current authorization of
+    #: one account (``GET /api/v1/internal/users/{user_id}/authorization``) and the
+    #: publication-notification hand-off (``POST /api/v1/internal/assignment-notifications``).
+    #: Both values are needed for student assignment reads: without them B3 cannot decide
+    #: current enrollment, so those reads are refused with ``503`` rather than decided from
+    #: the token's stale ``scope`` snapshot. Assignment creation still works when the values
+    #: are missing -- it records ``notification_state = unavailable`` instead of pretending
+    #: the notification was scheduled. The service token is a pre-shared service credential,
+    #: never a user token.
     b4_base_url: str | None = None
     b4_service_token: str | None = None
 

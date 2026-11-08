@@ -181,33 +181,37 @@ stateDiagram-v2
 
 ```text
         ┌──────── b4 schema ────────┐
-        │ user ──< enrollment >── section ──< course
-        │   │                        │
-        │   └──< session             └──< assignment_ref（仅存 UUID，无 FK）
+        │ user ──< enrollment >── class ──< section ──< course
+        │   │                                              │
+        │   └──< session                                   └──< assignment_notification ──< delivery
         │   └──< audit
         └───────────────────────────┘
                      ▲
-                     │ user_id / course_id / section_id / enrollment_id
+                     │ user_id / course_id / section_id / class_id / enrollment_id
                      │ （UUID 值引用，**无跨 schema 外键**）
                      ▼
         ┌──────── b3 schema ────────┐
         │ question ──< question_version ──< test_suite ──< test_case
         │                     │                └──< fixture
         │                     └── reference_answer（受保护）
-        │ assignment（course_id via UUID）
+        │ assignment（course_id via UUID；课程级受众，无目标表）
         │ question_stats（去标识化聚合）
         └───────────────────────────┘
                      ▲
                      │ question_version_id（评测绑定）
                      ▼
         ┌──────── b2 schema ────────┐
-        │ submission ──< artifact
+        │ submission ──< artifact（submission 带 assignment_id，可空=历史行）
         │ evaluation_run ──< evaluation_result ──< case_evidence
         │                └──< security_finding
-        │ email_checkpoint
+        │ email_checkpoint / email_verification_submissions
         │ outbox / inbox（幂等与投递）
         └───────────────────────────┘
 ```
+
+> 课程 → 课序 → 班级 → 名单是 v0.32.0 的事实层级：`class` 属于 `section`，`section` 属于 `course`，
+> `enrollment` 同时带 `course_id/section_id/class_id`。作业是课程级的，因此不再存在
+> 「作业目标课序/目标学生」表；B2 的提交授权由 B4 的**当前** enrollment 决定，而不是令牌 scope 快照。
 
 ### 三个实体所有权不变量（ADR-0001）
 

@@ -38,7 +38,12 @@ def course(factory):
     course_id = factory.course(code="CS101", title="Intro", created_by=teacher)
     factory.grant(user_id=teacher, course_id=course_id, role="teacher")
     section_id = factory.section(course_id=course_id, code="01", term="2026F")
-    return {"teacher": teacher, "course_id": course_id, "section_id": section_id}
+    return {
+        "teacher": teacher,
+        "course_id": course_id,
+        "section_id": section_id,
+        "class_id": factory.default_class(section_id),
+    }
 
 
 def _upload(client, headers, key, content: bytes, filename: str, course):
@@ -46,7 +51,11 @@ def _upload(client, headers, key, content: bytes, filename: str, course):
         "/api/v1/roster-imports",
         headers=headers,
         files={"file": (filename, content, "application/octet-stream")},
-        data={"course_id": str(course["course_id"]), "section_id": str(course["section_id"])},
+        data={
+            "course_id": str(course["course_id"]),
+            "section_id": str(course["section_id"]),
+            "class_id": str(course["class_id"]),
+        },
     )
 
 
@@ -103,6 +112,9 @@ def test_xlsx_roster_parses_and_previews_without_writing(client, course, sign_in
     body = response.json()
 
     assert body["status"] == "previewed"
+    assert body["course_id"] == str(course["course_id"])
+    assert body["section_id"] == str(course["section_id"])
+    assert body["class_id"] == str(course["class_id"])
     assert body["detected_columns"] == CHINESE_HEADER
     assert body["proposed_mapping"]["student_number"] == "学号"
     assert body["proposed_mapping"]["display_name"] == "姓名"
@@ -135,11 +147,20 @@ def test_confirmation_writes_roster_rows_atomically(client, course, sign_in_as, 
 
     with engine.connect() as connection:
         rows = connection.execute(
-            select(enrollments.c.student_number, enrollments.c.display_name, enrollments.c.source)
+            select(
+                enrollments.c.student_number,
+                enrollments.c.display_name,
+                enrollments.c.source,
+                enrollments.c.course_id,
+                enrollments.c.class_id,
+            )
         ).fetchall()
     assert {row.student_number for row in rows} == {"20230001", "20230002"}
     assert {row.display_name for row in rows} == {"张三", "李四"}
     assert {row.source for row in rows} == {"roster_import"}
+    # The confirmed rows name the class they were imported for, at every level.
+    assert {row.course_id for row in rows} == {course["course_id"]}
+    assert {row.class_id for row in rows} == {course["class_id"]}
 
 
 def test_confirmation_is_idempotent(client, course, sign_in_as, factory):
@@ -369,7 +390,12 @@ def test_csv_without_known_columns_stops_for_a_mapping(client, course, sign_in_a
 
 
 def test_an_empty_csv_fails_the_parse_explicitly(client, course, sign_in_as, engine):
-    """An empty file is not an empty roster: it is a failed parse, and it says so."""
+    """An empty file is not an empty roster: it is refused before any artifact is stored.
+
+    `failed_parse` describes a stored document the parser could not read; an empty upload
+    is rejected at the boundary, so there is deliberately no `roster_imports` row to clean
+    up or resume.
+    """
     headers = sign_in_as("teacher").headers
     created = _upload(client, headers, None, b"", "empty.csv", course)
     assert created.status_code == 422
@@ -378,7 +404,7 @@ def test_an_empty_csv_fails_the_parse_explicitly(client, course, sign_in_as, eng
         statuses = [
             row[0] for row in connection.execute(select(roster_imports.c.status)).fetchall()
         ]
-    assert statuses == ["failed_parse"]
+    assert statuses == []
 
 
 def _csv_bytes(
@@ -431,18 +457,42 @@ def test_an_empty_upload_is_rejected(client, course, sign_in_as):
     assert response.status_code == 422
 
 
-def test_section_must_belong_to_the_given_course(client, course, sign_in_as, factory):
+def test_the_target_course_section_and_class_must_agree(
+    client, course, sign_in_as, factory
+):
+    """The upload names all three levels; a mismatch is refused before anything is stored."""
     headers = sign_in_as("teacher").headers
+    content = xlsx_bytes([["20230001", "张三", "CS101", "01"]], header=CHINESE_HEADER)
+
+    # A section of a different course.
     other_course = factory.course(code="CS200")
     other_section = factory.section(course_id=other_course, code="01")
-    content = xlsx_bytes([["20230001", "张三", "CS101", "01"]], header=CHINESE_HEADER)
-    response = client.post(
+    wrong_course = client.post(
         "/api/v1/roster-imports",
         headers=headers,
         files={"file": ("roster.xlsx", content, "application/octet-stream")},
-        data={"course_id": str(course["course_id"]), "section_id": str(other_section)},
+        data={
+            "course_id": str(course["course_id"]),
+            "section_id": str(other_section),
+            "class_id": str(course["class_id"]),
+        },
     )
-    assert response.status_code == 404
+    assert wrong_course.status_code == 404
+
+    # A class that belongs to another section of the right course.
+    second_section = factory.section(course_id=course["course_id"], code="02")
+    foreign_class = factory.default_class(second_section)
+    wrong_class = client.post(
+        "/api/v1/roster-imports",
+        headers=headers,
+        files={"file": ("roster.xlsx", content, "application/octet-stream")},
+        data={
+            "course_id": str(course["course_id"]),
+            "section_id": str(course["section_id"]),
+            "class_id": str(foreign_class),
+        },
+    )
+    assert wrong_class.status_code == 422
     assert factory.enrollment_count() == 0
 
 
@@ -642,7 +692,11 @@ def test_a_roster_row_that_matches_a_platform_user_is_linked(
 ):
     """A student who already has an account is connected to the imported enrollment."""
     student_id = factory.user(
-        username="student", password=PASSWORD, roles=("student",), student_number="20230001"
+        username="student",
+        password=PASSWORD,
+        roles=("student",),
+        display_name="张三",
+        student_number="20230001",
     )
     headers = sign_in_as("teacher").headers
     content = xlsx_bytes([["20230001", "张三", "CS101", "01"]], header=CHINESE_HEADER)
@@ -651,3 +705,97 @@ def test_a_roster_row_that_matches_a_platform_user_is_linked(
     with engine.connect() as connection:
         linked = connection.execute(select(enrollments.c.user_id)).scalar_one()
     assert linked == student_id
+
+
+# -------------------------------------------------------------- binding at confirm time
+
+
+def test_a_student_active_in_another_class_is_rejected_as_a_row(
+    client, course, sign_in_as, factory, engine
+) -> None:
+    """A row for a student already active elsewhere is rejected with its reason, not moved.
+
+    The rule is "one active section per student per course"; confirmation turns the violation
+    into a rejected row (never a silent move of the existing enrollment, never a 500) and the
+    rest of the import commits.
+    """
+    teacher_headers = sign_in_as("teacher").headers
+    existing = factory.enrollment(
+        section_id=course["section_id"], student_number="20230001", display_name="张三"
+    )
+    second_section = factory.section(course_id=course["course_id"], code="02")
+    second_class = factory.default_class(second_section)
+
+    content = xlsx_bytes([["20230001", "张三"], ["20230002", "李四"]], header=["学号", "姓名"])
+    created = client.post(
+        "/api/v1/roster-imports",
+        headers=teacher_headers,
+        files={"file": ("roster.xlsx", content, "application/octet-stream")},
+        data={
+            "course_id": str(course["course_id"]),
+            "section_id": str(second_section),
+            "class_id": str(second_class),
+        },
+    )
+    assert created.status_code == 202, created.text
+    import_id = created.json()["roster_import_id"]
+
+    confirmed = _confirm(client, teacher_headers, import_id)
+    assert confirmed.status_code == 202, confirmed.text
+    body = confirmed.json()
+    assert body["status"] == "committed"
+    assert len(body["accepted_rows"]) == 1
+    assert len(body["rejected_rows"]) == 1
+    rejected = body["rejected_rows"]
+    assert [row["values"]["student_number"] for row in rejected] == ["20230001"]
+    assert "conflict_other_section" in rejected[0]["reason"]
+
+    with engine.connect() as connection:
+        rows = connection.execute(
+            select(
+                enrollments.c.enrollment_id,
+                enrollments.c.student_number,
+                enrollments.c.section_id,
+                enrollments.c.class_id,
+            ).where(enrollments.c.course_id == course["course_id"])
+        ).fetchall()
+    by_number = {row.student_number: row for row in rows}
+    assert len(by_number) == 2
+    assert by_number["20230001"].enrollment_id == existing
+    assert by_number["20230001"].class_id == course["class_id"], (
+        "the existing enrollment was silently moved instead of the row being rejected"
+    )
+    assert by_number["20230002"].class_id == second_class
+
+
+def test_an_account_name_mismatch_is_rejected_instead_of_merged(
+    client, course, sign_in_as, factory, engine
+) -> None:
+    """Different name on the same student number means two people; the row is not bound."""
+    teacher_headers = sign_in_as("teacher").headers
+    account = factory.user(
+        username="student",
+        password=PASSWORD,
+        roles=("student",),
+        display_name="王五",
+        student_number="20230001",
+    )
+    content = xlsx_bytes([["20230001", "张三"], ["20230002", "李四"]], header=["学号", "姓名"])
+    created = _upload(client, teacher_headers, None, content, "roster.xlsx", course).json()
+    confirmed = _confirm(client, teacher_headers, created["roster_import_id"])
+    assert confirmed.status_code == 202, confirmed.text
+    body = confirmed.json()
+    assert len(body["rejected_rows"]) == 1
+    assert [row["values"]["student_number"] for row in body["rejected_rows"]] == ["20230001"]
+    assert "account_name_mismatch" in body["rejected_rows"][0]["reason"]
+
+    with engine.connect() as connection:
+        rows = connection.execute(
+            select(enrollments.c.student_number, enrollments.c.user_id)
+        ).fetchall()
+    linked = {row.student_number: row.user_id for row in rows}
+    # The mismatched row was rejected, so no enrollment was created for it at all -- and in
+    # particular the differently-named account was not merged into this roster.
+    assert "20230001" not in linked
+    assert linked["20230002"] is None
+    assert account  # the account exists and is simply not linked

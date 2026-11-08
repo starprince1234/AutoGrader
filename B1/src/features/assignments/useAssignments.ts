@@ -29,17 +29,15 @@ export type AssignmentListPage = { items: AssignmentPublic[]; nextCursor: string
 /**
  * 作业列表筛选。
  *
- * `sectionId` 仍是**单值查询参数**：契约 `listAssignments?section_id=` 的语义是
- * "目标课序**包含**该课序"（CHG-0032），而不是"作业只有一个课序"。作业本身可以有多值
- * `section_ids`，列表只根据这个查询参数过滤行；多值展示在页面里做。
+ * v0.32.0 起作业是**课程级**的：列表只按课程过滤；作业自动覆盖该课程全部课序与班级，
+ * 契约里已没有 `section_id` 查询参数，也没有 `section_ids`/`student_ids` 目标列表。
  */
-export type AssignmentFilter = { courseId: string | null; sectionId: string | null };
+export type AssignmentFilter = { courseId: string | null };
 
 export function useAssignmentList(filter: AssignmentFilter, options?: { enabled?: boolean }) {
   return useInfiniteQuery({
     queryKey: queryKeys.assignments({
       course_id: filter.courseId ?? undefined,
-      section_id: filter.sectionId ?? undefined,
     }),
     enabled: options?.enabled ?? true,
     initialPageParam: null as string | null,
@@ -48,7 +46,6 @@ export function useAssignmentList(filter: AssignmentFilter, options?: { enabled?
         query: {
           limit: ASSIGNMENT_PAGE_SIZE,
           course_id: filter.courseId ?? undefined,
-          section_id: filter.sectionId ?? undefined,
           cursor: pageParam ?? undefined,
         },
       });

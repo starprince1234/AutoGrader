@@ -4,18 +4,22 @@
 配置不完整时**不让宿主启动失败**（其它模块仍应可用），但本模块的端点必须返回 `503` 并在
 `health()` 中如实反映——宁可明确不可用，也不静默降级（例如"不验签也放行"）。
 
-## 作业受众目录（设计 §5.2/§6.5）
+## 作业目录与 B4 权威授权目录（课程级作业，v0.32.0）
 
-提交接收与邮件收件都需要同一个只读端口：`B3AssignmentDirectory`（B3 internal
-`GET /api/v1/assignment-audiences/{id}`）。它复用 B2 已有的 `B2_B3_BASE_URL` +
-`B2_B3_AUTHORIZATION`（与服务取包/存证同一条服务间通道），不新增凭据。
+提交接收、邮件收件与隔离复核共用两个只读端口：
 
-- 没配 → `assignment_directory=None`：接收端点对带作业的提交返回 503（`AssignmentDirectoryUnavailable`
-  由 `intake.service` 抛出），核验码端点同样 503。**不**把"没配"伪装成"作业不存在"。
-- 配了但装配非法（地址不是 http(s) / 凭据为空）→ 同上，原因可读。
+- `B3AssignmentDirectory`（B3 internal `GET /api/v1/assignment-audiences/{id}`）：作业属于哪门课、
+  题目是哪些、是否 open；复用现有 `B2_B3_BASE_URL` + `B2_B3_AUTHORIZATION`。
+- `B4UserAuthorizationDirectory`（B4 internal `GET /api/v1/internal/users/{id}/authorization`）：
+  "这个学生**此刻**是否属于这门课、当前课序是哪个"的唯一权威；复用现有
+  `B2_IDENTITY_URL` + `B2_IDENTITY_AUTHORIZATION`（与邮件身份目录同一份服务间配置）。
 
-**同一个实例**同时交给 `SubmissionIntakeService` 与 `EmailVerificationService`：
-两个入口对"作业是否存在/是否受众"不可能给出不同答案。
+两者**未配置即不可用**：没配 B3 目录 → 带作业的提交/挑战 503；没配 B4 授权目录 → 所有提交、
+邮件核验挑战与**学生**成绩查询 503（教师成绩路径不依赖它）。绝不把"没配/连不上"伪装成
+"作业不存在"或"你不在受众里"。
+
+**同一个实例**同时交给 `SubmissionIntakeService`、`EmailVerificationService`、`EmailIntakeService`
+与隔离复核服务：四个入口对"当前有效归属"不可能给出不同答案。
 """
 
 from __future__ import annotations
@@ -30,6 +34,7 @@ from autograder_b2.auth.tokens import JwksAuthenticator
 from autograder_b2.config import (
     ConfigurationError,
     Settings,
+    load_identity_settings,
     load_imap_settings,
     load_jwks,
     settings_from_env,
@@ -43,6 +48,10 @@ from autograder_b2.intake.quarantine import IntakeQuarantineService
 from autograder_b2.intake.query import SubmissionQueryService
 from autograder_b2.intake.service import IntakeLimits, SubmissionIntakeService
 from autograder_b2.integration.assignments import AssignmentDirectory, B3AssignmentDirectory
+from autograder_b2.integration.b4_authorization import (
+    B4UserAuthorizationDirectory,
+    UserAuthorizationDirectory,
+)
 from autograder_b2.storage.cas import ContentAddressedStore
 
 
@@ -64,8 +73,12 @@ class IntakeRuntime:
     #: 一次性核验码服务（设计 §6.3）：与邮件入口同生共死——没有收件链路时，挑战端点也明确不可用。
     #: 顶层 `B2Runtime` 通过属性把它转给路由；IMAP 路径由 `EmailIntakeService.verification` 使用。
     email_verification: EmailVerificationService | None = None
-    #: 作业受众目录（B3 internal 端点）。接收服务与核验服务**共用**这一个实例；`None` = 未配置。
+    #: 作业目录（B3 internal 端点）。接收服务、核验服务与隔离复核**共用**这一个实例；`None` = 未配置。
     assignment_directory: AssignmentDirectory | None = None
+    #: B4 权威授权/归属目录（`GET /api/v1/internal/users/{id}/authorization`）。四个入口共用；
+    #: `None` = 未配置（提交/核验/学生成绩路由 503，`authorization_reason` 给出可读原因）。
+    authorization_directory: UserAuthorizationDirectory | None = None
+    authorization_reason: str | None = None
     _failures: int = field(default=0, init=False)
 
     @property
@@ -160,6 +173,9 @@ def build_runtime(settings_source: Mapping[str, str]) -> IntakeRuntime:
         jwks, issuer=settings.jwt_issuer, audience=settings.jwt_audience
     )
     runtime.assignment_directory = _build_assignment_directory(settings)
+    runtime.authorization_directory, runtime.authorization_reason = _build_authorization_directory(
+        settings_source
+    )
     limits = IntakeLimits(
         max_files=settings.max_files,
         max_file_bytes=settings.max_file_bytes,
@@ -170,13 +186,20 @@ def build_runtime(settings_source: Mapping[str, str]) -> IntakeRuntime:
         ContentAddressedStore(settings.artifact_root, engine),
         limits,
         assignment_directory=runtime.assignment_directory,
+        authorization_directory=runtime.authorization_directory,
     )
     runtime.query = SubmissionQueryService(engine)
-    runtime.quarantines = IntakeQuarantineService(engine)
+    runtime.quarantines = IntakeQuarantineService(
+        engine, authorization_directory=runtime.authorization_directory
+    )
     _wire_email_intake(runtime, settings_source, engine)
     if runtime.email is not None:
         # 人工复核需要回邮箱取原邮件；没有邮件入口时服务仍可读列表/作废/暂存。
-        runtime.quarantines = IntakeQuarantineService(engine, email=runtime.email)
+        runtime.quarantines = IntakeQuarantineService(
+            engine,
+            email=runtime.email,
+            authorization_directory=runtime.authorization_directory,
+        )
     return runtime
 
 
@@ -194,6 +217,36 @@ def _build_assignment_directory(settings: Settings) -> AssignmentDirectory | Non
         # 非法装配（地址不是 http(s)）在这里收敛成"没有目录"：端点会以 503 + 可读原因拒绝，
         # 而不是让宿主启动失败或悄悄跳过作业校验。
         return None
+
+
+def _build_authorization_directory(
+    settings_source: Mapping[str, str],
+) -> tuple[UserAuthorizationDirectory | None, str | None]:
+    """用现有 B2→B4 身份通道装配权威授权目录 → `(目录, None)` 或 `(None, 可读原因)`。
+
+    "未配置"与"配错/半配置"分别给出原因，但对外都是 503（**没有**降级成"跳过归属校验"的路径）。
+    与 `DirectoryEmailMatcher` 复用同一份 `B2_IDENTITY_URL` / `B2_IDENTITY_AUTHORIZATION`：
+    同一把服务令牌，不新增凭据；区别只在端点（按 user_id 查授权 vs 按邮箱查账号）。
+    """
+    try:
+        identity = load_identity_settings(settings_source)
+    except ConfigurationError as error:
+        return None, str(error)
+    if identity is None:
+        return None, (
+            "user authorization is not configured: set B2_IDENTITY_URL and"
+            " B2_IDENTITY_AUTHORIZATION"
+        )
+    try:
+        return (
+            B4UserAuthorizationDirectory(
+                base_url=identity.base_url,
+                authorization=identity.authorization,
+            ),
+            None,
+        )
+    except ValueError as error:
+        return None, f"user authorization directory is misconfigured: {error}"
 
 
 def _wire_email_intake(
@@ -234,6 +287,7 @@ def _wire_email_intake(
         authenticator=runtime.authenticator,
         directory=directory,
         assignment_directory=runtime.assignment_directory,
+        authorization_directory=runtime.authorization_directory,
     )
     runtime.email = EmailIntakeService(
         engine=engine,
@@ -243,4 +297,5 @@ def _wire_email_intake(
         quarantines=QuarantineStore(engine),
         verification=runtime.email_verification,
         assignment_directory=runtime.assignment_directory,
+        authorization_directory=runtime.authorization_directory,
     )

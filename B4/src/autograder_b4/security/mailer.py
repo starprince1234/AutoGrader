@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import smtplib
 import ssl
+from datetime import datetime
 from email.message import EmailMessage
 from email.utils import formataddr
 from typing import Final
@@ -27,6 +28,19 @@ logger = get_logger("mailer")
 
 SUBJECT: Final = "AutoGrader 注册验证码"
 PASSWORD_RESET_SUBJECT: Final = "AutoGrader 密码重置验证码"
+ASSIGNMENT_SUBJECT_TEMPLATE: Final = "AutoGrader 新作业: {course_title} · {assignment_title}"
+
+ASSIGNMENT_BODY: Final = """你好 {student_name}:
+
+课程《{course_title}》发布了一份新作业:《{assignment_title}》。
+截止时间:{due_text}
+
+请登录 AutoGrader 查看题目并提交。如果已经提交,请忽略本提醒。
+
+—— AutoGrader
+"""
+
+NO_DUE_TEXT: Final = "未设置截止时间"
 
 BODY: Final = """你好:
 
@@ -58,6 +72,15 @@ PASSWORD_RESET_BODY: Final = """你好:
 
 class MailDeliveryError(RuntimeError):
     """The message could not be delivered. The detail never contains a credential."""
+
+
+class MailNotConfigured(MailDeliveryError):
+    """The mail channel has no usable configuration.
+
+    A distinct type rather than a message check: the notification delivery row records
+    `mail_not_configured` versus `smtp_error`, and the difference is whether an operator
+    must supply environment variables or investigate a transport failure.
+    """
 
 
 def deliver(settings: Settings, message: EmailMessage) -> None:
@@ -92,6 +115,42 @@ def deliver(settings: Settings, message: EmailMessage) -> None:
             client.quit()
         except (smtplib.SMTPException, OSError):  # pragma: no cover - best effort
             client.close()
+
+
+def send_assignment_published(
+    settings: Settings,
+    *,
+    to: str,
+    student_name: str,
+    course_title: str,
+    assignment_title: str,
+    due_at: datetime | None,
+) -> None:
+    """Tell one student that a new assignment was published.
+
+    This is a *notification*, not an access grant: the recipient still has to sign in and
+    is re-authorized on every read/submission. The body therefore contains only the course
+    and assignment names, the due time and the student's own name -- never another
+    student's data, a token, or an answer file name.
+    """
+    due_text = NO_DUE_TEXT
+    if due_at is not None:
+        due_text = due_at.strftime("%Y-%m-%d %H:%M UTC")
+    message = EmailMessage()
+    message["Subject"] = ASSIGNMENT_SUBJECT_TEMPLATE.format(
+        course_title=course_title, assignment_title=assignment_title
+    )
+    message["From"] = formataddr((settings.smtp_from_name, settings.smtp_from))
+    message["To"] = to
+    message.set_content(
+        ASSIGNMENT_BODY.format(
+            student_name=student_name,
+            course_title=course_title,
+            assignment_title=assignment_title,
+            due_text=due_text,
+        )
+    )
+    _deliver(settings, message, event="assignment.notification.sent")
 
 
 def send_verification_code(settings: Settings, *, to: str, code: str, ttl_seconds: int) -> None:
@@ -141,7 +200,7 @@ def _send_code(
     event: str,
 ) -> None:
     if not settings.smtp_configured:
-        raise MailDeliveryError(
+        raise MailNotConfigured(
             "the mail channel is not configured "
             "(SMTP_HOST / SMTP_USER / SMTP_PASS / SMTP_FROM)"
         )
@@ -152,11 +211,25 @@ def _send_code(
     message["To"] = to
     message.set_content(body.format(code=code, minutes=max(1, ttl_seconds // 60)))
 
+    _deliver(settings, message, event=event)
+
+
+def _deliver(settings: Settings, message: EmailMessage, *, event: str) -> None:
+    """Hand one composed message to the server, translating transport errors.
+
+    A missing configuration raises :class:`MailNotConfigured`; a refusing server raises
+    :class:`MailDeliveryError`. Both are type-only details: a transport error string can
+    echo the server banner, the recipient or a half-typed credential, none of which belongs
+    in a log line or a status row.
+    """
+    if not settings.smtp_configured:
+        raise MailNotConfigured(
+            "the mail channel is not configured "
+            "(SMTP_HOST / SMTP_USER / SMTP_PASS / SMTP_FROM)"
+        )
     try:
         deliver(settings, message)
     except (smtplib.SMTPException, OSError, ssl.SSLError) as error:
-        # Type only: a transport error string can echo the server banner, the recipient or a
-        # half-typed credential, none of which belongs in a log line.
         raise MailDeliveryError(
             f"the mail server refused the message ({type(error).__name__})"
         ) from error

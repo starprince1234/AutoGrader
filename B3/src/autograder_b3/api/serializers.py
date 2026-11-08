@@ -300,27 +300,22 @@ def authoring_assistance_to_public(
     )
 
 
-def assignment_to_public(
-    row: Any,
-    version_ids: list[UUID],
-    section_ids: list[UUID],
-    student_ids: list[UUID],
-) -> AssignmentPublic:
-    """Project one assignment. Targets are passed in because they are separate rows.
+def assignment_to_public(row: Any, version_ids: list[UUID]) -> AssignmentPublic:
+    """Project one course-level assignment (v0.32.0).
 
-    They are *not* read off ``row``: the assignment object no longer has a ``section_id``,
-    so a caller that forgot to load the target rows would raise instead of silently
-    emitting an assignment with an empty audience.
+    The ordered question list is passed in because it is a separate table; it is *not* read
+    off ``row``. ``notification_state`` is a column on the row and is copied verbatim --
+    the serializer never infers "scheduled" from the presence of a due date or anything
+    else, because that field must mean "B4 acknowledged the hand-off" and nothing weaker.
     """
     return AssignmentPublic(
         assignment_id=row.assignment_id,
         course_id=row.course_id,
-        section_ids=tuple(section_ids),
-        student_ids=tuple(student_ids),
         title=row.title,
         status=row.status,
         due_at=row.due_at,
         question_version_ids=tuple(version_ids),
+        notification_state=row.notification_state,
         created_at=row.created_at,
         updated_at=row.updated_at,
     )

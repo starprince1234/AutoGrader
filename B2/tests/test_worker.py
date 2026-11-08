@@ -37,6 +37,7 @@ from autograder_b2.events.outbox import SUBMISSION_ACCEPTED
 from autograder_b2.intake.api import build_router
 from autograder_b2.intake.runtime import IntakeRuntime, build_runtime
 from autograder_b2.worker import awaiting_evaluation, drain_outbox, run_once
+from tests.authorization_fixture import FakeAuthorizationDirectory
 from tests.conftest import requires_postgres
 from tests.test_events_outbox import (
     NATS_URL,
@@ -316,12 +317,21 @@ def assignments(intake_runtime: IntakeRuntime) -> Iterator[_AssignmentDirectory]
     yield directory
 
 
+@pytest.fixture()
+def authorization(intake_runtime: IntakeRuntime) -> Iterator[FakeAuthorizationDirectory]:
+    """给接收入口注入 B4 权威授权目录（生产由 `B2_IDENTITY_*` 装配 HTTP 客户端）。"""
+    directory = FakeAuthorizationDirectory()
+    intake_runtime.authorization_directory = directory
+    assert intake_runtime.service is not None
+    intake_runtime.service.authorization_directory = directory
+    yield directory
+
+
 def _register_assignment(directory: _AssignmentDirectory, payload: dict[str, object]) -> None:
-    """把 `_envelope` 生成的作业登记成 open、单课序、单题、全学生的受众。"""
+    """把 `_envelope` 生成的作业登记成 open、单题、课程级的作业。"""
     directory.register(
         str(payload["assignment_id"]),
         course_id=str(payload["course_id"]),
-        section_id=str(payload["section_id"]),
         question_version_id=str(payload["question_version_id"]),
     )
 
@@ -333,6 +343,7 @@ def test_accepted_submission_is_evaluated_and_published_end_to_end(
     intake_client: TestClient,
     signer: _Signer,
     assignments: _AssignmentDirectory,
+    authorization: FakeAuthorizationDirectory,
 ) -> None:
     """`POST /api/v1/submissions` → outbox 一行 → worker 一轮 → **真实 broker 读回**同一个事件。
 
@@ -342,6 +353,7 @@ def test_accepted_submission_is_evaluated_and_published_end_to_end(
     student = (str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4()))
     payload = _envelope(student)
     _register_assignment(assignments, payload)
+    authorization.enroll(student[0], course_id=student[1], section_id=student[2])
     accepted = intake_client.post(
         ENDPOINT, json=payload, headers=_auth(_student_token(signer, student))
     )

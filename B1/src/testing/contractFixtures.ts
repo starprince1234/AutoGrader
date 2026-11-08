@@ -7,8 +7,11 @@
 import type {
   AdvisoryScore,
   AppealPack,
+  AssignmentNotificationDelivery,
+  AssignmentNotificationSummary,
   AssignmentPublic,
   AuthoringAssistance,
+  ClassPublic,
   ComparisonDiagnostics,
   CoursePublic,
   CurrentUser,
@@ -23,6 +26,7 @@ import type {
   IntakeQuarantineView,
   LearningHintStep,
   LearningHintsResponse,
+  MyMembership,
   ProblemDetails,
   QuestionDraftGeneration,
   QuestionDraftGenerationCapabilities,
@@ -33,6 +37,7 @@ import type {
   RegistrationAllowlistReplacement,
   RegistrationAllowlistState,
   RosterImportPreview,
+  RosterSummary,
   Role,
   SessionCreated,
   SubmissionAccepted,
@@ -43,6 +48,10 @@ export const UUID_A = "00000000-0000-4000-8000-0000000000a1";
 export const UUID_B = "00000000-0000-4000-8000-0000000000b2";
 export const UUID_C = "00000000-0000-4000-8000-0000000000c3";
 export const UUID_D = "00000000-0000-4000-8000-0000000000d4";
+/** 班级 id（v0.32.0 课序之下还有班级）。 */
+export const UUID_E = "00000000-0000-4000-8000-0000000000e5";
+/** 通知投递记录 id。 */
+export const UUID_F = "00000000-0000-4000-8000-0000000000f6";
 export const UUID_RUN = "00000000-0000-4000-8000-000000000004";
 export const SHA_A = "a".repeat(64);
 
@@ -77,26 +86,41 @@ export function coursePage(courses: CoursePublic[], nextCursor: string | null = 
 }
 
 /**
- * 作业（`AssignmentPublic`，CHG-0032）：一门课程 + 1..N 个目标课序，
- * 可选收窄到指定学生（`student_ids` 为空 = 所选课序全体）。
+ * 作业（`AssignmentPublic`，v0.32.0）：**课程级**——属于一门课程并自动覆盖该课程全部
+ * 课序与班级，没有 `section_ids`/`student_ids`。`notification_state` 是发布通知的调度状态
+ * （不是投递结果，投递结果见 `assignmentNotificationSummary`）。
  */
 export function assignmentPublic(overrides?: Partial<AssignmentPublic>): AssignmentPublic {
   return {
     assignment_id: UUID_A,
     course_id: UUID_B,
-    section_ids: [UUID_C],
-    student_ids: [],
     title: "第一次作业",
     status: "open",
     due_at: "2026-10-01T15:59:00.000Z",
     question_version_ids: [UUID_C],
+    notification_state: "scheduled",
     created_at: "2026-09-15T07:00:00.000Z",
     updated_at: "2026-09-15T07:00:00.000Z",
     ...overrides,
   } as AssignmentPublic;
 }
 
-/** 调用者本人资料（`GET /api/v1/me`）：邮件正文的姓名/学号来自这里。 */
+/** 调用者本人的一条有效选课（课程/课序/班级），v0.32.0。 */
+export function myMembership(overrides?: Partial<MyMembership>): MyMembership {
+  return {
+    course_id: UUID_A,
+    course_code: "OS-2026",
+    course_title: "操作系统",
+    section_id: UUID_B,
+    section_code: "01",
+    term: "2026F",
+    class_id: UUID_E,
+    class_name: "软件工程1班",
+    ...overrides,
+  } as MyMembership;
+}
+
+/** 调用者本人资料（`GET /api/v1/me`）：正文的姓名/学号与 memberships 都来自这里。 */
 export function currentUser(overrides?: Partial<CurrentUser>): CurrentUser {
   return {
     user_id: UUID_D,
@@ -104,8 +128,100 @@ export function currentUser(overrides?: Partial<CurrentUser>): CurrentUser {
     display_name: "张三",
     student_number: "20260001",
     roles: ["student"] as Role[],
+    memberships: [],
     ...overrides,
   } as CurrentUser;
+}
+
+/** 班级（`ClassPublic`，v0.32.0）：课序之下的学生分组。 */
+export function classPublic(overrides?: Partial<ClassPublic>): ClassPublic {
+  return {
+    class_id: UUID_E,
+    course_id: UUID_A,
+    section_id: UUID_B,
+    class_name: "软件工程1班",
+    source: "manual",
+    allowlist_batch_id: null,
+    enrollment_count: 2,
+    bound_count: 1,
+    created_at: "2026-09-15T07:00:00.000Z",
+    ...overrides,
+  } as ClassPublic;
+}
+
+/** 服务端聚合的课程受众（`RosterSummary`，v0.32.0）。 */
+export function rosterSummary(overrides?: Partial<RosterSummary>): RosterSummary {
+  return {
+    course_id: UUID_A,
+    section_count: 1,
+    class_count: 1,
+    student_total: 2,
+    bound_count: 1,
+    unbound_count: 1,
+    sections: [
+      {
+        section_id: UUID_B,
+        section_code: "01",
+        term: "2026F",
+        class_count: 1,
+        student_total: 2,
+        bound_count: 1,
+        unbound_count: 1,
+        classes: [
+          {
+            class_id: UUID_E,
+            class_name: "软件工程1班",
+            student_total: 2,
+            bound_count: 1,
+            unbound_count: 1,
+          },
+        ],
+      },
+    ],
+    ...overrides,
+  } as RosterSummary;
+}
+
+/** 作业通知的投递汇总（B4 `AssignmentNotificationSummary`）。 */
+export function assignmentNotificationSummary(
+  overrides?: Partial<AssignmentNotificationSummary>,
+): AssignmentNotificationSummary {
+  return {
+    assignment_id: UUID_A,
+    course_id: UUID_B,
+    status: "completed",
+    recipient_total: 2,
+    sent_count: 2,
+    pending_count: 0,
+    failed_count: 0,
+    skipped_unbound_count: 0,
+    skipped_no_contact_count: 0,
+    skipped_inactive_count: 0,
+    created_at: "2026-09-15T07:00:00.000Z",
+    updated_at: "2026-09-15T07:05:00.000Z",
+    ...overrides,
+  } as AssignmentNotificationSummary;
+}
+
+/** 作业通知的单个收件人投递记录（B4 `AssignmentNotificationDelivery`）。 */
+export function assignmentNotificationDelivery(
+  overrides?: Partial<AssignmentNotificationDelivery>,
+): AssignmentNotificationDelivery {
+  return {
+    delivery_id: UUID_F,
+    student_number: "20260001",
+    display_name: "张三",
+    section_id: UUID_B,
+    class_id: UUID_E,
+    user_id: UUID_D,
+    status: "sent",
+    reason_code: null,
+    reason_detail: null,
+    attempts: 1,
+    sent_at: "2026-09-15T07:05:00.000Z",
+    updated_at: "2026-09-15T07:05:00.000Z",
+    ...overrides,
+  } as AssignmentNotificationDelivery;
 }
 
 /** 一次性核验码挑战（`POST /api/v1/email-verification/challenges`，CHG-0032）。 */
@@ -142,13 +258,16 @@ export function assignmentPage(
 }
 
 /**
- * 名单行（`EnrollmentPublic`，CHG-0007 起契约有响应 schema）。
+ * 名单行（`EnrollmentPublic`，CHG-0007 起契约有响应 schema；v0.32.0 增加课程/班级）。
  * `student_id` 是连接名单与成绩的**唯一**可用键，且可空：名单里的学生可能还没绑定账号。
  */
 export function enrollmentPublic(overrides?: Partial<EnrollmentPublic>): EnrollmentPublic {
   return {
     enrollment_id: UUID_C,
+    course_id: UUID_A,
     section_id: UUID_B,
+    class_id: UUID_E,
+    class_name: "软件工程1班",
     student_id: UUID_D,
     student_number: "20260001",
     display_name: "张三",
@@ -248,6 +367,7 @@ export function rosterImportPreview(
     status: "previewed",
     course_id: UUID_B,
     section_id: UUID_C,
+    class_id: UUID_E,
     detected_columns: ["姓名", "学号", "课程编号", "课序号", "邮箱"],
     proposed_mapping: {
       display_name: "姓名",

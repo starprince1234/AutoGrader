@@ -12,6 +12,7 @@ from .assignments import (
     create_assignment,
     get_assignment_detail,
     list_assignment_versions,
+    retry_assignment_notification,
 )
 from .assets import delete_fixture, upload_fixture, upload_stem_asset
 from .assistance import authoring_assistance
@@ -87,6 +88,7 @@ __all__ = [
     "read_generation",
     "record_reference_attestation",
     "request_generation",
+    "retry_assignment_notification",
     "update_question",
     "upload_fixture",
     "upload_stem_asset",

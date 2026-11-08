@@ -66,10 +66,13 @@ PRIMARY_KEY_COLUMNS = {
     "users": "user_id",
     "courses": "course_id",
     "sections": "section_id",
+    "classes": "class_id",
     "roles": "role_id",
     "credentials": "credential_id",
     "sessions": "session_id",
     "enrollments": "enrollment_id",
+    "assignment_notifications": "notification_id",
+    "assignment_notification_deliveries": "delivery_id",
     "roster_imports": "roster_import_id",
     "roster_import_files": "file_id",
     "roster_import_rows": "row_id",
@@ -78,6 +81,9 @@ PRIMARY_KEY_COLUMNS = {
     "inbox_events": "inbox_id",
     "dlq_messages": "dlq_id",
     "login_attempts": "attempt_id",
+    "registration_allowlist_batches": "batch_id",
+    "registration_allowlist": "entry_id",
+    "registration_codes": "code_id",
     "password_reset_codes": "code_id",
 }
 

@@ -1,61 +1,57 @@
-"""Internal service-to-service endpoints (called by B2's mail intake, never by a browser).
+"""Internal service-to-service endpoints (never reachable from a browser).
 
-Why the service token is a dependency instead of a check inside the handler: a handler that
-forgets a check is a hole that no signature change reveals, while a missing dependency changes
-the signature. Denials are therefore uniform, and there is exactly one place to audit.
+Why the service token is a dependency instead of a check inside each handler: a handler
+that forgets a check is a hole that no signature change reveals, while a missing dependency
+changes the signature. Denials are therefore uniform, and there is exactly one place to
+audit.
 
-The one endpoint here answers "which account has this address". That is a question an
-enumeration attack wants to ask, which is why it is unreachable without the pre-shared
-credential and why it returns no address in the response.
+Two capabilities live here (v0.32.0):
+
+* **identity lookup by e-mail** -- B2's mail intake attributes an inbound message to an
+  account. That is a question an enumeration attack wants to ask, which is why it is
+  unreachable without the credential and why the response carries no address;
+* **current authorization of one account** -- B3/B2 must decide assignment/submission access
+  from the caller's *current* membership. A JWT scope is only a snapshot from issuance, so
+  they ask this endpoint at request time. The response is ids only: roles, course grants and
+  (course, section, class) enrollments. No name, e-mail or student number travels here.
+
+`POST /assignment-notifications` is called by B3 when an assignment is published; it records
+who must be notified and with which status. Delivery is performed by the B4 sender process,
+so this endpoint never sends mail and never reports a scheduled message as delivered.
 """
 
 from __future__ import annotations
 
+import datetime as dt
 import hmac
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, Response
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import Connection, func, select
 
 from ..api.dependencies import B4State, Dependencies
 from ..api.problem import ProblemRoute
-from ..db.tables import enrollments, sections, users
-from ..db.tables import roles as roles_table
-from ..errors import not_found, unauthenticated
+from ..classes import authorization_for_user
+from ..db.tables import users
+from ..errors import conflict, not_found, unauthenticated, unprocessable
+from ..notifications import materialise
 from ..registration import normalize_email
 
 logger = logging.getLogger("autograder_b4.api.internal")
 
-#: Upper bounds mirror `openapi/b4.yaml` (`CourseTargetValidationRequest`). They are not a
-#: business limit; they keep one request from asking the database to expand an unbounded
-#: `IN (...)`, which is the only resource question this read-only endpoint can raise.
-MAX_TARGET_SECTIONS = 50
-MAX_TARGET_STUDENTS = 2000
 
-
-class CourseTargetValidationRequest(BaseModel):
-    """Assignment target ids to validate against one course.
-
-    `section_ids` may be empty only in theory (B3 always sends at least one); an empty list
-    is accepted and simply validates nothing, so the endpoint stays a pure predicate.
-    """
+class AssignmentNotificationRequest(BaseModel):
+    """What B3 hands over once an assignment is published (idempotent by assignment id)."""
 
     model_config = ConfigDict(extra="forbid")
 
+    assignment_id: uuid.UUID
     course_id: uuid.UUID
-    section_ids: list[uuid.UUID] = Field(max_length=MAX_TARGET_SECTIONS)
-    student_ids: list[uuid.UUID] = Field(max_length=MAX_TARGET_STUDENTS)
-
-
-def _platform_roles(connection: Connection, user_id) -> list[str]:
-    rows = connection.execute(
-        select(roles_table.c.role).where(
-            roles_table.c.user_id == user_id, roles_table.c.course_id.is_(None)
-        )
-    ).fetchall()
-    return [row[0] for row in rows]
+    title: str = Field(min_length=1, max_length=200)
+    due_at: dt.datetime | None = None
+    published_at: dt.datetime
 
 
 def build_internal_router(state: B4State, dependencies: Dependencies) -> APIRouter:
@@ -90,87 +86,99 @@ def build_internal_router(state: B4State, dependencies: Dependencies) -> APIRout
             "is_active": bool(row.is_active),
         }
 
-    @router.post("/api/v1/internal/course-targets/validate")
-    def validate_course_targets(
-        payload: CourseTargetValidationRequest,
+    @router.get("/api/v1/internal/users/{user_id}/authorization")
+    def get_user_authorization(
+        user_id: uuid.UUID,
         _caller: None = Depends(require_service_token),
         connection: Connection = Depends(dependencies.connection),
     ) -> dict[str, object]:
-        """Answer "are these sections of this course, and are these students enrolled in them?".
+        """Answer "what is this account allowed to reach, right now".
 
-        `CHG-0032`: B3 stores target ids it does not own the meaning of, so assignment creation
-        must ask B4. The response deliberately returns ids and section labels only — no student
-        name/number — because B3 needs an admission decision, not a second copy of identity data.
+        B3 uses it to decide assignment reads, B2 to admit or refuse a submission. It reads
+        the live `b4` rows on every call: a token issued before a student was added to a
+        course does not limit them, and one issued before they were removed does not extend
+        access. Only ids are returned.
         """
-        requested_sections = list(dict.fromkeys(payload.section_ids))
-        requested_students = list(dict.fromkeys(payload.student_ids))
-
-        section_rows = (
-            connection.execute(
-                select(
-                    sections.c.section_id,
-                    sections.c.course_id,
-                    sections.c.section_code,
-                    sections.c.term,
-                )
-                .where(sections.c.course_id == payload.course_id)
-                .where(sections.c.section_id.in_(requested_sections))
-                .order_by(sections.c.section_code, sections.c.section_id)
-            ).fetchall()
-            if requested_sections
-            else []
-        )
-        valid_section_ids = {row[0] for row in section_rows}
-
-        student_pairs: list[tuple[uuid.UUID, uuid.UUID]] = []
-        if requested_students and valid_section_ids:
-            rows = connection.execute(
-                select(enrollments.c.user_id, enrollments.c.section_id)
-                .select_from(
-                    enrollments.join(sections, enrollments.c.section_id == sections.c.section_id)
-                )
-                .where(sections.c.course_id == payload.course_id)
-                .where(enrollments.c.section_id.in_(tuple(valid_section_ids)))
-                .where(enrollments.c.is_active.is_(True))
-                .where(enrollments.c.user_id.is_not(None))
-                .where(enrollments.c.user_id.in_(requested_students))
-                .order_by(enrollments.c.section_id, enrollments.c.user_id)
-            ).fetchall()
-            student_pairs = [(row[0], row[1]) for row in rows]
-        matched_students = {pair[0] for pair in student_pairs}
-
+        document = authorization_for_user(connection, user_id)
+        if document is None:
+            raise not_found("No account exists with that id.")
         logger.info(
-            "internal.course_targets_validated",
+            "internal.user_authorization_served",
             extra={
-                "event": "internal.course_targets_validated",
-                "course_id": str(payload.course_id),
-                "requested_sections": len(requested_sections),
-                "valid_sections": len(valid_section_ids),
-                "requested_students": len(requested_students),
-                "valid_students": len(matched_students),
+                "event": "internal.user_authorization_served",
+                "user_id": str(user_id),
+                "course_grants": len(document["course_grants"]),  # type: ignore[arg-type]
+                "enrollments": len(document["enrollments"]),  # type: ignore[arg-type]
             },
         )
-        return {
-            "course_id": str(payload.course_id),
-            "sections": [
-                {
-                    "section_id": str(row[0]),
-                    "course_id": str(row[1]),
-                    "section_code": row[2],
-                    "term": row[3],
-                }
-                for row in section_rows
-            ],
-            "unknown_section_ids": [
-                str(item) for item in requested_sections if item not in valid_section_ids
-            ],
-            "students": [
-                {"student_id": str(student_id), "section_id": str(section_id)}
-                for student_id, section_id in student_pairs
-            ],
-            "unknown_student_ids": [
-                str(item) for item in requested_students if item not in matched_students
-            ],
-        }
+        return document
+
+    @router.post("/api/v1/internal/assignment-notifications")
+    def create_assignment_notifications(
+        payload: AssignmentNotificationRequest,
+        response: Response,
+        _caller: None = Depends(require_service_token),
+    ) -> dict[str, object]:
+        """Materialise the recipient snapshot for one published assignment.
+
+        Idempotent by `assignment_id`: a retry (transient failure, B3 retry, duplicate
+        delivery) returns the existing summary with `200` and never creates a second
+        audience. A different course for an existing assignment id is an inconsistency and
+        is refused with `409` instead of silently rewriting the campaign.
+        """
+        if payload.published_at.tzinfo is None:
+            # `materialise` re-checks this as `422`; the early branch keeps the failure next
+            # to the request instead of inside the transaction.
+            raise unprocessable("published_at must carry a timezone.")
+        existing_course = _existing_campaign_course(state, payload.assignment_id)
+        if existing_course is not None and existing_course != payload.course_id:
+            raise conflict(
+                "This assignment already has a notification for a different course."
+            )
+        result = materialise(
+            state.engine,
+            assignment_id=payload.assignment_id,
+            course_id=payload.course_id,
+            title=payload.title,
+            due_at=payload.due_at,
+            published_at=payload.published_at,
+            now=_now(),
+        )
+        response.status_code = 201 if result.created else 200
+        logger.info(
+            "internal.assignment_notification_materialised",
+            extra={
+                "event": "internal.assignment_notification_materialised",
+                "assignment_id": str(payload.assignment_id),
+                # `created` is a reserved LogRecord attribute; the field is named explicitly.
+                "was_created": result.created,
+                "recipients": result.summary["recipient_total"],
+            },
+        )
+        return result.summary
 
     return router
+
+
+def _existing_campaign_course(state: B4State, assignment_id: uuid.UUID) -> uuid.UUID | None:
+    from ..db.tables import assignment_notifications as campaigns
+
+    with state.engine.connect() as connection:
+        return connection.execute(
+            select(campaigns.c.course_id).where(campaigns.c.assignment_id == assignment_id)
+        ).scalar_one_or_none()
+
+
+def _platform_roles(connection: Connection, user_id) -> list[str]:
+    from ..db.tables import roles as roles_table
+
+    rows = connection.execute(
+        select(roles_table.c.role).where(
+            roles_table.c.user_id == user_id, roles_table.c.course_id.is_(None)
+        )
+    ).fetchall()
+    return [str(row[0]) for row in rows]
+
+
+def _now() -> dt.datetime:
+    return dt.datetime.now(dt.UTC).replace(microsecond=0)

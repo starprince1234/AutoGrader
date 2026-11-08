@@ -22,11 +22,11 @@
 | `20261020_0003` | `20260915_0002` | 自助注册：白名单批次/当前名单、注册验证码、`users.created_via`、邮箱唯一索引 | 是（删除 3 张新表、索引与列） |
 | `20261027_0004` | `20261020_0003` | 名单导入接受 CSV：放宽 `roster_imports.media_type` 的 CHECK（保留历史 PDF 值） | 是（恢复旧 CHECK） |
 | `20261027_0005` | `20261027_0004` | 找回密码：`password_reset_codes` + 索引 + 应用角色授权 | 是（删除该表） |
-| `20261027_0005`（head） | — | `module.yaml: database.migration_head = "20261027_0005"` | — |
+| `20261108_0010`（head，v0.32.0） | `20261029_0009` | `module.yaml: database.migration_head = "20261108_0010"` | 课程→课序→班级三级模型、enrollments 课程/班级列与“同课程仅一个有效课序”部分唯一索引、通知两张表、`roster_imports.class_id`、allowlist 唯一键改为 `(batch_id, student_number)` |
 
 ## 当前 head 与 `module.yaml` 一致性
 
-- `module.yaml: database.migration_head = "20261027_0005"`，与 `alembic_version_b4` 实测值一致。
+- `module.yaml: database.migration_head = "20261108_0010"`，与 `alembic_version_b4` 实测值一致。
 - 自动校验（`tests/test_database.py`）：
   - `test_migration_head_matches_module_manifest` —— 数据库 head == `module.yaml`；
   - `test_migration_head_matches_the_migration_files` —— 数据库 head == 迁移文件的唯一 head。

@@ -621,10 +621,28 @@ class ConsumptionCounter(Base):
 
 
 class Assignment(Base):
+    """A course-level homework set (v0.32.0).
+
+    One row per assignment: it belongs to exactly one course and automatically applies to
+    every section (课序), class (班级) and student of that course, including ones added
+    later while it is open. There is deliberately no target-section/student table any more:
+    the audience is computed from the identity/course module's live enrollments at read
+    and submission time, which is the only way "who is this for" cannot diverge.
+
+    ``notification_state`` records the publication-notification hand-off to B4:
+    ``pending`` (never attempted), ``scheduled`` (B4 has the audience) or ``unavailable``
+    (it does not; a teacher may retry). ``notification_scheduled_at`` is when the hand-off
+    succeeded. Neither is delivery status -- delivery belongs to B4.
+    """
+
     __tablename__ = "assignments"
     __table_args__ = (
         CheckConstraint("length(title) BETWEEN 1 AND 200", name="ck_assignments_title_length"),
         CheckConstraint("status IN ('open', 'archived')", name="ck_assignments_status"),
+        CheckConstraint(
+            "notification_state IN ('pending', 'scheduled', 'unavailable')",
+            name="ck_assignments_notification_state",
+        ),
         Index("ix_assignments_course_id", "course_id"),
         {"schema": SCHEMA},
     )
@@ -634,6 +652,12 @@ class Assignment(Base):
     title: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="open")
     due_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    notification_state: Mapped[str] = mapped_column(
+        Text, nullable=False, default="pending", server_default="pending"
+    )
+    notification_scheduled_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
@@ -666,62 +690,6 @@ class AssignmentItem(Base):
         nullable=False,
     )
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-
-class AssignmentSection(Base):
-    """One target section of an assignment (1..N rows per assignment).
-
-    The composite primary key is the uniqueness rule: a section is either a target once
-    or not at all. ``section_id`` is a plain UUID -- the identity/course module owns
-    sections, so no cross-schema foreign key is introduced (same rule as
-    ``assignments.course_id``). Read by the ordinary role, written by the internal role
-    (the create path runs there, in the same transaction as the assignment row).
-    """
-
-    __tablename__ = "assignment_sections"
-    __table_args__ = (
-        Index("ix_assignment_sections_section_id", "section_id"),
-        {"schema": SCHEMA},
-    )
-
-    assignment_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid,
-        ForeignKey(
-            "b3.assignments.assignment_id",
-            name="fk_assignment_sections_assignment_id",
-        ),
-        primary_key=True,
-    )
-    section_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
-
-
-class AssignmentStudent(Base):
-    """One student in an assignment's optional narrowing list.
-
-    **No row means "the whole target sections"**, so "not narrowed" and "narrowed to
-    nobody" cannot be confused: only a non-empty list is ever written. The student must
-    be actively enrolled in one of the assignment's target sections; that cross-module
-    fact is validated against the identity/course module before the row is written, never
-    by a database join.
-    """
-
-    __tablename__ = "assignment_students"
-    __table_args__ = (
-        Index("ix_assignment_students_student_id", "student_id"),
-        {"schema": SCHEMA},
-    )
-
-    assignment_id: Mapped[uuid.UUID] = mapped_column(
-        Uuid,
-        ForeignKey(
-            "b3.assignments.assignment_id",
-            name="fk_assignment_students_assignment_id",
-        ),
-        primary_key=True,
-    )
-    student_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 

@@ -5,7 +5,7 @@ import { useAllGrades } from "../grades/useGrades";
 import { useAssignmentRoster } from "./useAssignmentRoster";
 
 /**
- * 作业 × 名单 × 成绩的逐人逐题聚合（CHG-0032 §7.1）。
+ * 作业 × 课程名单 × 成绩的逐人逐题聚合（CHG-0032 §7.1 / v0.32.0 课程级受众）。
  *
  * 两条硬规则：
  * 1. **一题一次提交**：一道题取该生该题**最新**的提交（按 `submitted_at`），它代表现状。
@@ -13,6 +13,7 @@ import { useAssignmentRoster } from "./useAssignmentRoster";
  *    调用方不得渲染"未交"之类判定——只允许显示加载/截断。因此 `counts` 只有在
  *    `complete === true` 时才是非 `null`。
  *
+ * 名单来自**全课程**（作业对该课程全部课序/班级生效），未绑定账号的行以 `unbound` 保留。
  * 历史行（`assignment_id === null`）不属于任何作业，**不**进入作业级视图：这里按
  * `assignment_id` 精确过滤，不按题目版本"猜"归属。
  */
@@ -42,7 +43,11 @@ export type StudentProgress = {
   studentId: string | null;
   studentNumber: string;
   displayName: string;
+  /** 课序（`EnrollmentPublic.section_id`）。 */
   sectionId: string;
+  /** 班级（v0.32.0：课序之下还有班级）。 */
+  classId: string;
+  className: string;
   status: OverallState;
   questions: QuestionProgress[];
   /** 已完成的题目数。 */
@@ -201,6 +206,8 @@ export function buildStudentProgress(args: {
         studentNumber: enrollment.student_number,
         displayName: enrollment.display_name,
         sectionId: enrollment.section_id,
+        classId: enrollment.class_id,
+        className: enrollment.class_name ?? "",
         status: "unbound" as const,
         questions: [],
         completedCount: 0,
@@ -227,6 +234,8 @@ export function buildStudentProgress(args: {
       studentNumber: enrollment.student_number,
       displayName: enrollment.display_name,
       sectionId: enrollment.section_id,
+      classId: enrollment.class_id,
+      className: enrollment.class_name ?? "",
       status: overallStateOf(questions),
       questions,
       completedCount,

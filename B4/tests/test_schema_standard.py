@@ -12,6 +12,7 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 
+import pytest
 from sqlalchemy import Engine, inspect, text
 
 from autograder_b4.db.tables import ALL_TABLES, metadata
@@ -599,17 +600,42 @@ def test_uuid_primary_keys_are_generated_by_the_application(engine: Engine) -> N
 
 
 def test_enrollment_uniqueness_is_enforced_by_the_database(engine: Engine, factory) -> None:
-    """Business uniqueness is a constraint, not a convention (table-standards.md §4)."""
+    """Business uniqueness is a constraint, not a convention (table-standards.md §4).
+
+    v0.32.0 replaced `UNIQUE (section_id, student_number)` with the partial unique index
+    `(course_id, student_number) WHERE is_active`: a student has at most one **active**
+    课序/班级 per course, while historical inactive rows may repeat.
+    """
+    from sqlalchemy import update
     from sqlalchemy.exc import IntegrityError
 
+    from autograder_b4.db.tables import enrollments
+
     course_id = factory.course(code="CS101")
-    section_id = factory.section(course_id=course_id, code="01")
-    factory.enrollment(section_id=section_id, student_number="20230001")
-    try:
-        factory.enrollment(section_id=section_id, student_number="20230001")
-    except IntegrityError:
-        return
-    raise AssertionError("a duplicate (section_id, student_number) was accepted")
+    first_section = factory.section(course_id=course_id, code="01")
+    second_section = factory.section(course_id=course_id, code="02")
+    other_course = factory.course(code="CS201")
+    other_section = factory.section(course_id=other_course, code="01")
+
+    first = factory.enrollment(section_id=first_section, student_number="20230001")
+    # Same course, different class: the old per-section rule would have allowed it.
+    with pytest.raises(IntegrityError) as cross_class:
+        factory.enrollment(section_id=second_section, student_number="20230001")
+    assert "uq_enrollments_course_id_student_number_active" in str(cross_class.value.orig)
+    # Same course, same class: also refused.
+    with pytest.raises(IntegrityError):
+        factory.enrollment(section_id=first_section, student_number="20230001")
+    # A different course is a different enrollment.
+    factory.enrollment(section_id=other_section, student_number="20230001")
+
+    with engine.begin() as connection:
+        connection.execute(
+            update(enrollments)
+            .where(enrollments.c.enrollment_id == first)
+            .values(is_active=False)
+        )
+    # Deactivating the row frees the slot; the partial index ignores inactive history.
+    factory.enrollment(section_id=first_section, student_number="20230001")
 
 
 def test_roles_reject_an_unknown_role_value(engine: Engine, factory) -> None:

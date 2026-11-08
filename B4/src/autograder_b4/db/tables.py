@@ -75,6 +75,26 @@ sections = Table(
     Column("created_by", PGUUID(as_uuid=True), nullable=True),
     Column("created_at", TIMESTAMPTZ, nullable=False, server_default=func.now()),
     Column("updated_at", TIMESTAMPTZ, nullable=False, server_default=func.now()),
+    UniqueConstraint("section_id", "course_id", name="uq_sections_section_id_course_id"),
+)
+
+#: A class (班级) inside a section (课序). The section/class split is what lets several
+#: registered classes share one 课序; before this table existed one class *was* one section.
+classes = Table(
+    "classes",
+    metadata,
+    Column("class_id", PGUUID(as_uuid=True), primary_key=True),
+    Column("section_id", PGUUID(as_uuid=True), nullable=False),
+    Column("class_name", Text, nullable=False),
+    #: `registered_class` (attached from an allowlist batch), `roster_import` (uploaded
+    #: file) or `manual` (empty class created by hand / back-filled from a section code).
+    Column("source", Text, nullable=False),
+    Column("allowlist_batch_id", PGUUID(as_uuid=True), nullable=True),
+    Column("created_by", PGUUID(as_uuid=True), nullable=True),
+    Column("created_at", TIMESTAMPTZ, nullable=False, server_default=func.now()),
+    Column("updated_at", TIMESTAMPTZ, nullable=False, server_default=func.now()),
+    UniqueConstraint("class_id", "section_id", name="uq_classes_class_id_section_id"),
+    UniqueConstraint("section_id", "class_name", name="uq_classes_section_id_class_name"),
 )
 
 roles = Table(
@@ -122,6 +142,7 @@ roster_imports = Table(
     Column("roster_import_id", PGUUID(as_uuid=True), primary_key=True),
     Column("course_id", PGUUID(as_uuid=True), nullable=False),
     Column("section_id", PGUUID(as_uuid=True), nullable=False),
+    Column("class_id", PGUUID(as_uuid=True), nullable=True),
     Column("status", Text, nullable=False),
     Column("filename", Text, nullable=False),
     Column("media_type", Text, nullable=False),
@@ -165,13 +186,62 @@ enrollments = Table(
     "enrollments",
     metadata,
     Column("enrollment_id", PGUUID(as_uuid=True), primary_key=True),
+    Column("course_id", PGUUID(as_uuid=True), nullable=False),
     Column("section_id", PGUUID(as_uuid=True), nullable=False),
+    Column("class_id", PGUUID(as_uuid=True), nullable=False),
     Column("user_id", PGUUID(as_uuid=True), nullable=True),
     Column("student_number", Text, nullable=False),
     Column("display_name", Text, nullable=False),
     Column("source", Text, nullable=False),
     Column("roster_import_id", PGUUID(as_uuid=True), nullable=True),
     Column("is_active", Boolean, nullable=False, server_default="true"),
+    Column("created_at", TIMESTAMPTZ, nullable=False, server_default=func.now()),
+    Column("updated_at", TIMESTAMPTZ, nullable=False, server_default=func.now()),
+)
+
+#: One published assignment's notification campaign. B3 owns assignments; B4 owns the
+#: roster and the mail channel, so B3 hands the facts over once and this row is keyed by
+#: `assignment_id` for idempotency. Delivery status lives in the table below it.
+assignment_notifications = Table(
+    "assignment_notifications",
+    metadata,
+    Column("notification_id", PGUUID(as_uuid=True), primary_key=True),
+    Column("assignment_id", PGUUID(as_uuid=True), nullable=False, unique=True),
+    Column("course_id", PGUUID(as_uuid=True), nullable=False),
+    Column("title", Text, nullable=False),
+    Column("due_at", TIMESTAMPTZ, nullable=True),
+    Column("published_at", TIMESTAMPTZ, nullable=False),
+    #: `pending` (materialised, nothing attempted yet), `sending`, `completed`, `partial`,
+    #: `failed` -- derived from the delivery rows by the sender, never guessed by the caller.
+    Column("status", Text, nullable=False, server_default="pending"),
+    Column("recipient_total", Integer, nullable=False, server_default="0"),
+    Column("created_at", TIMESTAMPTZ, nullable=False, server_default=func.now()),
+    Column("updated_at", TIMESTAMPTZ, nullable=False, server_default=func.now()),
+)
+
+#: One intended recipient of an assignment notification. The roster fields are snapshots
+#: taken when the assignment was published: the row must stay meaningful after the class
+#: or enrollment is deleted, and deleting the enrollment must not erase the evidence that
+#: a student was in the audience. `reason_code` distinguishes "not delivered" from "sent".
+assignment_notification_deliveries = Table(
+    "assignment_notification_deliveries",
+    metadata,
+    Column("delivery_id", PGUUID(as_uuid=True), primary_key=True),
+    Column("notification_id", PGUUID(as_uuid=True), nullable=False),
+    Column("enrollment_id", PGUUID(as_uuid=True), nullable=True),
+    Column("student_number", Text, nullable=False),
+    Column("display_name", Text, nullable=False),
+    Column("section_id", PGUUID(as_uuid=True), nullable=False),
+    Column("class_id", PGUUID(as_uuid=True), nullable=False),
+    Column("user_id", PGUUID(as_uuid=True), nullable=True),
+    #: pending | sending | sent | failed | skipped_unbound | skipped_no_contact |
+    #: skipped_inactive.
+    Column("status", Text, nullable=False, server_default="pending"),
+    Column("reason_code", Text, nullable=True),
+    Column("reason_detail", Text, nullable=True),
+    Column("attempts", Integer, nullable=False, server_default="0"),
+    Column("next_attempt_at", TIMESTAMPTZ, nullable=True),
+    Column("sent_at", TIMESTAMPTZ, nullable=True),
     Column("created_at", TIMESTAMPTZ, nullable=False, server_default=func.now()),
     Column("updated_at", TIMESTAMPTZ, nullable=False, server_default=func.now()),
 )
@@ -283,9 +353,16 @@ registration_allowlist = Table(
     metadata,
     Column("entry_id", PGUUID(as_uuid=True), primary_key=True),
     Column("batch_id", PGUUID(as_uuid=True), nullable=False),
-    Column("student_number", Text, nullable=False, unique=True),
+    Column("student_number", Text, nullable=False),
     Column("display_name", Text, nullable=False),
     Column("created_at", TIMESTAMPTZ, nullable=False, server_default=func.now()),
+    #: A student may be on the imported class lists of several courses (v0.32.0); the
+    #: uniqueness that matters is "once per imported class", not "once globally".
+    UniqueConstraint(
+        "batch_id",
+        "student_number",
+        name="uq_registration_allowlist_batch_id_student_number",
+    ),
 )
 
 registration_codes = Table(
@@ -320,6 +397,7 @@ ALL_TABLES = (
     users,
     courses,
     sections,
+    classes,
     roles,
     credentials,
     sessions,
@@ -327,6 +405,8 @@ ALL_TABLES = (
     roster_import_files,
     roster_import_rows,
     enrollments,
+    assignment_notifications,
+    assignment_notification_deliveries,
     audit_records,
     outbox_events,
     inbox_events,

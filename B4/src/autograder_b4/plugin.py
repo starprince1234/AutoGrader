@@ -38,7 +38,7 @@ logger = get_logger("plugin")
 
 DESCRIPTOR = ModuleDescriptor(
     module="B4",
-    contract_version="0.31.0",
+    contract_version="0.32.0",
     provides=("b4-auth", "b4-course", "postgres", "nats"),
     requires=("host",),
     routes=(
@@ -46,6 +46,9 @@ DESCRIPTOR = ModuleDescriptor(
         "/api/v1/users",
         "/api/v1/courses",
         "/api/v1/sections",
+        # v0.32.0: a class (班级) is its own entity below a section; the route prefix is
+        # separate so the registry check sees the new surface. Must match module.yaml.
+        "/api/v1/classes",
         "/api/v1/enrollments",
         "/api/v1/roster-imports",
         "/api/v1/audit-records",

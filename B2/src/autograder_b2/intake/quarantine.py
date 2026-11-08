@@ -94,6 +94,10 @@ from autograder_b2.db.schema import intake_quarantines
 from autograder_b2.intake.attachments import AttachmentRejected
 from autograder_b2.intake.imap import ImapProtocolError
 from autograder_b2.integration.assignments import AssignmentUnavailable
+from autograder_b2.integration.b4_authorization import (
+    AuthorizationUnavailable,
+    UserAuthorizationDirectory,
+)
 
 if TYPE_CHECKING:
     from autograder_b2.intake.imap import EmailIntakeService
@@ -145,6 +149,10 @@ class QuarantineEmailUnavailable(RuntimeError):
 
 class QuarantineAssignmentUnavailable(RuntimeError):
     """匹配用户需要作业受众，但本部署没有配置/连不上作业目录 → 对外 503（系统故障，不是学生错）。"""
+
+
+class QuarantineAuthorizationUnavailable(RuntimeError):
+    """匹配用户需要 B4 权威归属，但授权目录没有配置/连不上 → 对外 503（系统故障，不是学生错）。"""
 
 
 class QuarantineMessageGone(RuntimeError):
@@ -447,9 +455,20 @@ class IntakeQuarantineService:
         engine: Engine,
         *,
         email: EmailIntakeService | None = None,
+        authorization_directory: UserAuthorizationDirectory | None = None,
     ) -> None:
         self._engine = engine
         self._email = email
+        #: B4 权威授权目录。未显式注入时取邮件入口所用的同一个实例（两者必须给出同一答案：
+        #: "这个学生现在是否属于这门课"）。`None` = 未配置 → 匹配用户返回 503。
+        self._authorization = authorization_directory
+
+    def _authorization_directory(self) -> UserAuthorizationDirectory | None:
+        if self._authorization is not None:
+            return self._authorization
+        if self._email is None:
+            return None
+        return getattr(self._email, "authorization_directory", None)
 
     # --- 列表 -------------------------------------------------------------------------
 
@@ -681,7 +700,8 @@ class IntakeQuarantineService:
         绝不跳过受众校验）。
 
         异常：403 越权；404 不存在；409 已处理/原邮件不可定位；422 请求/目标/附件不合规；
-        `QuarantineEmailUnavailable` / `QuarantineAssignmentUnavailable` → 503。
+        `QuarantineEmailUnavailable` / `QuarantineAssignmentUnavailable` /
+        `QuarantineAuthorizationUnavailable` → 503。
         """
         target, canonical_note = validate_completion_request(
             student_id=student_id,
@@ -708,6 +728,8 @@ class IntakeQuarantineService:
             raise QuarantineMessageGone("the record has no mailbox position")
 
         audience = self._load_audience(target)
+        # 与网页/邮件入口同口径：这一行的课程/课序必须与 B4 的**当前**归属一致。
+        authoritative_section = self._authoritative_section(target)
 
         try:
             raw = self._email.fetch_raw(uidvalidity=uidvalidity, uid=uid)
@@ -719,7 +741,7 @@ class IntakeQuarantineService:
                 raw=raw,
                 student_id=target.student_id,
                 course_id=target.course_id,
-                section_id=target.section_id,
+                section_id=authoritative_section,
                 assignment_id=target.assignment_id,
                 audience=audience,
                 mailbox=mailbox,
@@ -785,11 +807,14 @@ class IntakeQuarantineService:
         return _view_of(updated)
 
     def _load_audience(self, target: CompletionTarget):
-        """读取并校验人工复核选定的作业受众（与自动路径**同一个**目录与判定）。
+        """读取并校验人工复核选定的作业（与自动路径**同一个**目录与判定）。
 
         - 目录未配置/不可达 → `QuarantineAssignmentUnavailable`（503，系统故障不是学生错）；
-        - 作业不存在、不属于目标课程、或学生/课序不在受众内、或作业不再 open → 422
-          `QuarantineTargetMismatch`（人工复核不能把学生塞进不属于他的作业）。
+        - 作业不存在、不属于目标课程、或作业不再 open → 422 `QuarantineTargetMismatch`
+          （人工复核不能把学生塞进不属于他的作业）。
+
+        课程级作业没有 section/student 名单；"学生是否在课程里、当前课序是哪个"由
+        `_authoritative_section` 按 B4 的当前归属判定（与网页/邮件入口同口径）。
         """
         assert self._email is not None
         directory = self._email.assignment_directory
@@ -807,13 +832,43 @@ class IntakeQuarantineService:
             raise QuarantineTargetMismatch(
                 "the selected assignment belongs to another course"
             )
-        if not audience.is_target(
-            section_id=target.section_id, student_id=target.student_id
-        ):
-            raise QuarantineTargetMismatch(
-                "the selected student or section is not in the assignment audience"
-            )
         return audience
+
+    def _authoritative_section(self, target: CompletionTarget) -> str:
+        """按 B4 当前归属校验/补全目标学生的 section（不一致 → 422）。
+
+        人工复核由 staff 显式指定 `(student, course, section, assignment)`；服务端必须再按 B4 的
+        **当前**归属判一次，保证与网页/邮件入口同口径（设计 §4）：
+
+        - 授权目录未配置/不可达 → `QuarantineAuthorizationUnavailable`（503）；
+        - 目标学生当前没有该课程的 enrollment → 422（学生不在课程里，人工不能凭空放行）；
+        - 学生当前 enrollment 的 section 与 staff 指定的 section 不一致 → 422（显式提示，
+          不静默改写一个 staff 明确作出的选择）；
+        - 一致 → 用权威值（此时与指定值相同）落库。
+
+        课程 staff 作为目标学生时没有学生选课，保留 staff 指定的 section（与 staff 自助提交同口径）。
+        """
+        directory = self._authorization_directory()
+        if directory is None:
+            raise QuarantineAuthorizationUnavailable(
+                "the B4 user authorization directory is not configured"
+            )
+        try:
+            authorization = directory.get(target.student_id)
+        except AuthorizationUnavailable as error:
+            raise QuarantineAuthorizationUnavailable(str(error)) from error
+        if authorization.is_course_staff_for(target.course_id):
+            return target.section_id
+        enrollment = authorization.enrollment_for_course(target.course_id)
+        if enrollment is None:
+            raise QuarantineTargetMismatch(
+                "the selected student is not currently enrolled in the course"
+            )
+        if enrollment.section_id != target.section_id:
+            raise QuarantineTargetMismatch(
+                "the selected section does not match the student's current enrollment section"
+            )
+        return enrollment.section_id
 
     def set_held(
         self,
@@ -1041,6 +1096,7 @@ __all__ = [
     "InvalidQuarantineFilterError",
     "QuarantineAlreadyResolvedError",
     "QuarantineAssignmentUnavailable",
+    "QuarantineAuthorizationUnavailable",
     "QuarantineNotAttributableError",
     "QuarantineNotFoundError",
     "QuarantineRequestError",

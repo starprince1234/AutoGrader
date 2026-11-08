@@ -899,6 +899,7 @@ def test_probe_email_rejections_leave_no_submission_artifact_or_file(
     from autograder_b2.intake.matching import MatchedAccount
     from autograder_b2.intake.service import IntakeLimits, SubmissionIntakeService
     from autograder_b2.integration.assignments import AssignmentAudience
+    from tests.authorization_fixture import FakeAuthorizationDirectory
 
     mailbox = "probe-mailbox"
     limits = IntakeLimits(max_files=4, max_file_bytes=64 * 1024, max_total_bytes=128 * 1024)
@@ -928,14 +929,18 @@ def test_probe_email_rejections_leave_no_submission_artifact_or_file(
                 course_id=course_id,
                 title="probe",
                 status="open",
-                section_ids=(section_id,),
-                student_ids=(),
                 question_version_ids=(question_id,),
             )
 
     assignments = _Assignments()
+    # 权威归属：学生当前在课程里（本探针只针对"非法来件是否零落库"，归属必须是合法前提）。
+    authorization = FakeAuthorizationDirectory()
+    authorization.enroll(student_id, course_id=course_id, section_id=section_id)
     verification = EmailVerificationService(
-        engine=engine, directory=_Directory(), assignment_directory=assignments
+        engine=engine,
+        directory=_Directory(),
+        assignment_directory=assignments,
+        authorization_directory=authorization,
     )
     service = EmailIntakeService(
         engine=engine,
@@ -952,12 +957,17 @@ def test_probe_email_rejections_leave_no_submission_artifact_or_file(
             timeout_seconds=10.0,
         ),
         intake=SubmissionIntakeService(
-            engine, store, limits, assignment_directory=assignments
+            engine,
+            store,
+            limits,
+            assignment_directory=assignments,
+            authorization_directory=authorization,
         ),
         checkpoints=EmailCheckpointStore(engine),
         quarantines=QuarantineStore(engine),
         verification=verification,
         assignment_directory=assignments,
+        authorization_directory=authorization,
     )
 
     elf = b"\x7fELF\x02\x01\x01\x00" + b"\x00" * 24

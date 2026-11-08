@@ -60,12 +60,20 @@ install -m 0644 "$release/MAIN/deploy/autograder-worker.service" /etc/systemd/sy
 install -m 0644 "$release/MAIN/deploy/cloudflared.service" /etc/systemd/system/cloudflared.service
 install -m 0644 "$release/MAIN/deploy/autograder-intake.service" /etc/systemd/system/autograder-intake.service
 install -m 0644 "$release/MAIN/deploy/autograder-intake.timer" /etc/systemd/system/autograder-intake.timer
+install -m 0644 "$release/MAIN/deploy/autograder-notifications.service" /etc/systemd/system/autograder-notifications.service
+install -m 0644 "$release/MAIN/deploy/autograder-notifications.timer" /etc/systemd/system/autograder-notifications.timer
 systemctl daemon-reload
 ln -sfn "$release" "$root/current.next"
 mv -Tf "$root/current.next" "$root/current"
 systemctl enable autograder.service
 # 邮件收信由定时器驱动（见 autograder-intake.service 的说明）。
 systemctl enable --now autograder-intake.timer
+# 作业通知发送器同样由定时器驱动；先同步跑一趟，证明当前 release 能装配它
+# （没有待发行时是一次成功且无副作用的行为）。
+systemctl enable --now autograder-notifications.timer
+runuser --preserve-environment --user autograder -- \
+    "$release/MAIN/.venv/bin/python" -m autograder_b4.ops.notifications --limit 1 \
+    || fail "assignment notification sender failed on this release"
 systemctl restart autograder.service
 
 wait_ready() {

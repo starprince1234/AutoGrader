@@ -60,6 +60,12 @@ ACTION_COURSE_RETIRED = "course.retired"
 ACTION_COURSE_DELETED = "course.deleted"
 ACTION_SECTION_DELETED = "section.deleted"
 ACTION_SECTION_CREATED = "section.created"
+#: v0.32.0: a class is its own entity under a section, so its lifecycle is audited
+#: separately from the section's.
+ACTION_CLASS_CREATED = "class.created"
+ACTION_CLASS_RENAMED = "class.renamed"
+ACTION_CLASS_DELETED = "class.deleted"
+ACTION_NOTIFICATION_RETRIED = "notification.retried"
 ACTION_ENROLLMENT_UPDATED = "enrollment.updated"
 ACTION_ENROLLMENT_DELETED = "enrollment.deleted"
 ACTION_AUDIT_QUERIED = "audit.queried"

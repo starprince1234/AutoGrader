@@ -32,18 +32,48 @@ def _canonical_request_uuid(value: str, field: str) -> str:
         raise AuthorizationError(f"{field} is not a UUID") from error
 
 
+def require_submission_identity(principal: Principal, *, student_id: str) -> None:
+    """提交写入的**身份层**判定（角色 + 本人；不含课程作用域）。不满足即 403。
+
+    为什么**不**在这里校验课程作用域（v0.32.0）：作业受众是课程级，而"这个学生此刻是否属于
+    这门课"由 B4 的当前有效选课决定（`integration.b4_authorization`）。令牌的 `scope` 只是签发
+    时的快照：登录后被加入课程的学生在令牌里看不到该课程，登录后被移出的学生仍带着旧作用域——
+    两种情况都只能由 B4 在请求时回答。契约（`b2.yaml createSubmission`）明文要求 admission
+    不得依赖令牌 scope，因此这里只判：
+
+    1. 令牌必须持有**至少一个已登记角色**（认证不等于授权）；
+    2. 学生只能提交**自己**的作业（`student_id` 必须等于令牌主体）；教师/助教可代交；
+       管理员豁免（与其余端点同口径）。
+
+    `student_id` 先规范化再比较（契约的 `Uuid` 接受多种合法写法）。
+    """
+    if principal.is_admin:
+        return
+    if not principal.has_recognized_role:
+        raise AuthorizationError("the token carries no recognized platform role")
+    canonical_student = _canonical_request_uuid(student_id, "student_id")
+    if canonical_student != principal.user_id and not principal.is_course_staff:
+        raise AuthorizationError("a student may only submit their own work")
+
+
 def require_submission_authority(
-    principal: Principal, *, course_id: str, section_id: str, student_id: str
+    principal: Principal, *, course_id: str, section_id: str | None, student_id: str
 ) -> None:
-    """提交写入的授权判定。
+    """**staff 代交**的既有令牌语义判定（角色 + 课程作用域 + 身份）；不满足即 403。
+
+    这是 v0.32.0 之前提交写入的完整判定，现在只剩 staff 代交一条路径仍使用它（学生本人提交
+    走 `require_submission_identity`，课程归属由 B4 权威判定）：设计 §4 要求"staff 代交按现有
+    语义"，即教师/助教必须持有覆盖该课程的**令牌课程作用域**。`section_id=None` 表示调用方
+    不主张课序（课程级受众下课序由 B4 决定），此时只校验课程覆盖。
 
     四条规则，任一不满足即 403：
-    1. 令牌必须持有**至少一个已登记角色**（认证不等于授权）；
-    2. 令牌必须覆盖请求的 `course_id`（作用域相符）；
-    3. 学生只能提交**自己**的作业（`student_id` 必须等于令牌主体）——否则就是冒名提交；
-    4. 教师/助教可在其课程作用域内代学生提交（邮件入口与人工补交场景），管理员不受课程限制。
 
-    比较前先把请求侧三个标识规范化（见 `_canonical_request_uuid`）：否则同一份合规请求会因写法差异
+    1. 令牌必须持有**至少一个已登记角色**（认证不等于授权）；
+    2. 令牌必须覆盖请求的 `course_id`；`section_id` 非空时还要求覆盖该课序；
+    3. 学生只能提交**自己**的作业（`student_id` 必须等于令牌主体）——否则就是冒名提交；
+    4. 教师/助教可在其课程作用域内代学生提交，管理员不受课程限制。
+
+    比较前先把请求侧标识规范化（见 `_canonical_request_uuid`）：否则同一份合规请求会因写法差异
     被误拒，而"误拒"与"冒名放行"在日志里都表现为 403/202，很难事后分辨。
     """
     if principal.is_admin:
@@ -51,7 +81,9 @@ def require_submission_authority(
     if not principal.has_recognized_role:
         raise AuthorizationError("the token carries no recognized platform role")
     canonical_course = _canonical_request_uuid(course_id, "course_id")
-    canonical_section = _canonical_request_uuid(section_id, "section_id")
+    canonical_section = (
+        None if section_id is None else _canonical_request_uuid(section_id, "section_id")
+    )
     canonical_student = _canonical_request_uuid(student_id, "student_id")
     if not principal.covers_course(canonical_course, canonical_section):
         raise AuthorizationError("course scope does not cover this submission")

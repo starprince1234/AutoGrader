@@ -26,23 +26,18 @@ def teacher_principal(
     subject: str = TEACHER_ID,
     course_ids: tuple[uuid.UUID, ...] = (COURSE_A,),
     section_ids: tuple[uuid.UUID, ...] = (SECTION_A,),
-    course_wide: tuple[uuid.UUID, ...] = (),
 ) -> Principal:
-    """A teacher test principal with the same scope pairing a real token produces.
+    """A teacher test principal with the same scope a real token produces.
 
-    ``scope_pairs``/``course_wide`` were previously left empty here while the production
-    principal fills them from the token scope. The section-scoped checks therefore refused
-    every one of these principals, which made the fixtures lie about what a teacher token
-    grants. Pairing is ``zip(course_ids, section_ids)``: a token's scope is a list of
-    ``(course, section)`` entries, not two independent sets.
+    Only the course scope is load-bearing now (v0.32.0): assignments are course-level, so a
+    section-scoped token grants the whole course and the section ids are parsed but not used
+    for authorization.
     """
     return Principal(
         subject=subject,
         roles=frozenset({"teacher"}),
         course_ids=frozenset(course_ids),
         section_ids=frozenset(section_ids),
-        scope_pairs=frozenset(zip(course_ids, section_ids, strict=True)),
-        course_wide=frozenset(course_wide),
     )
 
 
@@ -57,7 +52,6 @@ def student_principal(
         roles=frozenset({"student"}),
         course_ids=frozenset(course_ids),
         section_ids=frozenset(section_ids),
-        scope_pairs=frozenset(zip(course_ids, section_ids, strict=True)),
     )
 
 

@@ -26,9 +26,9 @@
 | 文档 / 能力 | 状态 | 最后验证方式 |
 |---|---|---|
 | 插件注册（descriptor / health） | `已完成` | `tests/test_plugin.py`（8 例） |
-| `b3` schema：17 张业务表 + 5 个触发器 + 角色授权 | `已完成` | `tests/test_migrations.py`（17 例，含空库迁移与权限拒绝）、`alembic heads` → `20260915_0004 (head)` |
+| `b3` schema：19 张业务表 + 5 个触发器 + 角色授权 | `已完成` | `tests/test_migrations.py`（含空库迁移与权限拒绝）、`alembic heads` → `20261108_0010 (head)` |
 | RQ-B-3-10 题目聚合（题干/图片/参考答案/用例） | `已完成` | `tests/test_questions_api.py`（80 例）、`tests/test_dto_boundary.py`（8 例） |
-| RQ-B-3-20 题库维护 + 不可变版本 + assignment | `已完成` | `tests/test_versions.py`（31 例，应用层 409 + 触发器 23001） |
+| RQ-B-3-20 题库维护 + 不可变版本 + 课程级 assignment | `已完成` | `tests/test_versions.py`（应用层 409 + 触发器 23001）、`tests/test_assignments_api.py`（课程级受众 / B4 实时授权 / 通知交接与重试） |
 | RQ-B-3-20 发布前置参考答案凭证（CHG-0008） | `已完成` | `tests/test_versions.py`、`tests/test_questions_api.py`（无凭证 422 / 摘要不符 409 / 改内容自动失效） |
 | RQ-B-3-20 标签写路径（CHG-0008） | `已完成` | `tests/test_questions_api.py`（往返 + 9 类非法值 422） |
 | RQ-B-3-30 去标识化统计（去重/重放/查询） | `已完成`（**验收 5 未达标**：窗口路径 10 万量级 23.8 s） | `tests/test_statistics.py`（39 例）、`tests/test_auth.py`（23 例）、`scripts/benchmark_statistics.py` |

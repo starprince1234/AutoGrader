@@ -12,11 +12,12 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 
-from autograder_b4.db.tables import audit_records
+from autograder_b4.db.tables import audit_records, users
 
 PASSWORD = "correct horse battery staple"
+SERVICE_TOKEN = "test-service-token"
 
 
 @pytest.fixture
@@ -263,3 +264,107 @@ def test_audit_records_are_scoped_for_teachers(client, world, sign_in_as, factor
     admin_view = client.get("/api/v1/audit-records", headers=sign_in_as("admin").headers)
     admin_course_ids = {item["course_id"] for item in admin_view.json()["items"]}
     assert {str(world["course_id"]), str(world["other_course"])} <= admin_course_ids
+
+
+# ------------------------------------------------ internal authorization (B3/B2 ask B4)
+
+
+def _service_headers(token: str = SERVICE_TOKEN) -> dict[str, str]:
+    return {"authorization": f"Bearer {token}"}
+
+
+def _authorization_url(user_id: uuid.UUID) -> str:
+    return f"/api/v1/internal/users/{user_id}/authorization"
+
+
+def test_internal_authorization_requires_the_service_token(client, world, sign_in_as) -> None:
+    """Being authenticated as a user is not authorization for the internal channel."""
+    url = _authorization_url(world["student"])
+    assert client.get(url).status_code == 401
+    assert client.get(url, headers=_service_headers("not-the-token")).status_code == 401
+    assert client.get(url, headers=sign_in_as("student").headers).status_code == 401
+
+
+def test_internal_authorization_returns_ids_only(client, world, factory) -> None:
+    """B3/B2 decide access from ids; identity data must not travel on this channel."""
+    response = client.get(
+        _authorization_url(world["student"]), headers=_service_headers()
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert set(body) == {"user_id", "platform_roles", "course_grants", "enrollments"}
+    assert body["user_id"] == str(world["student"])
+    assert body["platform_roles"] == ["student"]
+    assert body["course_grants"] == []
+    assert body["enrollments"] == [
+        {
+            "course_id": str(world["course_id"]),
+            "section_id": str(world["section_id"]),
+            "class_id": str(factory.default_class(world["section_id"])),
+        }
+    ]
+    # The roster row's display name and the account's student number stay in B4.
+    assert "20230001" not in response.text
+
+
+def test_internal_authorization_reports_platform_roles_and_course_grants_separately(
+    client, factory
+) -> None:
+    teacher = factory.user(username="granted", password=PASSWORD, roles=("teacher",))
+    granted_course = factory.course(code="CS201")
+    factory.grant(user_id=teacher, course_id=granted_course, role="teacher")
+    enrolled_course = factory.course(code="CS202")
+    section_id = factory.section(course_id=enrolled_course, code="01")
+    factory.enrollment(
+        section_id=section_id,
+        student_number="20230010",
+        display_name="Teacher Also Student",
+        user_id=teacher,
+    )
+
+    response = client.get(_authorization_url(teacher), headers=_service_headers())
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["platform_roles"] == ["teacher"]
+    assert body["course_grants"] == [str(granted_course)]
+    assert [item["course_id"] for item in body["enrollments"]] == [str(enrolled_course)]
+
+
+def test_internal_authorization_of_an_unknown_account_is_404(client) -> None:
+    response = client.get(_authorization_url(uuid.uuid4()), headers=_service_headers())
+    assert response.status_code == 404
+
+
+def test_a_deactivated_account_has_no_effective_authorization(
+    client, world, engine
+) -> None:
+    """A disabled account keeps no access, whatever its historical role rows say."""
+    with engine.begin() as connection:
+        connection.execute(
+            update(users).where(users.c.user_id == world["student"]).values(is_active=False)
+        )
+    response = client.get(
+        _authorization_url(world["student"]), headers=_service_headers()
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["platform_roles"] == []
+    assert body["course_grants"] == []
+    assert body["enrollments"] == []
+
+
+def test_a_course_removal_takes_effect_immediately(client, world, engine) -> None:
+    """The answer is read from live rows, so a stale JWT scope cannot outlive a removal."""
+    from autograder_b4.db.tables import enrollments
+
+    with engine.begin() as connection:
+        connection.execute(
+            update(enrollments)
+            .where(enrollments.c.user_id == world["student"])
+            .values(is_active=False)
+        )
+    response = client.get(
+        _authorization_url(world["student"]), headers=_service_headers()
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["enrollments"] == []

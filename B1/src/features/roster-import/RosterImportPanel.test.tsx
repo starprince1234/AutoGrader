@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
-import { screen, waitFor } from "@testing-library/react";
+import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "../../testing/renderWithProviders";
 import {
@@ -9,11 +9,16 @@ import {
   problemResponse,
   type FetchStub,
 } from "../../testing/httpBoundary";
-import { courseSummary, rosterImportPreview } from "../../testing/contractFixtures";
+import {
+  classPublic,
+  courseSummary,
+  rosterImportPreview,
+} from "../../testing/contractFixtures";
 import { RosterImportPanel } from "./RosterImportPanel";
 
 const COURSE_ID = courseSummary().course_id;
 const SECTION_ID = rosterImportPreview().section_id;
+const CLASS_ID = classPublic().class_id;
 const IMPORT_ID = rosterImportPreview().roster_import_id;
 
 let stub: FetchStub | null = null;
@@ -37,7 +42,24 @@ function baseRoutes(
     {
       path: `/api/v1/courses/${COURSE_ID}/sections`,
       respond: () =>
-        jsonResponse({ items: [{ section_id: SECTION_ID, section_code: "01" }] }),
+        jsonResponse({
+          items: [
+            {
+              section_id: SECTION_ID,
+              course_id: COURSE_ID,
+              section_code: "01",
+              class_count: 1,
+              enrollment_count: 2,
+            },
+          ],
+        }),
+    },
+    {
+      path: `/api/v1/sections/${SECTION_ID}/classes`,
+      respond: () =>
+        jsonResponse({
+          items: [classPublic({ class_id: CLASS_ID, section_id: SECTION_ID })],
+        }),
     },
     {
       method: "POST",
@@ -69,20 +91,21 @@ function baseRoutes(
   ];
 }
 
-
-
-
 /**
  * 面板的作用域与任务 ID 来自页面（真实页面把它们放在 URL 里）。
  * 这里用一个持有 state 的壳代替 URL：上传成功后 id 回写，面板据此进入预览/映射。
  */
-function PanelHarness({ initialImportId = null }: { initialImportId?: string | null }) {
+function PanelHarness({
+  initialImportId = null,
+}: {
+  initialImportId?: string | null;
+}) {
   const [importId, setImportId] = useState<string | null>(initialImportId);
   return (
     <RosterImportPanel
-      courseId={COURSE_ID}
-      sectionId={SECTION_ID}
       importId={importId}
+      initialCourseId={COURSE_ID}
+      initialSectionId={SECTION_ID}
       onImportId={setImportId}
     />
   );
@@ -92,20 +115,64 @@ function renderPanel(importId: string | null = null) {
   return renderWithProviders(<PanelHarness initialImportId={importId} />);
 }
 
-describe("名单导入向导（RQ-B-1-10）", () => {
-  it("上传 → 预览 → 确认：预览逐行渲染、敏感列脱敏、被拒行不丢弃，且确认前零写入", async () => {
+async function selectClass(user: ReturnType<typeof userEvent.setup>) {
+  // 课程/课序/班级都是异步目录：必须等选项真的进入 select 再选（否则 selectOptions 会抛错）。
+  const course = await screen.findByTestId("import-course");
+  await waitFor(() => expect(within(course).getAllByRole("option").length).toBeGreaterThan(1));
+  await user.selectOptions(course, COURSE_ID);
+
+  const section = await screen.findByTestId("import-section");
+  await waitFor(() =>
+    expect(within(section).getAllByRole("option").length).toBeGreaterThan(1),
+  );
+  await user.selectOptions(section, SECTION_ID);
+
+  const klass = await screen.findByTestId("import-class");
+  await waitFor(() => expect(within(klass).getAllByRole("option").length).toBeGreaterThan(1));
+  await user.selectOptions(klass, CLASS_ID);
+}
+
+async function uploadFile(user: ReturnType<typeof userEvent.setup>, name = "roster.xlsx") {
+  await user.upload(
+    screen.getByLabelText("名单文件（CSV / XLSX）"),
+    new File(["roster"], name, {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }),
+  );
+  await user.click(screen.getByTestId("upload-submit"));
+}
+
+describe("名单导入向导（RQ-B-1-10 / v0.32.0 班级级）", () => {
+  it("上传前必须选清 课程 → 课序 → 班级；关系不清时不发请求", async () => {
     const user = userEvent.setup();
     stub = installFetchStub(baseRoutes(rosterImportPreview()));
-
     renderPanel();
 
-    const file = new File(["roster"], "roster.xlsx", {
-      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    });
-    await user.upload(screen.getByLabelText("名单文件（CSV / XLSX）"), file);
+    // 已带初始课程/课序，但班级未选：仍不可上传，且不发请求。
+    expect(await screen.findByTestId("import-scope-incomplete")).toHaveTextContent(
+      "选择课程、课序和班级后才能上传名单",
+    );
+    await user.upload(
+      screen.getByLabelText("名单文件（CSV / XLSX）"),
+      new File(["roster"], "roster.csv", { type: "text/csv" }),
+    );
+    expect(screen.getByTestId("upload-submit")).toBeDisabled();
     await user.click(screen.getByTestId("upload-submit"));
+    expect(
+      stub.requests.some(
+        (request) => request.method === "POST" && request.url.pathname === "/api/v1/roster-imports",
+      ),
+    ).toBe(false);
+  });
 
-    // 预览：通过行与拒绝行都在
+  it("选清归属后上传：multipart 带 course_id/section_id/class_id，预览逐行渲染且确认前零写入", async () => {
+    const user = userEvent.setup();
+    stub = installFetchStub(baseRoutes(rosterImportPreview()));
+    renderPanel();
+
+    await selectClass(user);
+    await uploadFile(user);
+
     const accepted = await screen.findByTestId("accepted-rows");
     expect(accepted).toHaveTextContent("20260001");
     const rejected = screen.getByTestId("rejected-rows");
@@ -116,12 +183,12 @@ describe("名单导入向导（RQ-B-1-10）", () => {
     expect(screen.getByTestId("accepted-rows")).toHaveTextContent("已脱敏");
     expect(screen.getByTestId("accepted-rows")).not.toHaveTextContent("zhangsan@example.edu");
 
-    // 上传请求携带 course/section 与文件（multipart 边界）
     const uploadRequest = stub.requests.find(
       (request) => request.method === "POST" && request.url.pathname === "/api/v1/roster-imports",
     );
     expect(uploadRequest?.formData?.get("course_id")).toBe(COURSE_ID);
     expect(uploadRequest?.formData?.get("section_id")).toBe(SECTION_ID);
+    expect(uploadRequest?.formData?.get("class_id")).toBe(CLASS_ID);
     expect(uploadRequest?.formData?.get("file")).toBeInstanceOf(File);
 
     // 确认前没有任何写入动作
@@ -130,7 +197,6 @@ describe("名单导入向导（RQ-B-1-10）", () => {
     ).toBe(false);
 
     await user.click(screen.getByTestId("confirm-import"));
-
     await waitFor(() => expect(screen.getByTestId("import-committed")).toBeInTheDocument());
     const confirmRequest = stub.requests.find((request) => request.url.pathname.endsWith("/confirm"));
     expect(confirmRequest?.method).toBe("POST");
@@ -153,13 +219,8 @@ describe("名单导入向导（RQ-B-1-10）", () => {
     );
 
     renderPanel();
-    await user.upload(
-      screen.getByLabelText("名单文件（CSV / XLSX）"),
-      new File(["roster"], "roster.xlsx", {
-        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      }),
-    );
-    await user.click(screen.getByTestId("upload-submit"));
+    await selectClass(user);
+    await uploadFile(user);
     await screen.findByTestId("confirm-import");
 
     await user.click(screen.getByTestId("confirm-import"));
@@ -184,11 +245,8 @@ describe("名单导入向导（RQ-B-1-10）", () => {
     );
 
     renderPanel();
-    await user.upload(
-      screen.getByLabelText("名单文件（CSV / XLSX）"),
-      new File(["x"], "roster.csv", { type: "text/csv" }),
-    );
-    await user.click(screen.getByTestId("upload-submit"));
+    await selectClass(user);
+    await uploadFile(user, "roster.csv");
 
     expect(await screen.findByTestId("mapping-form")).toBeInTheDocument();
     // 不自动猜测：所有目标字段初始为"未指派"
@@ -222,15 +280,14 @@ describe("名单导入向导（RQ-B-1-10）", () => {
   it("解析失败时明确提示，不伪造成功状态", async () => {
     const user = userEvent.setup();
     stub = installFetchStub(
-      baseRoutes(rosterImportPreview({ status: "failed_parse", accepted_rows: [], rejected_rows: [] })),
+      baseRoutes(
+        rosterImportPreview({ status: "failed_parse", accepted_rows: [], rejected_rows: [] }),
+      ),
     );
 
     renderPanel();
-    await user.upload(
-      screen.getByLabelText("名单文件（CSV / XLSX）"),
-      new File(["x"], "broken.csv", { type: "text/csv" }),
-    );
-    await user.click(screen.getByTestId("upload-submit"));
+    await selectClass(user);
+    await uploadFile(user, "broken.csv");
 
     // 状态标签与错误提示都写明解析失败（页面不会显示可确认的假成功状态）
     expect(screen.getAllByText(/解析失败/).length).toBeGreaterThan(0);
