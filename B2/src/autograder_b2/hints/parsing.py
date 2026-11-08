@@ -132,11 +132,25 @@ def parse_hint_steps(
             HintStep(
                 level=level,
                 title=_text(item.get("title"), "title", effective_title_limit),
-                text=_text(item.get("text"), "text", effective_text_limit),
+                text=_redact_complete_program(
+                    _text(item.get("text"), "text", effective_text_limit)
+                ),
             )
         )
     guard_hint_steps(steps)
     return tuple(steps)
+
+
+def _redact_complete_program(text: str) -> str:
+    """完整可提交代码块不整组丢弃，而是从提示里移除。
+
+    提示的价值在“知识点/排查方向”；把整组判失败会让一个正常提示因为附带的示例代码而消失。
+    移除围栏代码块既保留文字提示，也仍然保证响应里没有可直接提交的完整程序。
+    """
+    if not _is_complete_program(text):
+        return text
+    redacted = re.sub(r"```.*?```", "（示例代码已省略）", text, flags=re.DOTALL)
+    return redacted if redacted.strip() else "（示例代码已省略）"
 
 
 def guard_hint_steps(steps: tuple[HintStep, ...]) -> None:
