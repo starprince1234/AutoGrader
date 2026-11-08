@@ -33,6 +33,8 @@ DEFAULT_TIMEOUT_SECONDS = 30.0
 
 #: 端点路径（OpenAI 兼容形态）。base_url 由部署方给出，路径由本模块定死。
 CHAT_COMPLETIONS_PATH = "/chat/completions"
+#: MiMo 同时提供 Responses API；当 chat/completions 被网关判为 404/400 时作为兼容回退。
+RESPONSES_PATH = "/responses"
 
 #: 响应体的读取上限（防御性：provider 返回巨大响应时不把无界内容读进内存）。
 RESPONSE_LIMIT_BYTES = 1 << 20
@@ -71,6 +73,13 @@ class CommentaryProviderConfig:
             # LLM_BASE_URL 常被写成服务的根地址；这种形状下补 /v1。
             base = f"{base}/v1"
         return f"{base}{CHAT_COMPLETIONS_PATH}"
+
+    @property
+    def responses_endpoint(self) -> str:
+        chat = self.endpoint
+        if chat.endswith(CHAT_COMPLETIONS_PATH):
+            return f"{chat[: -len(CHAT_COMPLETIONS_PATH)]}{RESPONSES_PATH}"
+        return f"{self.base_url.rstrip('/')}{RESPONSES_PATH}"
 
 
 class CommentaryTransport(Protocol):
@@ -152,6 +161,25 @@ class HttpCommentaryProvider:
             status, body = self._transport.post_json(
                 self.config.endpoint, minimal, headers, self.config.timeout_seconds
             )
+        if status in (400, 404):
+            # MiMo 也提供 OpenAI Responses API；当 chat/completions 在网关侧不存在
+            # （param 里常见 "404 NOT_FOUND"）时，用同一个模型走 /v1/responses 再试一次。
+            status, body = self._transport.post_json(
+                self.config.responses_endpoint,
+                {"model": self.config.model, "input": prompt},
+                headers,
+                self.config.timeout_seconds,
+            )
+            if 200 <= status < 300:
+                try:
+                    document = json.loads(body)
+                except json.JSONDecodeError as error:
+                    raise CommentaryProviderError(
+                        "provider response is not valid JSON"
+                    ) from error
+                content = _extract_responses_content(document)
+                if content is not None and content.strip():
+                    return content
         if status < 200 or status >= 300:
             # 400 通常是请求体/模型名问题；把 provider 的短说明带出来便于定位，
             # 其它状态仍只报状态码，避免把上游整段响应暴露到界面。
@@ -185,6 +213,32 @@ def _extract_content(document: Any) -> str | None:
         return None
     content = message.get("content")
     return content if isinstance(content, str) else None
+
+
+def _extract_responses_content(document: Any) -> str | None:
+    """从 OpenAI Responses 形状里取文本（`output[].content[].text` 或 `output_text`）。"""
+    if not isinstance(document, Mapping):
+        return None
+    direct = document.get("output_text")
+    if isinstance(direct, str) and direct.strip():
+        return direct
+    output = document.get("output")
+    if not isinstance(output, list):
+        return None
+    parts: list[str] = []
+    for item in output:
+        if not isinstance(item, Mapping):
+            continue
+        content = item.get("content")
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if not isinstance(part, Mapping):
+                continue
+            text = part.get("text")
+            if isinstance(text, str) and text:
+                parts.append(text)
+    return "".join(parts) if parts else None
 
 
 def build_provider(
