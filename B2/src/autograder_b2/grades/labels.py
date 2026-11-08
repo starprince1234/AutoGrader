@@ -47,7 +47,7 @@ class ExportLabelResolver:
             return {}
         try:
             return self._resolve(rows, authorization=authorization)
-        except Exception:
+        except Exception:  # noqa: BLE001 - labels are optional; any lookup failure falls back to IDs
             # 标签是增强信息；B4/B3 任一不可用时导出仍应成功（用 ID），不能因此 503。
             return {}
 

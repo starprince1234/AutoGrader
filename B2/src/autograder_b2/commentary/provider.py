@@ -23,10 +23,10 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
-from urllib.parse import urlparse
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any, Protocol
+from urllib.parse import urlparse
 
 #: 请求超时（秒）。provider 故障不该把一次 HTTP 请求挂死——它是可选轨，超时即失败。
 DEFAULT_TIMEOUT_SECONDS = 30.0

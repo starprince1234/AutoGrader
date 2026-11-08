@@ -1697,8 +1697,8 @@ export const messages = {
     // AI-FLOW-01B：学生本次评测的分层学习提示（**不是分数**，也不含完整答案）。
     "hints.title": "学习提示",
     "hints.aidLabel": "学习辅助，不参与评分",
-    "hints.intro": "根据本次评测中出现的问题给提示。提示由模型生成。",
-    "hints.notCompleted": "评测完成后可生成提示。未完成的评测没有可讲的证据，也不会显示分数。",
+    "hints.intro": "根据本次评测中出现的问题给出提示。提示由模型生成。",
+    "hints.notCompleted": "评测完成后可生成提示。",
     "hints.forbidden": "无权查看本次结果：学习提示只对提交这次评测的学生本人开放。",
     "hints.loading": "正在读取提示…",
     "hints.unavailable": "AI 学习提示未启用（本部署没有配置模型服务）。权威成绩与逐项证据仍然可读。",

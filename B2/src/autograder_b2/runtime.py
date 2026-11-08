@@ -595,7 +595,7 @@ def _wire_database_services(runtime: B2Runtime) -> None:
                 b3_authorization=settings.b3_authorization if settings is not None else None,
             )
             if settings is not None
-            and settings.is_production()
+            and settings.is_production
             and settings.b3_base_url
             and settings.b4_base_url
             else None
