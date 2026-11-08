@@ -107,6 +107,8 @@ export function GradesPage({
   const [questionVersionId, setQuestionVersionId] = useState("");
   const [fromInput, setFromInput] = useState("");
   const [toInput, setToInput] = useState("");
+  const [fromFocused, setFromFocused] = useState(false);
+  const [toFocused, setToFocused] = useState(false);
   const [drilldownRunId, setDrilldownRunId] = useState<string | null>(initialRunId);
   const [tab, setTab] = useState<GradesTab>("detail");
   const [exportOpen, setExportOpen] = useState(false);
@@ -568,14 +570,32 @@ export function GradesPage({
                 htmlFor="grades-from"
                 error={timeProblem === "fromInvalid" ? t("grades.timeFromInvalid") : null}
               >
-                <input
-                  id="grades-from"
-                  type="date"
-                  lang="en-ZA"
-                  placeholder="yyyy/mm/dd"
-                  value={fromInput}
-                  onChange={(event) => setFromInput(event.target.value)}
-                />
+                <div style={{ position: "relative" }}>
+                  <input
+                    id="grades-from"
+                    type="date"
+                    value={fromInput}
+                    onFocus={() => setFromFocused(true)}
+                    onBlur={() => setFromFocused(false)}
+                    onChange={(event) => setFromInput(event.target.value)}
+                    style={{ color: fromInput === "" && !fromFocused ? "transparent" : undefined }}
+                  />
+                  {fromInput === "" && !fromFocused ? (
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        position: "absolute",
+                        left: 12,
+                        top: "50%",
+                        transform: "translateY(-50%)",
+                        pointerEvents: "none",
+                        color: "var(--color-text-faint)",
+                      }}
+                    >
+                      yyyy/mm/dd
+                    </span>
+                  ) : null}
+                </div>
               </Field>
 
               <Field
@@ -589,14 +609,32 @@ export function GradesPage({
                       : null
                 }
               >
-                <input
-                  id="grades-to"
-                  type="date"
-                  lang="en-ZA"
-                  placeholder="yyyy/mm/dd"
-                  value={toInput}
-                  onChange={(event) => setToInput(event.target.value)}
-                />
+                <div style={{ position: "relative" }}>
+                  <input
+                    id="grades-to"
+                    type="date"
+                    value={toInput}
+                    onFocus={() => setToFocused(true)}
+                    onBlur={() => setToFocused(false)}
+                    onChange={(event) => setToInput(event.target.value)}
+                    style={{ color: toInput === "" && !toFocused ? "transparent" : undefined }}
+                  />
+                  {toInput === "" && !toFocused ? (
+                    <span
+                      aria-hidden="true"
+                      style={{
+                        position: "absolute",
+                        left: 12,
+                        top: "50%",
+                        transform: "translateY(-50%)",
+                        pointerEvents: "none",
+                        color: "var(--color-text-faint)",
+                      }}
+                    >
+                      yyyy/mm/dd
+                    </span>
+                  ) : null}
+                </div>
               </Field>
             </>
           ) : null}
@@ -700,8 +738,8 @@ export function GradesPage({
                 {fromInput === "" && toInput === ""
                   ? t("grades.exportAllTime")
                   : t("grades.exportRangeSummary", {
-                      from: fromInput === "" ? "—" : fromInput,
-                      to: toInput === "" ? "—" : toInput,
+                      from: fromInput === "" ? t("grades.scopeUndecided") : fromInput,
+                      to: toInput === "" ? t("grades.scopeUndecided") : toInput,
                     })}
               </p>
               <p className="muted">{t("grades.exportRangeHint")}</p>
@@ -729,7 +767,6 @@ export function GradesPage({
                   </li>
                 ))}
               </ul>
-              <p className="muted">{t("grades.exportRequiredHint")}</p>
             </div>
 
             <div>
@@ -751,7 +788,6 @@ export function GradesPage({
                   {t(optionalExportFieldLabel(field))}
                 </label>
               ))}
-              <p className="muted">{t("grades.exportOptionalHint")}</p>
             </div>
 
             <div className="inline">
