@@ -362,21 +362,32 @@ describe("作业中心（教师侧提交情况）", () => {
     return user;
   }
 
-  it("「邮件提交」旁边显示待处理条数，数字随记录数变化", async () => {
+  it("「邮件提交」旁的条数与复核页同一批：同样的课程/课序与待处理筛选", async () => {
     stub = installFetchStub(routes({ role: "teacher", pendingQuarantines: 3 }));
     await signIn("teacher1", "pw");
     renderAt("/", () => <AssignmentsPage />);
     const badge = await screen.findByTestId("assignments-quarantine-badge");
     await waitFor(() => expect(badge).toHaveTextContent("3"));
     expect(badge).toHaveAttribute("aria-label", "有 3 条待处理的邮件记录");
+
+    // 徽标请求必须和「邮件提交」链接带过去的条件一致，否则会出现"徽标 7 条、复核页更少"。
+    const request = stub!.requests.find(
+      (item) => item.method === "GET" && item.url.pathname === "/api/v1/intake/quarantines",
+    );
+    expect(request?.url.searchParams.get("resolved")).toBe("false");
+    expect(request?.url.searchParams.get("held")).toBe("false");
+    expect(request?.url.searchParams.get("course_id")).toBe(COURSE);
+    expect(request?.url.searchParams.get("section_id")).toBe(SECTION);
+    // 与复核页第一页同一分页大小，两个数字才对得上。
+    expect(request?.url.searchParams.get("limit")).toBe("50");
   });
 
-  it("待处理超过一页时显示「100+」（不把一页计数当总数）", async () => {
+  it("待处理超过一页时显示「50+」（不把一页计数当总数）", async () => {
     stub = installFetchStub(routes({ role: "teacher", pendingQuarantines: 150 }));
     await signIn("teacher1", "pw");
     renderAt("/", () => <AssignmentsPage />);
     const badge = await screen.findByTestId("assignments-quarantine-badge");
-    await waitFor(() => expect(badge).toHaveTextContent("100+"));
+    await waitFor(() => expect(badge).toHaveTextContent("50+"));
   });
 
   it("按新分类统计已交/部分/未交，且作业的多个目标课序以多值展示", async () => {

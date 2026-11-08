@@ -5,7 +5,7 @@ import { MAX_AUTO_PAGES } from "../../api/pagination";
 import type { AssignmentPublic, GradeRow } from "../../api/types";
 import { useSession } from "../../auth/sessionContext";
 import { canReviewQuarantine, canViewCohortGrades } from "../../auth/visibility";
-import { useQuarantineMail } from "../review/useReviewMail";
+import { useQuarantineMail, REVIEW_PAGE_SIZE } from "../review/useReviewMail";
 import { formatDateTime, shortenId } from "../../ui/format";
 import {
   Banner,
@@ -45,9 +45,6 @@ import { Select } from "../../ui/Select";
  * 不能假设作业只有一个课序：`section_ids` 是数组，列表显示全部目标课序，
  * 进度判定使用当前筛选课序的名单（列标题与说明都写明这一点）。
  */
-
-/** 复核入口徽标的取数上限：一行待处理记录很小，100 条足够覆盖日常。 */
-const PENDING_BADGE_LIMIT = 100;
 
 type AssignmentStatus = AssignmentPublic["status"];
 
@@ -373,26 +370,7 @@ function TeacherProgress({
 export function AssignmentsPage() {
   const session = useSession();
   const cohortView = canViewCohortGrades(session);
-  // 复核入口旁的数字：老师要的是"有几封要处理"，不是一个红点。列表接口没有 total，
-  // 因此只数这一页（最多 100）；还有下一页就显示「100+」，不把一页计数当总数。
   const quarantineIdentity = session.subject ?? session.username ?? "anonymous";
-  const pendingQuarantine = useQuarantineMail({
-    identity: quarantineIdentity,
-    enabled: canReviewQuarantine(session),
-    filter: {
-      courseId: null,
-      sectionId: null,
-      resolved: false,
-      held: false,
-      reasonCode: null,
-      cursor: null,
-      limit: PENDING_BADGE_LIMIT,
-    },
-  });
-  const pendingRows = (pendingQuarantine.data?.pages ?? []).flatMap((page) => page.items);
-  const pendingCount = pendingRows.length;
-  const pendingOverflow = Boolean(pendingQuarantine.data?.pages.at(-1)?.nextCursor);
-  const hasPendingQuarantine = pendingCount > 0;
   // 作用域：学生用会话里的课程/课序；教师的两个视图都由页面上的课程/课序选择器决定。
   const scope = session.scope[0] ?? null;
   const [tab, setTab] = useState<"list" | "progress">("list");
@@ -434,6 +412,30 @@ export function AssignmentsPage() {
     [courseScope, sectionScope],
   );
   const assignments = useAllAssignments(listFilter);
+  /**
+   * 复核入口旁的数字：必须和点进去看到的「待处理记录」是**同一批**——
+   * 同样的课程/课序（页面选择器决定，也就是链接带过去的 scope）、同样的
+   * `resolved=false & held=false`、同样的分页大小（`REVIEW_PAGE_SIZE`，复核页第一页也是它）。
+   * 之前这里按"全部课程"数，于是出现过徽标 7 条、复核页却更少。
+   * 课程目录未到手前先不请求：否则会先按"全部课程"数出一个不一致的数字。
+   */
+  const pendingQuarantine = useQuarantineMail({
+    identity: quarantineIdentity,
+    enabled: canReviewQuarantine(session) && !courses.isPending,
+    filter: {
+      courseId: listFilter.courseId,
+      sectionId: listFilter.sectionId,
+      resolved: false,
+      held: false,
+      reasonCode: null,
+      cursor: null,
+      limit: REVIEW_PAGE_SIZE,
+    },
+  });
+  const pendingRows = (pendingQuarantine.data?.pages ?? []).flatMap((page) => page.items);
+  const pendingCount = pendingRows.length;
+  const pendingOverflow = Boolean(pendingQuarantine.data?.pages.at(-1)?.nextCursor);
+  const hasPendingQuarantine = pendingCount > 0;
   const mine = useAllGrades(scope?.course_id ?? null, scope?.section_id ?? null);
 
   const cohortFilter = useMemo(
