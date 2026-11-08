@@ -237,7 +237,7 @@ export function CaseEvidenceCard({
         <span className="muted">
           {t("grades.caseAwarded")}：{evidence.awarded ?? t("common.none")}
         </span>
-        {teacherView ? (
+        {false ? (
           <>
             <span className="muted">
               {t("grades.caseWeight")}：{evidence.weight ?? 1}
@@ -259,8 +259,8 @@ export function CaseEvidenceCard({
         ) : null}
       </header>
 
-      {/* 确定性说明属于技术证据：学生只看结果，教师复核时再展开。 */}
-      {teacherView ? (
+      {/* 结果说明属于内部证据，教师和学生都只看答题结果。 */}
+      {false ? (
         <div data-testid="case-explanation">
           <h4>{t("grades.explanation")}</h4>
           {evidence.explanation ? (
@@ -274,9 +274,9 @@ export function CaseEvidenceCard({
         </div>
       ) : null}
 
-      {teacherView && evidence.message ? <p className="muted">{evidence.message}</p> : null}
+      {false && evidence.message ? <p className="muted">{evidence.message}</p> : null}
 
-      {teacherView ? (
+      {false ? (
         <>
           <ResourceBlock
             resource={evidence.resource ?? null}

@@ -110,7 +110,7 @@ export function GradeDrilldown({
               {t("grades.notScored")}
             </strong>
           )}
-          {!studentView ? (
+          {false ? (
             <details className="muted">
               <summary>{t("grades.technicalInfo")}</summary>
               <span>
@@ -144,7 +144,7 @@ export function GradeDrilldown({
         })}
       </p>
 
-      {!studentView ? (
+      {false ? (
         <>
       <Panel title={t("grades.staticFindings")}>
         {data.static_findings.length === 0 ? (
@@ -226,7 +226,7 @@ export function GradeDrilldown({
       </Panel>
 
       {/* 技术摘要默认收起：教师需要它来复核，但它不是学生的主阅读内容。 */}
-      {!studentView ? (
+      {false ? (
         <>
           <details data-testid="binding-details">
             <summary>{t("grades.technicalDetails")}</summary>

@@ -151,7 +151,7 @@ export function GradesPage({
     time:
       fromInput === "" && toInput === ""
         ? t("grades.scopeAllTime")
-        : `${fromInput || t("common.none")} — ${toInput || t("common.none")}`,
+        : `${fromInput || t("grades.scopeUndecided")} — ${toInput || t("grades.scopeUndecided")}`,
   });
 
   useEffect(() => {
@@ -571,6 +571,8 @@ export function GradesPage({
                 <input
                   id="grades-from"
                   type="date"
+                  lang="en-ZA"
+                  placeholder="yyyy/mm/dd"
                   value={fromInput}
                   onChange={(event) => setFromInput(event.target.value)}
                 />
@@ -590,6 +592,8 @@ export function GradesPage({
                 <input
                   id="grades-to"
                   type="date"
+                  lang="en-ZA"
+                  placeholder="yyyy/mm/dd"
                   value={toInput}
                   onChange={(event) => setToInput(event.target.value)}
                 />
