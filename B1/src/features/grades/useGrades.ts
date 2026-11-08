@@ -207,7 +207,6 @@ export async function downloadGradesExport(
   columns: readonly string[] = [],
 ): Promise<{ filename: string; requestId: string; bytes: number }> {
   const requestId = newRequestId();
-  const requestedColumns = [...new Set([...REQUIRED_EXPORT_FIELDS, ...columns])];
   const { response } = await apiRequestRaw("/api/v1/grades/export", {
     query: {
       course_id: filter.courseId as string,
@@ -217,7 +216,8 @@ export async function downloadGradesExport(
       from: filter.fromUtc ?? undefined,
       to: filter.toUtc ?? undefined,
       evaluation_run_id: filter.evaluationRunId ?? undefined,
-      columns: requestedColumns.join(","),
+      columns:
+        columns.length === 0 ? REQUIRED_EXPORT_FIELDS.join(",") : columns.join(","),
       format,
     },
     accept:

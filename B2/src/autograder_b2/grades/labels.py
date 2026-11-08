@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 import urllib.error
-import urllib.parse
 import urllib.request
 from collections.abc import Iterable, Mapping
 from typing import Any
@@ -138,10 +137,11 @@ class ExportLabelResolver:
         request = urllib.request.Request(url, method="GET", headers=dict(headers))
         try:
             with urllib.request.urlopen(request, timeout=self._timeout) as response:
+                status = int(response.status)
                 body = response.read(RESPONSE_LIMIT_BYTES)
         except (urllib.error.URLError, OSError, ValueError) as error:
             raise RuntimeError("export label lookup failed") from error
-        if response.status < 200 or response.status >= 300:
+        if status < 200 or status >= 300:
             raise RuntimeError("export label lookup failed")
         return json.loads(body.decode("utf-8", errors="replace"))
 
