@@ -155,5 +155,6 @@ def _alembic_config_path() -> Path:
         if candidate.is_file():
             return candidate
     raise RuntimeError(
-        "cannot locate alembic.ini (tried B4_MODULE_ROOT, the source tree and the current directory)"
+        "cannot locate alembic.ini (tried B4_MODULE_ROOT, the source tree and the "
+        "current directory)"
     )
