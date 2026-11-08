@@ -54,10 +54,12 @@ _CODE_BODY = re.compile(
 )
 #: 声称本次运行结论的措辞（提示不得成为第二个分数来源）。
 _SCORE_CLAIM = re.compile(
-    r"(本次(评测|得分|成绩)|你(这|本)次?得了|最终得分|你的分数是|满分是|score\s*[:=]\s*\d)",
+    r"(你(这|本)次?得了|最终得分|你的分数是|满分是|score\s*[:=]\s*\d)",
     re.IGNORECASE,
 )
 #: 序列化的隐藏用例/期望输出/参考解标记（它们从未进入模型输入）。
+#: 中文的“参考答案/期望输出”在正常提示里也可能作为提醒语出现（例如“不要直接抄参考答案”），
+#: 不作为硬拒绝词；真正的边界是这些内容从未进入输入。英文序列化标记仍保留。
 _FORBIDDEN_MARKERS = (
     "expected_output",
     "hidden_case",
@@ -65,9 +67,6 @@ _FORBIDDEN_MARKERS = (
     "reference_answer",
     "reference answer",
     "expected stdout",
-    "期望输出",
-    "隐藏用例",
-    "参考答案",
 )
 
 
