@@ -20,16 +20,19 @@ export interface paths {
          * Accept a submission for evaluation (RQ-B-2-10)
          * @description Validates the submission envelope against MAIN/contracts/schemas/
          *     submission-envelope.schema.json, re-computes each file digest, enforces file
-         *     count and size limits, checks the course scope from the verified token, and
-         *     stores content by digest. Repeating a request with the same idempotency key
-         *     returns the same submission_id and does not start a second evaluation.
+         *     count and size limits, and stores content by digest. Repeating a request with the
+         *     same idempotency key returns the same submission_id and does not start a second
+         *     evaluation.
          *
-         *     One request is one assignment question (CHG-0032). The envelope carries
-         *     `assignment_id`; the server asks B3 for the assignment audience and refuses the
-         *     request when the question does not belong to the assignment (`422`) or when the
-         *     student/section is outside its audience (`403`). Exactly one `.txt` answer file is
-         *     accepted, named after the question's 1-based position in the assignment
-         *     (`1.txt`, `2.txt`, ...).
+         *     One request is one assignment question (v0.32.0). The envelope carries
+         *     `assignment_id`; the server asks B3 for the assignment (course, open state, ordered
+         *     question list) and asks **B4** for the submitting student's current effective course
+         *     membership. The section recorded on the submission is the one B4 reports, not the one
+         *     the client claimed: a token's scope is only a snapshot, so admission must not depend
+         *     on it. The request is refused when the question does not belong to the assignment
+         *     (`422`) or when the student is not currently enrolled in the assignment's course
+         *     (`403`). Exactly one `.txt` answer file is accepted, named after the question's
+         *     1-based position in the assignment (`1.txt`, `2.txt`, ...).
          *
          *     On success emits `autograder.v1.submission.accepted` (including `assignment_id`);
          *     the event never carries source code.
@@ -1437,7 +1440,14 @@ export interface components {
             /** @description Normative labels that must be displayed with the steps: model-generated, not part of the score, no complete answer. */
             disclaimers: string[];
         };
-        /** @description Which assignment the student is about to prove ownership of an e-mail address for (CHG-0032: a challenge is assignment-scoped, because one message may carry one .txt answer per question). */
+        /**
+         * @description Which assignment the student is about to prove ownership of an e-mail address for. A
+         *     challenge is assignment-scoped because one message may carry one `.txt` answer per
+         *     question. `course_id`/`section_id` remain in the body for contract stability, but the
+         *     server does **not** trust them: it resolves the caller's current enrollment from B4 and
+         *     binds the challenge to the authoritative course/section (v0.32.0). A request whose
+         *     course does not match the assignment is refused.
+         */
         EmailVerificationChallengeRequest: {
             course_id: components["schemas"]["Uuid"];
             section_id: components["schemas"]["Uuid"];

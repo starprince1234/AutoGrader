@@ -209,6 +209,44 @@ POST /api/v1/reference-verifications  {"question_version_id": "<uuid>"}
 vi/chmod 只有在上述接口返回全通过并产生存证时，才可称为“参考答案检验通过”；学生端到端提交本轮
 不验证。
 
+## 2.1 v0.32.0 迁移（课程→课序→班级→名单 + 课程级作业 + 作业通知）
+
+本次发布包含两段**有数据回填**的迁移，正常发布流程会按 Alembic 顺序应用，业务数据保留。发布前建议
+先做一次只读备份（本流程不自动备份）：
+
+```bash
+ts=$(date -u +%Y%m%dT%H%M%SZ)
+docker exec autograder-postgres-1 pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+    -Fc -n b2 -n b3 -n b4 > "/opt/autograder/backups/pre-v0320-$ts.dump"
+```
+
+- **B4 `20261108_0010`**：新增 `b4.classes`（班级）与两张通知表；`b4.enrollments` 增加
+  `course_id`/`class_id` 并回填；删除旧的 `(section_id, student_number)` 唯一索引，改为部分唯一
+  `(course_id, student_number) WHERE is_active`（同一课程一名学生只能有一个有效课序/班级）；
+  `roster_imports` 增加 `class_id`；注册白名单唯一键由“学号全局唯一”改为 `(batch_id, student_number)`
+  （同一学生可以出现在不同课程的名单里）。
+  - 回填规则是确定的：每个现有课序恰好生成一个班级，班级名取该课序最近一次已提交名单导入的文件名，
+    否则取覆盖该课序全部学生的唯一白名单批次名，否则取课序号。
+  - **如果现有数据已经存在“同一学生在同一课程的两个有效课序”，迁移会以聚合计数（不含姓名/学号）
+    报错并停止**，不会自动挑选或删除。处置顺序：按报错课程定位冲突行 → 人工确认正确课序 → 把另一行
+    置 `is_active=false` 或修正学号 → 重新发布。
+- **B3 `20261108_0010`**：删除 `b3.assignment_sections`/`b3.assignment_students`，为 `assignments`
+  增加 `notification_state`/`notification_scheduled_at`。删除后作业自动成为课程级（该课程全部课序/
+  班级生效）；此前因没有目标课序而“看不见/详情没有学生”的历史作业也随之恢复可见，这是预期修复。
+- **回滚**：两段迁移的 `downgrade` 只删除新增结构，不回填逆向数据（班级归属无法反推）；需要恢复
+  旧数据时使用上面的迁移前 dump 恢复整个 schema，而不是执行 downgrade。
+
+**作业通知发送器**：发布后由 `autograder-notifications.service`（`autograder-notifications.timer`，
+每分钟一趟）把 pending/failed 投递行真实发送并写回状态；发布脚本会先同步跑一趟证明该 release
+可装配发送器。SMTP 变量来自 `/etc/autograder/runtime.env` 的 `SMTP_*`（与注册验证码同一套）。
+教师端看到的是逐人状态与原因（未注册/无邮箱/账号停用/SMTP 失败），`sent` 只在 SMTP 接受后计入；
+发送失败不会伪装成成功。检查命令：
+
+```bash
+systemctl status autograder-notifications.timer
+journalctl -u autograder-notifications -n 50 --no-pager
+```
+
 ## 3. 空库重建与后续数据
 
 2026-10-20 用户已授权删除当前生产业务数据，并要求后续发布保留新数据。重建由独立的 [`reset-database.sh`](../../deploy/reset-database.sh) 执行，不接入 push 或日常 deploy，也不提供自动清库开关。

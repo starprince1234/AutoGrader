@@ -72,27 +72,69 @@ def _payload(**overrides) -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------- allowlist
-def test_allowlist_upload_is_gbk_tolerant_and_replaces(client, factory) -> None:
+def test_allowlist_upload_is_gbk_tolerant_and_replaces_the_same_class(client, factory) -> None:
+    """Each upload is one registered class; re-uploading the same file updates that class."""
     headers = _admin(client, factory)
 
     first = _upload_allowlist(
         client, headers, [("付明煜", "2024141460472"), ("黄俊杰", "2024141460192")]
     )
     assert first.status_code == 200, first.text
+    batch_id = first.json()["batch_id"]
+    assert first.json()["class_name"] == "名单"
     assert first.json()["row_count"] == 2
-    assert first.json()["replaced_row_count"] == 0
+    assert first.json()["skipped_row_count"] == 0
+    assert first.json()["replaced"] is False
+    assert len(first.json()["content_sha256"]) == 64
 
     second = _upload_allowlist(client, headers, [("付明煜", "2024141460472")])
     assert second.status_code == 200, second.text
+    assert second.json()["batch_id"] == batch_id, "the same file name is the same class"
+    assert second.json()["replaced"] is True
     assert second.json()["row_count"] == 1
-    # Full replacement: the file is a snapshot, so the removed student is no longer allowed.
-    assert second.json()["replaced_row_count"] == 2
 
     summary = client.get("/api/v1/registration-allowlists", headers=headers)
     assert summary.status_code == 200
     assert summary.json()["row_count"] == 1
     assert summary.json()["filename"] == "名单.csv"
-    assert summary.json()["batch_id"] == second.json()["batch_id"]
+    assert summary.json()["batch_id"] == batch_id
+
+
+def test_several_classes_coexist_and_the_same_student_may_be_on_each(
+    client, factory, mailbox
+) -> None:
+    """The allowlist is per imported class, not a global snapshot of the platform.
+
+    v0.32.0 relaxed the old global `UNIQUE (student_number)`: a student who takes two courses
+    is on the class list of each, and importing the second class must not silently drop them.
+    """
+    headers = _admin(client, factory)
+    first = _upload_allowlist(
+        client, headers, [("付明煜", "2024141460472")], filename="一班.csv"
+    )
+    second = _upload_allowlist(
+        client, headers, [("付明煜", "2024141460472")], filename="二班.csv"
+    )
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert first.json()["batch_id"] != second.json()["batch_id"]
+    assert second.json()["row_count"] == 1
+
+    batches = client.get("/api/v1/registration-allowlists/batches", headers=headers).json()
+    classes = {item["class_name"]: item for item in batches["items"]}
+    assert set(classes) == {"一班", "二班"}
+    for item in classes.values():
+        entries = client.get(
+            f"/api/v1/registration-allowlists/batches/{item['batch_id']}/entries",
+            headers=headers,
+        )
+        assert entries.status_code == 200
+        assert [entry["student_number"] for entry in entries.json()["items"]] == [
+            "2024141460472"
+        ]
+
+    # And the identity can still register: being on two class lists is not a duplicate row.
+    assert client.post("/api/v1/auth/registrations/code", json=_payload()).status_code == 202
 
 
 def test_allowlist_upload_requires_an_administrator(client, factory) -> None:
@@ -242,7 +284,16 @@ def test_registration_creates_a_usable_account_and_links_the_roster(
     )
     assert created.status_code == 201, created.text
     user_id = uuid.UUID(created.json()["user_id"])
-    assert created.json()["username"] == "alice"
+    body = created.json()
+    assert set(body) == {
+        "user_id",
+        "username",
+        "bound_course_count",
+        "identity_mismatch_count",
+    }
+    assert body["username"] == "alice"
+    assert body["bound_course_count"] == 1
+    assert body["identity_mismatch_count"] == 0
 
     with factory.engine.connect() as connection:
         user = connection.execute(
@@ -357,3 +408,136 @@ def test_registration_rejects_a_short_password(client, factory, mailbox) -> None
         json={"email": "alice@example.edu.cn", "code": mailbox.code, "password": "short"},
     )
     assert response.status_code == 422
+
+
+# ---------------------------------------------------------------------------- roster binding
+def _register(client, mailbox) -> tuple[uuid.UUID, dict[str, object]]:
+    assert client.post("/api/v1/auth/registrations/code", json=_payload()).status_code == 202
+    created = client.post(
+        "/api/v1/auth/registrations",
+        json={"email": "alice@example.edu.cn", "code": mailbox.code, "password": PASSWORD},
+    )
+    assert created.status_code == 201, created.text
+    return uuid.UUID(created.json()["user_id"]), created.json()
+
+
+def test_registration_binds_every_course_the_student_is_on(client, factory, mailbox) -> None:
+    """A student may take several courses; the account is linked to all of those rows."""
+    headers = _admin(client, factory)
+    assert _upload_allowlist(client, headers, [("付明煜", "2024141460472")]).status_code == 200
+
+    enrollment_ids = []
+    for code in ("SE-2026", "CS-2026"):
+        course_id = factory.course(code=code, title=f"课程 {code}")
+        section_id = factory.section(course_id=course_id, code="01")
+        enrollment_ids.append(
+            factory.enrollment(
+                section_id=section_id,
+                student_number="2024141460472",
+                display_name="付明煜",
+            )
+        )
+
+    user_id, body = _register(client, mailbox)
+    assert body["bound_course_count"] == 2
+    assert body["identity_mismatch_count"] == 0
+
+    with factory.engine.connect() as connection:
+        linked = connection.execute(
+            select(tables.enrollments.c.user_id).where(
+                tables.enrollments.c.enrollment_id.in_(enrollment_ids)
+            )
+        ).scalars().all()
+    assert len(linked) == 2
+    assert set(linked) == {user_id}
+
+
+def test_a_roster_row_with_a_different_name_is_counted_and_not_bound(
+    client, factory, mailbox
+) -> None:
+    """Binding by student number alone would merge two people; the count says so instead."""
+    headers = _admin(client, factory)
+    assert _upload_allowlist(client, headers, [("付明煜", "2024141460472")]).status_code == 200
+
+    matching_course = factory.course(code="SE-2026", title="软件工程")
+    matching_section = factory.section(course_id=matching_course, code="01")
+    matching = factory.enrollment(
+        section_id=matching_section, student_number="2024141460472", display_name="付明煜"
+    )
+    other_course = factory.course(code="CS-2026", title="计算机")
+    other_section = factory.section(course_id=other_course, code="01")
+    mismatched = factory.enrollment(
+        section_id=other_section, student_number="2024141460472", display_name="别的名字"
+    )
+
+    user_id, body = _register(client, mailbox)
+    assert body["bound_course_count"] == 1
+    assert body["identity_mismatch_count"] == 1
+
+    with factory.engine.connect() as connection:
+        rows = {
+            row.enrollment_id: row.user_id
+            for row in connection.execute(
+                select(tables.enrollments.c.enrollment_id, tables.enrollments.c.user_id).where(
+                    tables.enrollments.c.enrollment_id.in_([matching, mismatched])
+                )
+            ).fetchall()
+        }
+    assert rows[matching] == user_id
+    assert rows[mismatched] is None
+
+
+def test_a_registration_before_the_roster_import_is_bound_when_the_roster_arrives(
+    client, factory, mailbox, sign_in_as
+) -> None:
+    """Register, then import: the confirmed roster row links to the existing account."""
+    headers = _admin(client, factory)
+    assert _upload_allowlist(client, headers, [("付明煜", "2024141460472")]).status_code == 200
+    user_id, body = _register(client, mailbox)
+    assert body["bound_course_count"] == 0
+    assert body["identity_mismatch_count"] == 0
+
+    teacher = factory.user(username="teacher", password=PASSWORD, roles=("teacher",))
+    teacher_headers = sign_in_as("teacher").headers
+    course_id = factory.course(code="SE-2026", title="软件工程")
+    factory.grant(user_id=teacher, course_id=course_id, role="teacher")
+    section = client.post(
+        f"/api/v1/courses/{course_id}/sections",
+        headers=teacher_headers,
+        json={"section_code": "01"},
+    )
+    assert section.status_code == 201, section.text
+    section_id = section.json()["section_id"]
+    klass = client.post(
+        f"/api/v1/sections/{section_id}/classes",
+        headers=teacher_headers,
+        json={"class_name": "一班"},
+    )
+    assert klass.status_code == 201, klass.text
+
+    content = "student_number,display_name\n2024141460472,付明煜\n".encode()
+    uploaded = client.post(
+        "/api/v1/roster-imports",
+        headers=teacher_headers,
+        files={"file": ("roster.csv", content, "text/csv")},
+        data={
+            "course_id": str(course_id),
+            "section_id": section_id,
+            "class_id": klass.json()["class_id"],
+        },
+    )
+    assert uploaded.status_code == 202, uploaded.text
+    confirmed = client.post(
+        f"/api/v1/roster-imports/{uploaded.json()['roster_import_id']}/confirm",
+        headers=teacher_headers,
+    )
+    assert confirmed.status_code == 202, confirmed.text
+    assert confirmed.json()["status"] == "committed"
+
+    with factory.engine.connect() as connection:
+        linked = connection.execute(
+            select(tables.enrollments.c.user_id).where(
+                tables.enrollments.c.course_id == course_id
+            )
+        ).scalar_one()
+    assert linked == user_id

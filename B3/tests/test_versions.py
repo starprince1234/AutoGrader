@@ -33,9 +33,11 @@ from autograder_b3.domain.versions import (
     run_batch_operation,
 )
 from autograder_b3.dto.internal import PROTECTED_FIELD_NAMES, AssignmentCreateInputModel
+from autograder_b3.integration.b4 import (
+    B4AssignmentNotifier,
+    NotificationUnavailable,
+)
 from autograder_b3.errors import (
-    AssignmentTargetsInvalid,
-    AssignmentTargetsUnavailable,
     Conflict,
     DraftAssignmentReference,
     ImmutableVersionConflict,
@@ -45,16 +47,7 @@ from autograder_b3.errors import (
     RevisionNoteMisuse,
 )
 
-from .conftest import (
-    COURSE_A,
-    COURSE_B,
-    SECTION_A,
-    SECTION_A2,
-    SECTION_B,
-    STUDENT_A,
-    STUDENT_B,
-    draft_payload,
-)
+from .conftest import COURSE_A, COURSE_B, draft_payload
 from .examples import CALLABLE_MANIFEST, FILE_MANIFEST, STDIN_MANIFEST
 from .support import (
     attest,
@@ -439,8 +432,6 @@ def test_batch_delete_reports_each_outcome_independently(database, settings):
     assert outcomes[0].error_code is None
     assert outcomes[1].error_code == "not_found"
     with database.protected_session() as session:
-        from autograder_b3.infra.repositories import QuestionBankRepository
-
         assert bank_version(session, version.question_version_id) is None
 
 
@@ -522,8 +513,37 @@ def test_deleting_an_ai_generated_draft_keeps_the_generation_ledger(
 # --- assignments ---------------------------------------------------------
 
 
-def test_assignment_accepts_only_published_versions(database, settings, b4_target_client):
-    question, published = create_published_question(database, settings, payload=draft_payload())
+class _RecordingNotifier:
+    """Minimal notifier port implementation: records the hand-off, never fails."""
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def notify(self, *, assignment_id, course_id, title, due_at, published_at) -> None:
+        self.calls.append(
+            {
+                "assignment_id": assignment_id,
+                "course_id": course_id,
+                "title": title,
+                "due_at": due_at,
+                "published_at": published_at,
+            }
+        )
+
+
+def _assignment_payload(version_id, **overrides) -> AssignmentCreateInputModel:
+    values = {
+        "course_id": COURSE_A,
+        "title": "week 1",
+        "due_at": None,
+        "question_version_ids": (version_id,),
+    }
+    values.update(overrides)
+    return AssignmentCreateInputModel(**values)
+
+
+def test_assignment_accepts_only_published_versions(database, settings):
+    _question, published = create_published_question(database, settings, payload=draft_payload())
     _, draft_version = create_question(
         database,
         settings,
@@ -535,143 +555,147 @@ def test_assignment_accepts_only_published_versions(database, settings, b4_targe
         create_assignment(
             database,
             principal=teacher_principal(),
-            payload=AssignmentCreateInputModel(
-                course_id=COURSE_A,
-                section_ids=(SECTION_A,),
-                title="week 1",
-                due_at=None,
-                question_version_ids=(draft_version.question_version_id,),
-            ),
-            targets=b4_target_client,
+            payload=_assignment_payload(draft_version.question_version_id),
+            notifier=_RecordingNotifier(),
             now=PUBLISH_AT,
         )
 
+    notifier = _RecordingNotifier()
     view = create_assignment(
         database,
         principal=teacher_principal(),
-        payload=AssignmentCreateInputModel(
-            course_id=COURSE_A,
-            section_ids=(SECTION_A, SECTION_A2),
-            student_ids=(STUDENT_A,),
+        payload=_assignment_payload(
+            published.question_version_id,
             title="week 1",
             due_at=datetime(2026, 9, 20, tzinfo=UTC),
-            question_version_ids=(published.question_version_id,),
         ),
-        targets=b4_target_client,
+        notifier=notifier,
         now=PUBLISH_AT,
     )
     assert view.assignment.title == "week 1"
     assert view.question_version_ids == (published.question_version_id,)
-    # The target model is a set: both sections and the narrowing list are stored, not
-    # collapsed into one column (the old shape could not represent either).
-    assert view.section_ids == (SECTION_A, SECTION_A2)
-    assert view.student_ids == (STUDENT_A,)
+    # v0.32.0: the assignment is course-level, so there is no target list; the hand-off
+    # carries the course and the ordered question list, and success is recorded.
+    assert view.assignment.notification_state == "scheduled"
+    assert view.assignment.notification_scheduled_at == PUBLISH_AT
+    assert notifier.calls == [
+        {
+            "assignment_id": view.assignment.assignment_id,
+            "course_id": COURSE_A,
+            "title": "week 1",
+            "due_at": datetime(2026, 9, 20, tzinfo=UTC),
+            "published_at": PUBLISH_AT,
+        }
+    ]
 
 
-def test_assignment_referencing_another_course_is_not_found(database, settings, b4_target_client):
+def test_assignment_referencing_another_course_is_not_found(database, settings):
     _, version = create_published_question(database, settings, payload=draft_payload())
     with pytest.raises(NotFound):
         create_assignment(
             database,
             principal=teacher_principal(course_ids=(COURSE_B,)),
-            payload=AssignmentCreateInputModel(
-                course_id=COURSE_B,
-                section_ids=(SECTION_B,),
-                title="cross course",
-                due_at=None,
-                question_version_ids=(version.question_version_id,),
+            payload=_assignment_payload(
+                version.question_version_id, course_id=COURSE_B, title="cross course"
             ),
-            targets=b4_target_client,
+            notifier=_RecordingNotifier(),
             now=PUBLISH_AT,
         )
 
 
-def test_assignment_rejects_a_section_of_another_course(database, settings, b4_target_client):
-    """A section id must belong to the assignment's course; the target validator decides."""
-    _, published = create_published_question(database, settings, payload=draft_payload())
-    with pytest.raises(AssignmentTargetsInvalid):
-        create_assignment(
-            database,
-            principal=teacher_principal(),
-            payload=AssignmentCreateInputModel(
-                course_id=COURSE_A,
-                section_ids=(SECTION_A, SECTION_B),
-                title="wrong class",
-                due_at=None,
-                question_version_ids=(published.question_version_id,),
-            ),
-            targets=b4_target_client,
-            now=PUBLISH_AT,
-        )
-
-
-def test_assignment_rejects_a_student_not_enrolled_in_the_target_sections(
-    database, settings, b4_target_client
-):
-    _, published = create_published_question(database, settings, payload=draft_payload())
-    with pytest.raises(AssignmentTargetsInvalid):
-        # STUDENT_B is enrolled in SECTION_A2, which is not a target of this assignment.
-        create_assignment(
-            database,
-            principal=teacher_principal(),
-            payload=AssignmentCreateInputModel(
-                course_id=COURSE_A,
-                section_ids=(SECTION_A,),
-                student_ids=(STUDENT_A, STUDENT_B),
-                title="not enrolled",
-                due_at=None,
-                question_version_ids=(published.question_version_id,),
-            ),
-            targets=b4_target_client,
-            now=PUBLISH_AT,
-        )
-
-
-def test_assignment_creation_without_a_target_validator_is_unavailable(database, settings):
-    """No validator means no assignment: target ids are never accepted on trust."""
-    _, published = create_published_question(database, settings, payload=draft_payload())
-    with pytest.raises(AssignmentTargetsUnavailable):
-        create_assignment(
-            database,
-            principal=teacher_principal(),
-            payload=AssignmentCreateInputModel(
-                course_id=COURSE_A,
-                section_ids=(SECTION_A,),
-                title="no validator",
-                due_at=None,
-                question_version_ids=(published.question_version_id,),
-            ),
-            targets=None,
-            now=PUBLISH_AT,
-        )
-
-
-def test_assignment_creation_reports_an_unreachable_target_validator(database, settings):
-    """An unreachable validator is a 503 outcome, not a silent skip."""
-    from autograder_b3.integration.b4 import B4TargetClient
+def test_a_failed_notification_does_not_roll_the_assignment_back(database, settings):
+    """Publishing is a fact; only the hand-off failed, and that state is recorded."""
+    from autograder_b3.infra.repositories import QuestionBankRepository
 
     def failing_opener(request, timeout):
-        raise ConnectionError("connection refused")
+        raise ConnectionError("identity service down")
 
     _, published = create_published_question(database, settings, payload=draft_payload())
-    with pytest.raises(AssignmentTargetsUnavailable):
-        create_assignment(
+    broken = B4AssignmentNotifier(
+        base_url="http://identity.invalid",
+        service_token="test-service-token",
+        opener=failing_opener,
+    )
+    view = create_assignment(
+        database,
+        principal=teacher_principal(),
+        payload=_assignment_payload(published.question_version_id),
+        notifier=broken,
+        now=PUBLISH_AT,
+    )
+    assert view.assignment.notification_state == "unavailable"
+    assert view.assignment.notification_scheduled_at is None
+
+    with database.app_session() as session:
+        persisted = QuestionBankRepository(session).get_assignment(
+            view.assignment.assignment_id
+        )
+        assert persisted is not None
+        assert persisted.notification_state == "unavailable"
+
+
+def test_an_unconfigured_notifier_marks_the_assignment_unavailable(database, settings):
+    _question, published = create_published_question(database, settings, payload=draft_payload())
+    view = create_assignment(
+        database,
+        principal=teacher_principal(),
+        payload=_assignment_payload(published.question_version_id),
+        notifier=None,
+        now=PUBLISH_AT,
+    )
+    assert view.assignment.notification_state == "unavailable"
+    assert view.assignment.notification_scheduled_at is None
+
+
+def test_notification_rejection_is_recorded_and_raised_on_retry(database, settings):
+    """A B4 rejection at retry time maps back to its status; otherwise it is 'unavailable'."""
+    from autograder_b3.domain.assignments import retry_assignment_notification
+    from autograder_b3.infra.repositories import QuestionBankRepository
+    from autograder_b3.integration.b4 import NotificationRejected
+
+    class RejectingNotifier:
+        def notify(self, **kwargs) -> None:
+            raise NotificationRejected(409)
+
+    _question, published = create_published_question(database, settings, payload=draft_payload())
+    view = create_assignment(
+        database,
+        principal=teacher_principal(),
+        payload=_assignment_payload(published.question_version_id),
+        notifier=None,
+        now=PUBLISH_AT,
+    )
+    with pytest.raises(Conflict):
+        retry_assignment_notification(
             database,
             principal=teacher_principal(),
-            payload=AssignmentCreateInputModel(
-                course_id=COURSE_A,
-                section_ids=(SECTION_A,),
-                title="validator down",
-                due_at=None,
-                question_version_ids=(published.question_version_id,),
-            ),
-            targets=B4TargetClient(
-                base_url="http://identity.invalid",
-                service_token="test-service-token",
-                opener=failing_opener,
-            ),
+            assignment_id=view.assignment.assignment_id,
+            notifier=RejectingNotifier(),
             now=PUBLISH_AT,
         )
+    with database.app_session() as session:
+        persisted = QuestionBankRepository(session).get_assignment(
+            view.assignment.assignment_id
+        )
+        assert persisted is not None
+        assert persisted.notification_state == "unavailable"
+
+
+def test_a_transient_notification_failure_keeps_the_assignment_readable(database, settings):
+    _question, published = create_published_question(database, settings, payload=draft_payload())
+
+    class OutageNotifier:
+        def notify(self, **kwargs) -> None:
+            raise NotificationUnavailable("smtp-ish outage")
+
+    view = create_assignment(
+        database,
+        principal=teacher_principal(),
+        payload=_assignment_payload(published.question_version_id),
+        notifier=OutageNotifier(),
+        now=PUBLISH_AT,
+    )
+    assert view.assignment.notification_state == "unavailable"
 
 
 def test_student_cannot_write_to_the_question_bank(database, settings):

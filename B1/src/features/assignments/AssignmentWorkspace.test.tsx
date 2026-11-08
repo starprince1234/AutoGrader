@@ -28,6 +28,7 @@ import {
   emailVerificationChallengeStatus,
   gradePage,
   gradeRow,
+  myMembership,
   questionPublic,
   questionVersionPublic,
   sessionCreated,
@@ -58,8 +59,6 @@ const EMAIL_SUBMISSION = "00000000-0000-4000-8000-0000000000ee";
 const ASSIGNMENT = assignmentPublic({
   assignment_id: UUID_A,
   course_id: COURSE,
-  section_ids: [SECTION],
-  student_ids: [],
   title: "第一次作业",
   question_version_ids: [V1, V2],
 });
@@ -85,6 +84,8 @@ function baseRoutes(options: {
   submit?: () => Response;
   events?: () => Response;
   challengeStatus?: () => Response;
+  /** 覆盖 `GET /me` 的 memberships（默认本人在这门课里有一个有效选课）。 */
+  memberships?: ReturnType<typeof myMembership>[];
 } = {}): StubbedRoute[] {
   return [
     {
@@ -100,13 +101,27 @@ function baseRoutes(options: {
         ),
     },
     { path: `/api/v1/assignments/${UUID_A}`, respond: () => jsonResponse(ASSIGNMENT) },
-    { path: "/api/v1/me", respond: () => jsonResponse(currentUser()) },
     {
-      path: `/api/v1/courses/${COURSE}/sections`,
+      path: "/api/v1/me",
       respond: () =>
-        jsonResponse({
-          items: [{ section_id: SECTION, course_id: COURSE, section_code: "01", term: "2026F" }],
-        }),
+        jsonResponse(
+          currentUser({
+            user_id: STUDENT,
+            memberships:
+              options.memberships ??
+              [
+                myMembership({
+                  course_id: COURSE,
+                  course_title: "操作系统",
+                  section_id: SECTION,
+                  section_code: "01",
+                  term: "2026F",
+                  class_id: "00000000-0000-4000-8000-0000000000d1",
+                  class_name: "软件工程1班",
+                }),
+              ],
+          }),
+        ),
     },
     {
       path: "/api/v1/grades",
@@ -462,7 +477,7 @@ describe("学生作业工作区（CHG-0032）", () => {
       expect(within(panel).getByTestId("email-field-name")).toHaveValue("张三"),
     );
     expect(within(panel).getByTestId("email-field-student-number")).toHaveValue("20260001");
-    expect(within(panel).getByTestId("email-field-section")).toHaveValue("01 · 2026F");
+    expect(within(panel).getByTestId("email-field-section")).toHaveValue("01");
     const body = within(panel).getByTestId("email-template-body") as HTMLTextAreaElement;
     expect(body.value).toContain(`作业编号：${UUID_A}`);
     expect(body.value).toContain("姓名：张三");
@@ -495,6 +510,16 @@ describe("学生作业工作区（CHG-0032）", () => {
     expect(
       within(panel).getByTestId(`email-result-link-${EMAIL_SUBMISSION}`),
     ).toBeInTheDocument();
+  });
+
+  it("本人不在该课程名单中时说明原因并禁止提交（不以令牌 scope 代替权威名单）", async () => {
+    await openWorkspace({ memberships: [] });
+
+    expect(await screen.findByTestId("workspace-scope-missing")).toHaveTextContent(
+      "不在该课程的有效名单中",
+    );
+    expect(screen.getByTestId("workspace-submit")).toBeDisabled();
+    expect(screen.getByTestId("workspace-email-entry")).toBeInTheDocument();
   });
 
   it("邮件核验被拒绝时显示原因码文案（身份不符）", async () => {

@@ -20,7 +20,10 @@ const S2 = "00000000-0000-4000-8000-000000000202";
 function enrollment(overrides: Partial<EnrollmentPublic>): EnrollmentPublic {
   return {
     enrollment_id: "00000000-0000-4000-8000-000000000301",
+    course_id: "00000000-0000-4000-8000-000000000601",
     section_id: "00000000-0000-4000-8000-000000000401",
+    class_id: "00000000-0000-4000-8000-000000000701",
+    class_name: "软件工程1班",
     student_id: S1,
     student_number: "20260001",
     display_name: "张三",
@@ -153,7 +156,7 @@ describe("作业逐人逐题聚合（CHG-0032 §7.1）", () => {
     expect(progress[0].status).toBe("not_submitted");
   });
 
-  it("未绑定账号的名单行单独成类，不参与五个判定分类", () => {
+  it("未绑定账号的名单行单独成类，不参与五个判定分类，但保留课序/班级定位", () => {
     const roster = [enrollment({ student_id: null })];
     const progress = buildStudentProgress({
       roster,
@@ -162,6 +165,8 @@ describe("作业逐人逐题聚合（CHG-0032 §7.1）", () => {
       assignmentId: ASSIGNMENT,
     });
     expect(progress[0].status).toBe("unbound");
+    expect(progress[0].classId).toBe("00000000-0000-4000-8000-000000000701");
+    expect(progress[0].className).toBe("软件工程1班");
     const counts = buildCounts(progress);
     expect(counts.unbound).toBe(1);
     expect(counts.notSubmitted).toBe(0);

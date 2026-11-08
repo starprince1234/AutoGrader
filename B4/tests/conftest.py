@@ -43,6 +43,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from autograder_b4.config import Settings
 from autograder_b4.db.engine import create_engine_from_settings
 from autograder_b4.db.tables import (
+    classes,
     courses,
     enrollments,
     sections,
@@ -86,11 +87,17 @@ REPOSITORY_ROOT = B4_ROOT.parent
 #: Every table B4 owns, in an order that TRUNCATE ... CASCADE accepts. The Alembic
 #: version table is excluded: it records schema state, not test data.
 TRUNCATE_ORDER = (
+    "assignment_notification_deliveries",
+    "assignment_notifications",
     "audit_records",
     "enrollments",
+    "classes",
     "roster_import_rows",
     "roster_import_files",
     "roster_imports",
+    "registration_codes",
+    "registration_allowlist",
+    "registration_allowlist_batches",
     "dlq_messages",
     "inbox_events",
     "outbox_events",
@@ -346,8 +353,21 @@ class Factory:
         return course_id
 
     def section(
-        self, *, course_id: uuid.UUID, code: str, term: str | None = None, created_by=None
+        self,
+        *,
+        course_id: uuid.UUID,
+        code: str,
+        term: str | None = None,
+        created_by=None,
+        class_name: str | None = None,
     ) -> uuid.UUID:
+        """Create a section and its first class, returning the section id.
+
+        v0.32.0 made a class its own entity below the section: an enrollment names
+        course, section *and* class, so a section without a class cannot hold a roster row.
+        Creating one default class here keeps every existing fixture working while
+        `class_` / `default_class` expose the new level explicitly.
+        """
         section_id = uuid.uuid4()
         now = datetime.now(UTC).replace(microsecond=0)
         with self.engine.begin() as connection:
@@ -362,7 +382,111 @@ class Factory:
                     updated_at=now,
                 )
             )
+            self._insert_class(
+                connection,
+                section_id=section_id,
+                class_name=class_name or f"{code}班",
+                source="manual",
+                created_by=created_by,
+                now=now,
+            )
         return section_id
+
+    def _insert_class(
+        self,
+        connection,
+        *,
+        section_id: uuid.UUID,
+        class_name: str,
+        source: str = "manual",
+        batch_id: uuid.UUID | None = None,
+        created_by: uuid.UUID | None = None,
+        now: datetime | None = None,
+    ) -> uuid.UUID:
+        class_id = uuid.uuid4()
+        moment = now or datetime.now(UTC).replace(microsecond=0)
+        connection.execute(
+            classes.insert().values(
+                class_id=class_id,
+                section_id=section_id,
+                class_name=class_name,
+                source=source,
+                allowlist_batch_id=batch_id,
+                created_by=created_by,
+                created_at=moment,
+                updated_at=moment,
+            )
+        )
+        return class_id
+
+    def class_(
+        self,
+        *,
+        section_id: uuid.UUID,
+        class_name: str,
+        source: str = "manual",
+        batch_id: uuid.UUID | None = None,
+        created_by: uuid.UUID | None = None,
+    ) -> uuid.UUID:
+        """Insert one class directly (arranging preconditions the API would normally make)."""
+        with self.engine.begin() as connection:
+            return self._insert_class(
+                connection,
+                section_id=section_id,
+                class_name=class_name,
+                source=source,
+                batch_id=batch_id,
+                created_by=created_by,
+            )
+
+    def default_class(self, section_id: uuid.UUID) -> uuid.UUID:
+        """The single class of a section created through `section` (or the API)."""
+        with self.engine.connect() as connection:
+            rows = connection.execute(
+                select(classes.c.class_id).where(classes.c.section_id == section_id)
+            ).fetchall()
+        if len(rows) != 1:
+            raise AssertionError(
+                f"section {section_id} has {len(rows)} classes; pass class_id explicitly"
+            )
+        return rows[0][0]
+
+    def _class_for_enrollment(
+        self, section_id: uuid.UUID | None, class_id: uuid.UUID | None
+    ) -> uuid.UUID:
+        """Resolve the class an enrollment belongs to, creating a default one if needed."""
+        if class_id is not None:
+            with self.engine.connect() as connection:
+                row = connection.execute(
+                    select(classes.c.class_id, classes.c.section_id).where(
+                        classes.c.class_id == class_id
+                    )
+                ).fetchone()
+            if row is None:
+                raise AssertionError(f"class {class_id} does not exist")
+            if section_id is not None and row.section_id != section_id:
+                raise AssertionError(
+                    f"class {class_id} belongs to section {row.section_id}, not {section_id}"
+                )
+            return class_id
+        if section_id is None:
+            raise AssertionError("factory.enrollment needs section_id or class_id")
+        with self.engine.begin() as connection:
+            rows = connection.execute(
+                select(classes.c.class_id).where(classes.c.section_id == section_id)
+            ).fetchall()
+            if len(rows) == 1:
+                return rows[0][0]
+            if len(rows) > 1:
+                raise AssertionError(
+                    f"section {section_id} has {len(rows)} classes; pass class_id explicitly"
+                )
+            section_code = connection.execute(
+                select(sections.c.section_code).where(sections.c.section_id == section_id)
+            ).scalar_one()
+            return self._insert_class(
+                connection, section_id=section_id, class_name=f"{section_code}班"
+            )
 
     def grant(self, *, user_id: uuid.UUID, course_id: uuid.UUID, role: str = "teacher") -> None:
         now = datetime.now(UTC).replace(microsecond=0)
@@ -380,23 +504,48 @@ class Factory:
     def enrollment(
         self,
         *,
-        section_id: uuid.UUID,
+        section_id: uuid.UUID | None = None,
+        class_id: uuid.UUID | None = None,
         student_number: str,
         display_name: str = "Student",
         user_id: uuid.UUID | None = None,
+        source: str = "manual",
+        is_active: bool = True,
     ) -> uuid.UUID:
+        """Insert one roster row; course/section/class are derived from the class.
+
+        The class defaults to the section's only class (creating one if a test created the
+        section through the API), because v0.32.0 requires an enrollment to name all three
+        levels and the old `factory.enrollment(section_id=...)` calls must keep working.
+        """
+        resolved_class = self._class_for_enrollment(section_id, class_id)
         enrollment_id = uuid.uuid4()
         now = datetime.now(UTC).replace(microsecond=0)
         with self.engine.begin() as connection:
+            row = connection.execute(
+                select(classes.c.section_id).where(classes.c.class_id == resolved_class)
+            ).one()
+            actual_section = row.section_id
+            if section_id is not None and section_id != actual_section:
+                raise AssertionError(
+                    f"class {resolved_class} belongs to section {actual_section}, "
+                    f"not {section_id}"
+                )
+            course_id = connection.execute(
+                select(sections.c.course_id).where(sections.c.section_id == actual_section)
+            ).scalar_one()
             connection.execute(
                 enrollments.insert().values(
                     enrollment_id=enrollment_id,
-                    section_id=section_id,
+                    course_id=course_id,
+                    section_id=actual_section,
+                    class_id=resolved_class,
                     user_id=user_id,
                     student_number=student_number,
                     display_name=display_name,
-                    source="manual",
-                    is_active=True,
+                    source=source,
+                    roster_import_id=None,
+                    is_active=is_active,
                     created_at=now,
                     updated_at=now,
                 )

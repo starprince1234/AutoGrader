@@ -2,8 +2,12 @@ import { useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { t } from "../../i18n";
 import { isApiError } from "../../api/problem";
-import type { AssignmentPublic, GradeRow } from "../../api/types";
-import { useSections } from "../../api/directory";
+import type {
+  AssignmentNotificationDelivery,
+  AssignmentPublic,
+  GradeRow,
+} from "../../api/types";
+import { useRosterSummary } from "../../api/directory";
 import { MAX_AUTO_PAGES } from "../../api/pagination";
 import { formatDateTime, shortenId } from "../../ui/format";
 import {
@@ -30,14 +34,27 @@ import {
   useSubmissionFileText,
 } from "../submission/useSubmissionFile";
 import { answerFileName } from "../submission/validation";
+import {
+  useAssignmentNotifications,
+} from "./useAssignmentNotifications";
+import { AssignmentNotificationPanel } from "./AssignmentNotificationPanel";
+import {
+  deliveryStatusLabel,
+  deliveryStatusTone,
+} from "./notificationDisplay";
 
 /**
- * 教师作业详情（CHG-0032 §7.2）：概览 + 汇总计数 + 题目表 + 逐人逐题矩阵。
+ * 教师作业详情（CHG-0032 §7.2 / v0.32.0 课程级受众）。
+ *
+ * 概览 + 服务端受众统计 + 题目表 + 逐人逐题矩阵 + 作业通知面板。
  *
  * 判定纪律（唯一不能出错的地方）：
  * - **名单/成绩未取全时不得显示"未交"**：`counts` 只有在 `complete` 时才非 null，
  *   不完整时整块换成加载/截断说明；
+ * - 顶部"这门课多少人/已绑定/未绑定"来自服务端 `roster-summary`，不由已加载页加总；
+ * - 矩阵包含**未绑定账号**的名单行并注明原因（他们不参与"未交"判定）；
  * - 历史提交（`assignment_id === null`）不属于任何作业，不出现在矩阵里；
+ * - 通知列与通知面板只读 B4 的投递记录：`sent` 才是已送达，`skipped_*` 不是。
  * - 答案文件带 `Authorization` 读取（不能裸 `<a href>`），以 `<pre>` 文本转义展示，
  *   有字符上限，内容不写日志。
  */
@@ -96,7 +113,8 @@ function progressErrorContent(error: unknown, testId: string) {
   return <ErrorState error={error} testId={testId} />;
 }
 
-function ScoreCell({ grade }: { grade: GradeRow | null }) {  if (grade === null) return <span className="muted">{t("common.none")}</span>;
+function ScoreCell({ grade }: { grade: GradeRow | null }) {
+  if (grade === null) return <span className="muted">{t("common.none")}</span>;
   if (grade.state !== "completed") {
     return (
       <span className="muted" data-testid="teacher-unscored">
@@ -115,9 +133,13 @@ function ScoreCell({ grade }: { grade: GradeRow | null }) {  if (grade === null)
 }
 
 export function TeacherAssignmentDetail({ assignment }: { assignment: AssignmentPublic }) {
-  const sections = useSections(assignment.course_id);
   const rows = useQuestionVersionRows(assignment.question_version_ids);
   const progress = useAssignmentProgress(assignment);
+  const summary = useRosterSummary(assignment.course_id);
+  const notifications = useAssignmentNotifications(
+    assignment.course_id,
+    assignment.assignment_id,
+  );
   const [expandedEnrollmentId, setExpandedEnrollmentId] = useState<string | null>(null);
   const [answerTarget, setAnswerTarget] = useState<{
     submissionId: string;
@@ -125,9 +147,16 @@ export function TeacherAssignmentDetail({ assignment }: { assignment: Assignment
     title: string;
   } | null>(null);
 
-  const sectionLabelOf = (sectionId: string) =>
-    sections.data?.find((option) => option.sectionId === sectionId)?.label ??
+  const sectionCodeOf = (sectionId: string) =>
+    summary.data?.sections.find((section) => section.section_id === sectionId)?.section_code ??
     shortenId(sectionId);
+  const classNameOf = (classId: string) => {
+    for (const section of summary.data?.sections ?? []) {
+      const match = section.classes.find((row) => row.class_id === classId);
+      if (match) return match.class_name;
+    }
+    return shortenId(classId);
+  };
 
   const titleByVersion = useMemo(() => {
     const map = new Map<string, string>();
@@ -140,10 +169,69 @@ export function TeacherAssignmentDetail({ assignment }: { assignment: Assignment
     return map;
   }, [rows]);
 
+  const deliveryByStudentNumber = useMemo(() => {
+    const map = new Map<string, AssignmentNotificationDelivery["status"]>();
+    for (const delivery of notifications.deliveries) {
+      map.set(delivery.student_number, delivery.status);
+    }
+    return map;
+  }, [notifications.deliveries]);
+
+  /** 通知列：只显示 B4 记录的投递状态；没有记录时明确区分"未安排"与"发布后加入"。 */
+  const notificationCell = (studentNumber: string, testId: string) => {
+    if (notifications.isPending) {
+      return (
+        <span className="muted" data-testid={testId}>
+          <InlineLoader />
+        </span>
+      );
+    }
+    if (notifications.notScheduled) {
+      return (
+        <span className="muted" data-testid={testId}>
+          {t("assignments.notification.notArranged")}
+        </span>
+      );
+    }
+    if (notifications.isError) {
+      return (
+        <span className="muted" data-testid={testId}>
+          {t("assignments.notification.readFailed")}
+        </span>
+      );
+    }
+    const status = deliveryByStudentNumber.get(studentNumber);
+    if (status === undefined) {
+      // 投递记录可能还没取全：此时"没有这个人的记录"还不能下结论（不能写成"发布后加入"）。
+      if (notifications.truncated) {
+        return (
+          <span className="muted" data-testid={testId}>
+            {t("assignments.notification.incomplete")}
+          </span>
+        );
+      }
+      if (!notifications.complete) {
+        return (
+          <span className="muted" data-testid={testId}>
+            <InlineLoader />
+          </span>
+        );
+      }
+      return (
+        <span className="muted" data-testid={testId}>
+          {t("assignments.notification.notInSnapshot")}
+        </span>
+      );
+    }
+    return (
+      <StatusPill tone={deliveryStatusTone(status)} testId={testId}>
+        {deliveryStatusLabel(status)}
+      </StatusPill>
+    );
+  };
+
   const expanded =
     progress.rows.find((row) => row.enrollmentId === expandedEnrollmentId) ?? null;
-  const targetSections = assignment.section_ids;
-  const narrowed = assignment.student_ids;
 
   return (
     <div className="stack">
@@ -162,29 +250,53 @@ export function TeacherAssignmentDetail({ assignment }: { assignment: Assignment
                 ? formatDateTime(assignment.due_at, t("common.none"))
                 : t("assignments.noDue")}
             </span>
-            <span className="muted">{t("assignments.versionCount")}：{rows.length}</span>
+            <span className="muted">
+              {t("assignments.versionCount")}：{rows.length}
+            </span>
           </div>
-          <dl className="stack" data-testid="assignment-audience">
-            <div>
-              <dt className="muted">{t("assignments.targetSections")}</dt>
-              <dd data-testid="assignment-target-sections">
-                {targetSections.map((sectionId) => sectionLabelOf(sectionId)).join("、")}
-              </dd>
-            </div>
-            <div>
-              <dt className="muted">{t("assignments.audience")}</dt>
-              <dd data-testid="assignment-audience-summary">
-                {narrowed.length > 0
-                  ? t("assignments.narrowedAudience", { count: narrowed.length })
-                  : t("assignments.fullSectionsAudience")}
-              </dd>
-            </div>
-          </dl>
+          <p className="muted" data-testid="assignment-audience-summary">
+            {t("assignments.courseWideAudience")}
+          </p>
+          <span className="muted" data-testid="assignment-notification-state">
+            {t("assignments.notificationState")}：
+            {t(`assignments.notificationState.${assignment.notification_state}`)}
+          </span>
         </div>
       </Panel>
 
       <Panel title={t("assignments.summaryTitle")} testId="assignment-summary">
         <p className="muted">{t("assignments.summaryNotice")}</p>
+
+        <div className="inline" data-testid="assignment-audience-counts">
+          {summary.isPending ? (
+            <p className="muted" data-testid="assignment-roster-summary-loading">
+              <InlineLoader />
+            </p>
+          ) : summary.isError ? (
+            <Banner tone="warn" testId="assignment-roster-summary-error">
+              {t("assignments.audienceSummaryIncomplete")}
+            </Banner>
+          ) : summary.data ? (
+            <>
+              <span className="muted" data-testid="roster-section-count">
+                {t("assignments.audienceSectionCount")}：{summary.data.section_count}
+              </span>
+              <span className="muted" data-testid="roster-class-count">
+                {t("assignments.audienceClassCount")}：{summary.data.class_count}
+              </span>
+              <span className="muted" data-testid="roster-student-total">
+                {t("assignments.audienceStudentTotal")}：{summary.data.student_total}
+              </span>
+              <span className="muted" data-testid="roster-bound-count">
+                {t("assignments.audienceBound")}：{summary.data.bound_count}
+              </span>
+              <span className="muted" data-testid="roster-unbound-count">
+                {t("assignments.audienceUnbound")}：{summary.data.unbound_count}
+              </span>
+            </>
+          ) : null}
+        </div>
+
         {progress.truncated ? (
           <Banner tone="warn" testId="assignment-summary-truncated">
             {t("common.paginationTruncated", { pages: MAX_AUTO_PAGES })}{" "}
@@ -308,7 +420,21 @@ export function TeacherAssignmentDetail({ assignment }: { assignment: Assignment
                 {
                   key: "section",
                   header: t("assignments.col.section"),
-                  render: (row) => sectionLabelOf(row.sectionId),
+                  render: (row) => sectionCodeOf(row.sectionId),
+                },
+                {
+                  key: "class",
+                  header: t("assignments.col.class"),
+                  render: (row) => row.className || classNameOf(row.classId),
+                },
+                {
+                  key: "notification",
+                  header: t("assignments.col.notification"),
+                  render: (row) =>
+                    notificationCell(
+                      row.studentNumber,
+                      `student-notification-${row.enrollmentId}`,
+                    ),
                 },
                 {
                   key: "status",
@@ -464,6 +590,14 @@ export function TeacherAssignmentDetail({ assignment }: { assignment: Assignment
           </>
         )}
       </Panel>
+
+      <AssignmentNotificationPanel
+        courseId={assignment.course_id}
+        assignmentId={assignment.assignment_id}
+        notificationState={assignment.notification_state}
+        notifications={notifications}
+        rosterSummary={summary.data ?? null}
+      />
 
       {answerTarget !== null ? (
         <Modal

@@ -50,6 +50,22 @@ export type UserSummary = B4Schemas["UserSummary"];
 export type CoursePublic = B4Schemas["CoursePublic"];
 export type SectionPublic = B4Schemas["SectionPublic"];
 export type EnrollmentPublic = B4Schemas["EnrollmentPublic"];
+/** 一个班级（v0.32.0）：课序之下的学生分组，一个课序可含多个班级。 */
+export type ClassPublic = B4Schemas["ClassPublic"];
+/**
+ * 课程名单的服务端聚合（`getCourseRosterSummary`，v0.32.0）。
+ *
+ * 页面上的"这门课多少人 / 多少课序 / 多少班级"必须读它而不是自己数已加载的行：
+ * 客户端拼页得到的数字会随分页静默变化。
+ */
+export type RosterSummary = B4Schemas["RosterSummary"];
+/** 调用者本人的一条有效选课（课程/课序/班级）。 */
+export type MyMembership = B4Schemas["MyMembership"];
+/** 作业发布通知的投递汇总（B4 `AssignmentNotificationSummary`）。 */
+export type AssignmentNotificationSummary = B4Schemas["AssignmentNotificationSummary"];
+/** 作业发布通知的单个收件人投递状态（B4 `AssignmentNotificationDelivery`）。 */
+export type AssignmentNotificationDelivery =
+  B4Schemas["AssignmentNotificationDelivery"];
 export type RosterImportPreview = B4Schemas["RosterImportPreview"];
 export type RosterRowPreview = B4Schemas["RosterRowPreview"];
 export type UpdateEnrollmentRequest =
@@ -82,6 +98,30 @@ export type CreateCourseRequest =
 export type CreateSectionRequest =
   B4Operations["createSection"]["requestBody"]["content"]["application/json"];
 export type EnrollmentPage = JsonBody<B4Operations["listEnrollments"], 200>;
+/** 一个班级的名单页（`listClassEnrollments`，v0.32.0）。 */
+export type ClassEnrollmentPage = JsonBody<B4Operations["listClassEnrollments"], 200>;
+/** 全课程名单页（`listCourseEnrollments`，v0.32.0）：教师作业详情的受众来源。 */
+export type CourseEnrollmentPage = JsonBody<B4Operations["listCourseEnrollments"], 200>;
+export type ClassListBody = JsonBody<B4Operations["listClasses"], 200>;
+export type ClassCreateRequest =
+  B4Operations["createClass"]["requestBody"]["content"]["application/json"];
+export type ClassRenameRequest =
+  B4Operations["renameClass"]["requestBody"]["content"]["application/json"];
+export type RosterSummaryBody = JsonBody<B4Operations["getCourseRosterSummary"], 200>;
+export type AssignmentNotificationsBody = JsonBody<
+  B4Operations["getAssignmentNotifications"],
+  200
+>;
+/** 作业通知的一页投递记录（`deliveries` 是游标页，`items` 由 schema 收窄）。 */
+export type AssignmentNotificationDeliveryPage = Omit<
+  AssignmentNotificationsBody["deliveries"],
+  "items"
+> & { items: AssignmentNotificationDelivery[] };
+/** 重试/安排作业通知后 B3 返回的最新作业（`notification_state` 已更新）。 */
+export type ScheduleAssignmentNotificationsResult = JsonBody<
+  B3Operations["scheduleAssignmentNotifications"],
+  200
+>;
 
 /**
  * 创建用户的响应（`createUser` 的 `201`）：只有新账号的 `user_id`。

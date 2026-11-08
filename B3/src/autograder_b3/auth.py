@@ -44,12 +44,11 @@ class Principal:
     subject: str
     roles: frozenset[str] = frozenset()
     course_ids: frozenset[UUID] = frozenset()
+    #: Section ids carried by the token's ``scope`` claim. Kept parsed because the claim
+    #: shape is B4's and a malformed one must still be rejected; no B3 authorization decision
+    #: uses it any more -- assignments are course-level and student reads use B4's live
+    #: authorization, never this snapshot (v0.32.0).
     section_ids: frozenset[UUID] = frozenset()
-    #: 授权的 `(course_id, section_id)` 配对。扁平的两个集合丢掉了配对关系，无法回答
-    #: "这个课序属于这门课吗"，而作业必须按 (课程, 课序) 定位，不能只按序号。
-    scope_pairs: frozenset[tuple[UUID, UUID]] = frozenset()
-    #: 只授予了整门课（scope 里没有 section_id）的课程：这些课程下的任何课序都可用。
-    course_wide: frozenset[UUID] = frozenset()
     is_service: bool = False
     token_id: str | None = None
 
@@ -62,9 +61,6 @@ class Principal:
 
     def in_course(self, course_id: UUID) -> bool:
         return self.is_admin or course_id in self.course_ids
-
-    def in_section(self, section_id: UUID) -> bool:
-        return self.is_admin or section_id in self.section_ids
 
     def readable_courses(self) -> frozenset[UUID] | None:
         """``None`` means "no course restriction" (admin)."""
@@ -110,65 +106,6 @@ def require_course_write(principal: Principal | None, course_id: UUID) -> Princi
     if not actor.in_course(course_id):
         raise Forbidden("the requested course is outside the caller's authorization scope")
     return actor
-
-
-def require_assignment_read(
-    principal: Principal | None,
-    *,
-    course_id: UUID,
-    section_ids: Iterable[UUID],
-    student_ids: Iterable[UUID],
-) -> Principal:
-    """Require that the caller may read **this assignment**, given its audience.
-
-    An assignment is visible per audience, not per course alone: a teacher whose token is
-    scoped to particular class sections may read an assignment only when it targets one of
-    them (a whole-course grant covers every section by definition), and a student needs
-    their own ``(course, section)`` pair inside the target sections plus, when the
-    assignment narrows its audience, their own id in that list.
-
-    The assignment's existence is checked by the caller **before** this function runs, so
-    a ``403`` here really means "authenticated but outside the audience" and ``404`` stays
-    reserved for "no such assignment" (``MAIN/docs/api/identifiers.md`` §3).
-    """
-    actor = require_authenticated(principal)
-    if actor.is_service or actor.is_admin:
-        return actor
-    targets = frozenset(section_ids)
-    if actor.has_role("teacher"):
-        require_course_read(actor, course_id)
-        if course_id in actor.course_wide:
-            return actor
-        granted = {section for (course, section) in actor.scope_pairs if course == course_id}
-        if granted & targets:
-            return actor
-        raise Forbidden(
-            "the assignment's target sections are outside the caller's authorization scope"
-        )
-    if actor.has_role("student"):
-        require_course_read(actor, course_id)
-        granted = {section for (course, section) in actor.scope_pairs if course == course_id}
-        if not granted & targets:
-            raise Forbidden(
-                "the assignment's target sections are outside the caller's authorization scope"
-            )
-        audience = frozenset(student_ids)
-        if audience and not _subject_in_audience(actor.subject, audience):
-            raise Forbidden("the assignment's audience does not include the caller")
-        return actor
-    raise Forbidden("the caller's role may not read assignments")
-
-
-def _subject_in_audience(subject: str, student_ids: frozenset[UUID]) -> bool:
-    """Whether the token subject is one of the named students.
-
-    Compared as UUIDs, not as raw text: a token subject written in an accepted-but-different
-    textual form must not silently become "not in the audience".
-    """
-    try:
-        return UUID(subject) in student_ids
-    except (ValueError, AttributeError, TypeError):
-        return False
 
 
 def require_statistics_read(principal: Principal | None, course_id: UUID) -> Principal:
@@ -285,7 +222,7 @@ class JwksTokenVerifier:
         if unknown:
             raise Unauthenticated("token carries an unknown role")
 
-        course_ids, section_ids, scope_pairs, course_wide = _parse_scope(claims.get("scope"))
+        course_ids, section_ids = _parse_scope(claims.get("scope"))
         subject = claims.get("sub")
         if not isinstance(subject, str) or not subject:
             raise Unauthenticated("token subject is missing")
@@ -294,8 +231,6 @@ class JwksTokenVerifier:
             roles=frozenset(roles),
             course_ids=course_ids,
             section_ids=section_ids,
-            scope_pairs=scope_pairs,
-            course_wide=course_wide,
             token_id=claims.get("jti") if isinstance(claims.get("jti"), str) else None,
         )
 
@@ -320,15 +255,19 @@ class JwksTokenVerifier:
             raise Unauthenticated("token is not valid yet")
 
 
-def _parse_scope(
-    raw: Any,
-) -> tuple[frozenset[UUID], frozenset[UUID], frozenset[tuple[UUID, UUID]], frozenset[UUID]]:
+def _parse_scope(raw: Any) -> tuple[frozenset[UUID], frozenset[UUID]]:
+    """Parse the token's ``scope`` claim into ``(course_ids, section_ids)``.
+
+    The claim shape is B4's (a list of ``{course_id, section_id?}`` entries); a malformed one
+    is rejected rather than ignored. Only ``course_ids`` is used for authorization now --
+    assignments are course-level, so a section-scoped grant covers the whole course -- but
+    the section ids stay parsed because the claim is the issuer's and an unparseable value
+    must not silently become "no scope".
+    """
     course_ids: set[UUID] = set()
     section_ids: set[UUID] = set()
-    scope_pairs: set[tuple[UUID, UUID]] = set()
-    course_wide: set[UUID] = set()
     if raw is None:
-        return frozenset(), frozenset(), frozenset(), frozenset()
+        return frozenset(), frozenset()
     if not isinstance(raw, list):
         raise Unauthenticated("token scope claim is malformed")
     for entry in raw:
@@ -343,20 +282,10 @@ def _parse_scope(
         section_id = entry.get("section_id")
         if section_id is not None:
             try:
-                parsed_section = UUID(str(section_id))
+                section_ids.add(UUID(str(section_id)))
             except ValueError as exc:
                 raise Unauthenticated("token scope carries a malformed section_id") from exc
-            section_ids.add(parsed_section)
-            if course_id is not None:
-                scope_pairs.add((UUID(str(course_id)), parsed_section))
-        elif course_id is not None:
-            course_wide.add(UUID(str(course_id)))
-    return (
-        frozenset(course_ids),
-        frozenset(section_ids),
-        frozenset(scope_pairs),
-        frozenset(course_wide),
-    )
+    return frozenset(course_ids), frozenset(section_ids)
 
 
 def _roles_claim(claims: Mapping[str, Any]) -> list[str]:
@@ -421,19 +350,15 @@ class StaticTokenVerifier:
         if claims is None:
             raise Unauthenticated("unknown test token")
         roles = claims.get("roles", [])
-        # The scope parser also produces the (course, section) pairing and the course-wide
-        # set; this test verifier was still unpacking the old two-value shape, which made
-        # every HTTP test fail at authentication before the endpoint ran. Production
-        # verification goes through `JwksTokenVerifier` and was never affected.
-        course_ids, section_ids, scope_pairs, course_wide = _parse_scope(claims.get("scope"))
+        # Same scope parser as production verification, so a test token cannot express a
+        # scope shape the real verifier would reject.
+        course_ids, section_ids = _parse_scope(claims.get("scope"))
         subject = claims.get("sub", "test-subject")
         return Principal(
             subject=str(subject),
             roles=frozenset(roles),
             course_ids=course_ids,
             section_ids=section_ids,
-            scope_pairs=scope_pairs,
-            course_wide=course_wide,
             is_service=bool(claims.get("service", False)),
         )
 

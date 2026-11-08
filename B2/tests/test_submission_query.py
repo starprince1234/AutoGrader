@@ -26,6 +26,7 @@ from autograder_b2.api.errors import install_problem_handlers
 from autograder_b2.intake.api import build_router
 from autograder_b2.intake.runtime import IntakeRuntime, build_runtime
 from autograder_b2.integration.assignments import AssignmentAudience
+from tests.authorization_fixture import FakeAuthorizationDirectory
 from tests.conftest import requires_postgres
 
 pytestmark = requires_postgres
@@ -53,9 +54,7 @@ class _AssignmentDirectory:
         *,
         assignment_id: str,
         course_id: str,
-        section_id: str,
         question_version_id: str,
-        student_ids: tuple[str, ...] = (),
         status: str = "open",
     ) -> None:
         self.audiences[str(uuid.UUID(assignment_id))] = AssignmentAudience(
@@ -63,8 +62,6 @@ class _AssignmentDirectory:
             course_id=str(uuid.UUID(course_id)),
             title="作业",
             status=status,
-            section_ids=(str(uuid.UUID(section_id)),),
-            student_ids=tuple(str(uuid.UUID(item)) for item in student_ids),
             question_version_ids=(str(uuid.UUID(question_version_id)),),
         )
 
@@ -132,11 +129,17 @@ def assignments() -> _AssignmentDirectory:
 
 
 @pytest.fixture(scope="module")
+def authorization() -> FakeAuthorizationDirectory:
+    return FakeAuthorizationDirectory()
+
+
+@pytest.fixture(scope="module")
 def runtime(
     upgraded_database_url: str,
     tmp_path_factory: pytest.TempPathFactory,
     signer: _Signer,
     assignments: _AssignmentDirectory,
+    authorization: FakeAuthorizationDirectory,
 ) -> IntakeRuntime:
     instance = build_runtime(
         {
@@ -145,19 +148,26 @@ def runtime(
             "B2_JWKS_JSON": json.dumps(signer.jwks),
         }
     )
-    # 作业目录是接收入口的外部依赖：测试注入端口替身（生产由 `B2_B3_BASE_URL` 装配真实 HTTP 客户端）。
+    # 作业目录与 B4 授权目录都是接收入口的外部依赖：测试注入端口替身（生产由
+    # `B2_B3_*`/`B2_IDENTITY_*` 装配真实 HTTP 客户端）。
     assert instance.service is not None
     instance.assignment_directory = assignments
     instance.service.assignment_directory = assignments
+    instance.authorization_directory = authorization
+    instance.service.authorization_directory = authorization
     return instance
 
 
 @pytest.fixture()
 def client(
-    runtime: IntakeRuntime, engine: Engine, assignments: _AssignmentDirectory
+    runtime: IntakeRuntime,
+    engine: Engine,
+    assignments: _AssignmentDirectory,
+    authorization: FakeAuthorizationDirectory,
 ) -> Iterator[TestClient]:
     app = FastAPI()
     app.state.assignment_directory = assignments
+    app.state.authorization = authorization
     install_problem_handlers(app)
     app.include_router(build_router(runtime))
     with TestClient(app) as test_client:
@@ -215,9 +225,11 @@ def _submit(
     directory.add(
         assignment_id=assignment,
         course_id=course_id,
-        section_id=section_id,
         question_version_id=question_version_id,
     )
+    # 接收入口按 B4 权威归属判定"当前有效归属"：这里把学生登记为当前在课程里。
+    authorization = client.app.state.authorization  # type: ignore[attr-defined]
+    authorization.enroll(student_id, course_id=course_id, section_id=section_id)
     response = client.post(POST, json=payload, headers=_auth(_student_token(signer, student_id, course)))
     assert response.status_code == 202, response.text
     return payload["submission_id"]

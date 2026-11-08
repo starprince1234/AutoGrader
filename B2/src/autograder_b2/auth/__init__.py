@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from autograder_b2.auth.authorization import AuthorizationError, require_submission_authority
+from autograder_b2.auth.authorization import (
+    AuthorizationError,
+    require_submission_authority,
+    require_submission_identity,
+)
 from autograder_b2.auth.tokens import (
     ALGORITHM,
     DEFAULT_AUDIENCE,
@@ -25,4 +29,5 @@ __all__ = [
     "JwksAuthenticator",
     "Principal",
     "require_submission_authority",
+    "require_submission_identity",
 ]

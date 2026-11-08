@@ -8,6 +8,8 @@
 2. **一次性核验码**：已认证学生为**一个作业**申请；高熵随机、库里只存 SHA-256、默认 30 分钟有效、
    绑定 `(student_id, course_id, section_id, assignment_id)`（设计 §1.5：一次码 = 一个作业，
    一封邮件携带 N 个附件 → N 条提交）。明文只在签发响应里出现一次。
+   v0.32.0 起课程级受众：`course_id` 必须与作业所属课程一致，`section_id` 取 B4 的**当前权威归属**
+   （`integration.b4_authorization`），**忽略**请求里的 section——令牌 scope 只是签发时的快照。
 3. **邮件必须携带核验码**：收件端从正文里解析核验码 → 哈希 → 行锁查挑战 → 校验未消费/未过期/
    所有者 == 发件账号 → 写 `email_verifications`（`processed_at=NULL`，题目映射在提交事务里
    写入 `email_verification_submissions`）。
@@ -60,7 +62,7 @@ from sqlalchemy import Connection, Engine
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import IntegrityError
 
-from autograder_b2.auth.authorization import AuthorizationError, require_submission_authority
+from autograder_b2.auth.authorization import AuthorizationError, require_submission_identity
 from autograder_b2.auth.tokens import AuthenticationError, JwksAuthenticator, Principal
 from autograder_b2.db.schema import (
     email_sender_bindings,
@@ -77,6 +79,11 @@ from autograder_b2.integration.assignments import (
     AssignmentAudience,
     AssignmentDirectory,
     AssignmentUnavailable,
+)
+from autograder_b2.integration.b4_authorization import (
+    AuthorizationUnavailable,
+    UserAuthorization,
+    UserAuthorizationDirectory,
 )
 from autograder_b2.logging.logger import log_event
 
@@ -265,9 +272,10 @@ class EmailVerificationService:
     """挑战的签发/状态查询 + IMAP 侧的消费与心跳。
 
     `authenticator` 只用于 HTTP 端点的认证（路由层调用 `authenticate`）；IMAP 路径不需要它。
-    `directory` 是发件地址 → 账号的查询端口；`assignment_directory` 是作业受众的只读端口
-    （B3 internal 端点）。两者都是**外部依赖**：不可用时的语义彼此独立——身份目录不可用让本轮
-    拉取失败重试，作业目录不可用同样让本轮拉取失败（设计 §6.5），绝不把故障记成学生格式错误。
+    `directory` 是发件地址 → 账号的查询端口；`assignment_directory` 是作业的只读端口
+    （B3 internal 端点）；`authorization_directory` 是 B4 的权威授权/归属端口。三者都是**外部
+    依赖**：不可用时的语义彼此独立——身份目录不可用让本轮拉取失败重试，作业目录不可用同样让本轮
+    拉取失败（设计 §6.5），B4 授权目录不可用同理；绝不把故障记成学生格式错误。
     """
 
     def __init__(
@@ -277,6 +285,7 @@ class EmailVerificationService:
         authenticator: JwksAuthenticator | None = None,
         directory: SenderDirectory | None = None,
         assignment_directory: AssignmentDirectory | None = None,
+        authorization_directory: UserAuthorizationDirectory | None = None,
         now: Callable[[], datetime] = utc_now,
         challenge_ttl: timedelta = CHALLENGE_TTL,
         heartbeat_max_age: timedelta = HEARTBEAT_MAX_AGE,
@@ -289,6 +298,7 @@ class EmailVerificationService:
         self._authenticator = authenticator
         self._directory = directory
         self._assignment_directory = assignment_directory
+        self._authorization_directory = authorization_directory
         self._now = now
         self._challenge_ttl = challenge_ttl
         self._heartbeat_max_age = heartbeat_max_age
@@ -312,8 +322,13 @@ class EmailVerificationService:
 
     @property
     def assignment_directory(self) -> AssignmentDirectory | None:
-        """作业受众目录（与接收服务的作业校验**同一个**实例；未配置为 `None`）。"""
+        """作业目录（与接收服务的作业校验**同一个**实例；未配置为 `None`）。"""
         return self._assignment_directory
+
+    @property
+    def authorization_directory(self) -> UserAuthorizationDirectory | None:
+        """B4 权威授权目录（提交入口、邮件入口与隔离复核共用同一个实例；未配置为 `None`）。"""
+        return self._authorization_directory
 
     def authenticate(self, authorization_header: str | None) -> Principal:
         """认证头 → `Principal`；任何失败都是 `AuthenticationError`（路由层映射 401）。"""
@@ -333,33 +348,36 @@ class EmailVerificationService:
     ) -> IssuedChallenge:
         """为学生签发一次性核验码（不复用旧码；签发不创建提交、不改变任何成绩）。
 
-        授权复用提交写入的既有判定：学生只能为自己签发，且令牌必须覆盖该课程/课序
-        （`require_submission_authority` 的角色 + 作用域 + 本人三层语义）；作业受众再由
-        `assignment_directory` 校验（课程不符/非目标课序/非受众学生 → 403）。
+        令牌层只判**角色与身份**（学生只能为自己签发；管理员豁免），**不**用令牌的课程 `scope`
+        做准入——它只是签发时的快照（登录后新加入课程的学生在令牌里看不到该课程）。当前归属由
+        **B4 权威授权**决定：
 
-        异常：非法标识 `ChallengeRequestError`（422）；越权 `AuthorizationError`（403）；
+        - 学生必须仍有该课程的当前有效 enrollment，挑战绑定的 `section_id` 取该 enrollment 的
+          值——请求里的 section 被**忽略**（设计 §4：不得信客户端）；
+        - 该课程的 staff（B4 `course_grants` 含该课程）为自己签发时没有学生选课，保留请求里的
+          section；管理员豁免；
+        - 无归属 → `AuthorizationError`（403）；B4 授权目录不可用 → `AuthorizationUnavailable`
+          （503），绝不折成"不在受众里"。
+
+        作业本身再由 `assignment_directory` 校验（不存在 404 / 非 open 409 / 课程不符 403）；
+        无归属的调用者先拿到 403，因此不会从 404/409 的差异里读到作业是否存在。
+
+        异常：非法标识 `ChallengeRequestError`（422）；越权/无归属 `AuthorizationError`（403）；
         作业不存在 `ChallengeAssignmentNotFoundError`（404）；作业不在 open 状态
-        `ChallengeAssignmentClosedError`（409）；作业目录不可用 `AssignmentUnavailable`（503）；
-        数据库故障 `SQLAlchemyError`（503）。
+        `ChallengeAssignmentClosedError`（409）；作业或 B4 授权目录不可用 `AssignmentUnavailable` /
+        `AuthorizationUnavailable`（503）；数据库故障 `SQLAlchemyError`（503）。
         """
         canonical_course = _canonical_uuid(course_id, "course_id")
         canonical_section = _canonical_uuid(section_id, "section_id")
         canonical_assignment = _canonical_uuid(assignment_id, "assignment_id")
-        require_submission_authority(
-            principal,
-            course_id=canonical_course,
-            section_id=canonical_section,
-            student_id=principal.user_id,
+        # 身份层：角色 + 本人（管理员豁免）；课程归属由 B4 判定，不用令牌 scope。
+        require_submission_identity(principal, student_id=principal.user_id)
+        authoritative_section = self._require_authoritative_section(
+            principal, canonical_course, canonical_section
         )
         audience = self._require_audience(canonical_assignment)
         if audience.course_id != canonical_course:
             raise AuthorizationError("the assignment belongs to another course")
-        if not audience.is_target(
-            section_id=canonical_section, student_id=principal.user_id
-        ):
-            raise AuthorizationError(
-                "the caller's section or account is not in the assignment audience"
-            )
 
         now = self._now()
         expires_at = now + self._challenge_ttl
@@ -373,7 +391,7 @@ class EmailVerificationService:
                             challenge_id=challenge_id,
                             student_id=uuid.UUID(principal.user_id),
                             course_id=uuid.UUID(canonical_course),
-                            section_id=uuid.UUID(canonical_section),
+                            section_id=uuid.UUID(authoritative_section),
                             assignment_id=uuid.UUID(canonical_assignment),
                             question_version_id=None,
                             code_sha256=sha256_hex(code.encode("ascii")),
@@ -396,7 +414,7 @@ class EmailVerificationService:
                 fields={
                     "outcome": "issued",
                     "course_id": canonical_course,
-                    "section_id": canonical_section,
+                    "section_id": authoritative_section,
                     "assignment_id": canonical_assignment,
                 },
             )
@@ -407,6 +425,33 @@ class EmailVerificationService:
                 assignment_id=canonical_assignment,
             )
         raise RuntimeError("could not allocate a unique e-mail verification code")
+
+    def _require_authoritative_section(
+        self,
+        principal: Principal,
+        course_id: str,
+        requested_section: str,
+    ) -> str:
+        """按 B4 的当前归属返回挑战应绑定的权威 `section_id`（覆盖请求值）；无归属 → 403。
+
+        口径与提交入口一致：管理员豁免；该课程的 staff 为自己签发时保留请求 section；
+        否则必须有当前有效 enrollment，其 `section_id` 即权威值。
+        """
+        if principal.is_admin:
+            return requested_section
+        directory = self._authorization_directory
+        if directory is None:
+            raise AuthorizationUnavailable(
+                "the B4 user authorization directory is not configured;"
+                " current course membership cannot be verified"
+            )
+        authorization: UserAuthorization = directory.get(principal.user_id)
+        if authorization.is_course_staff_for(course_id):
+            return requested_section
+        enrollment = authorization.enrollment_for_course(course_id)
+        if enrollment is None:
+            raise AuthorizationError("the caller is not currently enrolled in this course")
+        return enrollment.section_id
 
     def get_challenge_status(
         self, principal: Principal, challenge_id: object
@@ -995,7 +1040,11 @@ class EmailVerificationService:
         )
 
     def _require_audience(self, assignment_id: str) -> AssignmentAudience:
-        """取作业受众；未配置/不可达 → `AssignmentUnavailable`，不存在 → 404，非 open → 409。"""
+        """取作业事实；未配置/不可达 → `AssignmentUnavailable`，不存在 → 404，非 open → 409。
+
+        课程级作业没有 section/student 名单；"这个学生此刻是否属于该课程、课序是哪个"由
+        `_require_authoritative_section` 按 B4 的当前归属回答（与提交入口同口径）。
+        """
         directory = self._assignment_directory
         if directory is None:
             raise AssignmentUnavailable("assignment directory is not configured")

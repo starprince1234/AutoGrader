@@ -1,35 +1,30 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { t } from "../../i18n";
 import type { CreateAssignmentRequest, QuestionVersionSummary } from "../../api/types";
-import { describeApiError, isApiError } from "../../api/problem";
+import { isApiError } from "../../api/problem";
 import {
   courseLabel,
   loadedCourses,
   useCourses,
-  useSections,
+  useRosterSummary,
 } from "../../api/directory";
 import { useQuestionList } from "../questions/useQuestions";
-import { Banner, Field, InlineLoader, Modal } from "../../ui/components";
+import { Banner, ErrorState, Field, InlineLoader, Modal } from "../../ui/components";
 import { shortenId } from "../../ui/format";
 import { Select } from "../../ui/Select";
 import { useCreateAssignment } from "./useAssignments";
-import { useSectionsRoster } from "./useAssignmentRoster";
 
 /**
- * 新建作业（CHG-0032）。
+ * 新建作业（v0.32.0：课程级作业）。
  *
- * 目标模型：作业属于**一门课程**，必须选 1..N 个课序（`section_ids`）；可以在这些课序里
- * 再勾选指定学生收窄受众（`student_ids`，空 = 整个课序）。
+ * 作业属于**一门课程**，一经发布自动对该课程**全部课序与全部班级**的学生生效：
+ * 契约里不再有 `section_ids` / `student_ids`，因此这里没有课序勾选，也没有指定学生。
+ * 预览里的人数来自服务端 `roster-summary`（SQL 聚合），不是客户端数已加载的名单页——
+ * 否则"这门课多少人"会随分页静默变化。
  *
- * 两条容易做错的地方：
- * 1. **不能按同名课程跨 course 合并**：课程选择器里每个 course 是独立选项（同名时用
- *    `course_id` 前缀区分），课序列表只来自**当前选中的 course_id**。旧实现按课程名把清单
- *    合并，会把另一门同名课程的班级混进来，最终由服务端 422 拒绝。
- * 2. **指定学生只能来自所选课序的有效在册学生**：名单按所选课序并行拉取；未绑定账号的
- *    名单行不能被单独指定（服务端也只接受有效在册且已绑定账号的学生）。
- *
- * 发布分两步：先预览（课程/课序/学生/名称/截止时间/题目数），再二次确认才 `POST`。
+ * 课程按 `course_id` 独立列出：同名课程用课程编号或短 id 区分，绝不按名字合并（合并会把
+ * 另一门课的题目混进来，最终由服务端拒绝）。
  */
 
 type PublishedVersion = QuestionVersionSummary & { questionTitle: string };
@@ -53,8 +48,6 @@ export function AssignmentComposer({
   const courses = useCourses();
   const courseOptions = useMemo(() => loadedCourses(courses.data?.pages), [courses.data]);
   const [courseId, setCourseId] = useState("");
-  const [sectionIds, setSectionIds] = useState<string[]>([]);
-  const [studentIds, setStudentIds] = useState<string[]>([]);
   const [title, setTitle] = useState("");
   const [dueAt, setDueAt] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
@@ -65,7 +58,7 @@ export function AssignmentComposer({
   const selectedCourse = courseOptions.find(
     (course) => course.course_id === selectedCourseId,
   );
-  // 课程按 `course_id` 独立列出；同名课程用短 id 区分，绝不合并成一项。
+  // 课程按 `course_id` 独立列出；同名、同编号课程用短 id 区分，绝不合并成一项。
   const duplicateLabels = useMemo(() => {
     const seen = new Map<string, number>();
     for (const course of courseOptions) {
@@ -76,30 +69,17 @@ export function AssignmentComposer({
       [...seen.entries()].filter(([, count]) => count > 1).map(([label]) => label),
     );
   }, [courseOptions]);
-  const courseOptionLabel = (course: { course_id: string; course_code?: string | null; title: string }) => {
+  const courseOptionLabel = (course: {
+    course_id: string;
+    course_code?: string | null;
+    title: string;
+  }) => {
     const label = courseLabel(course);
     return duplicateLabels.has(label) ? `${label} · ${shortenId(course.course_id)}` : label;
   };
 
-  const sectionsQuery = useSections(selectedCourseId || null);
-  const sectionOptions = sectionsQuery.data ?? [];
-  const sectionLabelOf = (id: string) =>
-    sectionOptions.find((option) => option.sectionId === id)?.label ?? shortenId(id);
-
-  const roster = useSectionsRoster(sectionIds);
-
-  // 名单变化后丢掉已经不在名单里的选择，避免提交一个服务端必然 422 的 id。
-  useEffect(() => {
-    const available = new Set(
-      roster.students
-        .map((student) => student.student_id)
-        .filter((studentId): studentId is string => studentId !== null),
-    );
-    setStudentIds((previous) => {
-      const next = previous.filter((studentId) => available.has(studentId));
-      return next.length === previous.length ? previous : next;
-    });
-  }, [roster.students]);
+  // 受众规模来自服务端聚合；它只是预览信息，不参与发布校验（受众永远由服务端按课程名单判定）。
+  const summary = useRosterSummary(selectedCourseId || null);
 
   const questions = useQuestionList(
     selectedCourseId || null,
@@ -129,10 +109,6 @@ export function AssignmentComposer({
       setError(t("assignments.create.errorTitle"));
       return;
     }
-    if (sectionIds.length === 0) {
-      setError(t("assignments.create.errorSections"));
-      return;
-    }
     if (selected.length === 0) {
       setError(t("assignments.create.errorVersions"));
       return;
@@ -143,11 +119,9 @@ export function AssignmentComposer({
   const publish = () => {
     const body: CreateAssignmentRequest = {
       course_id: selectedCourseId,
-      section_ids: sectionIds,
       title: title.trim(),
       question_version_ids: selected,
     };
-    if (studentIds.length > 0) body.student_ids = studentIds;
     const isoDue = localInputToIso(dueAt);
     if (isoDue) body.due_at = isoDue;
     create.mutate(body, {
@@ -169,7 +143,7 @@ export function AssignmentComposer({
           return;
         }
         if (isApiError(failure) && failure.status === 422) {
-          setError(t("assignments.create.invalidTargets"));
+          setError(t("assignments.create.invalidRequest"));
           return;
         }
         if (isApiError(failure) && failure.status === 403) {
@@ -177,7 +151,7 @@ export function AssignmentComposer({
           return;
         }
         if (isApiError(failure) && failure.status === 503) {
-          setError(t("assignments.create.targetsUnavailable"));
+          setError(t("assignments.create.unavailable"));
           return;
         }
         setError(isApiError(failure) ? failure.message : t("common.requestFailed"));
@@ -185,10 +159,41 @@ export function AssignmentComposer({
     });
   };
 
-  const selectedStudents = roster.students.filter(
-    (student) =>
-      typeof student.student_id === "string" && studentIds.includes(student.student_id),
-  );
+  const audienceValue = (value: number | undefined) =>
+    value === undefined ? t("common.none") : String(value);
+
+  const audienceSummary = summary.isPending ? (
+    <p className="muted" data-testid="compose-audience-loading">
+      <InlineLoader />
+    </p>
+  ) : summary.isError ? (
+    <Banner tone="warn" testId="compose-audience-error">
+      {t("assignments.create.summaryUnavailable")}
+    </Banner>
+  ) : summary.data ? (
+    <dl className="stack" data-testid="compose-audience-summary">
+      <div className="inline">
+        <dt className="muted">{t("assignments.create.previewSections")}</dt>
+        <dd data-testid="compose-preview-section-count">
+          {audienceValue(summary.data.section_count)}
+        </dd>
+        <dt className="muted">{t("assignments.create.previewClasses")}</dt>
+        <dd data-testid="compose-preview-class-count">
+          {audienceValue(summary.data.class_count)}
+        </dd>
+        <dt className="muted">{t("assignments.create.previewStudents")}</dt>
+        <dd data-testid="compose-preview-student-total">
+          {audienceValue(summary.data.student_total)}
+        </dd>
+        <dt className="muted">{t("assignments.create.previewBound")}</dt>
+        <dd data-testid="compose-preview-bound">{audienceValue(summary.data.bound_count)}</dd>
+        <dt className="muted">{t("assignments.create.previewUnbound")}</dt>
+        <dd data-testid="compose-preview-unbound">
+          {audienceValue(summary.data.unbound_count)}
+        </dd>
+      </div>
+    </dl>
+  ) : null;
 
   return (
     <>
@@ -200,13 +205,14 @@ export function AssignmentComposer({
               value={selectedCourseId}
               onChange={(event) => {
                 setCourseId(event.target.value);
-                // 换课程等于换受众：已选课序与指定学生都不能沿用。
-                setSectionIds([]);
-                setStudentIds([]);
+                // 换课程等于换题目来源与受众：已选版本不能沿用。
                 setSelected([]);
               }}
               disabled={create.isPending}
             >
+              {courseOptions.length === 0 ? (
+                <option value="">{t("common.selectPrompt")}</option>
+              ) : null}
               {courseOptions.map((course) => (
                 <option key={course.course_id} value={course.course_id}>
                   {courseOptionLabel(course)}
@@ -215,115 +221,11 @@ export function AssignmentComposer({
             </Select>
           </Field>
 
-          <fieldset className="stack" data-testid="compose-section-list">
-            <legend>
-              {t("assignments.create.sections")}
-              <span className="muted"> · {t("assignments.create.sectionsHint")}</span>
-            </legend>
-            {sectionsQuery.isPending ? (
-              <p className="muted">
-                <InlineLoader />
-              </p>
-            ) : sectionsQuery.isError ? (
-              <Banner tone="error" testId="compose-sections-error">
-                {describeApiError(sectionsQuery.error)}
-              </Banner>
-            ) : sectionOptions.length === 0 ? (
-              <p className="muted">{t("assignments.create.noSections")}</p>
-            ) : (
-              <ul className="stack">
-                {sectionOptions.map((option) => {
-                  const checked = sectionIds.includes(option.sectionId);
-                  return (
-                    <li key={option.sectionId}>
-                      <label className="inline">
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          disabled={create.isPending}
-                          data-testid={`compose-section-${option.sectionId}`}
-                          onChange={() => {
-                            setSectionIds((previous) =>
-                              checked
-                                ? previous.filter((id) => id !== option.sectionId)
-                                : [...previous, option.sectionId],
-                            );
-                            setStudentIds([]);
-                          }}
-                        />
-                        <span>{option.label}</span>
-                      </label>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </fieldset>
+          {courses.isError ? <ErrorState error={courses.error} testId="compose-courses-error" /> : null}
 
-          <fieldset className="stack" data-testid="compose-student-fieldset">
-            <legend>
-              {t("assignments.create.students")}
-              <span className="muted"> · {t("assignments.create.studentsHint")}</span>
-            </legend>
-            {sectionIds.length === 0 ? (
-              <p className="muted">{t("assignments.create.studentsNeedSections")}</p>
-            ) : roster.isPending ? (
-              <p className="muted" data-testid="compose-roster-loading">
-                <InlineLoader />
-              </p>
-            ) : roster.isError ? (
-              <Banner tone="error" testId="compose-roster-error">
-                {describeApiError(roster.error)}
-              </Banner>
-            ) : roster.truncated ? (
-              <Banner tone="warn" testId="compose-roster-truncated">
-                {t("assignments.create.rosterTruncated")}
-              </Banner>
-            ) : (
-              <>
-                <p className="muted">{t("assignments.create.wholeSections")}</p>
-                {roster.students.filter((student) => student.student_id !== null).length === 0 ? (
-                  <p className="muted">{t("assignments.create.noStudents")}</p>
-                ) : (
-                  <ul className="stack" data-testid="compose-student-list">
-                    {roster.students
-                      .filter((student) => student.student_id !== null)
-                      .map((student) => {
-                        const studentId = student.student_id as string;
-                        const checked = studentIds.includes(studentId);
-                        return (
-                          <li key={student.enrollment_id}>
-                            <label className="inline">
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                disabled={create.isPending}
-                                data-testid={`compose-student-${studentId}`}
-                                onChange={() =>
-                                  setStudentIds((previous) =>
-                                    checked
-                                      ? previous.filter((id) => id !== studentId)
-                                      : [...previous, studentId],
-                                  )
-                                }
-                              />
-                              <span>
-                                {student.display_name} · {student.student_number}
-                              </span>
-                            </label>
-                          </li>
-                        );
-                      })}
-                  </ul>
-                )}
-                {roster.students.some((student) => student.student_id === null) ? (
-                  <p className="muted" data-testid="compose-unbound-note">
-                    {t("assignments.create.unboundNote")}
-                  </p>
-                ) : null}
-              </>
-            )}
-          </fieldset>
+          <Banner tone="info" testId="compose-course-wide-notice">
+            {t("assignments.create.courseWideNotice")}
+          </Banner>
 
           <Field label={t("assignments.create.name")} htmlFor="compose-title">
             <input
@@ -418,32 +320,19 @@ export function AssignmentComposer({
         <Modal title={t("assignments.create.confirmTitle")} onClose={() => setPreviewing(false)}>
           <div className="stack" data-testid="assignment-compose-confirm">
             <p>{t("assignments.create.confirmBody")}</p>
+            <p className="muted" data-testid="compose-preview-audience-notice">
+              {t("assignments.create.courseWideNotice")}
+            </p>
             <dl className="stack">
               <div>
                 <dt className="muted">{t("grades.course")}</dt>
-                <dd>{selectedCourse ? courseOptionLabel(selectedCourse) : selectedCourseId}</dd>
-              </div>
-              <div>
-                <dt className="muted">{t("assignments.create.sections")}</dt>
-                <dd data-testid="compose-preview-sections">
-                  {sectionIds.map(sectionLabelOf).join("、")}
+                <dd data-testid="compose-preview-course">
+                  {selectedCourse ? courseOptionLabel(selectedCourse) : selectedCourseId}
                 </dd>
               </div>
               <div>
-                <dt className="muted">{t("assignments.create.students")}</dt>
-                <dd data-testid="compose-preview-students">
-                  {studentIds.length === 0
-                    ? t("assignments.create.wholeSections")
-                    : t("assignments.create.chosenStudents", { count: studentIds.length }) +
-                      (selectedStudents.length > 0
-                        ? `（${selectedStudents
-                            .map(
-                              (student) =>
-                                `${student.display_name} ${student.student_number}`,
-                            )
-                            .join("、")}）`
-                        : "")}
-                </dd>
+                <dt className="muted">{t("assignments.audience")}</dt>
+                <dd>{audienceSummary}</dd>
               </div>
               <div>
                 <dt className="muted">{t("assignments.create.name")}</dt>
@@ -455,7 +344,9 @@ export function AssignmentComposer({
               </div>
               <div>
                 <dt className="muted">{t("assignments.create.versions")}</dt>
-                <dd>{t("assignments.create.chosen", { count: selected.length })}</dd>
+                <dd data-testid="compose-preview-questions">
+                  {t("assignments.create.chosen", { count: selected.length })}
+                </dd>
               </div>
             </dl>
             <div className="inline">

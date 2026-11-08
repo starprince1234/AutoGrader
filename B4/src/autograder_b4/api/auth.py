@@ -460,26 +460,27 @@ def build_auth_router(state: B4State, dependencies: Dependencies) -> APIRouter:
         caller=Depends(dependencies.principal),
         connection: Connection = Depends(dependencies.connection),
     ) -> dict[str, object]:
-        """The caller's own account facts (CHG-0032).
+        """The caller's own account facts (CHG-0032 / v0.32.0).
 
-        The mail-submission body must carry the student's name and student number, and the
-        browser has no legitimate way to derive them: the access token carries identity and
-        scope, not profile data, and the roster endpoint is staff-only. Reading one's own
-        profile is not a privilege escalation, so the shape is deliberately minimal (no
-        e-mail address, no other user's data) and every authenticated caller may read exactly
-        their own row.
+        Returns the caller's own row only: no e-mail address and no other user's data.
+        Since v0.32.0 it also carries `memberships` -- the active course/section/class
+        enrollments -- because a student needs to see which courses, 课序 and 班级 they are
+        in (and to switch between several courses) without a staff-only roster endpoint.
         """
         row = connection.execute(
             select(users).where(users.c.user_id == caller.user_id)
         ).one_or_none()
         if row is None:  # pragma: no cover - a valid session implies an existing user
             raise unauthenticated()
+        from ..classes import my_memberships
+
         return {
             "user_id": str(row.user_id),
             "username": row.username,
             "display_name": row.display_name,
             "student_number": row.student_number,
             "roles": sorted(caller.all_roles),
+            "memberships": my_memberships(connection, caller.user_id),
         }
 
     return router

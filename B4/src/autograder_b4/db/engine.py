@@ -9,6 +9,7 @@ constant.
 
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass
 from functools import lru_cache
@@ -121,14 +122,39 @@ def alembic_script_head() -> str:
 
     Used by the health report and by tests so that "database head == manifest" cannot be
     satisfied by editing the manifest.
+
+    The module root is resolved the same way the host resolves it: an installed package
+    (site-packages) has no `alembic.ini`, so a path relative to `__file__` only works for a
+    source checkout. `B4_MODULE_ROOT` is the deployment root the host hands the module, and
+    the current working directory is the module directory when an operator runs `alembic`
+    by hand. All three are tried before failing loudly.
     """
     from alembic.config import Config
     from alembic.script import ScriptDirectory
 
-    root = Path(__file__).resolve().parents[3]
-    config = Config(str(root / "alembic.ini"))
+    config_path = _alembic_config_path()
+    config = Config(str(config_path))
     script = ScriptDirectory.from_config(config)
     heads = script.get_heads()
     if len(heads) != 1:
         raise RuntimeError(f"expected exactly one Alembic head, found {sorted(heads)}")
     return str(heads[0])
+
+
+def _alembic_config_path() -> Path:
+    candidates: list[Path] = []
+    module_root = os.environ.get("B4_MODULE_ROOT", "").strip()
+    if module_root:
+        root = Path(module_root)
+        candidates.extend([root / "B4" / "alembic.ini", root / "alembic.ini"])
+    # Source checkout: autograder_b4/db/engine.py -> <repo>/B4/alembic.ini
+    candidates.append(Path(__file__).resolve().parents[3] / "alembic.ini")
+    # `alembic`/pytest run from the module directory.
+    candidates.append(Path.cwd() / "alembic.ini")
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    raise RuntimeError(
+        "cannot locate alembic.ini (tried B4_MODULE_ROOT, the source tree and the "
+        "current directory)"
+    )

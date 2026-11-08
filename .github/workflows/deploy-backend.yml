@@ -37,6 +37,7 @@ on:
       - "MAIN/pyproject.toml"
       - "MAIN/sdk/src/**"
       - "MAIN/scripts/production-prepare.sh"
+      - "MAIN/scripts/acceptance_assignment_workflow.py"
       - "MAIN/uv.lock"
       - "MAIN/scripts/production-preflight.sh"
       - "MAIN/deploy/**"
@@ -76,7 +77,17 @@ jobs:
       - name: Install the backend workspace
         run: uv sync --project MAIN --all-groups --extra modules --locked
       - name: Lint backend code
-        run: uv run --project MAIN --locked ruff check MAIN/host MAIN/sdk MAIN/deploy/check-readiness.py B2/src B3/src B4/src B5/src
+        run: uv run --project MAIN --locked ruff check MAIN/host MAIN/sdk MAIN/deploy/check-readiness.py MAIN/scripts/acceptance_assignment_workflow.py B2/src B3/src B4/src B5/src
+      - name: Check the acceptance script compiles
+        run: uv run --project MAIN --locked python -m py_compile MAIN/scripts/acceptance_assignment_workflow.py
+      - name: Check the notification sender deployment units
+        # The publication notification is delivered by a timer-driven B4 CLI. A release that
+        # forgets to install the units (or the installer that references them) would leave the
+        # feature "scheduled" forever, so the units are part of the verify surface.
+        run: |
+          test -f MAIN/deploy/autograder-notifications.service
+          test -f MAIN/deploy/autograder-notifications.timer
+          grep -q 'autograder-notifications' MAIN/deploy/deploy-release.sh
       - name: Check host and deployment health contract
         run: uv run --project MAIN --locked pytest MAIN/host/tests -q
       - name: Check cgroup failure handling
@@ -272,7 +283,7 @@ jobs:
         env:
           JWT_PRIVATE_KEY_FILE: ${{ runner.temp }}/jwt-ed25519.pem
         run: MAIN/.venv/bin/python -m autograder_b4.ops.generate_key
-      - name: B4 internal target validation and identity (real PostgreSQL)
+      - name: B4 classes, notifications, registration and identity (real PostgreSQL)
         working-directory: B4
         env:
           B4_TEST_DATABASE_URL: postgresql+psycopg://autograder_b4:ci-b4@127.0.0.1:5432/autograder
@@ -284,18 +295,43 @@ jobs:
           # Existing B4 suites were never exercised by CI and several are red at the base
           # revision (contract-drift assertions / a bcrypt-only legacy-hash test whose dev
           # dependency is not part of the host environment). This selection covers the
-          # identity/course surface this change touches plus the new internal endpoints.
+          # v0.32.0 change surface: course/section/class hierarchy, the notification
+          # materialisation/state machine, registration binding, roster imports and the
+          # identity/course authorization surface plus the internal endpoints. Each
+          # invocation gets a fresh migrated schema, so count-based assertions cannot leak.
           ../MAIN/.venv/bin/python -m pytest -q \
-            tests/test_internal_course_targets.py \
-            tests/test_internal_identities.py \
+            tests/test_classes_and_roster.py \
+            tests/test_assignment_notifications.py \
+            tests/test_internal_identities.py
+          ../MAIN/.venv/bin/python -m pytest -q \
+            tests/test_registration.py \
+            tests/test_roster_import.py \
+            tests/test_users_courses.py
+          ../MAIN/.venv/bin/python -m pytest -q \
             tests/test_current_user.py \
             tests/test_authorization.py
+          # `test_database.py` runs every invocation (role privileges / ownership). The
+          # repository-wide schema-standard linter is deliberately NOT part of this job: it
+          # already fails at the base revision on a pre-existing registration_allowlist
+          # singular-name finding (tracked separately), so running it here would make this
+          # change's verify red for a reason unrelated to it -- without weakening any check
+          # for the change surface. Re-add the file when that legacy finding is fixed.
+          # The backup/dump cases drive `pg_dump` **inside a Docker container named
+          # `b4-postgres-1`** (the module-local compose instance), which this job does not
+          # run: its PostgreSQL is a GitHub service container with a different name. They
+          # are excluded rather than weakened; the migration/ownership/privilege cases in
+          # the same file still run against the real CI database.
+          ../MAIN/.venv/bin/python -m pytest -q \
+            tests/test_database.py -k "not backup"
 
       # ------------------------------------------------------------------ end-to-end
       # The module suites above prove each boundary against real PostgreSQL. This block
       # starts the composed host (B2+B3+B4 in one process) and drives the whole teacher ->
-      # student web/mail -> teacher flow over real HTTP, with synthetic accounts seeded into
-      # the real b4 schema and a real TCP IMAP fixture for the mail leg.
+      # course/class roster -> assignment -> notification -> student web/mail flow over real
+      # HTTP, with a real TCP IMAP fixture for the inbound mail leg and a real TCP SMTP sink
+      # (started inside the acceptance script) for the outbound notification leg. The host's
+      # SMTP configuration points at that sink, so "sent" is proven by bytes a real SMTP
+      # client handed to a real listener -- never by a stub inside the application.
       - name: Acceptance — reset schemas for the composed host
         env:
           PGHOST: 127.0.0.1
@@ -350,6 +386,19 @@ jobs:
           B4_JWT_AUDIENCE: autograder-api
           B4_JWKS_URL: http://127.0.0.1:18000/api/v1/auth/jwks
           B4_SERVICE_TOKEN: ci-service-token
+          # Outbound mail: the acceptance script starts a plaintext SMTP sink on this port and
+          # the host/CLI use the same variables, so registration codes and publication-notice
+          # e-mails are really handed to a listener. SMTP_TLS_MODE=none is required for the
+          # local sink; a TLS handshake against it would be a configuration error.
+          SMTP_HOST: 127.0.0.1
+          SMTP_PORT: "2525"
+          SMTP_USER: acceptance-smtp
+          SMTP_PASS: acceptance-smtp-pass
+          SMTP_FROM: no-reply@autograder.local
+          SMTP_FROM_NAME: AutoGrader Acceptance
+          SMTP_TLS_MODE: none
+          SMTP_TIMEOUT_SECONDS: "10"
+          ACCEPTANCE_SMTP_PORT: "2525"
           B2_DATABASE_URL: postgresql+psycopg://autograder_b2:ci-b2@127.0.0.1:5432/autograder
           B2_NATS_URL: nats://127.0.0.1:4222
           B2_ENV: development

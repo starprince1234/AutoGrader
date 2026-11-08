@@ -6,7 +6,7 @@
 
 | 方法 + 路径 | 用途 | 认证 | 作用域要求 | 实现状态 |
 |---|---|---|---|---|
-| `POST /api/v1/submissions` | 接收 B1 提交的待测代码 | 是（JWT） | 课程作用域匹配 `course_id`；学生只能提交本人 | 已实现（`B2Module.router` 实测注册） |
+| `POST /api/v1/submissions` | 接收 B1 提交的待测代码 | 是（JWT） | 令牌只判**角色 + 身份**（本人 / staff 代交 / 管理员豁免；学生不依赖令牌课程 scope）；**另按 B4 权威授权判定"当前有效归属"**（见 0.32.0 节） | 已实现（`B2Module.router` 实测注册） |
 | `GET /api/v1/submissions/{submission_id}` | 提交元数据与状态迁移史（不含源码内容） | 是（JWT） | 本人 / 课程作用域内的教师与助教 / 管理员 | 已实现（同上） |
 | `GET /api/v1/evaluation-runs/{evaluation_run_id}/events` | SSE 实时进度 | 是（JWT） | 仅本人/授权角色可订阅 | 已实现（`tests/test_b2_routes.py` 断言 `text/event-stream` 与断线语义） |
 | `GET/POST /api/v1/evaluation-runs/{evaluation_run_id}/commentary` | 读 / 生成教学评语（`RQ-T-20`）与顾问性参考分（`RQ-T-30`，同一次生成） | 是（JWT） | 读：同提交读权限；生成：**仅教师/助教/管理员** | 已实现（`tests/test_commentary_track.py`；见第 1b 节） |
@@ -23,8 +23,8 @@
 |---|---|---|
 | 评测运行详情 | `GET /api/v1/evaluation-runs/{evaluation_run_id}`（状态、进度） | 已实现（`tests/test_b2_routes.py`） |
 | 评测报告查询 | `GET /api/v1/evaluation-runs/{evaluation_run_id}/report`（报告 DTO，受 `evaluation-report` schema 约束） | 已实现（同上；报告只在 `completed` 后存在） |
-| 成绩查询 | 教师/学生按作用域查询（`GET /api/v1/grades`，**游标**分页） | 已实现（`tests/test_grades_query_export.py`、`tests/test_b2_routes.py`） |
-| 成绩导出 | 按课程/课序/题目版本导出 XLSX/CSV（`GET /api/v1/grades/export`） | 已实现（同上；产物确定性见 [../phases/active/phase-01-implementation.md](../phases/active/phase-01-implementation.md) 第 9 条） |
+| 成绩查询 | `GET /api/v1/grades`：教师/学生按作用域查询（**游标**分页）；学生读者另按 B4 当前归属判定（移出课程立即 403） | 已实现（`tests/test_grades_query_export.py`、`tests/test_b2_routes.py`） |
+| 成绩导出 | `GET /api/v1/grades/export`：按课程/课序/题目版本导出 XLSX/CSV；与查询共用同一处权限判定 | 已实现（同上；产物确定性见 [../phases/active/phase-01-implementation.md](../phases/active/phase-01-implementation.md) 第 9 条） |
 
 > 上表四行此前均记 `待实现`，**已按实际状态刷新**（2026-09-16）：四个端点都由 `B2Module.router` 注册，
 > 各有真实依赖测试（真实 PostgreSQL + 真实 JWT 验签 + 真实路由装配）。逐 RQ 追踪表的刷新见
@@ -145,7 +145,7 @@ B2 侧的四条纪律（每条都有测试，见 [../testing/cases.md](../testin
 | `POST .../{intake_quarantine_id}/resolve` | 人工归属（legacy）；体 `{student_id, note?}` | 同上；行锁后判定 | **只记录归属**：不建提交；写 `resolution=attributed` + 留痕 |
 | `POST .../{intake_quarantine_id}/dismiss` | 标记作废；体 `{note?}` | 同上 | 任何原因码都可作废；写 `resolution=dismissed`、无学生、无提交；一条 `UPDATE`，不评测 |
 | `POST .../{intake_quarantine_id}/hold` | 暂存/恢复；体 `{held: boolean}` | 同上 | 暂存仍未处理、可继续匹配/作废；写 `held_at`/`held_by`；已处理 409 |
-| `POST .../{intake_quarantine_id}/complete` | 匹配用户：回邮箱取原邮件，按 `student_id` + 课程/课序/题目版本生成真实提交 | 同上；目标课程必须在调用者 scope 内；有 scope 的记录还要求目标与记录 scope 一致 | 需要 `B2_IMAP_*`；没有邮件入口明确 503；原邮件不可定位 409；附件仍按当前闸门校验（422）；写 `resolution=completed` + `resolved_submission_id`，checkpoint 同事务转 `processed` |
+| `POST .../{intake_quarantine_id}/complete` | 匹配用户：回邮箱取原邮件，按 `student_id` + 课程 + 作业逐题（附件名 `<n>.txt`）生成真实提交 | 同上；目标课程必须在调用者 scope 内；有 scope 的记录还要求目标与记录 scope 一致；**另按 B4 当前归属校验**：学生必须仍有该课程的有效选课，且指定 section 必须等于其当前 enrollment 的 section（否则 422） | 需要 `B2_IMAP_*`；没有邮件入口明确 503；B4 授权目录不可用 503；原邮件不可定位 409；附件仍按当前闸门校验（422）；写 `resolution=completed` + `resolved_submission_id`，checkpoint 同事务转 `processed` |
 
 **行的课程范围从哪来（P13 的核心）**：`b2.intake_quarantines.scope_course_id/scope_section_id`
 （迁移 `20260915_0015`，成对为空或非空）。写入侧只接受**匹配规则候选共识**——全部命中规则的
@@ -167,9 +167,11 @@ B2 侧的四条纪律（每条都有测试，见 [../testing/cases.md](../testin
    `UPDATE b2.intake_quarantines`；用例以"提交/outbox/评测运行三张表计数逐条为零"把它钉住。
 3. **重复处置 ⇒ 409**（归属与驳回共享"已处理"状态，不覆盖前一个人的决定，也不静默返回旧值）；
    未知/非法标识 ⇒ 404；请求体违规 ⇒ 422。
-4. **名单成员关系不在 B2 复核**：B2 没有到 B4 名单的通道（无客户端、无 serviceToken 端点），
-   因此 resolve 不重查"该学生是否仍在该课序"。客户端每次从 B4 现取候选；服务端重查的是**记录行
-   scope + 调用者角色/作用域**，而不是信任客户端提交的候选列表。这是本轮登记在案的残留缺口。
+4. **名单成员关系在 `complete` 时由 B4 复核**（v0.32.0 起）：匹配用户必须回邮箱取原邮件，
+   服务端用 B4 `GET /api/v1/internal/users/{user_id}/authorization` 校验目标学生**当前**仍在课程里，
+   且指定 section 等于其当前 enrollment 的 section（不一致/无归属 ⇒ 422；授权目录不可用 ⇒ 503）。
+   legacy 的 `resolve`（只记录归属、不建提交）不要求该复核，因为它不产生任何提交或成绩。
+   列表/归属的行级 scope 仍来自核验码挑战（服务端签发事实），不信任客户端候选列表。
 
 ## 1e. 已上报的契约缺口（`CHG-0014`/`CHG-0015` 落地时发现，**B2 不自行裁决**）
 
@@ -231,8 +233,10 @@ B2 侧的四条纪律（每条都有测试，见 [../testing/cases.md](../testin
 | 提供方 | 我消费什么 | 用途 |
 |---|---|---|
 | B3 | `GET /api/v1/question-versions/{id}/evaluation-package`（内部接口） | 获取不可变 evaluation package（runner 核心依赖此结构） |
+| B3 | `GET /api/v1/assignment-audiences/{id}`（内部接口，serviceToken） | 课程级作业事实：所属课程、状态、有序题目列表（无 section/student 名单） |
 | B3 | 事件 `autograder.v1.question.version.published` | 缓存失效 / 题目可用性 |
 | B4 | JWT/JWKS（`iss`/`aud`/`role`/课程作用域） | 本地验签与授权判定 |
+| B4 | `GET /api/v1/internal/users/{user_id}/authorization`（内部接口，serviceToken；复用 `B2_IDENTITY_URL`/`B2_IDENTITY_AUTHORIZATION`） | **当前有效归属**权威：平台角色、课程级 staff 授权、当前有效选课（`course_id/section_id/class_id`）。提交/邮件挑战/邮件收件/隔离匹配/学生成绩读者共用。不可达或非 200 ⇒ 503（绝不当成"无归属"或空选课） |
 
 ## 3. 权威链接
 
@@ -289,6 +293,42 @@ B2 侧的四条纪律（每条都有测试，见 [../testing/cases.md](../testin
 - `SubmissionView.assignment_id`（可空，历史行为 `null`）。
 - `GET /submissions/{id}/files` 与 `/intake-message` 的读权限（CHG-0032 / 规格 §1.7）：学生只能读
   **本人**，教师/管理员在课程（含课序）作用域内可读；评分写端点仍限教师/管理员。
-- 作业模型相关的提交校验（作业存在/open、课程与题目属于作业、section/student 在受众内、恰好一个
-  单段 `<n>.txt`）与稳定拒绝原因见 [../architecture/interfaces.md](../architecture/interfaces.md) §2.4；
+- 作业模型相关的提交校验（作业存在/open、课程与题目属于作业、恰好一个单段 `<n>.txt`）与稳定
+  拒绝原因见 [../architecture/interfaces.md](../architecture/interfaces.md) §2.4；
   作业目录未配置/不可达是 `503`，不是学生错误。
+
+## 0.32.0 增量（课程级作业受众 + B4 权威归属）
+
+本版把作业受众从"手选课序/学生名单"改为**课程级**：一个作业对该课程**当前全部有效选课**的学生生效。
+因此 B2 的准入判定分成两层，且两层都必须成立：
+
+1. **令牌层（身份）**：角色、学生本人 / staff 代交 / 管理员豁免
+   （`auth.authorization.require_submission_identity`）。**学生的令牌课程 `scope` 不参与准入**
+   ——它只是签发时的快照（`b2.yaml createSubmission` 明文：admission must not depend on the
+   token's scope）：登录后才被加入课程的学生仍可提交，被移出的学生不能凭旧作用域继续提交。
+   staff 代交保留既有令牌语义（教师/助教令牌的课程作用域须覆盖该课程，
+   `require_submission_authority`）；邮件核验挑战是本人动作，只用身份层 + B4 归属。
+2. **权威归属层**（新增，`integration/b4_authorization.py`）：B2 调 B4
+   `GET /api/v1/internal/users/{user_id}/authorization` 取**当前**角色、课程级 staff 授权与当前
+   有效选课。判定口径（四个入口共用）：
+   - 学生提交本人作业 / 被 staff 代交：必须有该课程的当前有效 enrollment，其
+     `section_id` 是**权威课序**，覆盖请求里客户端填的值；
+   - 该课程的 staff：B4 的 `course_grants` 含该课程（B4 把课程级教师授权放在这里，
+     `platform_roles` 只返回平台级角色；管理员另由令牌级豁免处理）→ 为自己提交/签发时没有学生
+     选课，保留请求里的 section；
+   - 无当前归属 ⇒ `403`（提交入口在取作业**之前**判，因此不泄露作业是否存在）；
+   - B4 授权目录未配置/不可达/非 200 ⇒ `503`（基础设施失败），绝不折成 403 或"空选课"。
+
+**受影响的入口与行为**：
+
+| 入口 | 变化 |
+|---|---|
+| `POST /api/v1/submissions` | 课程级作业（B3 audience 只有 course/status/questions）；`section_id` 由 B4 权威值覆盖后落库；无归属 403；作业/授权目录不可用 503 |
+| `POST /api/v1/email-verification/challenges` | 挑战绑定 `(student, course, authoritative section, assignment)`；请求里的 `section_id` 被**忽略**（契约字段保留，服务端用权威值）；无归属 403、B4 目录不可用 503 |
+| IMAP 邮件收件 | 消费核验码后同样按作业 open + 课程一致 + 学生**当前**归属判定；移出课程 ⇒ 可解释隔离（不消费挑战）；换课序 ⇒ 用当前权威 section 落库；B4 目录不可用 ⇒ 本轮拉取失败并记 `identity_unavailable` 心跳（绝不隔离） |
+| `POST .../intake/quarantines/{id}/complete` | 人工匹配用户时校验作业课程与请求一致，并用 B4 权威归属校验学生/课序（不一致或无归属 ⇒ 422，目录不可用 ⇒ 503），与网页/邮件入口同口径 |
+| `GET /api/v1/grades`、`/grades/export` | **学生读者**新增权威归属检查：请求课程不在其当前 enrollments ⇒ 403；B4 目录不可用 ⇒ 503。staff 路径保持 token scope；响应结构与导出列不变 |
+
+**配置**：B4 授权端点复用现有 `B2_IDENTITY_URL` / `B2_IDENTITY_AUTHORIZATION`（Bearer 服务令牌，
+与邮件身份目录同一份配置），**不新增凭据**。部署必须保证 API/worker 进程也能拿到这两项
+（不只是 mail 进程）；缺失时上述入口按 503 语义拒绝。

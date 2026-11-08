@@ -22,11 +22,13 @@ import {
   assignmentPublic,
   coursePage,
   courseSummary,
+  currentUser,
   enrollmentPage,
   enrollmentPublic,
   gradePage,
   gradeRow,
   intakeQuarantineView,
+  myMembership,
   sessionCreated,
 } from "../../testing/contractFixtures";
 import { signIn } from "../../auth/sessionStore";
@@ -34,21 +36,25 @@ import { MAX_AUTO_PAGES } from "../../api/pagination";
 import { AssignmentsPage } from "./AssignmentsPage";
 
 /**
- * 作业中心（CHG-0032 适配）。
+ * 作业中心（v0.32.0 课程级）。
  *
  * 两条最重要的结论都不是"页面能打开"：
- * 1. 学生看到的进度来自**本人成绩行**（按 assignment_id 归属），且成绩行没取完时不给判定；
- * 2. 教师看到的"已交 / 部分 / 未交"来自**当前课序**的名单×成绩连接，
- *    作业的多个目标课序以多值展示，不因单 section 假设而崩溃。
+ * 1. 学生视图的课程/课序/班级来自 `GET /me` 的 memberships（多课程可切换），
+ *    本人进度来自**本人成绩行**（按 assignment_id 归属），成绩行没取完时不给判定；
+ * 2. 教师视图的"已交 / 部分 / 未交"来自**当前筛选课序**的名单 × 成绩连接；
+ *    作业本身对课程全部课序/班级生效，界面不再展示/依赖作业的 section_ids。
  */
 
 const COURSE = "00000000-0000-4000-8000-0000000000b1";
-const SECTION = "00000000-0000-4000-8000-0000000000b2";
-const SECTION_2 = "00000000-0000-4000-8000-0000000000b3";
-const STUDENT = "00000000-0000-4000-8000-0000000000c1";
-const S1 = "00000000-0000-4000-8000-0000000000d1";
-const S2 = "00000000-0000-4000-8000-0000000000d2";
-const S3 = "00000000-0000-4000-8000-0000000000d3";
+const COURSE_2 = "00000000-0000-4000-8000-0000000000b2";
+const SECTION = "00000000-0000-4000-8000-0000000000c1";
+const SECTION_2 = "00000000-0000-4000-8000-0000000000c2";
+const CLASS = "00000000-0000-4000-8000-0000000000d1";
+const CLASS_2 = "00000000-0000-4000-8000-0000000000d2";
+const STUDENT = "00000000-0000-4000-8000-0000000000e1";
+const S1 = "00000000-0000-4000-8000-0000000000f1";
+const S2 = "00000000-0000-4000-8000-0000000000f2";
+const S3 = "00000000-0000-4000-8000-0000000000f3";
 
 const V1 = "00000000-0000-4000-8000-000000000101";
 const V2 = "00000000-0000-4000-8000-000000000102";
@@ -57,16 +63,12 @@ const V3 = "00000000-0000-4000-8000-000000000103";
 const A1 = assignmentPublic({
   assignment_id: UUID_A,
   course_id: COURSE,
-  section_ids: [SECTION, SECTION_2],
-  student_ids: [],
   title: "第一次作业",
   question_version_ids: [V1, V2],
 });
 const A2 = assignmentPublic({
   assignment_id: UUID_C,
   course_id: COURSE,
-  section_ids: [SECTION],
-  student_ids: [],
   title: "第二次作业",
   question_version_ids: [V3],
   status: "archived",
@@ -90,21 +92,30 @@ function jwtFor(subject: string): string {
 const ROSTER = [
   enrollmentPublic({
     enrollment_id: UUID_A,
+    course_id: COURSE,
     section_id: SECTION,
+    class_id: CLASS,
+    class_name: "软件工程1班",
     student_id: S1,
     student_number: "20260001",
     display_name: "张三",
   }),
   enrollmentPublic({
     enrollment_id: UUID_C,
+    course_id: COURSE,
     section_id: SECTION,
+    class_id: CLASS,
+    class_name: "软件工程1班",
     student_id: S2,
     student_number: "20260002",
     display_name: "李四",
   }),
   enrollmentPublic({
     enrollment_id: "00000000-0000-4000-8000-0000000000e3",
+    course_id: COURSE,
     section_id: SECTION,
+    class_id: CLASS,
+    class_name: "软件工程1班",
     student_id: S3,
     student_number: "20260003",
     display_name: "王五",
@@ -117,8 +128,9 @@ function routes(options: {
   gradeNextCursor?: string | null;
   enrollments?: unknown[];
   pendingQuarantines?: number;
+  memberships?: ReturnType<typeof myMembership>[];
 }): StubbedRoute[] {
-  return [
+  const common: StubbedRoute[] = [
     {
       method: "GET",
       path: "/api/v1/intake/quarantines",
@@ -154,6 +166,37 @@ function routes(options: {
       respond: () =>
         jsonResponse(gradePage((options.grades ?? []) as never[], options.gradeNextCursor ?? null)),
     },
+  ];
+
+  if (options.role === "student") {
+    return [
+      ...common,
+      {
+        path: "/api/v1/me",
+        respond: () =>
+          jsonResponse(
+            currentUser({
+              user_id: STUDENT,
+              memberships:
+                options.memberships ??
+                [
+                  myMembership({
+                    course_id: COURSE,
+                    course_title: "操作系统",
+                    section_id: SECTION,
+                    section_code: "01",
+                    class_id: CLASS,
+                    class_name: "软件工程1班",
+                  }),
+                ],
+            }),
+          ),
+      },
+    ];
+  }
+
+  return [
+    ...common,
     {
       path: "/api/v1/courses",
       respond: () => jsonResponse(coursePage([courseSummary({ course_id: COURSE })])),
@@ -163,8 +206,22 @@ function routes(options: {
       respond: () =>
         jsonResponse({
           items: [
-            { section_id: SECTION, course_id: COURSE, section_code: "01", term: "2026F" },
-            { section_id: SECTION_2, course_id: COURSE, section_code: "02", term: "2026F" },
+            {
+              section_id: SECTION,
+              course_id: COURSE,
+              section_code: "01",
+              term: "2026F",
+              class_count: 1,
+              enrollment_count: 3,
+            },
+            {
+              section_id: SECTION_2,
+              course_id: COURSE,
+              section_code: "02",
+              term: "2026F",
+              class_count: 0,
+              enrollment_count: 0,
+            },
           ],
         }),
     },
@@ -201,10 +258,28 @@ function renderAt(path: string, element: () => ReactElement) {
 }
 
 describe("作业中心（学生侧）", () => {
-  it("列出作业，用本人成绩行按 assignment_id 算进度，并挂到作业工作区", async () => {
+  it("展示本人姓名/学号与全部课程、课序、班级；列出作业并给出进度", async () => {
     stub = installFetchStub(
       routes({
         role: "student",
+        memberships: [
+          myMembership({
+            course_id: COURSE,
+            course_title: "操作系统",
+            section_id: SECTION,
+            section_code: "01",
+            class_id: CLASS,
+            class_name: "软件工程1班",
+          }),
+          myMembership({
+            course_id: COURSE_2,
+            course_title: "数据结构",
+            section_id: "00000000-0000-4000-8000-0000000000c9",
+            section_code: "02",
+            class_id: CLASS_2,
+            class_name: "数据结构1班",
+          }),
+        ],
         grades: [
           gradeRow({
             assignment_id: UUID_A,
@@ -222,29 +297,67 @@ describe("作业中心（学生侧）", () => {
     await signIn("student1", "pw");
     renderAt("/", () => <AssignmentsPage />);
 
-    const table = await screen.findByTestId("my-assignments-table");
-    expect(table).toHaveTextContent("第一次作业");
-    expect(table).toHaveTextContent("第二次作业");
+    const memberships = await screen.findByTestId("my-memberships");
+    await waitFor(() =>
+      expect(within(memberships).getByTestId("my-identity")).toHaveTextContent("张三"),
+    );
+    expect(within(memberships).getByTestId("my-identity")).toHaveTextContent("20260001");
+    const list = screen.getByTestId("my-membership-list");
+    expect(within(list).getByTestId(`my-membership-${COURSE}`)).toHaveTextContent(
+      "操作系统 · 课序 01 · 班级 软件工程1班",
+    );
+    expect(within(list).getByTestId(`my-membership-${COURSE_2}`)).toHaveTextContent("数据结构");
 
-    // A1 两题只交了一题 → 部分提交 1/2；动作指向还没交的 V2。
+    // 多课程：提供课程切换。
+    expect(await screen.findByTestId("student-course-switch")).toBeInTheDocument();
+
+    const table = await screen.findByTestId("my-assignments-table");
     const row = within(table).getByText("第一次作业").closest("tr") as HTMLTableRowElement;
     expect(within(row).getByText("部分提交")).toBeInTheDocument();
     expect(within(row).getByTestId(`my-progress-${UUID_A}`)).toHaveTextContent("已完成 1 / 2");
-    const continueLink = within(row).getByRole("link", { name: "继续作答" });
-    expect(continueLink).toHaveAttribute(
+    expect(within(row).getByRole("link", { name: "继续作答" })).toHaveAttribute(
       "href",
-      expect.stringContaining(`/assignments/${UUID_A}`),
+      expect.stringContaining(`question=${V2}`),
     );
-    expect(continueLink).toHaveAttribute("href", expect.stringContaining(`question=${V2}`));
 
-    // A2 一题未交 → 未交 0/1，动作是"作答"。
     const second = within(table).getByText("第二次作业").closest("tr") as HTMLTableRowElement;
     expect(within(second).getByText("未交")).toBeInTheDocument();
-    expect(within(second).getByRole("link", { name: "作答" })).toHaveAttribute(
-      "href",
-      expect.stringContaining(`/assignments/${UUID_C}`),
-    );
     expect(second).toHaveTextContent("未设置截止时间");
+  });
+
+  it("切换课程会按选中 course_id 重新请求作业列表", async () => {
+    stub = installFetchStub(
+      routes({
+        role: "student",
+        memberships: [
+          myMembership({ course_id: COURSE, course_title: "操作系统" }),
+          myMembership({ course_id: COURSE_2, course_title: "数据结构" }),
+        ],
+      }),
+    );
+    await signIn("student1", "pw");
+    renderAt("/", () => <AssignmentsPage />);
+
+    const select = await screen.findByLabelText("课程");
+    await userEvent.setup().selectOptions(select, COURSE_2);
+
+    await waitFor(() => {
+      const assigned = (stub?.requests ?? []).filter(
+        (request) => request.url.pathname === "/api/v1/assignments",
+      );
+      expect(
+        assigned.some((request) => request.url.searchParams.get("course_id") === COURSE_2),
+      ).toBe(true);
+    });
+  });
+
+  it("不在任何课程名单中时明确说明，而不是显示空列表", async () => {
+    stub = installFetchStub(routes({ role: "student", memberships: [] }));
+    await signIn("student1", "pw");
+    renderAt("/", () => <AssignmentsPage />);
+
+    expect(await screen.findByText(/当前账号还没有任何有效选课/)).toBeInTheDocument();
+    expect(screen.queryByTestId("my-assignments-table")).toBeNull();
   });
 
   it("本人成绩行还没到位时不给出进度判定", async () => {
@@ -390,13 +503,8 @@ describe("作业中心（教师侧提交情况）", () => {
     await waitFor(() => expect(badge).toHaveTextContent("50+"));
   });
 
-  it("按新分类统计已交/部分/未交，且作业的多个目标课序以多值展示", async () => {
+  it("按新分类统计已交/部分/未交；列表视图说明作业是课程级受众", async () => {
     await openProgress({ grades: teacherGrades });
-
-    // A1 的目标课序是 [SECTION, SECTION_2]：两个都显示，不假设只有一个课序。
-    const sections = await screen.findByTestId(`assignment-sections-${UUID_A}`);
-    await waitFor(() => expect(sections).toHaveTextContent("01 · 2026F"));
-    expect(sections).toHaveTextContent("02 · 2026F");
 
     expect(await screen.findByTestId(`submitted-${UUID_A}`)).toHaveTextContent("1");
     expect(screen.getByTestId(`partial-${UUID_A}`)).toHaveTextContent("1");
@@ -404,6 +512,21 @@ describe("作业中心（教师侧提交情况）", () => {
 
     expect(screen.getByTestId(`submitted-${UUID_C}`)).toHaveTextContent("1");
     expect(screen.getByTestId(`notSubmitted-${UUID_C}`)).toHaveTextContent("2");
+
+    // 旧的多课序展示（assignment-sections-*）已删除：作业不再有目标课序列表。
+    expect(screen.queryByTestId(`assignment-sections-${UUID_A}`)).toBeNull();
+  });
+
+  it("教师列表视图显示课程级受众说明，且不出现 section_ids 派生列", async () => {
+    stub = installFetchStub(routes({ role: "teacher", grades: teacherGrades }));
+    await signIn("teacher1", "pw");
+    renderAt("/", () => <AssignmentsPage />);
+
+    expect(await screen.findByTestId("my-assignments-table")).toBeInTheDocument();
+    expect(screen.getByTestId("assignment-course-wide")).toHaveTextContent(
+      "发布后对该课程全部课序与班级",
+    );
+    expect(screen.queryByText("目标课序")).toBeNull();
   });
 
   it("未绑定账号的名单行不参与「未交」判定", async () => {
@@ -412,14 +535,20 @@ describe("作业中心（教师侧提交情况）", () => {
       enrollments: [
         enrollmentPublic({
           enrollment_id: UUID_A,
+          course_id: COURSE,
           section_id: SECTION,
+          class_id: CLASS,
+          class_name: "软件工程1班",
           student_id: S1,
           student_number: "20260001",
           display_name: "张三",
         }),
         enrollmentPublic({
           enrollment_id: UUID_C,
+          course_id: COURSE,
           section_id: SECTION,
+          class_id: CLASS,
+          class_name: "软件工程1班",
           student_id: null,
           student_number: "20260002",
           display_name: "李四",
@@ -447,13 +576,5 @@ describe("作业中心（教师侧提交情况）", () => {
     expect(within(notice).queryAllByRole("status")).toHaveLength(0);
     expect(screen.queryByTestId("assignment-progress-table")).toBeNull();
     expect(screen.queryByTestId(`notSubmitted-${UUID_A}`)).toBeNull();
-  });
-
-  it("教师列表视图不因作业多课序而误报（无 section 单选假设）", async () => {
-    stub = installFetchStub(routes({ role: "teacher", grades: teacherGrades }));
-    await signIn("teacher1", "pw");
-    renderAt("/", () => <AssignmentsPage />);
-    // 默认在列表标签：教师也能看到作业列表，不应崩溃。
-    expect(await screen.findByTestId("my-assignments-table")).toBeInTheDocument();
   });
 });

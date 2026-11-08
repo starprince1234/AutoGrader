@@ -1,20 +1,22 @@
-"""Assignment target model and audience (``CHG-0032`` / assignment workflow §3).
+"""Course-level assignments and the publication-notification hand-off (v0.32.0).
 
-These are the B3 acceptance cases for the assignment rework:
+These are the B3 acceptance cases for the assignment rework (design §3):
 
-* an assignment targets 1..N sections and may narrow the audience to named students;
-* target ids are validated against the identity/course module, and an unavailable
-  validator refuses creation instead of accepting them on trust;
+* an assignment belongs to one course and automatically covers **every** section, class and
+  student of it -- there is no hand-picked target list;
+* a student's access is decided from B4's **authoritative current** authorization, so every
+  section of the course sees the assignment, another course's student does not, and a
+  student removed from the course stops seeing it immediately;
+* the list's course filter is applied in SQL (a page is never shortened by a post-filter);
+* publishing hands the audience to B4: ``scheduled`` on success, ``unavailable`` on any
+  failure (the assignment is not rolled back), and the teacher retry endpoint is idempotent
+  and maps B4's declared rejections back to the same status;
 * version references keep their old semantics (cross-course ``404``, draft ``409``,
-  duplicate ids ``422``);
-* reads are audience-aware: teachers inside their course/section scope, students inside
-  the target sections and, when the audience is narrowed, on the named list;
-* the list is keyset-paginated and the cursor is actually used;
-* B2's internal audience endpoint requires the service token and reports ``503`` when
-  the deployment has not configured one.
+  duplicate ids ``422``) and B2's internal audience endpoint still requires the service token.
 
-The database and the HTTP surface are real; only the identity/course module's *endpoint*
-is replaced (the ``b4_target_client`` fixture serves it from an in-memory mapping).
+The database and the HTTP surface are real; only the identity/course module's *HTTP
+exchange* is replaced (``fake_b4`` serves the two internal operations through the
+production clients).
 """
 
 from __future__ import annotations
@@ -26,24 +28,25 @@ import pytest
 from fastapi.testclient import TestClient
 
 from autograder_b3.api.app import create_app
-from autograder_b3.integration.b4 import B4TargetClient
+from autograder_b3.integration.b4 import B4AssignmentNotifier, B4AuthorizationClient
 
 from .conftest import (
+    CLASS_E,
     COURSE_A,
     COURSE_B,
     COURSE_D,
-    SECTION_A,
-    SECTION_A2,
-    SECTION_B,
-    SECTION_D,
+    COURSE_E,
+    SECTION_E,
     STUDENT_A,
-    STUDENT_B,
     draft_payload,
 )
 from .support import http_publish
 
 ASSIGNMENTS = "/api/v1/assignments"
 INTERNAL_ASSIGNMENT = "/api/v1/assignment-audiences"
+
+#: The clock fixture's fixed moment; the notification request echoes it as ``published_at``.
+CREATED_AT = "2026-09-15T08:30:00.000Z"
 
 
 def _publish_one_version(
@@ -86,6 +89,13 @@ def published_course_d_version(client, auth_headers) -> str:
 
 
 @pytest.fixture
+def published_course_e_version(client, auth_headers) -> str:
+    return _publish_one_version(
+        client, auth_headers, token="teacher-e", course_id=COURSE_E
+    )
+
+
+@pytest.fixture
 def draft_version(client, auth_headers) -> str:
     created = client.post(
         "/api/v1/questions",
@@ -107,22 +117,18 @@ def _create_assignment(
     *,
     token: str = "teacher-a",
     course_id=COURSE_A,
-    section_ids=(SECTION_A,),
-    student_ids=(),
     version_ids,
     title: str = "Homework",
+    due_at: str | None = None,
 ):
-    return client.post(
-        ASSIGNMENTS,
-        json={
-            "course_id": str(course_id),
-            "section_ids": [str(section) for section in section_ids],
-            "student_ids": [str(student) for student in student_ids],
-            "title": title,
-            "question_version_ids": [str(version) for version in version_ids],
-        },
-        headers=auth_headers(token),
-    )
+    body: dict = {
+        "course_id": str(course_id),
+        "title": title,
+        "question_version_ids": [str(version) for version in version_ids],
+    }
+    if due_at is not None:
+        body["due_at"] = due_at
+    return client.post(ASSIGNMENTS, json=body, headers=auth_headers(token))
 
 
 def _client_with(dependencies, **changes) -> TestClient:
@@ -131,49 +137,71 @@ def _client_with(dependencies, **changes) -> TestClient:
     return TestClient(app, raise_server_exceptions=False)
 
 
-# --- creation: target model ----------------------------------------------
+def _detail(client, auth_headers, token: str, assignment_id: str):
+    return client.get(f"{ASSIGNMENTS}/{assignment_id}", headers=auth_headers(token))
 
 
-def test_assignment_targets_multiple_sections_and_narrows_students(
-    client, auth_headers, published_version
+def _listed_ids(client, auth_headers, token: str, **params) -> set[str]:
+    response = client.get(ASSIGNMENTS, params=params, headers=auth_headers(token))
+    assert response.status_code == 200, response.text
+    return {item["assignment_id"] for item in response.json()["items"]}
+
+
+# --- creation: course-level shape ----------------------------------------
+
+
+def test_create_assignment_is_course_level_and_schedules_the_notification(
+    client, auth_headers, fake_b4, published_version
 ):
     response = _create_assignment(
         client,
         auth_headers,
-        section_ids=(SECTION_A, SECTION_A2),
-        student_ids=(STUDENT_A, STUDENT_B),
         version_ids=(published_version,),
+        due_at="2026-11-20T23:59:00Z",
     )
     assert response.status_code == 201, response.text
     body = response.json()
     assert set(body) == {
         "assignment_id",
         "course_id",
-        "section_ids",
-        "student_ids",
         "title",
         "status",
         "due_at",
         "question_version_ids",
+        "notification_state",
         "created_at",
         "updated_at",
     }
-    assert body["section_ids"] == [str(SECTION_A), str(SECTION_A2)]
-    assert body["student_ids"] == [str(STUDENT_A), str(STUDENT_B)]
+    assert body["course_id"] == str(COURSE_A)
     assert body["question_version_ids"] == [published_version]
     assert body["status"] == "open"
-    # The single-section field is gone, not deprecated: keeping it would be a second
-    # answer to "who is this assignment for".
-    assert "section_id" not in body
+    # The hand-picked target model is gone, not deprecated: a leftover list would be a
+    # second answer to "who is this assignment for".
+    assert "section_ids" not in body
+    assert "student_ids" not in body
+    assert body["notification_state"] == "scheduled"
+
+    sent = fake_b4.notifications[uuid.UUID(body["assignment_id"])]
+    assert sent == {
+        "assignment_id": body["assignment_id"],
+        "course_id": str(COURSE_A),
+        "title": "Homework",
+        "due_at": "2026-11-20T23:59:00.000Z",
+        "published_at": CREATED_AT,
+    }
+    post = next(item for item in fake_b4.requests if item["method"] == "POST")
+    assert post["url"].endswith("/api/v1/internal/assignment-notifications")
+    assert post["headers"]["authorization"] == "Bearer test-service-token"
 
 
-def test_assignment_can_target_exactly_one_section_without_narrowing(
-    client, auth_headers, published_version
+def test_create_assignment_without_a_due_date_sends_no_deadline(
+    client, auth_headers, fake_b4, published_version
 ):
     response = _create_assignment(client, auth_headers, version_ids=(published_version,))
     assert response.status_code == 201, response.text
-    assert response.json()["section_ids"] == [str(SECTION_A)]
-    assert response.json()["student_ids"] == []
+    assert response.json()["due_at"] is None
+    sent = fake_b4.notifications[uuid.UUID(response.json()["assignment_id"])]
+    assert sent["due_at"] is None
 
 
 def test_assignment_keeps_question_version_order(client, auth_headers):
@@ -189,70 +217,13 @@ def test_assignment_keeps_question_version_order(client, auth_headers):
 # --- creation: validation -------------------------------------------------
 
 
-def test_unknown_section_is_unprocessable(client, auth_headers, published_version):
-    response = _create_assignment(
-        client, auth_headers, section_ids=(uuid.uuid4(),), version_ids=(published_version,)
-    )
-    assert response.status_code == 422
-    assert response.json()["type"].endswith("/invalid-assignment-target")
-    assert response.json()["detail"].count("section target") == 1
-
-
-def test_section_of_another_course_is_unprocessable(client, auth_headers, published_version):
-    response = _create_assignment(
-        client, auth_headers, section_ids=(SECTION_B,), version_ids=(published_version,)
-    )
-    assert response.status_code == 422
-    assert response.json()["type"].endswith("/invalid-assignment-target")
-
-
-def test_student_must_be_enrolled_in_one_of_the_target_sections(
+def test_duplicate_question_version_ids_are_unprocessable(
     client, auth_headers, published_version
 ):
-    # STUDENT_B is actively enrolled in SECTION_A2, which this assignment does not target.
     response = _create_assignment(
-        client,
-        auth_headers,
-        section_ids=(SECTION_A,),
-        student_ids=(STUDENT_A, STUDENT_B),
-        version_ids=(published_version,),
-    )
-    assert response.status_code == 422
-    assert response.json()["type"].endswith("/invalid-assignment-target")
-    # Counts only: a creation error must not become an enrollment lookup channel.
-    assert str(STUDENT_B) not in response.text
-
-
-def test_unknown_student_is_unprocessable(client, auth_headers, published_version):
-    response = _create_assignment(
-        client,
-        auth_headers,
-        student_ids=(uuid.uuid4(),),
-        version_ids=(published_version,),
-    )
-    assert response.status_code == 422
-    assert response.json()["type"].endswith("/invalid-assignment-target")
-
-
-def test_duplicate_target_ids_are_unprocessable(client, auth_headers, published_version):
-    duplicate_sections = _create_assignment(
-        client,
-        auth_headers,
-        section_ids=(SECTION_A, SECTION_A),
-        version_ids=(published_version,),
-    )
-    assert duplicate_sections.status_code == 422
-    duplicate_students = _create_assignment(
-        client,
-        auth_headers,
-        student_ids=(STUDENT_A, STUDENT_A),
-        version_ids=(published_version,),
-    )
-    assert duplicate_students.status_code == 422
-    duplicate_versions = _create_assignment(
         client, auth_headers, version_ids=(published_version, published_version)
     )
-    assert duplicate_versions.status_code == 422
+    assert response.status_code == 422
 
 
 def test_draft_version_reference_is_conflict(client, auth_headers, draft_version):
@@ -269,201 +240,316 @@ def test_cross_course_version_reference_is_not_found(client, auth_headers, publi
         auth_headers,
         token="teacher-b",
         course_id=COURSE_B,
-        section_ids=(SECTION_B,),
         version_ids=(published_version,),
     )
     assert response.status_code == 404
 
 
-# --- creation: target validation availability ----------------------------
+def test_student_cannot_create_an_assignment(client, auth_headers, published_version):
+    response = _create_assignment(
+        client, auth_headers, token="student-a", version_ids=(published_version,)
+    )
+    assert response.status_code == 403
 
 
-def test_create_assignment_without_a_target_validator_is_503(
-    dependencies, auth_headers, published_version
+# --- creation: notification failures never roll the assignment back -------
+
+
+def test_create_without_a_configured_notifier_records_unavailable(
+    client, dependencies, auth_headers, published_version
 ):
-    with _client_with(dependencies, b4_targets=None) as overridden:
+    with _client_with(dependencies, b4_notifier=None) as overridden:
         response = overridden.post(
             ASSIGNMENTS,
             json={
                 "course_id": str(COURSE_A),
-                "section_ids": [str(SECTION_A)],
-                "title": "no validator",
+                "title": "no notifier",
                 "question_version_ids": [published_version],
             },
             headers=auth_headers("teacher-a"),
         )
-    assert response.status_code == 503
-    assert response.json()["type"].endswith("/assignment-targets-unavailable")
+    assert response.status_code == 201, response.text
+    assert response.json()["notification_state"] == "unavailable"
+    # The assignment is published and readable; only the hand-off is missing.
+    assignment_id = response.json()["assignment_id"]
+    assert _detail(client, auth_headers, "teacher-a", assignment_id).status_code == 200
 
 
-def test_create_assignment_with_an_unreachable_validator_is_503(
-    dependencies, auth_headers, published_version
+def test_create_with_an_unreachable_notifier_records_unavailable(
+    client, dependencies, auth_headers, published_version
 ):
     def failing_opener(request, timeout):
         raise ConnectionError("connection refused")
 
-    broken = B4TargetClient(
+    broken = B4AssignmentNotifier(
         base_url="http://identity.invalid",
         service_token="test-service-token",
         opener=failing_opener,
     )
-    with _client_with(dependencies, b4_targets=broken) as overridden:
+    with _client_with(dependencies, b4_notifier=broken) as overridden:
         response = overridden.post(
             ASSIGNMENTS,
             json={
                 "course_id": str(COURSE_A),
-                "section_ids": [str(SECTION_A)],
-                "title": "validator down",
+                "title": "notifier down",
                 "question_version_ids": [published_version],
             },
             headers=auth_headers("teacher-a"),
         )
-    assert response.status_code == 503
-    assert response.json()["type"].endswith("/assignment-targets-unavailable")
+    assert response.status_code == 201, response.text
+    assert response.json()["notification_state"] == "unavailable"
 
 
-# --- reads: teachers ------------------------------------------------------
+def test_create_records_unavailable_when_b4_rejects_the_hand_off(
+    client, auth_headers, fake_b4, published_version
+):
+    """B4's 4xx during creation is still "unavailable", not a failed creation."""
+    fake_b4.default_notification_status = 422
+    response = _create_assignment(
+        client, auth_headers, version_ids=(published_version,), title="rejected hand-off"
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["notification_state"] == "unavailable"
 
 
-def test_section_scoped_teacher_reads_only_its_own_target_sections(
+# --- notification retry ---------------------------------------------------
+
+
+def test_notification_retry_is_idempotent(client, auth_headers, fake_b4, published_version):
+    created = _create_assignment(client, auth_headers, version_ids=(published_version,))
+    assert created.status_code == 201, created.text
+    assignment_id = created.json()["assignment_id"]
+    path = f"{ASSIGNMENTS}/{assignment_id}/notifications"
+
+    first = client.post(path, headers=auth_headers("teacher-a"))
+    assert first.status_code == 200, first.text
+    assert first.json()["notification_state"] == "scheduled"
+    second = client.post(path, headers=auth_headers("teacher-a"))
+    assert second.status_code == 200, second.text
+    assert second.json()["notification_state"] == "scheduled"
+    # B4 is the idempotent side; B3 keeps handing over the same facts, never new ones.
+    assert fake_b4.notifications[uuid.UUID(assignment_id)]["assignment_id"] == assignment_id
+
+
+def test_an_unavailable_assignment_can_be_retried_to_scheduled(
+    client, dependencies, auth_headers, fake_b4, published_version
+):
+    with _client_with(dependencies, b4_notifier=None) as overridden:
+        created = overridden.post(
+            ASSIGNMENTS,
+            json={
+                "course_id": str(COURSE_A),
+                "title": "retry me",
+                "question_version_ids": [published_version],
+            },
+            headers=auth_headers("teacher-a"),
+        )
+    assert created.status_code == 201, created.text
+    assignment_id = created.json()["assignment_id"]
+    assert created.json()["notification_state"] == "unavailable"
+
+    retried = client.post(
+        f"{ASSIGNMENTS}/{assignment_id}/notifications", headers=auth_headers("teacher-a")
+    )
+    assert retried.status_code == 200, retried.text
+    assert retried.json()["assignment_id"] == assignment_id
+    assert retried.json()["notification_state"] == "scheduled"
+    detail = _detail(client, auth_headers, "teacher-a", assignment_id)
+    assert detail.json()["notification_state"] == "scheduled"
+
+
+@pytest.mark.parametrize("status", [404, 409, 422])
+def test_notification_retry_maps_b4_rejections_to_the_same_status(
+    client, auth_headers, fake_b4, published_version, status: int
+):
+    created = _create_assignment(client, auth_headers, version_ids=(published_version,))
+    assert created.status_code == 201, created.text
+    assignment_id = created.json()["assignment_id"]
+    fake_b4.notification_status[uuid.UUID(assignment_id)] = status
+
+    response = client.post(
+        f"{ASSIGNMENTS}/{assignment_id}/notifications", headers=auth_headers("teacher-a")
+    )
+    assert response.status_code == status
+    assert response.headers["content-type"].startswith("application/problem+json")
+    # The persisted state tells the truth: the hand-off did not succeed.
+    detail = _detail(client, auth_headers, "teacher-a", assignment_id)
+    assert detail.status_code == 200
+    assert detail.json()["notification_state"] == "unavailable"
+
+
+def test_notification_retry_requires_course_write_permission(
     client, auth_headers, published_version
 ):
+    created = _create_assignment(client, auth_headers, version_ids=(published_version,))
+    assignment_id = created.json()["assignment_id"]
+    path = f"{ASSIGNMENTS}/{assignment_id}/notifications"
+
+    assert client.post(path).status_code == 401
+    assert client.post(path, headers=auth_headers("student-a")).status_code == 403
+    # The assignment exists but belongs to COURSE_A; teacher-b has only COURSE_B.
+    assert client.post(path, headers=auth_headers("teacher-b")).status_code == 403
+    assert client.post(path, headers=auth_headers("teacher-a")).status_code == 200
+
+
+def test_notification_retry_for_an_unknown_assignment_is_not_found(client, auth_headers):
+    response = client.post(
+        f"{ASSIGNMENTS}/{uuid.uuid4()}/notifications", headers=auth_headers("teacher-a")
+    )
+    assert response.status_code == 404
+
+
+# --- reads: students -----------------------------------------------------
+
+
+def test_every_section_of_the_course_sees_the_assignment(
+    client, auth_headers, published_version
+):
+    """Two students in two different sections/classes of COURSE_A both see it."""
+    created = _create_assignment(client, auth_headers, version_ids=(published_version,))
+    assert created.status_code == 201, created.text
+    assignment_id = created.json()["assignment_id"]
+
+    for token in ("student-a", "student-b"):
+        detail = _detail(client, auth_headers, token, assignment_id)
+        assert detail.status_code == 200, (token, detail.text)
+        assert detail.json()["assignment_id"] == assignment_id
+        listed = _listed_ids(client, auth_headers, token)
+        assert assignment_id in listed, token
+
+
+def test_a_student_of_another_course_does_not_see_it(
+    client, auth_headers, published_version
+):
+    created = _create_assignment(client, auth_headers, version_ids=(published_version,))
+    assignment_id = created.json()["assignment_id"]
+
+    denied = _detail(client, auth_headers, "student-c", assignment_id)
+    assert denied.status_code == 403
+    assert denied.json()["type"].endswith("/forbidden")
+    assert assignment_id not in _listed_ids(client, auth_headers, "student-c")
+
+
+def test_removing_the_enrollment_revokes_access_immediately(
+    client, auth_headers, fake_b4, published_version
+):
+    """The authoritative directory is asked per request, so removal needs no token refresh."""
+    created = _create_assignment(client, auth_headers, version_ids=(published_version,))
+    assignment_id = created.json()["assignment_id"]
+
+    assert _detail(client, auth_headers, "student-a", assignment_id).status_code == 200
+    assert assignment_id in _listed_ids(client, auth_headers, "student-a")
+
+    fake_b4.enrollments.pop(STUDENT_A)
+
+    denied = _detail(client, auth_headers, "student-a", assignment_id)
+    assert denied.status_code == 403
+    listing = client.get(ASSIGNMENTS, headers=auth_headers("student-a"))
+    assert listing.status_code == 200, listing.text
+    assert listing.json()["items"] == []
+
+
+def test_student_list_filters_by_the_authoritative_courses_in_sql(
+    client, auth_headers, fake_b4, clock, published_course_e_version
+):
+    """The page must be filtered in SQL, not after fetching it.
+
+    COURSE_E is written by this test only. The visible assignment is created first, then
+    three newer assignments are created in COURSE_B, which this student is not enrolled in.
+    ``limit=1`` without a ``course_id`` filter must therefore return the COURSE_E
+    assignment: a post-filtered page would serve a COURSE_B row first and end up empty.
+    """
+    fake_b4.enrollments[STUDENT_A] = (COURSE_E, SECTION_E, CLASS_E)
     visible = _create_assignment(
         client,
         auth_headers,
-        section_ids=(SECTION_A, SECTION_A2),
-        version_ids=(published_version,),
+        token="teacher-e",
+        course_id=COURSE_E,
+        version_ids=(published_course_e_version,),
         title="visible",
     )
     assert visible.status_code == 201, visible.text
-    other_section = _create_assignment(
-        client,
-        auth_headers,
-        section_ids=(SECTION_A2,),
-        version_ids=(published_version,),
-        title="other section",
-    )
-    assert other_section.status_code == 201, other_section.text
-
     visible_id = visible.json()["assignment_id"]
-    other_id = other_section.json()["assignment_id"]
 
-    # teacher-a holds the (COURSE_A, SECTION_A) pair: intersecting target -> readable.
-    assert (
-        client.get(f"{ASSIGNMENTS}/{visible_id}", headers=auth_headers("teacher-a")).status_code
-        == 200
+    clock.advance(60)
+    course_b_version = _publish_one_version(
+        client, auth_headers, token="teacher-b", course_id=COURSE_B
     )
-    # The record exists and the course is in scope, but no target section is in the token:
-    # authenticated-but-outside-the-audience is 403 (never masked as 404).
-    denied = client.get(f"{ASSIGNMENTS}/{other_id}", headers=auth_headers("teacher-a"))
+    hidden_ids = set()
+    for index in range(3):
+        hidden = _create_assignment(
+            client,
+            auth_headers,
+            token="teacher-b",
+            course_id=COURSE_B,
+            version_ids=(course_b_version,),
+            title=f"hidden {index}",
+        )
+        assert hidden.status_code == 201, hidden.text
+        hidden_ids.add(hidden.json()["assignment_id"])
+        clock.advance(60)
+
+    listing = client.get(ASSIGNMENTS, params={"limit": 1}, headers=auth_headers("student-a"))
+    assert listing.status_code == 200, listing.text
+    body = listing.json()
+    assert [item["assignment_id"] for item in body["items"]] == [visible_id]
+    assert body["next_cursor"] is None
+    assert hidden_ids & {item["assignment_id"] for item in body["items"]} == set()
+
+
+def test_student_reads_fail_closed_when_the_directory_is_unusable(
+    client, dependencies, auth_headers, published_version
+):
+    created = _create_assignment(client, auth_headers, version_ids=(published_version,))
+    assignment_id = created.json()["assignment_id"]
+
+    def failing_opener(request, timeout):
+        raise ConnectionError("identity service down")
+
+    broken = B4AuthorizationClient(
+        base_url="http://identity.invalid",
+        service_token="test-service-token",
+        opener=failing_opener,
+    )
+    with _client_with(dependencies, b4_authorization=broken) as overridden:
+        detail = overridden.get(
+            f"{ASSIGNMENTS}/{assignment_id}", headers=auth_headers("student-a")
+        )
+        listed = overridden.get(ASSIGNMENTS, headers=auth_headers("student-a"))
+        # A teacher does not depend on the directory and keeps working.
+        teacher = overridden.get(
+            f"{ASSIGNMENTS}/{assignment_id}", headers=auth_headers("teacher-a")
+        )
+    assert detail.status_code == 503
+    assert detail.json()["type"].endswith("/authorization-unavailable")
+    assert listed.status_code == 503
+    assert teacher.status_code == 200
+
+    with _client_with(dependencies, b4_authorization=None) as overridden:
+        unconfigured = overridden.get(ASSIGNMENTS, headers=auth_headers("student-a"))
+    assert unconfigured.status_code == 503
+
+
+# --- reads: teachers -----------------------------------------------------
+
+
+def test_teacher_reads_assignments_within_the_token_course_scope(
+    client, auth_headers, published_version
+):
+    created = _create_assignment(client, auth_headers, version_ids=(published_version,))
+    assignment_id = created.json()["assignment_id"]
+
+    # A section-scoped teacher token still grants the whole course: assignments are
+    # course-level now, so there is no target section to match against.
+    assert _detail(client, auth_headers, "teacher-a", assignment_id).status_code == 200
+    assert assignment_id in _listed_ids(client, auth_headers, "teacher-a")
+
+    denied = _detail(client, auth_headers, "teacher-b", assignment_id)
     assert denied.status_code == 403
     assert denied.json()["type"].endswith("/forbidden")
+    assert assignment_id not in _listed_ids(client, auth_headers, "teacher-b")
 
-    # A whole-course teacher may read both.
-    assert (
-        client.get(f"{ASSIGNMENTS}/{other_id}", headers=auth_headers("teacher-wide")).status_code
-        == 200
-    )
-
-    listed = client.get(
-        ASSIGNMENTS, params={"course_id": str(COURSE_A)}, headers=auth_headers("teacher-a")
-    ).json()
-    listed_ids = {item["assignment_id"] for item in listed["items"]}
-    assert visible_id in listed_ids
-    assert other_id not in listed_ids
-
-    wide = client.get(
-        ASSIGNMENTS, params={"course_id": str(COURSE_A)}, headers=auth_headers("teacher-wide")
-    ).json()
-    wide_ids = {item["assignment_id"] for item in wide["items"]}
-    assert {visible_id, other_id} <= wide_ids
-
-
-# --- reads: students ------------------------------------------------------
-
-
-def test_student_reads_only_assignments_for_their_section_and_audience(
-    client, auth_headers, published_version
-):
-    targeting_my_section = _create_assignment(
-        client,
-        auth_headers,
-        section_ids=(SECTION_A,),
-        version_ids=(published_version,),
-        title="my section",
-    )
-    targeting_other_section = _create_assignment(
-        client,
-        auth_headers,
-        section_ids=(SECTION_A2,),
-        version_ids=(published_version,),
-        title="other section",
-    )
-    narrowed_to_me = _create_assignment(
-        client,
-        auth_headers,
-        section_ids=(SECTION_A, SECTION_A2),
-        student_ids=(STUDENT_A,),
-        version_ids=(published_version,),
-        title="narrowed to me",
-    )
-    narrowed_to_someone_else = _create_assignment(
-        client,
-        auth_headers,
-        section_ids=(SECTION_A, SECTION_A2),
-        student_ids=(STUDENT_B,),
-        version_ids=(published_version,),
-        title="narrowed to someone else",
-    )
-    for response in (
-        targeting_my_section,
-        targeting_other_section,
-        narrowed_to_me,
-        narrowed_to_someone_else,
-    ):
-        assert response.status_code == 201, response.text
-
-    visible_ids = {targeting_my_section.json()["assignment_id"], narrowed_to_me.json()["assignment_id"]}
-    hidden_ids = {
-        targeting_other_section.json()["assignment_id"],
-        narrowed_to_someone_else.json()["assignment_id"],
-    }
-
-    for assignment_id in visible_ids:
-        assert (
-            client.get(f"{ASSIGNMENTS}/{assignment_id}", headers=auth_headers("student-a")).status_code
-            == 200
-        ), assignment_id
-    for assignment_id in hidden_ids:
-        assert (
-            client.get(f"{ASSIGNMENTS}/{assignment_id}", headers=auth_headers("student-a")).status_code
-            == 403
-        ), assignment_id
-
-    listed = client.get(
-        ASSIGNMENTS, params={"course_id": str(COURSE_A)}, headers=auth_headers("student-a")
-    )
-    assert listed.status_code == 200, listed.text
-    listed_ids = {item["assignment_id"] for item in listed.json()["items"]}
-    assert visible_ids <= listed_ids
-    assert listed_ids & hidden_ids == set()
-
-
-def test_student_outside_the_target_section_is_forbidden_not_not_found(
-    client, auth_headers, published_version
-):
-    assignment = _create_assignment(
-        client,
-        auth_headers,
-        section_ids=(SECTION_A2,),
-        version_ids=(published_version,),
-    )
-    assert assignment.status_code == 201, assignment.text
-    response = client.get(
-        f"{ASSIGNMENTS}/{assignment.json()['assignment_id']}",
-        headers=auth_headers("student-a"),
-    )
-    assert response.status_code == 403
+    assert assignment_id in _listed_ids(client, auth_headers, "teacher-wide")
 
 
 # --- list: paging and authentication -------------------------------------
@@ -481,8 +567,8 @@ def test_assignment_list_walks_every_page_with_the_cursor(
     """The cursor is decoded and used: page 2 must not re-serve page 1.
 
     Runs on COURSE_D/teacher-d because assignment rows are not truncated between tests:
-    every other assignment test writes COURSE_A, so only a course nobody else writes can
-    assert the served set exactly.
+    every other assignment test writes COURSE_A/B/E, so only a course nobody else writes
+    can assert the served set exactly.
     """
     created_ids = []
     for index in range(3):
@@ -491,7 +577,6 @@ def test_assignment_list_walks_every_page_with_the_cursor(
             auth_headers,
             token="teacher-d",
             course_id=COURSE_D,
-            section_ids=(SECTION_D,),
             version_ids=(published_course_d_version,),
             title=f"page {index}",
         )
@@ -537,34 +622,20 @@ def test_assignment_list_rejects_a_malformed_cursor(client, auth_headers):
     assert response.status_code == 422
 
 
-def test_assignment_list_filters_by_target_section(
-    client, auth_headers, published_version
-):
+def test_assignment_list_filter_by_course(client, auth_headers, published_version):
     in_a = _create_assignment(
-        client,
-        auth_headers,
-        section_ids=(SECTION_A,),
-        version_ids=(published_version,),
-        title="in a",
+        client, auth_headers, version_ids=(published_version,), title="in a"
     )
-    in_a2 = _create_assignment(
-        client,
-        auth_headers,
-        section_ids=(SECTION_A2,),
-        version_ids=(published_version,),
-        title="in a2",
-    )
-    assert in_a.status_code == in_a2.status_code == 201
+    assert in_a.status_code == 201, in_a.text
 
     response = client.get(
         ASSIGNMENTS,
-        params={"course_id": str(COURSE_A), "section_id": str(SECTION_A)},
+        params={"course_id": str(COURSE_D)},
         headers=auth_headers("teacher-wide"),
     )
     assert response.status_code == 200, response.text
     ids = {item["assignment_id"] for item in response.json()["items"]}
-    assert in_a.json()["assignment_id"] in ids
-    assert in_a2.json()["assignment_id"] not in ids
+    assert in_a.json()["assignment_id"] not in ids
 
 
 # --- internal audience endpoint -----------------------------------------
@@ -573,13 +644,7 @@ def test_assignment_list_filters_by_target_section(
 def test_internal_assignment_serves_the_audience_to_a_service(
     client, service_headers, auth_headers, published_version
 ):
-    created = _create_assignment(
-        client,
-        auth_headers,
-        section_ids=(SECTION_A, SECTION_A2),
-        student_ids=(STUDENT_A,),
-        version_ids=(published_version,),
-    )
+    created = _create_assignment(client, auth_headers, version_ids=(published_version,))
     assert created.status_code == 201, created.text
     assignment_id = created.json()["assignment_id"]
 
@@ -591,16 +656,16 @@ def test_internal_assignment_serves_the_audience_to_a_service(
         "course_id",
         "title",
         "status",
-        "section_ids",
-        "student_ids",
         "question_version_ids",
     }
     assert body["assignment_id"] == assignment_id
     assert body["course_id"] == str(COURSE_A)
-    assert body["section_ids"] == [str(SECTION_A), str(SECTION_A2)]
-    assert body["student_ids"] == [str(STUDENT_A)]
+    assert body["status"] == "open"
     assert body["question_version_ids"] == [published_version]
-    # Timestamps are not needed for admission and are deliberately absent.
+    # Course membership is not asserted here (B4 is the only authority for it), and
+    # timestamps are not needed for admission.
+    assert "section_ids" not in body
+    assert "student_ids" not in body
     assert "created_at" not in body
     assert "updated_at" not in body
 
@@ -608,9 +673,7 @@ def test_internal_assignment_serves_the_audience_to_a_service(
 def test_internal_assignment_requires_the_service_token(
     client, auth_headers, published_version
 ):
-    created = _create_assignment(
-        client, auth_headers, version_ids=(published_version,)
-    )
+    created = _create_assignment(client, auth_headers, version_ids=(published_version,))
     assignment_id = created.json()["assignment_id"]
 
     unauthenticated = client.get(f"{INTERNAL_ASSIGNMENT}/{assignment_id}")
@@ -624,9 +687,7 @@ def test_internal_assignment_requires_the_service_token(
 def test_internal_assignment_reports_an_unconfigured_service_credential(
     client, dependencies, auth_headers, published_version
 ):
-    created = _create_assignment(
-        client, auth_headers, version_ids=(published_version,)
-    )
+    created = _create_assignment(client, auth_headers, version_ids=(published_version,))
     assignment_id = created.json()["assignment_id"]
     with _client_with(dependencies, service_verifier=None) as overridden:
         response = overridden.get(
@@ -640,3 +701,21 @@ def test_internal_assignment_reports_an_unconfigured_service_credential(
 def test_internal_assignment_for_an_unknown_id_is_not_found(client, service_headers):
     response = client.get(f"{INTERNAL_ASSIGNMENT}/{uuid.uuid4()}", headers=service_headers)
     assert response.status_code == 404
+
+
+# --- misc invariants ------------------------------------------------------
+
+
+def test_assignment_list_items_carry_the_notification_state(
+    client, auth_headers, published_version
+):
+    created = _create_assignment(client, auth_headers, version_ids=(published_version,))
+    assignment_id = created.json()["assignment_id"]
+    response = client.get(
+        ASSIGNMENTS, params={"course_id": str(COURSE_A)}, headers=auth_headers("teacher-a")
+    )
+    assert response.status_code == 200, response.text
+    item = next(
+        item for item in response.json()["items"] if item["assignment_id"] == assignment_id
+    )
+    assert item["notification_state"] == "scheduled"

@@ -20,7 +20,9 @@ return Response(file.content, media_type=file.media_type,
 ```
 
 异常映射：`AuthorizationError` → 403（`api.errors.FORBIDDEN`）；`InvalidFilterError` /
-`InvalidCursorError` / `UnsupportedExportFormat` → 422（`api.errors.UNPROCESSABLE`）。
+`InvalidCursorError` / `UnsupportedExportFormat` → 422（`api.errors.UNPROCESSABLE`）；
+学生读者的权威归属查不了（B4 授权目录未配置/不可达）→ `AuthorizationUnavailable`
+（`integration.b4_authorization`）→ 503。
 """
 
 from autograder_b2.grades.export import (

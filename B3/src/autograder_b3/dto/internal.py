@@ -304,32 +304,32 @@ class AuthoringAssistanceRequestModel(BaseModel):
 
 
 class AssignmentCreateInputModel(BaseModel):
-    """The contract's inline create-assignment body.
+    """The contract's ``CreateAssignment`` body (v0.32.0).
 
-    The three id arrays are **sets on the wire**: ``uniqueItems`` is declared in the
-    contract, so a duplicate is a ``422`` before any lookup happens, not a row that fails
-    a database unique constraint halfway through the transaction. Bounds mirror the
-    contract (1..50 target sections, 0..2000 narrowed students, 1..50 versions) and are
-    enforced here because the domain writes every accepted id.
+    An assignment is **course-level**: it belongs to exactly one course and automatically
+    applies to every section (课序), class (班级) and student of that course, including the
+    ones added later while it is open. The body therefore carries no target ids at all --
+    a hand-picked section/student list would be a second, silently diverging answer to
+    "who is this assignment for".
 
-    ``student_ids`` empty (the default) means "every student in the target sections";
-    there is deliberately no way to express "narrowed to nobody".
+    ``question_version_ids`` stays ordered (item ordinal = array position, answer files are
+    named by the 1-based position) and is a **set on the wire**: the contract declares
+    ``uniqueItems``, so a duplicate is a ``422`` before any lookup happens rather than a
+    row that fails a database unique constraint halfway through the transaction.
     """
 
     model_config = _STRICT
 
     course_id: UUID
-    section_ids: tuple[UUID, ...] = Field(min_length=1, max_length=50)
-    student_ids: tuple[UUID, ...] = Field(default=(), max_length=2000)
     title: str = Field(min_length=1, max_length=200)
     due_at: datetime | None = None
     question_version_ids: tuple[UUID, ...] = Field(min_length=1, max_length=50)
 
-    @field_validator("section_ids", "student_ids", "question_version_ids")
+    @field_validator("question_version_ids")
     @classmethod
     def _unique(cls, value: tuple[UUID, ...]) -> tuple[UUID, ...]:
         if len(set(value)) != len(value):
-            raise ValueError("assignment target ids must not contain duplicates")
+            raise ValueError("question_version_ids must not contain duplicates")
         return value
 
 
@@ -767,27 +767,22 @@ class FixtureContentBundle:
 
 
 @dataclass(frozen=True)
-class AssignmentInternal:
+class AssignmentAudience:
     """The assignment audience served to the evaluation/submission module (serviceToken).
 
-    It is the minimum a submission path needs to admit or refuse a submission: identity,
-    status, target sections/students and the ordered question list. Timestamps are not
-    needed for admission, so they are not exposed here -- unlike the public
+    Since v0.32.0 an assignment is **course-level**, so "who is it for" is exactly
+    "everyone currently enrolled in ``course_id``". That membership is deliberately **not**
+    asserted here: only B4 is authoritative for a student's current enrollment, and B2 asks
+    B4 separately when admitting a submission. This response is the minimum B2 needs from
+    B3: identity, status and the ordered question list. Timestamps are not needed for
+    admission, so they are not exposed -- unlike the public
     :class:`~autograder_b3.dto.public.AssignmentPublic`, which renders them.
-
-    ``section_ids``/``student_ids`` follow the same semantics as the public shape: at
-    least one target section, and an empty student list meaning "every student in the
-    target sections". The class is a plain dataclass with its own ``to_wire`` (like
-    :class:`ReferenceAnswerDelivery`) rather than a pydantic response model, because
-    internal projections are produced explicitly rather than validated on the way out.
     """
 
     assignment_id: UUID
     course_id: UUID
     title: str
     status: AssignmentStatus
-    section_ids: tuple[UUID, ...]
-    student_ids: tuple[UUID, ...]
     question_version_ids: tuple[UUID, ...]
 
     def to_wire(self) -> dict[str, Any]:
@@ -796,8 +791,6 @@ class AssignmentInternal:
             "course_id": str(self.course_id),
             "title": self.title,
             "status": self.status,
-            "section_ids": [str(item) for item in self.section_ids],
-            "student_ids": [str(item) for item in self.student_ids],
             "question_version_ids": [str(item) for item in self.question_version_ids],
         }
 

@@ -11,9 +11,9 @@ prose here. This module is frozen by ADR-0004:
 * every model forbids unknown fields at construction time and is immutable;
 * responses leave the process only through ``api/serializers.py`` -> ``serialize_public``.
 
-The assignment response shape is not pinned by the frozen contract (the OpenAPI
-operation declares only "Page of assignments"); B3 defines the smallest useful
-public shape and records the gap in ``docs/api/contract.md``.
+The assignment response shape is pinned by the frozen contract since 0.32.0
+(``AssignmentPublic``); this module restates its fields because the public DTO module
+must not import the internal one.
 """
 
 from __future__ import annotations
@@ -33,6 +33,10 @@ AdapterKind = Literal["stdin", "file", "callable"]
 #: ``common.yaml#ExecutionMode`` is the authority for these four names.
 ExecutionMode = Literal["per_case", "single_run", "ssh_session", "email_delivery"]
 AssignmentStatus = Literal["open", "archived"]
+#: The publication-notification hand-off state (v0.32.0). It describes **scheduling**, not
+#: delivery: ``scheduled`` means B4 received the audience, ``unavailable`` means it did not
+#: (a teacher may retry), ``pending`` is the transitional "never attempted" value.
+NotificationState = Literal["pending", "scheduled", "unavailable"]
 #: The model-advice surface (``CHG-0011``). An enum, not free text, so a caller cannot
 #: ask for "anything else" and every supported use is a documented one.
 AuthoringTopic = Literal["quality", "comparison_policy", "wording", "difficulty", "coverage"]
@@ -255,25 +259,31 @@ class QuestionStatisticsPublic(BaseModel):
 
 
 class AssignmentPublic(BaseModel):
-    """A homework set for one course and 1..N target sections.
+    """One course-level homework set (v0.32.0).
 
-    ``section_ids`` is the target set and ``student_ids`` is the optional narrowing list
-    (empty means "every student in the target sections"). Both are part of the public
-    shape because a client that cannot see who an assignment is for cannot render the
-    workspace or the teacher's matrix. ``question_version_ids`` is ordered: array position
-    is the item ordinal, and answer files are named by the 1-based position (``1.txt``).
+    An assignment belongs to exactly one course and applies to **every** section (课序),
+    class (班级) and student of that course, including ones added later while it is open.
+    There is no target list: the audience is "the course's current effective students",
+    evaluated when someone reads or submits, and that evaluation is done against B4's live
+    enrollments rather than a hand-picked id set.
+
+    ``question_version_ids`` is ordered: array position is the item ordinal, and answer
+    files are named by the 1-based position (``1.txt``). ``notification_state`` reports the
+    publication-notification hand-off -- ``scheduled`` (B4 has the audience),
+    ``unavailable`` (it does not; retry is possible), ``pending`` (never attempted). It is
+    deliberately available to students too: "was the announcement handed off" is not
+    personal data, and hiding it would let a broken notification look delivered.
     """
 
     model_config = _PUBLIC_CONFIG
 
     assignment_id: UUID
     course_id: UUID
-    section_ids: tuple[UUID, ...] = Field(min_length=1, max_length=50)
-    student_ids: tuple[UUID, ...] = ()
     title: str = Field(min_length=1, max_length=200)
     status: AssignmentStatus
     due_at: datetime | None = None
     question_version_ids: tuple[UUID, ...] = ()
+    notification_state: NotificationState
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

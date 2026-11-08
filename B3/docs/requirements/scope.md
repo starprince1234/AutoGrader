@@ -35,7 +35,7 @@ B3 是"题库与测试包"服务，向系统交付以下能力（**均已实现*
 
 ## 上游输入 / 下游输出去向
 
-- **上游输入**：B4 的 `course_id`/`section_id` 作用域与 JWT/JWKS；B2 的去标识化 `evaluation.completed` 事件；教师通过 B1 提交的题目编辑内容。
+- **上游输入**：B4 的 JWT/JWKS 与课程作用域，以及两个内部服务调用——`/api/v1/internal/users/{user_id}/authorization`（学生作业读的实时权威授权）与 `/api/v1/internal/assignment-notifications`（作业发布通知交接）；B2 的去标识化 `evaluation.completed` 事件；教师通过 B1 提交的题目编辑内容。
 - **下游去向**：B1（公开题目 DTO、题干图片受控资源）；B2（`evaluation-package` 内部接口）；统计查询结果（给 B1 展示）。
 
 ## 术语

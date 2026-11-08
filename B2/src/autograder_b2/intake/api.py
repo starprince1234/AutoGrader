@@ -46,6 +46,7 @@ from autograder_b2.intake.quarantine import (
     InvalidQuarantineFilterError,
     QuarantineAlreadyResolvedError,
     QuarantineAssignmentUnavailable,
+    QuarantineAuthorizationUnavailable,
     QuarantineContentRejected,
     QuarantineEmailUnavailable,
     QuarantineMessageGone,
@@ -63,6 +64,7 @@ from autograder_b2.intake.quarantine import (
 from autograder_b2.intake.query import SubmissionNotFoundError, SubmissionView
 from autograder_b2.intake.runtime import IntakeRuntime
 from autograder_b2.intake.service import AssignmentDirectoryUnavailable, SubmissionIdConflict
+from autograder_b2.integration.b4_authorization import AuthorizationUnavailable
 from autograder_b2.logging.context import bind_context
 from autograder_b2.logging.logger import log_dependency_unavailable, log_event
 
@@ -226,6 +228,14 @@ def build_router(runtime: IntakeRuntime) -> APIRouter:
                 # 作业目录未配置/不可达是**基础设施故障**，不是"学生交错了题"：503 + 依赖故障日志。
                 log_dependency_unavailable(
                     logger, dependency="b3-assignments", error=error, stage="submissions"
+                )
+                runtime.record_failure()
+                return problem_response(SERVICE_UNAVAILABLE, instance)
+            except AuthorizationUnavailable as error:
+                # B4 授权目录未配置/不可达同样是**基础设施故障**：不能折成"你不在课程里"（403），
+                # 也不能折成"作业不存在"（422）——那会把平台故障伪装成学生错误。
+                log_dependency_unavailable(
+                    logger, dependency="b4-authorization", error=error, stage="submissions"
                 )
                 runtime.record_failure()
                 return problem_response(SERVICE_UNAVAILABLE, instance)
@@ -690,6 +700,23 @@ def build_router(runtime: IntakeRuntime) -> APIRouter:
                     "Service Unavailable",
                     "the assignment directory is not available, so the original message"
                     " cannot be mapped to an assignment",
+                ),
+                instance,
+            )
+        except QuarantineAuthorizationUnavailable as error:
+            # B4 授权目录读不到（未配置/不可达）：同样 503——"当前归属"判不了时，
+            # 人工复核不得凭猜测把邮件变成某个学生的提交。
+            log_dependency_unavailable(
+                logger, dependency="b4-authorization", error=error, stage="intake quarantines"
+            )
+            runtime.record_failure()
+            return problem_response(
+                Problem(
+                    503,
+                    "service-unavailable",
+                    "Service Unavailable",
+                    "the user authorization directory is not available, so the original message"
+                    " cannot be attributed to a current course membership",
                 ),
                 instance,
             )

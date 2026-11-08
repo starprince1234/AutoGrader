@@ -258,6 +258,8 @@ def build_registration_router(state: B4State, dependencies: Dependencies) -> API
         rejection: str | None = None
         created_user_id: uuid.UUID | None = None
         created_username: str | None = None
+        bound_course_count = 0
+        identity_mismatch_count = 0
         duplicating_field: str | None = None
 
         try:
@@ -311,7 +313,11 @@ def build_registration_router(state: B4State, dependencies: Dependencies) -> API
                         elif _student_number_taken(write, row.student_number):
                             duplicating_field = "student_number"
                         else:
-                            created_user_id = domain.create_account(
+                            (
+                                created_user_id,
+                                bound_course_count,
+                                identity_mismatch_count,
+                            ) = domain.create_account(
                                 write,
                                 username=row.username,
                                 email=email,
@@ -353,7 +359,12 @@ def build_registration_router(state: B4State, dependencies: Dependencies) -> API
             "registration.created",
             extra={"event": "registration.created", "user_id": str(created_user_id)},
         )
-        return {"user_id": str(created_user_id), "username": created_username}
+        return {
+            "user_id": str(created_user_id),
+            "username": created_username,
+            "bound_course_count": bound_course_count,
+            "identity_mismatch_count": identity_mismatch_count,
+        }
 
     @router.post("/api/v1/registration-allowlists")
     async def replace_registration_allowlist(

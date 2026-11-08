@@ -348,7 +348,38 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/v1/internal/course-targets/validate": {
+    "/api/v1/internal/users/{user_id}/authorization": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Current effective roles and course membership of one account (internal)
+         * @description Purpose (v0.32.0): the assignment, submission and grade APIs must decide access from
+         *     the caller's **current** effective membership, but the authoritative facts (roles,
+         *     active course enrollment, section, class) belong to B4. A JWT `scope` claim is only a
+         *     snapshot taken when the token was issued: a student added to a course after sign-in
+         *     would be invisible to the token, and a student removed from a course would keep access
+         *     until the token expires. B3 and B2 therefore ask this endpoint at request time instead
+         *     of trusting the token's scope.
+         *
+         *     Returns identifiers only -- no name, e-mail address or student number. Being internal
+         *     is not authorization: the caller must present the pre-shared `serviceToken`.
+         */
+        get: operations["getInternalUserAuthorization"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/internal/assignment-notifications": {
         parameters: {
             query?: never;
             header?: never;
@@ -358,20 +389,74 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Validate an assignment's target sections and students (internal)
-         * @description Purpose: B3 owns assignments and stores target section/student ids, but B4 owns the
-         *     sections and enrollments that make those ids meaningful. Before an assignment is
-         *     created, B3 therefore asks this endpoint whether the chosen sections belong to the course
-         *     and whether the chosen students are actively enrolled in those sections (CHG-0032).
-         *     Server-side validation is mandatory: accepting ids on the client's word would let a
-         *     teacher publish to a class of another course, or name a student who is not enrolled.
+         * Materialise the publication notification of one assignment (internal)
+         * @description Called by B3 once an assignment is published; the B3 side retries because a transient
+         *     failure must not lose the notification. The call is **idempotent by `assignment_id`**:
+         *     a repeat returns the already materialised summary and never duplicates recipients or
+         *     sends anything twice. Delivery itself is performed by the B4 notification sender
+         *     (`python -m autograder_b4.ops.notifications`), which is why this endpoint only records
+         *     what must be sent and every recipient's status.
          *
-         *     Being internal is not authorization: the caller must present the pre-shared
-         *     `serviceToken`, never a user session. The response intentionally returns only ids and
-         *     section labels (no student names/numbers): B3 needs a decision, not a second copy of
-         *     identity data.
+         *     The audience is the course's current active roster. Unregistered students, students
+         *     whose account has no e-mail address, and deactivated accounts are recorded with
+         *     distinct skipped statuses and reason codes; "no notification" is therefore never
+         *     reported as "delivered".
          */
-        post: operations["validateCourseTargets"];
+        post: operations["createAssignmentNotifications"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/courses/{course_id}/assignments/{assignment_id}/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                course_id: components["schemas"]["Uuid"];
+                assignment_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Delivery status of one assignment notification (staff)
+         * @description Staff-only (write access to the course). Returns the campaign summary plus one row per
+         *     intended recipient, including the students that could not be notified and why. The
+         *     delivery list is a cursor page so a large course is never presented as a partial list.
+         *     `404` means B4 has no notification for this assignment id; it does not say whether the
+         *     assignment exists -- assignments are owned by B3 and are not checked here.
+         */
+        get: operations["getAssignmentNotifications"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/courses/{course_id}/assignments/{assignment_id}/notifications/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                course_id: components["schemas"]["Uuid"];
+                assignment_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Re-arm failed deliveries of one assignment notification (staff)
+         * @description Only rows in `failed` are reset to `pending` (attempts cleared, `next_attempt_at` set
+         *     to now); the sender will try them again on its next pass. Rows skipped because the
+         *     student has no account, no address or an inactive account are **not** retried: sending
+         *     again cannot fix those reasons, and pretending otherwise would hide them. Returns the
+         *     updated summary.
+         */
+        post: operations["retryAssignmentNotifications"];
         delete?: never;
         options?: never;
         head?: never;
@@ -387,11 +472,11 @@ export interface paths {
         };
         /**
          * Read the caller's own account facts
-         * @description Added by CHG-0032 for the assignment workspace: the mail-submission body must carry the
-         *     student's display name and student number, and the browser cannot derive them from the
-         *     access token (identity + scope only) or from the staff-only roster. This endpoint returns
-         *     exactly the caller's own row: no e-mail address, no other user's data. Every
-         *     authenticated caller may read only themselves.
+         * @description Returns the caller's own row only: no e-mail address and no other user's data. Since
+         *     v0.32.0 it also carries `memberships` (the caller's active course/section/class
+         *     enrollments), which is the only way a student can be shown "which courses, which
+         *     课序 and which 班级 am I in" without a staff-only roster endpoint.
+         *     Every authenticated caller may read only themselves.
          */
         get: operations["getCurrentUser"];
         put?: never;
@@ -530,33 +615,6 @@ export interface paths {
         patch: operations["updateCourse"];
         trace?: never;
     };
-    "/api/v1/courses/{course_id}/classes": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                course_id: components["schemas"]["Uuid"];
-            };
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Create a class in this course from an already-registered class
-         * @description Copies the students of an existing registration allowlist batch ("已注册名单" 里的一个班级)
-         *     into a new section of this course. Students are stored unbound (`user_id` null) until they
-         *     register, which is the same state a CSV roster import leaves them in.
-         *
-         *     This exists so a teacher does not upload the same file twice: the class was already
-         *     imported once for registration, and the course only needs to reference it.
-         */
-        post: operations["attachRegisteredClass"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/v1/courses/{course_id}/sections": {
         parameters: {
             query?: never;
@@ -591,12 +649,135 @@ export interface paths {
         /** Create a section (teacher or admin) */
         post: operations["createSection"];
         /**
-         * Delete a class (its enrollments go with it)
-         * @description Deleting a class removes its roster rows and its course grants. Assignments that named
-         *     this section are outside B4's schema and are not checked here -- deleting a class that
-         *     still has assignments is the caller's call, not something B4 can validate across modules.
+         * Delete a section together with its classes and roster rows
+         * @description A `stop` section groups classes (班级); deleting it removes its classes and their
+         *     roster rows. Assignments are course-scoped since v0.32.0, so no assignment target
+         *     references a section any more -- there is nothing left to dangle.
          */
         delete: operations["deleteSection"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/sections/{section_id}/classes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                section_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        /** List the classes (班级) of one section */
+        get: operations["listClasses"];
+        put?: never;
+        /**
+         * Create one class inside an existing section
+         * @description A section (课序) contains one or more classes (班级); creating a class never creates a
+         *     section. Several classes that were already registered (registration allowlist batches)
+         *     can therefore be attached to the **same** existing section.
+         *
+         *     When `batch_id` is present the class starts with that registered class's students,
+         *     copied as unbound roster rows; an account that already exists for a student number is
+         *     linked immediately. Re-attaching the same batch to the same section returns the
+         *     existing class (idempotent) instead of duplicating rows.
+         *
+         *     The request is refused with `409` when any of those students is already actively
+         *     enrolled in this course in a different section/class: one student may belong to at
+         *     most one active section per course, and the server never picks one silently. The
+         *     whole request rolls back; nothing half-written remains.
+         */
+        post: operations["createClass"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/classes/{class_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                class_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete one class together with its roster rows */
+        delete: operations["deleteClass"];
+        options?: never;
+        head?: never;
+        /** Rename one class */
+        patch: operations["renameClass"];
+        trace?: never;
+    };
+    "/api/v1/classes/{class_id}/enrollments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                class_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        /** List the roster of one class */
+        get: operations["listClassEnrollments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/courses/{course_id}/enrollments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                course_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Page through the complete roster of a course
+         * @description The teacher's course-wide roster: every active enrollment of every section and class,
+         *     including students without an account (`student_id` null) and their class/section.
+         *     This is the read a teacher detail page must page through completely; deriving the
+         *     roster from one class or one section would present a partial list as the audience.
+         */
+        get: operations["listCourseEnrollments"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/courses/{course_id}/roster-summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                course_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Server-computed audience counts for one course
+         * @description Counts are computed in SQL over the whole course, not summed from a client page: a
+         *     teacher's "how many students are in this course" answer must not depend on how many
+         *     pages the browser happened to load.
+         */
+        get: operations["getCourseRosterSummary"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -661,9 +842,12 @@ export interface paths {
         put?: never;
         /**
          * Upload a roster file and start parsing (RQ-B-1-10)
-         * @description Accepts a CSV or XLSX roster. Parsing never guesses: when a column cannot be
-         *     mapped unambiguously the import stops in `mapping_required` and waits for a
-         *     human decision. No roster row is persisted before confirmation.
+         * @description Accepts a CSV or XLSX roster for one **class**: the caller names the course, the
+         *     section (课序) and the class (班级) the file belongs to, and the server verifies that
+         *     the class belongs to that section and the section to that course. Parsing never
+         *     guesses: when a column cannot be mapped unambiguously the import stops in
+         *     `mapping_required` and waits for a human decision. No roster row is persisted
+         *     before confirmation.
          */
         post: operations["createRosterImport"];
         delete?: never;
@@ -813,33 +997,157 @@ export interface components {
             roles: components["schemas"]["Role"][];
             is_active: boolean;
         };
-        /** @description Assignment target ids to validate against the course's sections and active enrollments. */
-        CourseTargetValidationRequest: {
+        /**
+         * @description One class (班级) inside a section (课序). A class is deliberately not a section: a
+         *     section contains one or more classes, and a course can therefore have several student
+         *     groups in the same 课序 (v0.32.0). `enrollment_count`/`bound_count` are computed over
+         *     the class's active roster rows; `bound_count` is the subset linked to an account.
+         */
+        ClassPublic: {
+            class_id: components["schemas"]["Uuid"];
             course_id: components["schemas"]["Uuid"];
-            section_ids: components["schemas"]["Uuid"][];
-            student_ids: components["schemas"]["Uuid"][];
+            section_id: components["schemas"]["Uuid"];
+            class_name: string;
+            /**
+             * @description Where the class came from: a registered class (allowlist batch), an uploaded roster file, or manual creation.
+             * @enum {string}
+             */
+            source: "registered_class" | "roster_import" | "manual";
+            /** @description The registration allowlist batch this class was attached from; null for uploaded/manual classes. */
+            allowlist_batch_id?: components["schemas"]["Uuid"] | null;
+            enrollment_count: number;
+            bound_count: number;
+            created_at?: components["schemas"]["Timestamp"];
         };
         /**
-         * @description Validation result for one assignment's target ids. `sections` contains the requested
-         *     sections that actually belong to `course_id`; `unknown_section_ids` lists the rest.
-         *     `students` contains (student_id, section_id) pairs for requested students that are
-         *     actively enrolled in one of the requested sections; `unknown_student_ids` lists the
-         *     rest (not enrolled, not active, or not matched to an account).
+         * @description Create one class inside an existing section. With `batch_id`, the class starts as a
+         *     copy of that registered class's roster (accounts already existing for a student number
+         *     are linked immediately); without it the class starts empty. `class_name` defaults to
+         *     the registered class name (file name without extension) when a batch is given.
          */
-        CourseTargetValidation: {
+        ClassCreate: {
+            class_name: string;
+            batch_id?: components["schemas"]["Uuid"] | null;
+        };
+        ClassRename: {
+            class_name: string;
+        };
+        /**
+         * @description Server-computed audience counts for one course (v0.32.0). Every number is aggregated
+         *     in SQL over all active enrollments; none of it is summed from a client page, so a
+         *     teacher's "how big is this audience" answer cannot silently depend on pagination.
+         */
+        RosterSummary: {
             course_id: components["schemas"]["Uuid"];
+            section_count: number;
+            class_count: number;
+            student_total: number;
+            bound_count: number;
+            unbound_count: number;
             sections: {
                 section_id: components["schemas"]["Uuid"];
-                course_id: components["schemas"]["Uuid"];
                 section_code: string;
                 term: string | null;
+                class_count: number;
+                student_total: number;
+                bound_count: number;
+                unbound_count: number;
+                classes: {
+                    class_id: components["schemas"]["Uuid"];
+                    class_name: string;
+                    student_total: number;
+                    bound_count: number;
+                    unbound_count: number;
+                }[];
             }[];
-            unknown_section_ids: components["schemas"]["Uuid"][];
-            students: {
-                student_id: components["schemas"]["Uuid"];
+        };
+        /**
+         * @description One active course enrollment of the caller, with the section and class they belong to.
+         *     This is what lets a student see "which course, which 课序, which 班级 am I in" and
+         *     switch between several courses; it contains no other student's data.
+         */
+        MyMembership: {
+            course_id: components["schemas"]["Uuid"];
+            course_code?: string | null;
+            course_title: string;
+            section_id: components["schemas"]["Uuid"];
+            section_code: string;
+            term?: string | null;
+            class_id: components["schemas"]["Uuid"];
+            class_name: string;
+        };
+        /**
+         * @description Authoritative access facts for one account, read by B3/B2 on every request that decides
+         *     assignment/submission/grade access. Ids only: a name, e-mail address or student number
+         *     must never travel through this internal channel.
+         */
+        InternalUserAuthorization: {
+            user_id: components["schemas"]["Uuid"];
+            platform_roles: components["schemas"]["Role"][];
+            /** @description Course ids this account is staff (teacher) on. */
+            course_grants: components["schemas"]["Uuid"][];
+            /** @description Active student enrollments: the courses this account may see and submit in, and where. */
+            enrollments: {
+                course_id: components["schemas"]["Uuid"];
                 section_id: components["schemas"]["Uuid"];
+                class_id: components["schemas"]["Uuid"];
             }[];
-            unknown_student_ids: components["schemas"]["Uuid"][];
+        };
+        /**
+         * @description What B3 hands to B4 when an assignment is published. B4 snapshots the course roster
+         *     into recipients; the assignment facts are copied only for the message body (B4 does
+         *     not own assignments and cannot read B3's schema).
+         */
+        AssignmentNotificationRequest: {
+            assignment_id: components["schemas"]["Uuid"];
+            course_id: components["schemas"]["Uuid"];
+            title: string;
+            due_at?: components["schemas"]["Timestamp"] | null;
+            published_at: components["schemas"]["Timestamp"];
+        };
+        /**
+         * @description Delivery counts of one assignment's publication notification. The counts are the
+         *     checked result: `sent_count` counts messages the SMTP server accepted, `failed_count`
+         *     counts attempted deliveries that failed, and the three `skipped_*` counts name the
+         *     students that had no usable channel at publication time. A summary with `sent_count`
+         *     0 and `skipped_unbound_count` > 0 means "nothing was delivered", never "delivered".
+         */
+        AssignmentNotificationSummary: {
+            assignment_id: components["schemas"]["Uuid"];
+            course_id: components["schemas"]["Uuid"];
+            /** @enum {string} */
+            status: "pending" | "sending" | "completed" | "partial" | "failed";
+            recipient_total: number;
+            sent_count: number;
+            pending_count: number;
+            failed_count: number;
+            skipped_unbound_count: number;
+            skipped_no_contact_count: number;
+            skipped_inactive_count: number;
+            created_at: components["schemas"]["Timestamp"];
+            updated_at: components["schemas"]["Timestamp"];
+        };
+        /**
+         * @description One intended recipient of an assignment notification. `student_number`/`display_name`
+         *     are the roster values recorded at publication time, so the row stays meaningful after
+         *     the roster changes. `reason_code`/`reason_detail` explain skipped and failed rows; a
+         *     skipped row is never presented as sent.
+         */
+        AssignmentNotificationDelivery: {
+            delivery_id: components["schemas"]["Uuid"];
+            student_number: string;
+            display_name: string;
+            section_id: components["schemas"]["Uuid"];
+            class_id: components["schemas"]["Uuid"];
+            user_id?: components["schemas"]["Uuid"] | null;
+            /** @enum {string} */
+            status: "pending" | "sending" | "sent" | "failed" | "skipped_unbound" | "skipped_no_contact" | "skipped_inactive";
+            /** @enum {string|null} */
+            reason_code?: null | "smtp_error" | "mail_not_configured" | "no_account" | "no_email" | "inactive_account";
+            reason_detail?: string | null;
+            attempts: number;
+            sent_at?: components["schemas"]["Timestamp"] | null;
+            updated_at: components["schemas"]["Timestamp"];
         };
         /**
          * @description One row of a section's roster. Recorded by CHG-0007: the operation previously
@@ -856,7 +1164,10 @@ export interface components {
          */
         EnrollmentPublic: {
             enrollment_id: components["schemas"]["Uuid"];
+            course_id: components["schemas"]["Uuid"];
             section_id: components["schemas"]["Uuid"];
+            class_id: components["schemas"]["Uuid"];
+            class_name?: string;
             student_id?: components["schemas"]["Uuid"] | null;
             student_number: string;
             display_name: string;
@@ -874,6 +1185,12 @@ export interface components {
             display_name: string;
             student_number?: string | null;
             roles: components["schemas"]["Role"][];
+            /**
+             * @description The caller's own active course enrollments (v0.32.0), each with its section and
+             *     class. Empty for staff-only accounts. This is how a student can see -- and switch
+             *     between -- every course they belong to without reading a staff-only roster.
+             */
+            memberships: components["schemas"]["MyMembership"][];
         };
         UserSummary: {
             user_id: components["schemas"]["Uuid"];
@@ -914,11 +1231,6 @@ export interface components {
             student_number: string;
             display_name: string;
         };
-        /** @description Which registered class to attach to the course. */
-        RegisteredClassImport: {
-            batch_id: components["schemas"]["Uuid"];
-            section_code?: string | null;
-        };
         /**
          * @description Rename request. `title` is the only writable field (see `updateCourse`); an empty or
          *     whitespace-only title is refused rather than coerced, because a blank course name is
@@ -957,7 +1269,7 @@ export interface components {
             course_id: components["schemas"]["Uuid"];
             section_code: string;
             term?: string | null;
-            class_name?: string | null;
+            class_count?: number;
             enrollment_count: number;
             created_at?: components["schemas"]["Timestamp"] | null;
         };
@@ -972,6 +1284,7 @@ export interface components {
             status: "uploaded" | "parsed" | "mapping_required" | "validating" | "previewed" | "committed" | "rejected" | "failed_parse";
             course_id: components["schemas"]["Uuid"];
             section_id: components["schemas"]["Uuid"];
+            class_id: components["schemas"]["Uuid"];
             detected_columns: string[];
             proposed_mapping?: {
                 [key: string]: string;
@@ -1360,7 +1673,15 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Account created; the caller can sign in immediately. */
+            /**
+             * @description Account created; the caller can sign in immediately. The response also reports
+             *     what the account was bound to, so "registered but sees no course" is answerable
+             *     without a second call: `bound_course_count` is the number of active roster rows
+             *     linked to this account (one per course), `identity_mismatch_count` counts rows
+             *     whose recorded name differs from the verified registration name. Mismatched rows
+             *     are deliberately **not** bound: binding two differently-named records by student
+             *     number alone would merge two people, so the teacher must correct the roster.
+             */
             201: {
                 headers: {
                     [name: string]: unknown;
@@ -1370,6 +1691,8 @@ export interface operations {
                         /** Format: uuid */
                         user_id: string;
                         username: string;
+                        bound_course_count: number;
+                        identity_mismatch_count: number;
                     };
                 };
             };
@@ -1655,7 +1978,31 @@ export interface operations {
             422: components["responses"]["UnprocessableEntity"];
         };
     };
-    validateCourseTargets: {
+    getInternalUserAuthorization: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The account's current roles and memberships. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalUserAuthorization"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    createAssignmentNotifications: {
         parameters: {
             query?: never;
             header?: never;
@@ -1664,21 +2011,91 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["CourseTargetValidationRequest"];
+                "application/json": components["schemas"]["AssignmentNotificationRequest"];
             };
         };
         responses: {
-            /** @description Which requested sections/students are valid for this course. */
+            /** @description A notification for this assignment already existed; nothing changed. */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["CourseTargetValidation"];
+                    "application/json": components["schemas"]["AssignmentNotificationSummary"];
+                };
+            };
+            /** @description Recipients materialised; delivery is pending. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssignmentNotificationSummary"];
                 };
             };
             401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
             422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    getAssignmentNotifications: {
+        parameters: {
+            query?: {
+                cursor?: components["parameters"]["Cursor"];
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path: {
+                course_id: components["schemas"]["Uuid"];
+                assignment_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The notification summary and one delivery page. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        summary: components["schemas"]["AssignmentNotificationSummary"];
+                        deliveries: components["schemas"]["CursorPage"] & {
+                            items?: components["schemas"]["AssignmentNotificationDelivery"][];
+                        };
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    retryAssignmentNotifications: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                course_id: components["schemas"]["Uuid"];
+                assignment_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The updated notification summary. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssignmentNotificationSummary"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     getCurrentUser: {
@@ -1999,36 +2416,6 @@ export interface operations {
             422: components["responses"]["UnprocessableEntity"];
         };
     };
-    attachRegisteredClass: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                course_id: components["schemas"]["Uuid"];
-            };
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["RegisteredClassImport"];
-            };
-        };
-        responses: {
-            /** @description The created section, with its student count. */
-            201: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SectionPublic"];
-                };
-            };
-            401: components["responses"]["Unauthorized"];
-            403: components["responses"]["Forbidden"];
-            404: components["responses"]["NotFound"];
-            409: components["responses"]["Conflict"];
-        };
-    };
     listSections: {
         parameters: {
             query?: never;
@@ -2108,6 +2495,204 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listClasses: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                section_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Classes of the section, ordered by name. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        items: components["schemas"]["ClassPublic"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    createClass: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                section_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClassCreate"];
+            };
+        };
+        responses: {
+            /** @description The created (or already attached) class. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClassPublic"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    deleteClass: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                class_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    renameClass: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                class_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClassRename"];
+            };
+        };
+        responses: {
+            /** @description The stored class. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ClassPublic"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+        };
+    };
+    listClassEnrollments: {
+        parameters: {
+            query?: {
+                cursor?: components["parameters"]["Cursor"];
+                limit?: components["parameters"]["Limit"];
+            };
+            header?: never;
+            path: {
+                class_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Page of enrollments. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage"] & {
+                        items?: components["schemas"]["EnrollmentPublic"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    listCourseEnrollments: {
+        parameters: {
+            query?: {
+                cursor?: components["parameters"]["Cursor"];
+                limit?: components["parameters"]["Limit"];
+                section_id?: components["schemas"]["Uuid"];
+                class_id?: components["schemas"]["Uuid"];
+            };
+            header?: never;
+            path: {
+                course_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Page of enrollments. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage"] & {
+                        items?: components["schemas"]["EnrollmentPublic"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getCourseRosterSummary: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                course_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Course roster summary. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RosterSummary"];
+                };
             };
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
@@ -2214,6 +2799,7 @@ export interface operations {
                     file: string;
                     course_id: components["schemas"]["Uuid"];
                     section_id: components["schemas"]["Uuid"];
+                    class_id: components["schemas"]["Uuid"];
                 };
             };
         };

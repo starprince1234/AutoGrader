@@ -233,6 +233,15 @@
 - **结果**：通过。
 - 备注：契约未声明 `DELETE` 操作，删除由领域函数 + 数据库触发器保证；B3 对已发布版本**一律**拒绝删除（B3 无法知道 B2 是否引用过，读 `b2` 被禁止——拒绝是唯一安全解）。
 
+**验收 3-20-6（课程级作业、实时受众与发布通知）**
+
+- Given：课程 C 有多个课序/班级与在册学生；另有课程 D 的学生 S_D；C 的学生 S_C 的登录 token 在其被加入课程前签发。
+- When：创建作业（只给 `course_id`/`title`/`due_at?`/`question_version_ids`）；S_C 与 D 的学生分别列表/详情；把 S_C 移出课程（权威 authorization 返回空）后重试；B4 通知端点成功/不可用/拒绝分别验证。
+- Then：创建成功并同步交接通知，响应含 `notification_state`（成功 `scheduled`；B4 未配置/不可达/4xx/5xx → `unavailable`，作业**仍创建成功**）；课程 C 全部课序/班级学生（含加入前签发的 token）都能 list+detail，课程 D 学生 list 不含且 detail `403`，移出课程后立即 `403`/空列表；列表的课程集合在 SQL 过滤；B4 authorization 不可达 → `503`（不得当 `403`/空列表）；重试幂等并返回最新状态，B4 明确 `404/409/422` 映射同一状态码。
+- 失败判定：作业仍需手选课序/学生；学生可见性来自 token scope 快照；通知失败回滚作业或伪报 `scheduled`；B4 不可达被当成"无权限/空列表"。
+- **验证**：`tests/test_assignments_api.py`（课程级创建/课内全部课序可见/他课学生 `403`/移出课程立即失效/列表 SQL 下推/通知 `scheduled`/`unavailable`/重试与状态码映射/内部受众端点）、`tests/test_b4_client.py`（authorization 与通知客户端的请求形状与失败分类）、`tests/test_versions.py`（通知失败不回滚作业）、`tests/test_migrations.py`（迁移 0010 删除目标表、通知状态 CHECK 与权限）。
+- **结果**：实现完成；本机只做了静态检查（`uv run ruff check src tests`），数据库用例未在本机运行，待 CI 的 PostgreSQL 与 Lead 的 `pytest` 验证后再判定通过。
+
 ---
 
 ## RQ-B-3-30 答题情况与回答次数分布统计

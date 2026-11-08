@@ -10,37 +10,29 @@ import {
   type StubbedRoute,
 } from "../../testing/httpBoundary";
 import {
-  UUID_A,
   UUID_B,
-  UUID_C,
   assignmentPublic,
   coursePage,
   courseSummary,
-  enrollmentPage,
-  enrollmentPublic,
   questionPublic,
+  rosterSummary,
   sessionCreated,
 } from "../../testing/contractFixtures";
 import { signIn } from "../../auth/sessionStore";
 import { AssignmentComposer } from "./AssignmentComposer";
 
 /**
- * 新建作业（CHG-0032）。
+ * 新建作业（v0.32.0：课程级）。
  *
- * 断言的是四条容易做错的规则：
- * 1. 打开表单不写库；标题为空/未选课序时不发请求；
- * 2. **同一 course 内可多选课序**：请求体带全部 `section_ids`；
- * 3. **不同 course 即使同名也不合并**：课程选择器是独立选项，课序列表只来自选中的 course；
- * 4. 可选指定学生：勾选后请求体带 `student_ids`；不勾选表示整个课序（不带该字段）。
+ * 断言的是新契约下的四条规则：
+ * 1. 打开表单不写库；标题为空 / 未选题目时不发请求；
+ * 2. 请求体只有 `course_id/title/question_version_ids/due_at`，**不再有** section_ids/student_ids；
+ * 3. 预览的人数来自服务端 `roster-summary`（课序数/班级数/学生总数/已绑定/未绑定）；
+ * 4. 不同 course 即使同名也不合并：课程选择器是独立选项。
  */
 
 const COURSE_1 = "00000000-0000-4000-8000-0000000000c1";
 const COURSE_2 = "00000000-0000-4000-8000-0000000000c2";
-const SECTION_1 = "00000000-0000-4000-8000-0000000000b1";
-const SECTION_2 = "00000000-0000-4000-8000-0000000000b2";
-const SECTION_3 = "00000000-0000-4000-8000-0000000000b3";
-const STUDENT_1 = "00000000-0000-4000-8000-0000000000d1";
-const STUDENT_2 = "00000000-0000-4000-8000-0000000000d2";
 
 const PUBLISHED = "00000000-0000-4000-8000-000000000401";
 const DRAFT = "00000000-0000-4000-8000-000000000402";
@@ -69,7 +61,7 @@ function baseRoutes(overrides: { onPost?: () => Response } = {}): StubbedRoute[]
         jsonResponse(
           sessionCreated({
             roles: ["teacher"],
-            scope: [{ course_id: COURSE_1, section_id: SECTION_1 }],
+            scope: [{ course_id: COURSE_1 }],
             access_token: jwtFor(UUID_B),
           }),
         ),
@@ -86,57 +78,32 @@ function baseRoutes(overrides: { onPost?: () => Response } = {}): StubbedRoute[]
         ),
     },
     {
-      path: `/api/v1/courses/${COURSE_1}/sections`,
-      respond: () =>
-        jsonResponse({
-          items: [
-            { section_id: SECTION_1, course_id: COURSE_1, section_code: "01", term: "2026F" },
-            { section_id: SECTION_2, course_id: COURSE_1, section_code: "02", term: "2026F" },
-          ],
-        }),
-    },
-    {
-      path: `/api/v1/courses/${COURSE_2}/sections`,
-      respond: () =>
-        jsonResponse({
-          items: [
-            { section_id: SECTION_3, course_id: COURSE_2, section_code: "01", term: "2026F" },
-          ],
-        }),
-    },
-    {
-      path: `/api/v1/sections/${SECTION_1}/enrollments`,
+      path: `/api/v1/courses/${COURSE_1}/roster-summary`,
       respond: () =>
         jsonResponse(
-          enrollmentPage([
-            enrollmentPublic({
-              enrollment_id: UUID_A,
-              section_id: SECTION_1,
-              student_id: STUDENT_1,
-              student_number: "20260001",
-              display_name: "张三",
-            }),
-          ]),
+          rosterSummary({
+            course_id: COURSE_1,
+            section_count: 2,
+            class_count: 3,
+            student_total: 10,
+            bound_count: 7,
+            unbound_count: 3,
+          }),
         ),
     },
     {
-      path: `/api/v1/sections/${SECTION_2}/enrollments`,
+      path: `/api/v1/courses/${COURSE_2}/roster-summary`,
       respond: () =>
         jsonResponse(
-          enrollmentPage([
-            enrollmentPublic({
-              enrollment_id: UUID_C,
-              section_id: SECTION_2,
-              student_id: STUDENT_2,
-              student_number: "20260002",
-              display_name: "李四",
-            }),
-          ]),
+          rosterSummary({
+            course_id: COURSE_2,
+            section_count: 1,
+            class_count: 1,
+            student_total: 4,
+            bound_count: 4,
+            unbound_count: 0,
+          }),
         ),
-    },
-    {
-      path: `/api/v1/sections/${SECTION_3}/enrollments`,
-      respond: () => jsonResponse(enrollmentPage([])),
     },
     {
       path: "/api/v1/questions",
@@ -174,9 +141,8 @@ function baseRoutes(overrides: { onPost?: () => Response } = {}): StubbedRoute[]
           jsonResponse(
             assignmentPublic({
               assignment_id: UUID_B,
+              course_id: COURSE_1,
               title: "第一次作业",
-              section_ids: [SECTION_1],
-              student_ids: [],
               question_version_ids: [PUBLISHED],
             }),
             201,
@@ -210,15 +176,7 @@ async function fillBase(user: ReturnType<typeof userEvent.setup>) {
   await user.click(screen.getByRole("checkbox", { name: /进程与线程/ }));
 }
 
-/** 等课序列表加载完成后再点选：列表是异步取回的。 */
-async function selectSection(
-  user: ReturnType<typeof userEvent.setup>,
-  sectionId: string,
-) {
-  await user.click(await screen.findByTestId(`compose-section-${sectionId}`));
-}
-
-describe("新建作业（CHG-0032）", () => {
+describe("新建作业（v0.32.0 课程级）", () => {
   it("打开表单不写库，且只列出已发布版本", async () => {
     stub = installFetchStub(baseRoutes());
     await signIn("teacher1", "pw");
@@ -229,27 +187,34 @@ describe("新建作业（CHG-0032）", () => {
     // 草稿版本不出现：引用它必然 409，让用户选一个注定失败的选项是设计缺陷。
     expect(within(list).queryByText(/v2/)).toBeNull();
     expect(postRequests(stub)).toHaveLength(0);
+    // 课程级说明在表单上可见：没有课序勾选、也没有指定学生。
+    expect(screen.getByTestId("compose-course-wide-notice")).toHaveTextContent(
+      "发布后对本课程全部课序与班级",
+    );
+    expect(screen.queryByTestId("compose-section-list")).toBeNull();
+    expect(screen.queryByTestId("compose-student-fieldset")).toBeNull();
   });
 
-  it("同一课程内可多选课序；不指定学生时请求体不带 student_ids（=整个课序）", async () => {
+  it("预览显示服务端受众统计；发布请求体只有课程/名称/题目（无 section_ids/student_ids）", async () => {
     stub = installFetchStub(baseRoutes());
     await signIn("teacher1", "pw");
     renderComposer();
     const user = userEvent.setup();
 
     await fillBase(user);
-    await selectSection(user, SECTION_1);
-    await selectSection(user, SECTION_2);
-    // 两个课序的名单都被并行拉取（指定学生只能来自所选课序）。
-    await screen.findByTestId("compose-student-list");
-
     await user.click(screen.getByTestId("assignment-compose-preview"));
     const confirm = await screen.findByTestId("assignment-compose-confirm");
-    expect(within(confirm).getByTestId("compose-preview-sections")).toHaveTextContent(
-      "01 · 2026F",
+
+    expect(within(confirm).getByTestId("compose-preview-course")).toHaveTextContent("OS-2026A");
+    await waitFor(() =>
+      expect(within(confirm).getByTestId("compose-preview-section-count")).toHaveTextContent("2"),
     );
-    expect(within(confirm).getByTestId("compose-preview-sections")).toHaveTextContent(
-      "02 · 2026F",
+    expect(within(confirm).getByTestId("compose-preview-class-count")).toHaveTextContent("3");
+    expect(within(confirm).getByTestId("compose-preview-student-total")).toHaveTextContent("10");
+    expect(within(confirm).getByTestId("compose-preview-bound")).toHaveTextContent("7");
+    expect(within(confirm).getByTestId("compose-preview-unbound")).toHaveTextContent("3");
+    expect(within(confirm).getByTestId("compose-preview-questions")).toHaveTextContent(
+      "1 个题目版本",
     );
     expect(postRequests(stub)).toHaveLength(0);
 
@@ -257,79 +222,51 @@ describe("新建作业（CHG-0032）", () => {
     await waitFor(() => expect(postRequests(stub)).toHaveLength(1));
 
     const body = postRequests(stub)[0].body as Record<string, unknown>;
-    expect(body.course_id).toBe(COURSE_1);
-    expect(body.section_ids).toEqual([SECTION_1, SECTION_2]);
+    expect(body).toMatchObject({
+      course_id: COURSE_1,
+      title: "第一次作业",
+      question_version_ids: [PUBLISHED],
+    });
+    expect(body).not.toHaveProperty("section_ids");
     expect(body).not.toHaveProperty("student_ids");
-    expect(body.question_version_ids).toEqual([PUBLISHED]);
   });
 
-  it("可选指定学生：勾选后请求体带 student_ids，且预览写出人数", async () => {
-    stub = installFetchStub(baseRoutes());
-    await signIn("teacher1", "pw");
-    renderComposer();
-    const user = userEvent.setup();
-
-    await fillBase(user);
-    await selectSection(user, SECTION_1);
-    const studentList = await screen.findByTestId("compose-student-list");
-    expect(studentList).toHaveTextContent("张三 · 20260001");
-    await user.click(screen.getByTestId(`compose-student-${STUDENT_1}`));
-
-    await user.click(screen.getByTestId("assignment-compose-preview"));
-    const confirm = await screen.findByTestId("assignment-compose-confirm");
-    expect(within(confirm).getByTestId("compose-preview-students")).toHaveTextContent(
-      "已指定 1 名学生",
-    );
-    expect(within(confirm).getByTestId("compose-preview-students")).toHaveTextContent("张三");
-
-    await user.click(screen.getByTestId("assignment-compose-confirm-button"));
-    await waitFor(() => expect(postRequests(stub)).toHaveLength(1));
-    const body = postRequests(stub)[0].body as Record<string, unknown>;
-    expect(body.student_ids).toEqual([STUDENT_1]);
-  });
-
-  it("不同 course 即使同名也不合并：课序只来自选中的那门课程", async () => {
+  it("不同 course 即使同名也不合并：课程按 course_id 出现独立选项", async () => {
     stub = installFetchStub(baseRoutes());
     await signIn("teacher1", "pw");
     renderComposer();
     const user = userEvent.setup();
 
     const courseSelect = await screen.findByLabelText("课程");
-    // 课程目录是异步加载的：等两个选项都进入原生 select 再断言（否则读到的是空列表）。
     await waitFor(() =>
       expect(within(courseSelect).getAllByRole("option")).toHaveLength(2),
     );
     const optionLabels = within(courseSelect)
       .getAllByRole("option")
       .map((option) => option.textContent ?? "");
-    // 两门同名课程是两个独立选项，用课程编号区分，而不是被合并成一项。
-    expect(optionLabels).toHaveLength(2);
     expect(optionLabels[0]).toContain("OS-2026A");
     expect(optionLabels[1]).toContain("OS-2026B");
 
     await user.selectOptions(courseSelect, COURSE_2);
     await fillBase(user);
-    // 只出现第二门课程的课序，第一门课程的课序不会混入。
-    await screen.findByTestId(`compose-section-${SECTION_3}`);
-    expect(screen.queryByTestId(`compose-section-${SECTION_1}`)).toBeNull();
-    await user.click(screen.getByTestId(`compose-section-${SECTION_3}`));
-
     await user.click(screen.getByTestId("assignment-compose-preview"));
+    const confirm = await screen.findByTestId("assignment-compose-confirm");
+    await waitFor(() =>
+      expect(within(confirm).getByTestId("compose-preview-student-total")).toHaveTextContent("4"),
+    );
     await user.click(await screen.findByTestId("assignment-compose-confirm-button"));
     await waitFor(() => expect(postRequests(stub)).toHaveLength(1));
     const body = postRequests(stub)[0].body as Record<string, unknown>;
     expect(body.course_id).toBe(COURSE_2);
-    expect(body.section_ids).toEqual([SECTION_3]);
   });
 
-  it("标题为空或未选课序时不发请求，并在表单上给出错误", async () => {
+  it("标题为空或未选题目时不发请求，并在表单上给出错误", async () => {
     stub = installFetchStub(baseRoutes());
     await signIn("teacher1", "pw");
     renderComposer();
     const user = userEvent.setup();
 
     await screen.findByTestId("compose-version-list");
-    await user.click(screen.getByRole("checkbox", { name: /进程与线程/ }));
     await user.click(screen.getByTestId("assignment-compose-preview"));
     expect(await screen.findByTestId("assignment-compose-error")).toHaveTextContent(
       "请输入作业名称。",
@@ -339,9 +276,38 @@ describe("新建作业（CHG-0032）", () => {
     await user.type(screen.getByLabelText("作业名称"), "第一次作业");
     await user.click(screen.getByTestId("assignment-compose-preview"));
     expect(await screen.findByTestId("assignment-compose-error")).toHaveTextContent(
-      "请至少选择一个课序。",
+      "请至少选择一个已发布题目版本。",
     );
     expect(postRequests(stub)).toHaveLength(0);
+  });
+
+  it("受众统计读取失败时如实说明，但发布仍然可用（受众由服务端判定）", async () => {
+    stub = installFetchStub(
+      baseRoutes().map((route) =>
+        route.path === `/api/v1/courses/${COURSE_1}/roster-summary`
+          ? {
+              path: `/api/v1/courses/${COURSE_1}/roster-summary`,
+              respond: () =>
+                problemResponse({
+                  status: 503,
+                  title: "Unavailable",
+                  detail: "roster aggregation unavailable",
+                }),
+            }
+          : route,
+      ),
+    );
+    await signIn("teacher1", "pw");
+    renderComposer();
+    const user = userEvent.setup();
+
+    await fillBase(user);
+    await user.click(screen.getByTestId("assignment-compose-preview"));
+    expect(await screen.findByTestId("compose-audience-error")).toHaveTextContent(
+      "受众统计暂时读取不到",
+    );
+    await user.click(screen.getByTestId("assignment-compose-confirm-button"));
+    await waitFor(() => expect(postRequests(stub)).toHaveLength(1));
   });
 
   it("服务端 409 时保留表单并提示重新选择，不重复提交", async () => {
@@ -361,7 +327,6 @@ describe("新建作业（CHG-0032）", () => {
     const user = userEvent.setup();
 
     await fillBase(user);
-    await selectSection(user, SECTION_1);
     await user.click(screen.getByTestId("assignment-compose-preview"));
     await user.click(await screen.findByTestId("assignment-compose-confirm-button"));
 
@@ -375,14 +340,14 @@ describe("新建作业（CHG-0032）", () => {
     expect(screen.getByRole("checkbox", { name: /进程与线程/ })).toBeChecked();
   });
 
-  it("服务端 422（无效目标）给出明确原因，而不是通用失败", async () => {
+  it("服务端 422 给出明确原因，而不是通用失败", async () => {
     stub = installFetchStub(
       baseRoutes({
         onPost: () =>
           problemResponse({
             status: 422,
             title: "Unprocessable Entity",
-            detail: "one or more assignment targets are not valid for the course",
+            detail: "question version does not belong to the course",
             instance: "/api/v1/assignments",
           }),
       }),
@@ -392,12 +357,11 @@ describe("新建作业（CHG-0032）", () => {
     const user = userEvent.setup();
 
     await fillBase(user);
-    await selectSection(user, SECTION_1);
     await user.click(screen.getByTestId("assignment-compose-preview"));
     await user.click(await screen.findByTestId("assignment-compose-confirm-button"));
 
     expect(await screen.findByTestId("assignment-compose-error")).toHaveTextContent(
-      "所选课序或学生不在该课程的有效名单中",
+      "服务端拒绝了这个作业（422）",
     );
   });
 });

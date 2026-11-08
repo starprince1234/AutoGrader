@@ -41,6 +41,7 @@ from autograder_b2.intake.service import IntakeLimits, SubmissionIntakeService
 from autograder_b2.integration.assignments import AssignmentAudience
 from autograder_b2.integration.submission_loader import load_submission_envelope
 from autograder_b2.storage.cas import ContentAddressedStore
+from tests.authorization_fixture import FakeAuthorizationDirectory
 from tests.conftest import requires_postgres
 from tests.imap_fixture import FixtureMessage, ImapFixtureServer
 
@@ -87,7 +88,7 @@ class _Directory:
 
 
 class _Assignments:
-    """作业受众目录（B3 internal 端点的替身；受众就是作业事实）。"""
+    """作业目录（B3 internal 端点的替身；课程级作业 = 所属课程 + 有序题目）。"""
 
     def __init__(self) -> None:
         self.audience = AssignmentAudience(
@@ -95,8 +96,6 @@ class _Assignments:
             course_id=COURSE_ID,
             title="unix homework",
             status="open",
-            section_ids=(SECTION_ID,),
-            student_ids=(),
             question_version_ids=(Q1, Q2),
         )
 
@@ -113,11 +112,21 @@ class _Harness:
         self.engine = engine
         self.store = ContentAddressedStore(artifact_root, engine)
         self.directory = _Assignments()
+        self.authorization = FakeAuthorizationDirectory()
+        # 权威归属：学生当前在 COURSE_ID 的 SECTION_ID 课序（验收标准 1 的前提）。
+        self.authorization.enroll(STUDENT_ID, course_id=COURSE_ID, section_id=SECTION_ID)
         self.intake = SubmissionIntakeService(
-            engine, self.store, LIMITS, assignment_directory=self.directory
+            engine,
+            self.store,
+            LIMITS,
+            assignment_directory=self.directory,
+            authorization_directory=self.authorization,
         )
         self.verification = EmailVerificationService(
-            engine=engine, directory=_Directory(), assignment_directory=self.directory
+            engine=engine,
+            directory=_Directory(),
+            assignment_directory=self.directory,
+            authorization_directory=self.authorization,
         )
         #: 记录邮件入口交给**同一个** `SubmissionIntakeService.persist` 的信封——用来证明它走的不是
         #: 邮件侧另建的一套落库逻辑，而是与 API 入口共用的那个存储入口，且传的是同一个冻结类型。
@@ -149,6 +158,7 @@ class _Harness:
             quarantines=QuarantineStore(self.engine),
             verification=self.verification,
             assignment_directory=self.directory,
+            authorization_directory=self.authorization,
         )
 
     # --- 计数与查询（一律直接查库，不看被测代码的返回值） --------------------------------
@@ -414,3 +424,32 @@ def test_accepted_email_submission_gets_a_uuid_identity(harness: _Harness) -> No
     assert uuid.UUID(str(row["submission_id"]))
     assert uuid.UUID(str(row["correlation_id"]))
     assert row["state"] == "validated"
+
+
+@requires_postgres
+def test_a_student_removed_from_the_course_cannot_submit_by_mail(harness: _Harness) -> None:
+    """移出课程后邮件也不能变成提交（与网页入口同口径的当前归属判定）。"""
+    code = issue_code(harness)
+    harness.authorization.unenroll(STUDENT_ID, COURSE_ID)
+    report = pull(harness, [build_message(code=code)])
+    assert report.count("quarantined") == 1, report.outcomes
+    assert harness.count(submissions) == 0
+    rows = harness.quarantine_rows()
+    assert len(rows) == 1
+    assert rows[0]["reason_code"] == "email_verification_rejected"
+    assert "no longer enrolled" in str(rows[0]["detail"])
+
+
+@requires_postgres
+def test_mail_submissions_use_the_current_enrollment_section(harness: _Harness) -> None:
+    """邮件提交的课序取 B4 的**当前**权威归属，而不是挑战签发时的快照。"""
+    code = issue_code(harness)
+    new_section = "77777777-7777-4777-8777-777777777777"
+    harness.authorization.enroll(STUDENT_ID, course_id=COURSE_ID, section_id=new_section)
+    report = pull(harness, [build_message(code=code)])
+    assert report.count("processed") == 1, report.outcomes
+    with harness.engine.connect() as connection:
+        sections = {
+            str(row["section_id"]) for row in connection.execute(sa.select(submissions)).mappings()
+        }
+    assert sections == {new_section}

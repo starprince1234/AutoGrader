@@ -6,7 +6,7 @@ import type { AssignmentPublic, GradeRow } from "../../api/types";
 import { useSession } from "../../auth/sessionContext";
 import { canReviewQuarantine, canViewCohortGrades } from "../../auth/visibility";
 import { useQuarantineMail, REVIEW_PAGE_SIZE } from "../review/useReviewMail";
-import { formatDateTime, shortenId } from "../../ui/format";
+import { formatDateTime } from "../../ui/format";
 import {
   Banner,
   EmptyState,
@@ -20,7 +20,13 @@ import {
   Table,
   Tabs,
 } from "../../ui/components";
-import { loadedCourses, useCourses, useMergedSections, useSections } from "../../api/directory";
+import {
+  courseLabel,
+  loadedCourses,
+  useCourses,
+  useSections,
+} from "../../api/directory";
+import { useCurrentUser } from "../../api/currentUser";
 import { useCohort } from "../grades/useCohort";
 import { useAllGrades, gradesAvailability, type GradesAvailability } from "../grades/useGrades";
 import { useAllAssignments } from "./useAssignments";
@@ -34,16 +40,15 @@ import { overallStateLabel, overallStateTone } from "./progressDisplay";
 import { Select } from "../../ui/Select";
 
 /**
- * 作业中心（CHG-0032 适配）。
+ * 作业中心（CHG-0032 适配 / v0.32.0 课程级作业）。
  *
  * 两种视图（同一批数据，回答不同问题）：
  * - 学生「我的作业」：我该做什么、什么时候到期、我做到哪了 → 每个作业挂到**作业工作区**
- *   `/assignments/{assignment_id}`（旧单题作答页已删除）。
- * - 教师「提交情况」：这个课序里各作业的已交/部分/未交 → 复用 `useCohort` 的
- *   "取完全部页再判定"，并用 `perAssignmentCounts` 按新分类聚合。
- *
- * 不能假设作业只有一个课序：`section_ids` 是数组，列表显示全部目标课序，
- * 进度判定使用当前筛选课序的名单（列标题与说明都写明这一点）。
+ *   `/assignments/{assignment_id}`（旧单题作答页已删除）。学生所属课程来自 `GET /me` 的
+ *   `memberships`：多课程时提供课程切换，并列出每门课的课序与班级（不读教师名单）。
+ * - 教师「提交情况」：当前筛选课序里各作业的已交/部分/未交 → 复用 `useCohort` 的
+ *   "取完全部页再判定" + `perAssignmentCounts`。作业本身对课程全部课序/班级生效，
+ *   这里的课序只是统计筛选，不是作业的受众范围。
  */
 
 type AssignmentStatus = AssignmentPublic["status"];
@@ -69,21 +74,6 @@ function DueCell({ dueAt, now }: { dueAt: string | null | undefined; now: number
           · {t("assignments.overdue")}
         </span>
       ) : null}
-    </span>
-  );
-}
-
-/** 作业目标课序的多值展示（`section_ids` 是数组，绝不当成单值）。 */
-function SectionCells({
-  assignment,
-  sectionLabelOf,
-}: {
-  assignment: AssignmentPublic;
-  sectionLabelOf: (sectionId: string) => string;
-}) {
-  return (
-    <span data-testid={`assignment-sections-${assignment.assignment_id}`}>
-      {assignment.section_ids.map((sectionId) => sectionLabelOf(sectionId)).join("、")}
     </span>
   );
 }
@@ -166,9 +156,18 @@ function StudentAssignmentList({
               assignmentId: row.assignment_id,
             });
             return (
-              <StatusPill tone={overallStateTone(own.overall)}>
-                {overallStateLabel(own.overall)}
-              </StatusPill>
+              <span data-testid={`my-progress-${row.assignment_id}`}>
+                <StatusPill tone={overallStateTone(own.overall)}>
+                  {overallStateLabel(own.overall)}
+                </StatusPill>
+                <span className="muted">
+                  {" · "}
+                  {t("assignments.progressDone", {
+                    done: own.completedCount,
+                    total: own.total,
+                  })}
+                </span>
+              </span>
             );
           },
         },
@@ -234,11 +233,9 @@ function CountCell({
 function TeacherProgress({
   assignments,
   cohort,
-  sectionLabelOf,
 }: {
   assignments: AssignmentPublic[];
   cohort: ReturnType<typeof useCohort>;
-  sectionLabelOf: (sectionId: string) => string;
 }) {
   const complete =
     !cohort.isPending && !cohort.truncated && !cohort.incomplete && !cohort.error;
@@ -309,11 +306,6 @@ function TeacherProgress({
             ),
           },
           {
-            key: "sections",
-            header: t("assignments.targetSections"),
-            render: (row) => <SectionCells assignment={row} sectionLabelOf={sectionLabelOf} />,
-          },
-          {
             key: "due_at",
             header: t("assignments.col.due"),
             render: (row) => <DueCell dueAt={row.due_at} now={Date.now()} />,
@@ -359,64 +351,103 @@ function TeacherProgress({
   );
 }
 
+/** 学生本人的课程/课序/班级（`GET /me` 的 memberships）：姓名与学号也来自同一响应。 */
+function MyMembershipsPanel() {
+  const currentUser = useCurrentUser();
+  const memberships = currentUser.data?.memberships ?? [];
+  return (
+    <Panel title={t("assignments.myMembershipsTitle")} testId="my-memberships">
+      {currentUser.isPending ? (
+        <p className="muted" data-testid="my-memberships-loading">
+          <InlineLoader />
+        </p>
+      ) : currentUser.isError ? (
+        <ErrorState error={currentUser.error} testId="my-memberships-error" />
+      ) : (
+        <div className="stack">
+          <div className="inline" data-testid="my-identity">
+            <span className="muted">
+              {t("assignments.myName")}：{currentUser.data?.display_name ?? t("common.none")}
+            </span>
+            <span className="muted">
+              {t("assignments.myStudentNumber")}：
+              {currentUser.data?.student_number ?? t("common.none")}
+            </span>
+          </div>
+          {memberships.length === 0 ? (
+            <EmptyState>{t("assignments.myCoursesEmpty")}</EmptyState>
+          ) : (
+            <ul className="stack" data-testid="my-membership-list">
+              {memberships.map((membership) => (
+                <li
+                  key={`${membership.course_id}:${membership.section_id}:${membership.class_id}`}
+                  className="muted"
+                  data-testid={`my-membership-${membership.course_id}`}
+                >
+                  {membership.course_title} · {t("assignments.col.section")}{" "}
+                  {membership.section_code} · {t("assignments.col.class")}{" "}
+                  {membership.class_name}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
 export function AssignmentsPage() {
   const session = useSession();
   const cohortView = canViewCohortGrades(session);
   const quarantineIdentity = session.subject ?? session.username ?? "anonymous";
-  // 作用域：学生用会话里的课程/课序；教师的两个视图都由页面上的课程/课序选择器决定。
-  const scope = session.scope[0] ?? null;
   const [tab, setTab] = useState<"list" | "progress">("list");
   const [composerOpen, setComposerOpen] = useState(false);
   const [createdNotice, setCreatedNotice] = useState<string | null>(null);
   const [courseId, setCourseId] = useState("");
   const [sectionId, setSectionId] = useState("");
+  const [studentCourseId, setStudentCourseId] = useState("");
 
-  const courses = useCourses();
+  const courses = useCourses({ enabled: cohortView });
   const courseOptions = loadedCourses(courses.data?.pages);
+  // 学生视图不需要 /me 之外的教师资源，教师视图也不需要本人的 memberships。
+  const currentUser = useCurrentUser({ enabled: !cohortView });
 
+  // ---- 教师：课程/课序筛选（课序只用于统计，不是作业受众范围） ----------
+  // 会话里的 scope 作为初始课序提示（复核链接与徽标必须指向同一批记录）；它只影响
+  // 默认筛选，真正的授权仍由服务端按当前归属判定。
+  const sessionScope = session.scope[0] ?? null;
   const selectedCourseId = courseId || (courseOptions[0]?.course_id ?? "");
-  // 界面上的课程按**名字**出现（同名课程只出现一次）；区别由课序体现。
-  const courseTitles = [...new Set(courseOptions.map((course) => course.title))];
-  const selectedCourseTitle =
-    courseOptions.find((course) => course.course_id === selectedCourseId)?.title ??
-    courseTitles[0] ??
-    "";
-  // 同名课程的课序合并成一个下拉：否则第二门课的班级永远选不到。
-  const mergedSections = useMergedSections(
-    courseOptions
-      .filter((course) => course.title === selectedCourseTitle)
-      .map((course) => course.course_id),
-  );
+  const sections = useSections(cohortView && selectedCourseId !== "" ? selectedCourseId : null);
+  const sectionOptions = sections.data ?? [];
+  const selectedSectionId =
+    sectionId || sessionScope?.section_id || (sectionOptions[0]?.sectionId ?? "");
+  const sectionScope = cohortView ? selectedSectionId : "";
 
-  const selectedSectionId = sectionId || scope?.section_id || "";
-  const sections = useSections(
-    cohortView && selectedCourseId !== "" ? selectedCourseId : null,
-  );
-
-  const courseScope = cohortView ? selectedCourseId : (scope?.course_id ?? "");
-  const sectionScope = cohortView ? selectedSectionId : (scope?.section_id ?? "");
+  // ---- 学生：本人 memberships（多课程时用课程切换） ----------------------
+  const memberships = currentUser.data?.memberships ?? [];
+  const selectedMembership =
+    memberships.find((membership) => membership.course_id === studentCourseId) ??
+    memberships[0] ??
+    null;
+  const studentCourseScope = cohortView ? "" : (selectedMembership?.course_id ?? "");
 
   const listFilter = useMemo(
-    () => ({
-      courseId: courseScope === "" ? null : courseScope,
-      sectionId: sectionScope === "" ? null : sectionScope,
-    }),
-    [courseScope, sectionScope],
+    () => ({ courseId: cohortView ? (selectedCourseId === "" ? null : selectedCourseId) : (studentCourseScope === "" ? null : studentCourseScope) }),
+    [cohortView, selectedCourseId, studentCourseScope],
   );
   const assignments = useAllAssignments(listFilter);
   /**
    * 复核入口旁的数字：必须和点进去看到的「待处理记录」是**同一批**——
-   * 同样的课程/课序（页面选择器决定，也就是链接带过去的 scope）、同样的
-   * `resolved=false & held=false`、同样的分页大小（`REVIEW_PAGE_SIZE`，复核页第一页也是它）。
-   * 之前这里按"全部课程"数，于是出现过徽标 7 条、复核页却更少。
-   * 课程目录未到手前先不请求：否则会先按"全部课程"数出一个不一致的数字。
+   * 同样的课程与统计课序、同样的 `resolved=false & held=false`、同样的分页大小
+   * （`REVIEW_PAGE_SIZE`，复核页第一页也是它）。课程目录未到手前先不请求。
    */
   const pendingQuarantine = useQuarantineMail({
     identity: quarantineIdentity,
     enabled: canReviewQuarantine(session) && !courses.isPending,
     filter: {
       courseId: listFilter.courseId,
-      sectionId: listFilter.sectionId,
+      sectionId: sectionScope === "" ? null : sectionScope,
       resolved: false,
       held: false,
       reasonCode: null,
@@ -428,34 +459,41 @@ export function AssignmentsPage() {
   const pendingCount = pendingRows.length;
   const pendingOverflow = Boolean(pendingQuarantine.data?.pages.at(-1)?.nextCursor);
   const hasPendingQuarantine = pendingCount > 0;
-  const mine = useAllGrades(scope?.course_id ?? null, scope?.section_id ?? null);
+  const mine = useAllGrades(
+    cohortView ? null : (selectedMembership?.course_id ?? null),
+    null,
+  );
 
   const cohortFilter = useMemo(
     () => ({
-      courseId: listFilter.courseId,
-      sectionId: listFilter.sectionId,
+      // 学生视图不需要"课序名单 × 成绩"连接：传 null 让 useCohort 的查询停止，
+      // 而不是多打一次与本人进度重复的成绩请求。
+      courseId: cohortView ? listFilter.courseId : null,
+      sectionId: sectionScope === "" ? null : sectionScope,
       questionVersionIds: null,
     }),
-    [listFilter],
+    [cohortView, listFilter.courseId, sectionScope],
   );
   const cohort = useCohort(cohortFilter);
 
-  const sectionLabelOf = (targetSectionId: string) => {
-    const option = (sections.data ?? []).find(
-      (candidate) => candidate.sectionId === targetSectionId,
-    );
-    if (option) return option.label;
-    const merged = mergedSections.options.find(
-      (candidate) => candidate.sectionId === targetSectionId,
-    );
-    return merged ? merged.label : shortenId(targetSectionId);
-  };
-
   const listView = (
     <div className="stack">
+      {cohortView ? null : <MyMembershipsPanel />}
       <Panel title={cohortView ? t("assignments.tabs.list") : t("assignments.myTitle")}>
-        {cohortView ? null : <p className="muted">{t("assignments.studentHint")}</p>}
-        {assignments.isPending ? (
+        {cohortView ? (
+          <Banner tone="info" testId="assignment-course-wide">
+            {t("assignments.courseWideAudience")}
+          </Banner>
+        ) : (
+          <p className="muted">{t("assignments.studentHint")}</p>
+        )}
+        {!cohortView && currentUser.isPending ? (
+          <Spinner label={t("assignments.membershipLoading")} />
+        ) : !cohortView && currentUser.isError ? (
+          <ErrorState error={currentUser.error} testId="my-memberships-error" />
+        ) : !cohortView && selectedMembership === null ? (
+          <EmptyState>{t("assignments.noMemberships")}</EmptyState>
+        ) : assignments.isPending ? (
           <Spinner label={t("assignments.loadingAll")} />
         ) : assignments.isError ? (
           <ErrorState error={assignments.error} />
@@ -481,8 +519,50 @@ export function AssignmentsPage() {
           />
         )}
       </Panel>
-      {mine.isError ? <ErrorState error={mine.error} /> : null}
+      {!cohortView && mine.isError ? <ErrorState error={mine.error} /> : null}
     </div>
+  );
+
+  const teacherFilterPanel = (
+    <Panel title={t("grades.filter")}>
+      <div className="form-grid">
+        <Field label={t("grades.course")} htmlFor="assignment-course">
+          <Select
+            id="assignment-course"
+            value={selectedCourseId}
+            onChange={(event) => {
+              setCourseId(event.target.value);
+              setSectionId("");
+            }}
+          >
+            {courseOptions.map((course) => (
+              <option key={course.course_id} value={course.course_id}>
+                {courseLabel(course)}
+              </option>
+            ))}
+          </Select>
+        </Field>
+        <Field label={t("assignments.section")} htmlFor="assignment-section">
+          <Select
+            id="assignment-section"
+            value={selectedSectionId}
+            onChange={(event) => setSectionId(event.target.value)}
+            disabled={selectedCourseId === ""}
+          >
+            {sectionOptions.length === 0 ? (
+              <option value="">{t("roster.emptyNoSection")}</option>
+            ) : null}
+            {sectionOptions.map((option, index) => (
+              <option key={option.sectionId} value={option.sectionId}>
+                {index + 1} · {option.label}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      </div>
+      {courses.isError ? <ErrorState error={courses.error} /> : null}
+      {sections.isError ? <ErrorState error={sections.error} /> : null}
+    </Panel>
   );
 
   return (
@@ -507,7 +587,7 @@ export function AssignmentsPage() {
               to="/review"
               search={{
                 tab: "mail",
-                course_id: courseScope === "" ? undefined : courseScope,
+                course_id: listFilter.courseId ?? undefined,
                 section_id: sectionScope === "" ? undefined : sectionScope,
               }}
               className="button button--ghost"
@@ -548,61 +628,9 @@ export function AssignmentsPage() {
         </div>
       </div>
 
-      {!cohortView && scope === null ? (
-        <Panel title={t("assignments.title")}>
-          <EmptyState>{t("assignments.scopeMissing")}</EmptyState>
-        </Panel>
-      ) : cohortView ? (
+      {cohortView ? (
         <>
-          <Panel title={t("grades.filter")}>
-            <div className="form-grid">
-              <Field label={t("grades.course")} htmlFor="assignment-course">
-                <Select
-                  id="assignment-course"
-                  value={selectedCourseTitle}
-                  onChange={(event) => {
-                    const next = courseOptions.find(
-                      (course) => course.title === event.target.value,
-                    );
-                    setCourseId(next?.course_id ?? "");
-                    setSectionId("");
-                  }}
-                >
-                  {courseTitles.map((title) => (
-                    <option key={title} value={title}>
-                      {title}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-              <Field label={t("assignments.section")} htmlFor="assignment-section">
-                <Select
-                  id="assignment-section"
-                  value={selectedSectionId}
-                  onChange={(event) => {
-                    const option = mergedSections.options.find(
-                      (candidate) => candidate.sectionId === event.target.value,
-                    );
-                    // 课序自带课程：选中它同时确定"哪门课的哪个班"，避免只按序号定位。
-                    if (option) {
-                      setCourseId(option.row.course_id);
-                    }
-                    setSectionId(event.target.value);
-                  }}
-                  disabled={selectedCourseId === ""}
-                >
-                  {(mergedSections.options ?? []).map((section, index) => (
-                    <option key={section.sectionId} value={section.sectionId}>
-                      {index + 1}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-            </div>
-            {courses.isError ? <ErrorState error={courses.error} /> : null}
-            {sections.isError ? <ErrorState error={sections.error} /> : null}
-          </Panel>
-
+          {teacherFilterPanel}
           <Tabs
             label={t("assignments.tabs.label")}
             testId="assignments-tabs"
@@ -614,23 +642,39 @@ export function AssignmentsPage() {
                 id: "progress",
                 label: t("assignments.tabs.progress"),
                 content:
-                  listFilter.sectionId === null ? (
+                  sectionScope === "" ? (
                     <Panel title={t("assignments.progressTitle")}>
                       <EmptyState>{t("assignments.progressNeedsSection")}</EmptyState>
                     </Panel>
                   ) : (
-                    <TeacherProgress
-                      assignments={assignments.assignments}
-                      cohort={cohort}
-                      sectionLabelOf={sectionLabelOf}
-                    />
+                    <TeacherProgress assignments={assignments.assignments} cohort={cohort} />
                   ),
               },
             ]}
           />
         </>
       ) : (
-        listView
+        <>
+          {memberships.length > 1 ? (
+            <Panel title={t("assignments.courseSwitch")} testId="student-course-switch">
+              <Field label={t("grades.course")} htmlFor="student-course">
+                <Select
+                  id="student-course"
+                  value={selectedMembership?.course_id ?? ""}
+                  onChange={(event) => setStudentCourseId(event.target.value)}
+                >
+                  {memberships.map((membership) => (
+                    <option key={membership.course_id} value={membership.course_id}>
+                      {membership.course_title} · {membership.section_code} ·{" "}
+                      {membership.class_name}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </Panel>
+          ) : null}
+          {listView}
+        </>
       )}
 
       {createdNotice ? (

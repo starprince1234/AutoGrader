@@ -6,9 +6,12 @@ import { log, newRequestId } from "../../logging/logger";
 import { queryKeys } from "../../app/queryClient";
 
 /**
- * 名单导入的写/读路径（RQ-B-1-10）。
+ * 名单导入的写/读路径（RQ-B-1-10 / v0.32.0 班级级导入）。
  * 关键约束：确认前的所有调用都是**只读或映射**（`POST /roster-imports` 只创建解析任务），
  * 唯一会写入名单的调用是 `confirmRosterImport`，且带幂等键。
+ *
+ * 上传必须显式带 `course_id/section_id/class_id`：服务端会校验"班级属于该课序、课序属于该课程"，
+ * 前端不猜任何一层归属。
  */
 
 export function useRosterImport(importId: string | null) {
@@ -28,12 +31,14 @@ export function useCreateRosterImport() {
       file: File;
       courseId: string;
       sectionId: string;
+      classId: string;
     }): Promise<RosterImportPreview> => {
       const requestId = newRequestId();
       const formData = new FormData();
       formData.append("file", input.file, input.file.name);
       formData.append("course_id", input.courseId);
       formData.append("section_id", input.sectionId);
+      formData.append("class_id", input.classId);
       const preview = await apiRequest<RosterImportPreview>("/api/v1/roster-imports", {
         method: "POST",
         formData,
@@ -47,6 +52,9 @@ export function useCreateRosterImport() {
         // 只记文件名与大小，不记文件内容
         filename: input.file.name,
         size_bytes: input.file.size,
+        course_id: input.courseId,
+        section_id: input.sectionId,
+        class_id: input.classId,
       });
       return preview;
     },
@@ -108,6 +116,14 @@ export function useConfirmRosterImport(importId: string) {
       await queryClient.invalidateQueries({
         queryKey: queryKeys.rosterImport(importId),
       });
+      // 写入的是"某个课程/课序/班级"的名单：班级人数、课序计数、课程聚合都会变化，
+      // 按前缀失效这三类缓存，名单页与作业详情下一次读取即为新值。
+      await queryClient.invalidateQueries({ queryKey: ["class-enrollments"] });
+      await queryClient.invalidateQueries({ queryKey: ["course-enrollments"] });
+      await queryClient.invalidateQueries({ queryKey: ["classes"] });
+      await queryClient.invalidateQueries({ queryKey: ["sections"] });
+      await queryClient.invalidateQueries({ queryKey: ["roster-summary"] });
+      await queryClient.invalidateQueries({ queryKey: ["courses"] });
     },
   });
 }

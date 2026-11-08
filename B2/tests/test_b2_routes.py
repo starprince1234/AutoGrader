@@ -80,6 +80,7 @@ from autograder_b2.grades import (
     FORMULA_TRIGGERS,
     GRADE_EXPORT_COLUMNS,
     XLSX_MEDIA_TYPE,
+    GradeQueryService,
     GradesExportService,
     render_csv,
     render_xlsx,
@@ -105,6 +106,7 @@ from autograder_b2.runtime import (
 )
 from autograder_b2.static.rules import RULES
 from autograder_b2.storage.cas import ContentAddressedStore
+from tests.authorization_fixture import FakeAuthorizationDirectory
 from tests.conftest import requires_postgres, run_alembic
 
 pytestmark = requires_postgres
@@ -389,20 +391,35 @@ def roster(engine: Engine) -> _RouteRoster:
 
 
 @pytest.fixture()
+def authorization() -> FakeAuthorizationDirectory:
+    """B4 权威授权目录替身：学生成绩用例需要它回答"当前是否在课程里"。"""
+    return FakeAuthorizationDirectory()
+
+
+@pytest.fixture()
 def client(
-    module: B2Module, context: _Context, engine: Engine, roster: _RouteRoster
+    module: B2Module,
+    context: _Context,
+    engine: Engine,
+    roster: _RouteRoster,
+    authorization: FakeAuthorizationDirectory,
 ) -> Iterator[TestClient]:
     """走**与宿主相同**的注册路径（`B2Module.router`），因此六条路由都被真的注册了。
 
     导出额外注入 B4 名单端口（`GradesExportService` 装配点）：没有姓名/学号的成绩单不是可用文件，
-    而测试环境没有 B4 服务。注入的只是**端口实现**，导出逻辑与 HTTP 管线仍是生产代码。
+    而测试环境没有 B4 服务。成绩查询/导出还注入 B4 授权目录替身（学生读者的"当前归属"）。
+    注入的只是**端口实现**，服务层逻辑与 HTTP 管线仍是生产代码。
     """
     app = FastAPI()
     install_problem_handlers(app)
     app.include_router(module.router(context))
     runtime = module._runtime
     assert runtime is not None
-    runtime.exporter = GradesExportService(engine, directory=roster)
+    runtime.intake.authorization_directory = authorization
+    runtime.grades = GradeQueryService(engine, authorization_directory=authorization)
+    runtime.exporter = GradesExportService(
+        engine, directory=roster, authorization_directory=authorization
+    )
     with TestClient(app) as test_client:
         yield test_client
 
@@ -1483,9 +1500,14 @@ def test_invalid_grade_filters_and_cursors_are_422(
 
 
 def test_students_only_see_their_own_rows_and_cannot_widen_student_id(
-    client: TestClient, signer: _Signer, world: _World, engine: Engine
+    client: TestClient,
+    signer: _Signer,
+    world: _World,
+    engine: Engine,
+    authorization: FakeAuthorizationDirectory,
 ) -> None:
     _seed_grade_rows(engine, world, count_a=1, count_b=1)
+    authorization.enroll(world.student_a, course_id=world.course, section_id=world.section_a)
     token = _auth(world.student_token(signer, world.student_a))
 
     own = client.get(GRADES, params={"course_id": world.course}, headers=token)
@@ -1506,6 +1528,50 @@ def test_students_only_see_their_own_rows_and_cannot_widen_student_id(
         GRADES, params={"course_id": world.course, "student_id": world.student_a}, headers=token
     )
     assert named_self.status_code == 200, named_self.text
+
+
+def test_student_moved_out_of_the_course_loses_grade_access_immediately(
+    client: TestClient,
+    signer: _Signer,
+    world: _World,
+    engine: Engine,
+    authorization: FakeAuthorizationDirectory,
+) -> None:
+    """移出课程后**无需换 token**：学生成绩读权限立即 403（权威归属检查）。"""
+    _seed_grade_rows(engine, world, count_a=1)
+    authorization.enroll(world.student_a, course_id=world.course, section_id=world.section_a)
+    token = _auth(world.student_token(signer, world.student_a))
+    assert client.get(GRADES, params={"course_id": world.course}, headers=token).status_code == 200
+
+    authorization.unenroll(world.student_a, world.course)
+    _assert_problem(
+        client.get(GRADES, params={"course_id": world.course}, headers=token),
+        403,
+    )
+    _assert_problem(
+        client.get(GRADES_EXPORT, params={"course_id": world.course}, headers=token),
+        403,
+    )
+
+
+def test_student_grade_query_is_503_when_authorization_is_unavailable(
+    client: TestClient,
+    signer: _Signer,
+    world: _World,
+    engine: Engine,
+    authorization: FakeAuthorizationDirectory,
+) -> None:
+    """B4 授权目录不可达 → 503（基础设施失败），不折算成 403。"""
+    _seed_grade_rows(engine, world, count_a=1)
+    authorization.set_unavailable(True)
+    _assert_problem(
+        client.get(
+            GRADES,
+            params={"course_id": world.course},
+            headers=_auth(world.student_token(signer, world.student_a)),
+        ),
+        503,
+    )
 
 
 def test_cross_course_and_cross_section_are_403(
@@ -1689,9 +1755,15 @@ def test_export_rejects_an_unsupported_format(
 
 
 def test_export_scopes_a_student_to_their_own_rows(
-    client: TestClient, signer: _Signer, world: _World, engine: Engine
+    client: TestClient,
+    signer: _Signer,
+    world: _World,
+    engine: Engine,
+    authorization: FakeAuthorizationDirectory,
 ) -> None:
     _seed_grade_rows(engine, world, count_a=1, count_b=3)
+    # 学生读者的成绩权限按 B4 的**当前**归属判定：这里把 student_a 登记为当前在课程里。
+    authorization.enroll(world.student_a, course_id=world.course, section_id=world.section_a)
     response = client.get(
         GRADES_EXPORT,
         params={"course_id": world.course, "format": "csv"},
@@ -2280,10 +2352,16 @@ def test_offset_is_not_a_paging_parameter(
 
 
 def test_students_cannot_query_or_export_another_students_grades(
-    client: TestClient, signer: _Signer, world: _World, engine: Engine
+    client: TestClient,
+    signer: _Signer,
+    world: _World,
+    engine: Engine,
+    authorization: FakeAuthorizationDirectory,
 ) -> None:
     """C：学生指名**他人**查询或导出 → 403（不是静默收窄成自己的记录）；指名自己 → 200。"""
     _seed_grade_rows(engine, world, count_a=1, count_b=1)
+    # 指名自己/默认查询都要过 B4 当前归属：把 student_a 登记为当前在课程里。
+    authorization.enroll(world.student_a, course_id=world.course, section_id=world.section_a)
     token = _auth(world.student_token(signer, world.student_a))
 
     for path in (GRADES, GRADES_EXPORT):

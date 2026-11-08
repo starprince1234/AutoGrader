@@ -862,20 +862,30 @@ export interface paths {
         };
         /**
          * List assignments (作业集合) in the caller's course scope
-         * @description Teachers see assignments in the courses they are staff on. Students see only
-         *     assignments whose target sections include their course section and, when the
-         *     assignment narrows its audience to named students, whose student list contains them
-         *     (CHG-0032). The list is keyset-paginated by `(created_at, assignment_id)`.
+         * @description An assignment belongs to exactly one course and applies to **every** section (课序) and
+         *     class (班级) of that course (v0.32.0): there is no hand-picked target list left. The
+         *     audience is evaluated against the caller's current effective membership, read from B4
+         *     on each request, so a student added to a course after sign-in sees its assignments and
+         *     a student removed from a course stops seeing them without waiting for a token refresh.
+         *
+         *     Teachers see assignments in the courses they are staff on; students see assignments of
+         *     the courses they are currently enrolled in. The list is keyset-paginated by
+         *     `(created_at, assignment_id)`.
          */
         get: operations["listAssignments"];
         put?: never;
         /**
          * Create an assignment from published question versions
-         * @description Only published versions may be referenced; a draft reference returns 409. The assignment
-         *     must target at least one section of `course_id`; `student_ids` optionally narrows the
-         *     audience to named students inside those sections (empty means the whole sections).
-         *     Sections and students are validated against B4 server-side; invalid targets are 422 and
-         *     are never silently narrowed.
+         * @description Only published versions of questions in `course_id` may be referenced; a draft
+         *     reference returns 409 and a question from another course is 404. The assignment is
+         *     course-scoped (v0.32.0): it automatically applies to every section and class of the
+         *     course, including sections/classes added later while the assignment is open. There is
+         *     no section or student target list any more.
+         *
+         *     Publishing also schedules the publication notification to the course's current roster
+         *     (B4). The notification is a separate, idempotent step: its state is reported as
+         *     `notification_state` on the returned assignment, and a failure never rolls the
+         *     assignment back but is visible as `unavailable` and can be retried.
          */
         post: operations["createAssignment"];
         delete?: never;
@@ -909,6 +919,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/assignments/{assignment_id}/notifications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                assignment_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Schedule (or retry) the publication notification of an assignment
+         * @description Idempotent by assignment: B4 materialises the recipient list once and returns the
+         *     existing state on every repeat, so calling this again never duplicates recipients or
+         *     re-sends a message. A teacher uses it when `notification_state` is `unavailable`
+         *     (B4 could not be reached while publishing). The response is the assignment with its
+         *     updated `notification_state`; per-recipient delivery results are read from B4
+         *     (`GET /api/v1/courses/{course_id}/assignments/{assignment_id}/notifications`), not
+         *     from this endpoint -- scheduling is not delivery.
+         */
+        post: operations["scheduleAssignmentNotifications"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/assignment-audiences/{assignment_id}": {
         parameters: {
             query?: never;
@@ -920,13 +958,15 @@ export interface paths {
         };
         /**
          * Read an assignment's audience for submission admission (service-to-service)
-         * @description Consumed by B2 when accepting a web or mail submission (CHG-0032). Being internal is not a
-         *     substitute for authorization: the caller must present the pre-shared `serviceToken`, not a
-         *     student or teacher access token. The response is the minimum needed for admission:
-         *     identity, status, target sections/students and the ordered question list. A missing
-         *     assignment is `404`; missing/wrong credentials are `401`; a deployment with no service
-         *     credential configured refuses the endpoint with `503` instead of treating it as open
-         *     (an unconfigured internal channel must fail closed, not degrade).
+         * @description Consumed by B2 when accepting a web or mail submission (v0.32.0: course-level audience).
+         *     Being internal is not a substitute for authorization: the caller must present the
+         *     pre-shared `serviceToken`, not a student or teacher access token. The response carries
+         *     the assignment's course, status and ordered question list; **membership in the course**
+         *     is not asserted here because only B4 is authoritative for it -- B2 asks B4 for the
+         *     submitting student's current enrollment separately. A missing assignment is `404`;
+         *     missing/wrong credentials are `401`; a deployment with no service credential
+         *     configured refuses the endpoint with `503` instead of treating it as open (an
+         *     unconfigured internal channel must fail closed, not degrade).
          */
         get: operations["getInternalAssignment"];
         put?: never;
@@ -1631,37 +1671,39 @@ export interface components {
             verified_at?: components["schemas"]["Timestamp"] | null;
         };
         /**
-         * @description A homework set that groups published question versions for one course and one or more
-         *     target sections, optionally narrowed to named students (CHG-0032). `question_version_ids`
-         *     is in assignment order (item ordinal 0..n-1); answer files are named by 1-based position
-         *     (`1.txt`, `2.txt`, ...). `student_ids` empty means "every student in the target
-         *     sections"; non-empty means exactly those students.
+         * @description A homework set that groups published question versions for exactly one course and
+         *     applies to every section (课序) and class (班级) of that course (v0.32.0). There is no
+         *     target list: the audience is "the course's current effective students", evaluated at
+         *     read/submission time. `question_version_ids` is in assignment order (item ordinal
+         *     0..n-1); answer files are named by 1-based position (`1.txt`, `2.txt`, ...).
+         *     `notification_state` reports the publication-notification hand-off:
+         *     `scheduled` (B4 received the audience), `unavailable` (it did not; retry is possible),
+         *     `pending` (never attempted, only transitional).
          */
         AssignmentPublic: {
             assignment_id: components["schemas"]["Uuid"];
             course_id: components["schemas"]["Uuid"];
-            section_ids: components["schemas"]["Uuid"][];
-            /** @description Optional audience narrowing. Empty = all students in the target sections. */
-            student_ids: components["schemas"]["Uuid"][];
             title: string;
             /** @enum {string} */
             status: "open" | "archived";
             due_at?: components["schemas"]["Timestamp"] | null;
             question_version_ids: components["schemas"]["Uuid"][];
+            /** @enum {string} */
+            notification_state: "pending" | "scheduled" | "unavailable";
             created_at?: components["schemas"]["Timestamp"] | null;
             updated_at?: components["schemas"]["Timestamp"] | null;
         };
         /**
-         * @description The assignment audience served to B2 over the internal channel (serviceToken only). It
-         *     is the minimum B2 needs to admit or refuse a submission: identity, target sections and
-         *     students, and the ordered question list. Timestamps are not needed for admission and are
-         *     therefore not exposed here.
+         * @description The assignment facts served to B2 over the internal channel (serviceToken only). It is
+         *     the minimum B2 needs to admit or refuse a submission: which course the assignment
+         *     belongs to, whether it is open, and the ordered question list. Course membership is
+         *     **not** asserted here -- B4 is the only authority for it, so B2 reads the submitting
+         *     student's current enrollment from B4 and combines the two facts. Timestamps are not
+         *     needed for admission and are therefore not exposed.
          */
         AssignmentInternal: {
             assignment_id: components["schemas"]["Uuid"];
             course_id: components["schemas"]["Uuid"];
-            section_ids: components["schemas"]["Uuid"][];
-            student_ids: components["schemas"]["Uuid"][];
             title: string;
             /** @enum {string} */
             status: "open" | "archived";
@@ -2899,8 +2941,6 @@ export interface operations {
                 cursor?: components["parameters"]["Cursor"];
                 limit?: components["parameters"]["Limit"];
                 course_id?: components["schemas"]["Uuid"];
-                /** @description Only assignments whose target sections include this section. */
-                section_id?: components["schemas"]["Uuid"];
             };
             header?: never;
             path?: never;
@@ -2934,13 +2974,6 @@ export interface operations {
             content: {
                 "application/json": {
                     course_id: components["schemas"]["Uuid"];
-                    /** @description Target sections of this course (1-based class ordinals are per course). */
-                    section_ids: components["schemas"]["Uuid"][];
-                    /**
-                     * @description Optional narrowing: exactly these students (each validated as actively enrolled in one of `section_ids`). Empty means every student in the target sections.
-                     * @default []
-                     */
-                    student_ids?: components["schemas"]["Uuid"][];
                     title: string;
                     due_at?: components["schemas"]["Timestamp"];
                     /** @description Assignment order: item ordinal equals array position (0-based). Answer files are named by 1-based position (`1.txt`, ...). */
@@ -2988,6 +3021,33 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    scheduleAssignmentNotifications: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                assignment_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The assignment with its current notification scheduling state. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssignmentPublic"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     getInternalAssignment: {

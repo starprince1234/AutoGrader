@@ -138,6 +138,25 @@ class SubmissionEnvelope:
 作业目录**未配置或不可达**不属于上表：它抛 `intake.service.AssignmentDirectoryUnavailable`（基础设施失败），
 对外是 `503`，绝不被折算成"作业不存在/题目不属于作业"这类学生错误（规格 §1.6 / §5.2）。
 
+**课程级受众（v0.32.0）与权威归属**：作业不再携带 section/student 名单（删除
+`AssignmentAudience.section_ids/student_ids/is_target`）。准入的第二层是 B4 的**当前**归属
+（`integration.b4_authorization`，`GET /api/v1/internal/users/{user_id}/authorization`）：
+
+- **令牌层只判身份**：角色 + 学生本人 / staff 代交 / 管理员豁免（`require_submission_identity`）。
+  学生的令牌课程 `scope` **不参与**准入（它只是签发时的快照：新加入课程的学生在令牌里看不到该
+  课程，被移出的学生仍带着旧作用域）；staff 代交保留既有令牌语义（教师令牌须覆盖该课程）。
+- 学生（本人提交或被 staff 代交）必须仍有该课程的当前有效 enrollment；其 `section_id` 是权威课序，
+  **覆盖**请求里的 `section_id` 后落库。该课程的 staff 为自己提交/签发且无学生选课时保留请求 section；
+  管理员豁免。
+- 无当前归属 → `403`（提交入口在取作业**之前**判定，不泄露作业是否存在）。
+- B4 授权目录**未配置/不可达/非 200/响应畸形** → `AuthorizationUnavailable`（基础设施失败，对外 `503`），
+  绝不折算成 `403` 或"空选课"。
+- 邮件入口（IMAP）用同一判定：无归属 → 可解释隔离（不消费挑战）；换课序 → 用当前权威 section；
+  B4 目录不可用 → 本轮拉取失败（`intake_state.last_error_code = identity_unavailable`），不隔离。
+- 人工匹配（`complete`）与网页/邮件入口同口径：B4 权威 section 与 staff 指定值不一致 / 无归属 ⇒ `422`。
+- 成绩**学生读者**另有同一归属检查：请求课程不在当前 enrollments ⇒ `403`；B4 目录不可用 ⇒ `503`。
+  staff 路径保持 token scope，响应结构与导出列不变。
+
 **不落库**：以上任一失败都不得在 `b2.submission`/`b2.artifact` 留下任何行。认证/作用域失败（`401`/`403`）发生在归一化之前，且**不得用 `404` 掩盖**。
 
 ## 3. `StaticAnalysisResult`

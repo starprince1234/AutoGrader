@@ -66,10 +66,13 @@
 | `sessions` | 会话/刷新凭据句柄 | `refresh_token_hash` 唯一且为 SHA-256（CHECK 正则）；`family_id` 聚合轮换链；`replaced_by` 自引用 | 登录创建；刷新轮换；注销/过期/重用检测时撤销 |
 | `roles` | 角色授予 | `role ∈ {student, teacher, assistant, admin}`；`(user_id, role, course_id)` 唯一（`NULLS NOT DISTINCT`）；`admin` 必须 `course_id IS NULL` | 平台角色由管理员授予；课程级授予由建课或运维命令写入 |
 | `courses` | 课程主数据 | `course_id` UUID 主键；`course_code` 唯一 | 教师/管理员创建；`is_active` 软删除 |
-| `sections` | 课序（课程下的开班） | `section_id` UUID 主键；`(course_id, section_code, term)` 唯一（`NULLS NOT DISTINCT`）；FK 指向 `courses`（同 schema） | 课程写权限者创建 |
-| `enrollments` | 选课关系（学生 × 课序） | `enrollment_id` UUID 主键；`(section_id, student_number)` 唯一；`source ∈ {roster_import, manual}`；FK 指向 `sections`/`users`/`roster_imports` | 名单导入确认或人工维护；可置 `is_active=false` |
+| `sections` | 课序（课程下的教学分组） | `section_id` UUID 主键；`(course_id, section_code, term)` 唯一（`NULLS NOT DISTINCT`）；`(section_id, course_id)` 唯一（供 enrollments 复合外键）；FK 指向 `courses`（同 schema） | 课程写权限者创建 |
+| `classes` | 班级（课序下的学生分组，v0.32.0） | `class_id` UUID 主键；`(section_id, class_name)` 唯一；`(class_id, section_id)` 唯一；`(section_id, allowlist_batch_id)` 部分唯一（同一已注册名单班不重复挂到同一课序）；`source ∈ {registered_class, roster_import, manual}`；FK 指向 `sections`/`registration_allowlist_batches`/`users` | 教师创建（可手工、可挂已注册名单班、可由名单导入创建）；删除课序/课程时级联 |
+| `enrollments` | 选课关系（学生 × 课程 × 课序 × 班级，v0.32.0） | `enrollment_id` UUID 主键；**部分唯一 `(course_id, student_number) WHERE is_active` = 同一课程最多一个有效课序/班级**；复合外键 `(class_id, section_id) → classes`、`(section_id, course_id) → sections` 保证层级一致；`source ∈ {roster_import, manual, registered_class}`；FK 指向 `classes`/`sections`/`users`/`roster_imports` | 名单导入确认、班级挂接或人工维护；可置 `is_active=false`（历史行保留） |
+| `assignment_notifications` | 作业发布通知的受众快照（v0.32.0） | `notification_id` UUID 主键；`assignment_id` 唯一（幂等键，B3 拥有作业本身）；`status ∈ {pending, sending, completed, partial, failed}`；FK 指向 `courses` | 发布时由 B3 经内部端点 materialise；只增不改受众 |
+| `assignment_notification_deliveries` | 每个应通知学生的真实投递状态 | `delivery_id` UUID 主键；`(notification_id, enrollment_id)` 部分唯一 / 无绑定行按学号唯一；`status ∈ {pending, sending, sent, failed, skipped_unbound, skipped_no_contact, skipped_inactive}`；`reason_code ∈ {smtp_error, mail_not_configured, no_account, no_email, inactive_account}`；快照学号/姓名/课序/班级 | 与通知同事务创建；发送进程更新状态；名单删除后保留快照（`enrollment_id` SET NULL） |
 | `audit_records` | 敏感操作审计 | `audit_id` UUID 主键；`occurred_at` timestamptz；`outcome ∈ {success, denied, failure}`；`change_digest` 为 SHA-256（CHECK 正则） | 只追加，不修改不删除 |
-| `roster_imports` | 导入状态机 + 预览元数据 | `status` 为契约枚举；`content_sha256` 为 SHA-256；`committed` 与 `committed_at` 必须同时成立（CHECK）；`idempotency_key` 部分唯一索引 | 上传创建；确认后终态 |
+| `roster_imports` | 导入状态机 + 预览元数据 | `status` 为契约枚举；`content_sha256` 为 SHA-256；`committed` 与 `committed_at` 必须同时成立（CHECK）；`idempotency_key` 部分唯一索引；`class_id` 记录目标班级（v0.32.0） | 上传创建；确认后终态 |
 | `roster_import_files` | 上传产物字节 | 一行一导入（`uq_roster_import_files_roster_import_id`）；上传大小受 `B4_ROSTER_UPLOAD_MAX_BYTES` 限制 | 随导入；`ON DELETE CASCADE` |
 | `roster_import_rows` | **暂存**的逐行解析结果 | `(roster_import_id, row_number)` 唯一；`status ∈ {accepted, rejected}`；`rejected` ⟺ `reason` 非空（CHECK） | 每次校验重写；**确认前的 roster 数据只存在于此表** |
 | `outbox_events` | 待发事件 | `event_id` 唯一；`event_type` 必须匹配 `^autograder\.v1\.`；`producer` 匹配 `^B[1-4]$` | 与业务变更同事务插入；中继发布后置 `published_at` |
@@ -98,6 +101,7 @@
 | `password_reset_codes` | 邮箱与验证码摘要 | 邮箱是 PII，只用于投递；验证码只存摘要，明文不落库、不进日志；不存口令 |
 | `users` | 姓名、学号、邮箱等 PII | 公开 DTO 最小化；日志脱敏；仅授权者可读 |
 | `roster_import_rows`、`roster_import_files` | 名单原始行与文件字节 | **确认前**只存于此，不进 `enrollments`；`RosterRowPreview` 只返回给授权调用者 |
+| `assignment_notification_deliveries` | 姓名/学号/课序/班级快照 + 投递失败原因 | 仅课程 staff 可读；不返回邮箱地址；发送日志只记计数 |
 | `audit_records` | 变更前后**摘要** | 只存 SHA-256 摘要与字段名，不存值 |
 
 ## 禁止事项（重申）

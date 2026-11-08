@@ -204,6 +204,15 @@ class B2Runtime:
         return self.intake.assignment_directory
 
     @property
+    def authorization_directory(self):
+        """B4 权威授权/归属目录（学生提交、邮件核验、学生成绩查询共用；未配置为 `None`）。
+
+        与 `assignment_directory` 同理：装配点在 `IntakeRuntime`，这里只转发。**未配置**时这些
+        路径以 503 拒绝（没有它就无法回答"当前有效归属"），绝不静默放宽成"不校验"。
+        """
+        return self.intake.authorization_directory
+
+    @property
     def email(self):
         """邮件拉取服务（IMAP 入口；未装配时为 `None`）。由 `pull` CLI 使用。
 
@@ -554,11 +563,15 @@ def _wire_database_services(runtime: B2Runtime) -> None:
     导出额外装配 B4 名单客户端（`B2_B4_BASE_URL`）：它让姓名/学号可以在**不跨 schema**的前提下
     进入导出文件。未配置或配置非法时导出仍装配（空结果照样能导出表头），但一旦有行就会以
     `IdentityNotConfigured`（503）拒绝，而不是生成缺身份的"成功"文件。
+
+    成绩的**学生读者**还需要 B4 的当前归属（`authorization_directory`）：移出课程后成绩读权限
+    立即失效（设计 §4）。教师/管理员读者沿用 token 作用域，不受该目录影响。
     """
     engine = runtime.intake.engine
     if engine is None:
         return
-    runtime.grades = GradeQueryService(engine)
+    authorization = runtime.intake.authorization_directory
+    runtime.grades = GradeQueryService(engine, authorization_directory=authorization)
     runtime.quality = EvaluationQualityService(engine)
     directory = None
     settings = runtime.intake.settings
@@ -570,7 +583,9 @@ def _wire_database_services(runtime: B2Runtime) -> None:
         except ValueError:
             # 非法地址在这里收敛成"没有目录"：导出会以 503 拒绝，不会悄悄输出空姓名列。
             directory = None
-    runtime.exporter = GradesExportService(engine, directory=directory)
+    runtime.exporter = GradesExportService(
+        engine, directory=directory, authorization_directory=authorization
+    )
 
 
 def _wire_evaluation_chain(runtime: B2Runtime) -> None:

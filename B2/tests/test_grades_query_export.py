@@ -72,6 +72,8 @@ from autograder_b2.grades.query import (
     grade_page_body,
     grade_row_body,
 )
+from autograder_b2.integration.b4_authorization import AuthorizationUnavailable
+from tests.authorization_fixture import FakeAuthorizationDirectory
 from tests.conftest import requires_postgres
 
 pytestmark = requires_postgres
@@ -97,8 +99,14 @@ HOSTILE_VALUES = (
 
 
 @pytest.fixture()
-def query(engine: Engine) -> GradeQueryService:
-    return GradeQueryService(engine)
+def authorization() -> FakeAuthorizationDirectory:
+    """B4 权威授权目录替身（学生读者的"当前归属"检查；教师/管理员路径不查它）。"""
+    return FakeAuthorizationDirectory()
+
+
+@pytest.fixture()
+def query(engine: Engine, authorization: FakeAuthorizationDirectory) -> GradeQueryService:
+    return GradeQueryService(engine, authorization_directory=authorization)
 
 
 class _FakeRoster:
@@ -160,9 +168,13 @@ def roster(engine: Engine) -> _FakeRoster:
 
 
 @pytest.fixture()
-def exporter(engine: Engine, roster: _FakeRoster) -> GradesExportService:
-    """导出服务装配测试名单客户端：姓名/学号属于 B4，B2 只能经授权接口取得。"""
-    return GradesExportService(engine, directory=roster)
+def exporter(
+    engine: Engine, roster: _FakeRoster, authorization: FakeAuthorizationDirectory
+) -> GradesExportService:
+    """导出服务装配测试名单客户端与 B4 授权目录替身：姓名/学号属于 B4，当前归属也属于 B4。"""
+    return GradesExportService(
+        engine, directory=roster, authorization_directory=authorization
+    )
 
 
 def _export(exporter: GradesExportService, **kwargs: object):
@@ -1033,7 +1045,10 @@ def test_xlsx_truncates_like_the_api_when_the_source_carries_microseconds() -> N
 
 
 def test_student_sees_only_own_records_and_naming_another_student_is_403(
-    engine: Engine, query: GradeQueryService, exporter: GradesExportService
+    engine: Engine,
+    query: GradeQueryService,
+    exporter: GradesExportService,
+    authorization: FakeAuthorizationDirectory,
 ) -> None:
     """学生：默认只见自己；显式指名自己 → 通过；指名他人 → 403（**不是**静默收窄）。"""
     course, section = uuid.uuid4(), uuid.uuid4()
@@ -1058,6 +1073,7 @@ def test_student_sees_only_own_records_and_naming_another_student_is_403(
         state="validated",
     )
     assert own != other
+    authorization.enroll(owner, course_id=course, section_id=section)
     principal = _student(owner, course, section)
 
     page = query.list_grades(principal=principal, course_id=str(course))
@@ -1071,6 +1087,67 @@ def test_student_sees_only_own_records_and_naming_another_student_is_403(
         query.list_grades(principal=principal, course_id=str(course), student_id=str(intruder))
     with pytest.raises(AuthorizationError, match="only read their own"):
         _export(exporter, principal=principal, course_id=str(course), student_id=str(intruder))
+
+
+def test_student_removed_from_the_course_is_403(
+    engine: Engine, query: GradeQueryService, authorization: FakeAuthorizationDirectory
+) -> None:
+    """移出课程后（B4 当前选课不存在）学生成绩读权限立即失效，即使 token 仍在有效期内。"""
+    course, section = uuid.uuid4(), uuid.uuid4()
+    student_id = uuid.uuid4()
+    _seed_submission(
+        engine,
+        course_id=course,
+        section_id=section,
+        student_id=student_id,
+        question_version_id=uuid.uuid4(),
+        submitted_at=BASE,
+        state="validated",
+    )
+    authorization.enroll(student_id, course_id=course, section_id=section)
+    principal = _student(student_id, course, section)
+    assert len(query.list_grades(principal=principal, course_id=str(course)).items) == 1
+
+    authorization.unenroll(student_id, course)
+    with pytest.raises(AuthorizationError, match="not currently enrolled"):
+        query.list_grades(principal=principal, course_id=str(course))
+
+
+def test_student_grade_query_requires_the_authorization_directory(
+    engine: Engine, authorization: FakeAuthorizationDirectory
+) -> None:
+    """B4 授权目录不可达 → `AuthorizationUnavailable`（路由层 503），不是 403。"""
+    service = GradeQueryService(engine, authorization_directory=authorization)
+    authorization.set_unavailable(True)
+    course = uuid.uuid4()
+    with pytest.raises(AuthorizationUnavailable):
+        service.list_grades(
+            principal=_student(uuid.uuid4(), course, uuid.uuid4()), course_id=str(course)
+        )
+
+
+def test_export_also_checks_the_current_enrollment(
+    engine: Engine, exporter: GradesExportService, authorization: FakeAuthorizationDirectory
+) -> None:
+    """导出复用查询的同一处归属判定：移出课程后导出同样 403。"""
+    course, section = uuid.uuid4(), uuid.uuid4()
+    student_id = uuid.uuid4()
+    _seed_submission(
+        engine,
+        course_id=course,
+        section_id=section,
+        student_id=student_id,
+        question_version_id=uuid.uuid4(),
+        submitted_at=BASE,
+        state="validated",
+    )
+    authorization.enroll(student_id, course_id=course, section_id=section)
+    principal = _student(student_id, course, section)
+    assert _export(exporter, principal=principal, course_id=str(course)).row_count == 1
+
+    authorization.unenroll(student_id, course)
+    with pytest.raises(AuthorizationError, match="not currently enrolled"):
+        _export(exporter, principal=principal, course_id=str(course))
 
 
 def test_student_in_another_course_is_403(engine: Engine, query: GradeQueryService) -> None:

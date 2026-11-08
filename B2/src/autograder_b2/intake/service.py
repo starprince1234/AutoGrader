@@ -27,9 +27,13 @@
 7. **信封可往返**：`correlation_id` 与 provenance 随提交行一起落库（迁移 `20260915_0008`），
    因此 `integration.submission_loader` 能把这一行重新组装成同一个冻结信封。少了这两样，
    评测阶段就没有生产级输入路径——它必须用 `submission.correlation_id` 发事件。
-8. **作业归属（CHG-0032）**：新提交必须带 `assignment_id`，并逐项对上 B3 的作业受众——作业存在且
-   open、课程与题目属于作业、section/student 在受众内。作业目录**未配置或不可达**一律是基础设施
-   失败（`AssignmentDirectoryUnavailable` → 对外 `503`），绝不把平台故障记成"学生交错了题"。
+8. **课程级作业归属（v0.32.0）**：新提交必须带 `assignment_id`。令牌层只判**角色与身份**
+   （`student_id` 是令牌主体本人或 staff 代交；管理员豁免），**不**用令牌的课程 `scope` 做准入
+   ——它只是签发时的快照（登录后新加入课程的学生在令牌里看不到该课程，被移出的学生仍带着旧
+   作用域）。"当前有效归属"由 **B4 权威授权**判定：学生必须仍有该课程的当前有效 enrollment
+   （`section_id` 以它为准、覆盖请求里的值），staff 代交保留既有令牌课程作用域且被代交学生同样
+   必须在课程里。作业本身由 B3 回答"存在/open/题目属于它"。作业目录与 B4 授权目录**未配置或
+   不可达**一律是基础设施失败（→ 对外 `503`），绝不把平台故障记成"学生交错了题"或"你不在受众里"。
 9. **一次提交 = 一道题 = 一个单段 `.txt`**（规格 §1.4）：入口、`build_submission_envelope`、
    `persist` 三处执行同一规则（原因码 `invalid_file_count` / `file_type_not_allowed`）。
 """
@@ -49,7 +53,11 @@ from sqlalchemy import Connection, Engine
 from sqlalchemy.exc import IntegrityError
 
 from autograder_b2 import contracts
-from autograder_b2.auth.authorization import AuthorizationError, require_submission_authority
+from autograder_b2.auth.authorization import (
+    AuthorizationError,
+    require_submission_authority,
+    require_submission_identity,
+)
 from autograder_b2.auth.tokens import Principal
 from autograder_b2.db.schema import submissions
 from autograder_b2.domain import states
@@ -71,6 +79,11 @@ from autograder_b2.integration.assignments import (
     AssignmentAudience,
     AssignmentDirectory,
     AssignmentUnavailable,
+)
+from autograder_b2.integration.b4_authorization import (
+    AuthorizationUnavailable,
+    UserAuthorization,
+    UserAuthorizationDirectory,
 )
 from autograder_b2.storage.cas import ContentAddressedStore
 from autograder_b2.storage.paths import storage_path_for
@@ -232,14 +245,18 @@ class SubmissionIntakeService:
         limits: IntakeLimits,
         *,
         assignment_directory: AssignmentDirectory | None = None,
+        authorization_directory: UserAuthorizationDirectory | None = None,
     ) -> None:
         self._engine = engine
         self._store = store
         self._limits = limits
-        #: 作业受众目录（B3 internal endpoint）。**未配置即不可用**：HTTP 入口返回 503，
+        #: 作业目录（B3 internal endpoint）。**未配置即不可用**：HTTP 入口返回 503，
         #: 绝不把"查不到作业"当成"作业不存在"。属性公开是为了让装配点（`IntakeRuntime`）与测试
         #: 可以注入同一个端口实例；生产写入路径不会在运行中替换它。
         self.assignment_directory = assignment_directory
+        #: B4 权威授权目录（`GET /api/v1/internal/users/{id}/authorization`）。同样**未配置即不可用**：
+        #: 没有它就无法回答"这个学生现在是否属于这门课"，因此不能放行，也不能假装"没有归属"。
+        self.authorization_directory = authorization_directory
 
     @property
     def limits(self) -> IntakeLimits:
@@ -255,20 +272,30 @@ class SubmissionIntakeService:
         principal: Principal,
         correlation_id: str,
     ) -> IntakeResult:
-        # 作业模型下的固定顺序（规格 §5.2）：先文件形态（原因码要具体），再契约/字节，再身份与目标。
+        # 固定顺序（设计 §4）：先文件形态（原因码要具体），再契约/字节，再身份，再权威归属，
+        # 最后才是作业自身的 open/题目校验。
         self._check_answer_file_shape(payload)
         files = self._check_limits(payload)
         self._check_contract(payload)
         prepared = self._prepare_files(files)
         identity = self._read_envelope(payload)
-        require_submission_authority(
-            principal,
-            course_id=identity["course_id"],
-            section_id=identity["section_id"],
-            student_id=identity["student_id"],
-        )
+        # 身份层：角色 + 本人/staff 代交（管理员豁免）。**不**校验令牌课程作用域：令牌里的
+        # `scope` 只是签发时的快照，而"这个学生此刻是否属于这门课"由 B4 的当前有效选课决定
+        # （b2.yaml：admission must not depend on the token's scope）。
+        require_submission_identity(principal, student_id=identity["student_id"])
+        if not principal.is_admin and str(uuid.UUID(identity["student_id"])) != principal.user_id:
+            # staff 代交保留既有令牌语义（设计 §4）：教师/助教的课程作用域仍须覆盖该课程。
+            require_submission_authority(
+                principal,
+                course_id=identity["course_id"],
+                section_id=None,
+                student_id=identity["student_id"],
+            )
+        # 权威归属在**取作业之前**判定：没有当前归属的学生不能从 404/422 的差异里读到
+        # "这个作业是否存在/是否开放"（设计 §4：无归属 → 403，不泄露作业是否存在）。
+        identity["section_id"] = self._require_authoritative_section(principal, identity)
         audience = self._require_assignment(identity["assignment_id"])
-        self._check_assignment_audience(audience, identity)
+        self._check_assignment_membership(audience, identity)
         self._check_answer_file_name(audience, identity, prepared)
 
         pairs = tuple((item.path, item.content) for item in prepared)
@@ -527,10 +554,48 @@ class SubmissionIntakeService:
         )
         return {key: str(payload[key]) for key in keys}
 
-    def _require_assignment(self, assignment_id: str) -> AssignmentAudience:
-        """取作业受众；**未配置或不可达一律 503 语义**（不折成"作业不存在"）。
+    def _require_authoritative_section(
+        self, principal: Principal, identity: Mapping[str, str]
+    ) -> str:
+        """按 B4 的**当前**归属返回权威 `section_id`（覆盖请求里的值）；无归属 → 403。
 
-        顺序（规格 §5.2）：目录未配置/不可达 → `AssignmentDirectoryUnavailable`（503）；
+        判定口径（设计 §4）：取**被提交学生**（staff 代交时就是被代交学生）的 B4 authorization：
+
+        - 管理员豁免（与身份判定一致）；
+        - 该主体是这门课的 staff（`course_grants` 含该课程）→ 按 staff 处理：没有学生选课可提供
+          课序，保留请求里的 section（staff 不会因"没选课"被拒）；
+        - 否则必须有该课程的当前有效 enrollment：其 `section_id` 是权威课序；
+        - 没有当前归属 → `AuthorizationError`（403，且**不**泄露作业是否存在）。
+
+        B4 授权目录未配置/不可达 → `AuthorizationUnavailable`（503 语义），绝不折成 403。
+        """
+        if principal.is_admin:
+            return identity["section_id"]
+        directory = self.authorization_directory
+        if directory is None:
+            raise AuthorizationUnavailable(
+                "the B4 user authorization directory is not configured;"
+                " current course membership cannot be verified"
+            )
+        # 请求侧标识可能是契约允许的任何 UUID 写法；授权比较与查询都用规范化文本。
+        student_id = str(uuid.UUID(identity["student_id"]))
+        course_id = str(uuid.UUID(identity["course_id"]))
+        authorization: UserAuthorization = directory.get(student_id)
+        if authorization.is_course_staff_for(course_id):
+            return identity["section_id"]
+        enrollment = authorization.enrollment_for_course(course_id)
+        if enrollment is None:
+            # 403 而不是 422/404：这是"你（或被代交学生）当前不在这门课里"，不是"内容与作业不匹配"，
+            # 也不能用作业存在与否来区分（那等于泄露作业是否存在）。
+            raise AuthorizationError(
+                "the student is not currently enrolled in the course this submission belongs to"
+            )
+        return enrollment.section_id
+
+    def _require_assignment(self, assignment_id: str) -> AssignmentAudience:
+        """取作业；**未配置或不可达一律 503 语义**（不折成"作业不存在"）。
+
+        顺序（设计 §4）：目录未配置/不可达 → `AssignmentDirectoryUnavailable`（503）；
         B3 明确 404 → `assignment_not_found`（422）；存在但非 open → `assignment_closed`（422）。
         """
         directory = self.assignment_directory
@@ -551,13 +616,14 @@ class SubmissionIntakeService:
         return audience
 
     @staticmethod
-    def _check_assignment_audience(
+    def _check_assignment_membership(
         audience: AssignmentAudience, identity: Mapping[str, str]
     ) -> None:
-        """课程/题目必须属于该作业（422），section/student 必须是该作业的受众（403）。
+        """课程与题目必须属于该作业（422）。
 
-        两种失败刻意分开：前者说明"提交内容与作业不匹配"（可解释的输入错误，422）；后者说明"你不在
-        这份作业的受众里"（授权问题，403，且**不**收窄成"作业不存在"）。
+        课程级作业不再有 section/student 名单，因此这里只判两件**内容不匹配**的事实；
+        "这个学生是否在课程里"由 B4 权威归属判定（403），两者刻意分开：前者是可解释的输入错误，
+        后者是授权问题。
         """
         course_id = str(uuid.UUID(identity["course_id"]))
         if course_id != audience.course_id or not audience.contains_question(
@@ -567,12 +633,6 @@ class SubmissionIntakeService:
                 "assignment_mismatch",
                 "the course or question version does not belong to this assignment",
             )
-        section_id = str(uuid.UUID(identity["section_id"]))
-        if section_id not in audience.section_ids:
-            raise AuthorizationError("this section is not targeted by the assignment")
-        student_id = str(uuid.UUID(identity["student_id"]))
-        if audience.student_ids and student_id not in audience.student_ids:
-            raise AuthorizationError("this student is not in the assignment audience")
 
     @staticmethod
     def _check_answer_file_name(

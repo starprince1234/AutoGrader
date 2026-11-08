@@ -26,15 +26,14 @@ import io
 import re
 import secrets
 import uuid
-from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import Connection, and_, delete, func, insert, select, update
 
+from .classes import bind_account_to_enrollments
 from .db.tables import (
     credentials,
-    enrollments,
     registration_allowlist,
     registration_allowlist_batches,
     registration_codes,
@@ -205,58 +204,6 @@ def parse_allowlist_csv(content: bytes) -> list[AllowlistRow]:
     return parsed
 
 
-def replace_allowlist(
-    connection: Connection,
-    *,
-    filename: str,
-    content: bytes,
-    rows: Iterable[AllowlistRow],
-    uploaded_by: uuid.UUID | None,
-) -> dict[str, object]:
-    """Replace the active allowlist with this file, inside the caller's transaction.
-
-    Full replacement is the deliberate semantic: the file is a *snapshot* of a cohort, so a
-    student removed from the list must also lose the ability to register. Previous batches stay
-    recorded (filename, digest, row count, uploader) so "who was allowed when" remains
-    answerable after the fact.
-    """
-    prepared = list(rows)
-    batch_id = uuid.uuid4()
-    digest = hashlib.sha256(content).hexdigest()
-    now = datetime.now(UTC).replace(microsecond=0)
-
-    connection.execute(
-        insert(registration_allowlist_batches).values(
-            batch_id=batch_id,
-            filename=filename,
-            content_sha256=digest,
-            row_count=len(prepared),
-            uploaded_by=uploaded_by,
-            created_at=now,
-        )
-    )
-    removed = connection.execute(delete(registration_allowlist)).rowcount
-    connection.execute(
-        insert(registration_allowlist),
-        [
-            {
-                "entry_id": uuid.uuid4(),
-                "batch_id": batch_id,
-                "student_number": row.student_number,
-                "display_name": row.display_name,
-                "created_at": now,
-            }
-            for row in prepared
-        ],
-    )
-    return {
-        "batch_id": batch_id,
-        "row_count": len(prepared),
-        "replaced_row_count": max(0, int(removed or 0)),
-        "content_sha256": digest,
-    }
-
-
 def allowlist_entry(
     connection: Connection, *, student_number: str, display_name: str
 ) -> AllowlistRow | None:
@@ -345,12 +292,18 @@ def create_account(
     display_name: str,
     password: str,
     now: datetime | None = None,
-) -> uuid.UUID:
-    """Create the account in the caller's transaction; returns the new `user_id`.
+) -> tuple[uuid.UUID, int, int]:
+    """Create the account in the caller's transaction; returns `(user_id, bound, mismatched)`.
 
-    The roster link is written here rather than left to a second import: an administrator who
-    imported the roster *before* the student registered would otherwise leave a correct account
-    that can sign in but sees no course at all.
+    The roster link is written here rather than left to a later import: an administrator who
+    imported the roster *before* the student registered would otherwise leave a correct
+    account that can sign in but sees no course at all (v0.32.0: every course/section/class
+    the student is on the roster for is bound at once).
+
+    Binding is by student number **and** name: a roster row whose recorded name differs from
+    the verified registration name is not bound and is counted instead. Binding on the number
+    alone would merge two differently-named people, and the registration response reports the
+    count so the teacher can see that a roster correction is needed.
     """
     moment = (now or datetime.now(UTC)).replace(microsecond=0)
     user_id = uuid.uuid4()
@@ -388,18 +341,14 @@ def create_account(
             created_at=moment,
         )
     )
-    connection.execute(
-        update(enrollments)
-        .where(
-            and_(
-                enrollments.c.student_number == student_number,
-                enrollments.c.user_id.is_(None),
-                enrollments.c.is_active.is_(True),
-            )
-        )
-        .values(user_id=user_id, updated_at=moment)
+    bound, mismatched = bind_account_to_enrollments(
+        connection,
+        user_id=user_id,
+        student_number=student_number,
+        display_name=display_name,
+        now=moment,
     )
-    return user_id
+    return user_id, bound, mismatched
 
 
 def class_name_of(filename: str) -> str:
@@ -484,21 +433,17 @@ def add_allowlist_batch(
             )
         )
 
-    wanted = [row.student_number for row in rows]
-    existing = {
-        row[0]
-        for row in connection.execute(
-            select(registration_allowlist.c.student_number).where(
-                registration_allowlist.c.student_number.in_(wanted or [""])
-            )
-        ).fetchall()
-    }
-    duplicates = sorted(set(wanted) & existing)
+    # The uniqueness that matters is within one imported class: a student may appear on the
+    # class lists of several courses (v0.32.0), so duplicates are only checked inside this
+    # file. Replacing an existing class deletes its rows first, so a re-export never collides
+    # with its own previous version.
+    duplicates: list[str] = []
 
     inserted = 0
     seen: set[str] = set()
     for row in rows:
-        if row.student_number in existing or row.student_number in seen:
+        if row.student_number in seen:
+            duplicates.append(row.student_number)
             continue
         seen.add(row.student_number)
         connection.execute(

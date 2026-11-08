@@ -160,6 +160,9 @@ export function CommentarySection({
         {notEnabled ? (
           <Banner tone="info" testId="commentary-not-enabled">
             {t("commentary.notEnabled")}
+            {isApiError(generate.error) && generate.error.problem?.detail ? (
+              <span className="muted"> {generate.error.problem.detail}</span>
+            ) : null}
           </Banner>
         ) : generate.isError ? (
           <ErrorState error={generate.error} testId="commentary-generate-error" />
@@ -174,6 +177,9 @@ export function CommentarySection({
         ) : notGenerated ? (
           <Banner tone="info" testId="commentary-not-generated">
             {t("commentary.notGenerated")}
+            {notGenerated.problem?.detail ? (
+              <span className="muted"> {notGenerated.problem.detail}</span>
+            ) : null}
           </Banner>
         ) : commentary.isError ? (
           <ErrorState error={commentary.error} testId="commentary-error" />

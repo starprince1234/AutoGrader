@@ -8,8 +8,8 @@ import {
   useSections,
   type SectionOption,
 } from "../../api/directory";
-import { useEnrollments } from "../roster/useEnrollments";
 import { useAllAssignments } from "../assignments/useAssignments";
+import { useCourseRoster } from "../assignments/useAssignmentRoster";
 import { useSession } from "../../auth/sessionContext";
 import { courseLabel as formatCourseLabel } from "../../api/directory";
 import {
@@ -211,8 +211,11 @@ export function MailReviewTab({
       ? null
       : (resolveTarget.scope_course_id ?? (pickerCourseId === "" ? null : pickerCourseId));
   const matchSectionId = resolveTarget?.scope_section_id ?? null;
+  // 作业是课程级的（v0.32.0）：没有"作业目标课序"可用于推断学生的课序，因此候选名单取
+  // **全课程名单**；若记录本身带课序 scope，则收窄到该课序。提交时用学生名单行里的权威
+  // section（服务端还会用 B4 授权再校验/补全一次）。
   const assignments = useAllAssignments(
-    { courseId: matchCourseId, sectionId: matchSectionId },
+    { courseId: matchCourseId },
     { enabled: !demo && matchCourseId !== null },
   );
   const assignmentOptions = demo
@@ -223,21 +226,20 @@ export function MailReviewTab({
   const selectedAssignment =
     assignmentOptions.find((assignment) => assignment.assignment_id === matchAssignmentId) ?? null;
   // 人工归属不再选"题目版本"：complete 请求按 assignment_id 定位，服务端按附件题号逐题建提交。
-  // 课序取记录关联的课序（若它属于该作业的目标课序），否则取作业的第一个目标课序。
-  const candidateSectionId =
-    selectedAssignment === null
-      ? matchSectionId
-      : matchSectionId !== null && selectedAssignment.section_ids.includes(matchSectionId)
-        ? matchSectionId
-        : (selectedAssignment.section_ids[0] ?? matchSectionId);
-  const enrollments = useEnrollments(demo ? null : candidateSectionId);
-  const candidates = useMemo(
-    () => (demo ? DEMO_STUDENTS : (enrollments.data?.pages ?? []).flatMap((page) => page.items)),
-    [demo, enrollments.data],
-  );
+  const roster = useCourseRoster(demo ? null : matchCourseId);
+  // 示例模式不发起任何业务请求：`useCourseRoster(null)` 是禁用查询，不能拿它的
+  // `isPending`（禁用查询在 react-query 里也是 pending）去禁用示例里的学生下拉。
+  const rosterLoading = !demo && roster.isPending;
+  const candidates = useMemo(() => {
+    const rows = demo ? DEMO_STUDENTS : roster.students;
+    if (matchSectionId === null) return rows;
+    return rows.filter((row) => row.section_id === matchSectionId);
+  }, [demo, roster.students, matchSectionId]);
   const selectableStudents = candidates.filter((row) => row.student_id !== null);
   const selectedStudent =
     selectableStudents.find((row) => row.student_id === studentId) ?? null;
+  // 记录带课序 scope 时用它；未关联记录用所选学生在权威名单里的课序。
+  const candidateSectionId = matchSectionId ?? selectedStudent?.section_id ?? null;
 
   const openResolve = (row: IntakeQuarantineView) => {
     setSuccess(null);
@@ -848,7 +850,7 @@ export function MailReviewTab({
                 id="review-resolve-student"
                 data-testid="review-resolve-student"
                 value={studentId}
-                disabled={candidateSectionId === null}
+                disabled={matchCourseId === null || rosterLoading}
                 onChange={(event) => setStudentId(event.target.value)}
               >
                 <option value="">{t("common.selectPrompt")}</option>
@@ -860,10 +862,10 @@ export function MailReviewTab({
               </Select>
             </Field>
 
-            {enrollments.isError ? (
-              <ErrorState error={enrollments.error} testId="review-resolve-candidates-error" />
+            {!demo && roster.isError ? (
+              <ErrorState error={roster.error} testId="review-resolve-candidates-error" />
             ) : null}
-            {candidateSectionId !== null && !enrollments.isPending && selectableStudents.length === 0 ? (
+            {matchCourseId !== null && !rosterLoading && selectableStudents.length === 0 ? (
               <Banner tone="info" testId="review-resolve-no-candidates">
                 {t("review.mail.noCandidates")}
               </Banner>

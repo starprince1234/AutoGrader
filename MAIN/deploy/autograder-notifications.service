@@ -1,0 +1,32 @@
+[Unit]
+# 作业发布通知的发送器：每趟取一批 pending/failed 的投递行，真实发送并写回结果。
+#
+# 为什么是独立 unit 而不是在 API 请求里发信：SMTP 慢且会失败，发布作业本身不能依赖它。
+# API 只记录"要通知谁"（未注册/无邮箱/停用账号各有明确 skipped 状态），这个进程记录
+# "实际发生了什么"（sent/failed + 退避），教师端据此看到真实送达数与未送达原因。
+Description=AutoGrader assignment notification sender (one bounded pass)
+After=network-online.target docker.service autograder.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=autograder
+Group=autograder
+WorkingDirectory=/opt/autograder/current/MAIN
+EnvironmentFile=/etc/autograder/runtime.env
+Environment=PYTHONUNBUFFERED=1
+Environment=HTTP_PROXY=http://127.0.0.1:7893
+Environment=HTTPS_PROXY=http://127.0.0.1:7893
+Environment=http_proxy=http://127.0.0.1:7893
+Environment=https_proxy=http://127.0.0.1:7893
+Environment=NO_PROXY=localhost,127.0.0.1,::1
+Environment=no_proxy=localhost,127.0.0.1,::1
+ExecStart=/opt/autograder/current/MAIN/.venv/bin/python -m autograder_b4.ops.notifications
+TimeoutStartSec=300s
+UMask=0077
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+NoNewPrivileges=true
+ReadWritePaths=/var/lib/autograder

@@ -49,7 +49,7 @@ const DEMO_SECTION: SectionPublic = {
   course_id: DEMO_COURSE_ID,
   section_code: "01",
   term: "2026 秋",
-  class_name: "2026 秋 软件工程 1 班",
+  class_count: 1,
   enrollment_count: 24,
   created_at: "2026-09-02T02:00:00.000Z",
 };
@@ -361,21 +361,26 @@ export function demoAssignment(courseId: string | null): AssignmentPublic {
   return {
     assignment_id: DEMO_ASSIGNMENT_ID,
     course_id: courseId ?? DEMO_COURSE_ID,
-    section_ids: [DEMO_SECTION_ID],
-    student_ids: [],
     title: "示例作业：统计文件行数",
     status: "open",
     due_at: "2026-11-20T15:59:00.000Z",
     question_version_ids: [DEMO_VERSION_ID],
+    notification_state: "scheduled",
     created_at: "2026-11-01T07:00:00.000Z",
     updated_at: "2026-11-01T07:00:00.000Z",
   };
 }
 
+/** 示例班级（v0.32.0：名单挂在班级下）。 */
+const DEMO_CLASS_ID = "00000000-0000-4000-8000-00000000d00c";
+
 export const DEMO_STUDENTS: EnrollmentPublic[] = [
   {
     enrollment_id: "00000000-0000-4000-8000-00000000e101",
+    course_id: DEMO_COURSE_ID,
     section_id: DEMO_SECTION_ID,
+    class_id: DEMO_CLASS_ID,
+    class_name: "2026 秋 软件工程 1 班",
     student_id: DEMO_STUDENT_ID,
     student_number: "20260001",
     display_name: "张三",
@@ -384,7 +389,10 @@ export const DEMO_STUDENTS: EnrollmentPublic[] = [
   },
   {
     enrollment_id: "00000000-0000-4000-8000-00000000e102",
+    course_id: DEMO_COURSE_ID,
     section_id: DEMO_SECTION_ID,
+    class_id: DEMO_CLASS_ID,
+    class_name: "2026 秋 软件工程 1 班",
     student_id: DEMO_STUDENT_2,
     student_number: "20260002",
     display_name: "李四",
@@ -393,7 +401,10 @@ export const DEMO_STUDENTS: EnrollmentPublic[] = [
   },
   {
     enrollment_id: "00000000-0000-4000-8000-00000000e103",
+    course_id: DEMO_COURSE_ID,
     section_id: DEMO_SECTION_ID,
+    class_id: DEMO_CLASS_ID,
+    class_name: "2026 秋 软件工程 1 班",
     student_id: DEMO_STUDENT_3,
     student_number: "20260003",
     display_name: "王五",
@@ -402,7 +413,10 @@ export const DEMO_STUDENTS: EnrollmentPublic[] = [
   },
   {
     enrollment_id: "00000000-0000-4000-8000-00000000e104",
+    course_id: DEMO_COURSE_ID,
     section_id: DEMO_SECTION_ID,
+    class_id: DEMO_CLASS_ID,
+    class_name: "2026 秋 软件工程 1 班",
     student_id: DEMO_STUDENT_4,
     student_number: "20260004",
     display_name: "赵六",

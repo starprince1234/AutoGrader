@@ -37,6 +37,7 @@ from autograder_b2.intake.imap import QuarantineStore
 from autograder_b2.intake.matching import ScopeContext
 from autograder_b2.intake.runtime import IntakeRuntime, build_runtime
 from autograder_b2.integration.assignments import AssignmentAudience, AssignmentUnavailable
+from tests.authorization_fixture import FakeAuthorizationDirectory
 from tests.conftest import requires_postgres, run_alembic
 
 pytestmark = requires_postgres
@@ -54,7 +55,7 @@ class _AssignmentDirectory:
 
     生产实现是 `integration.assignments.B3AssignmentDirectory`（HTTP + 服务令牌，不可达时抛
     `AssignmentUnavailable` → 503）。这里替换的只是**传输**：`accept` 的校验顺序与 422/403/503
-    语义走真实服务代码。
+    语义走真实服务代码。课程级作业没有 section/student 名单，只有"属于哪门课/题目/状态"。
     """
 
     def __init__(self) -> None:
@@ -66,11 +67,8 @@ class _AssignmentDirectory:
         assignment_id: str,
         *,
         course_id: str,
-        section_id: str,
         question_version_id: str = "",
         question_version_ids: tuple[str, ...] | None = None,
-        section_ids: tuple[str, ...] | None = None,
-        student_ids: tuple[str, ...] = (),
         status: str = "open",
     ) -> None:
         questions = (
@@ -78,14 +76,11 @@ class _AssignmentDirectory:
             if question_version_ids is not None
             else (question_version_id,)
         )
-        sections = section_ids if section_ids is not None else (section_id,)
         self.audiences[str(uuid.UUID(assignment_id))] = AssignmentAudience(
             assignment_id=str(uuid.UUID(assignment_id)),
             course_id=str(uuid.UUID(course_id)),
             title="作业",
             status=status,
-            section_ids=tuple(str(uuid.UUID(item)) for item in sections),
-            student_ids=tuple(str(uuid.UUID(item)) for item in student_ids),
             question_version_ids=tuple(str(uuid.UUID(item)) for item in questions),
         )
 
@@ -98,8 +93,9 @@ class _AssignmentDirectory:
             return None
 
 
-#: 当前用例的作业目录（`_envelope` 用它登记受众；`directory` 夹具每用例重置）。
+#: 当前用例的作业目录/权威授权目录（`_envelope` 用它登记受众；夹具每用例重置）。
 _DIRECTORY: _AssignmentDirectory | None = None
+_AUTHORIZATION: FakeAuthorizationDirectory | None = None
 
 
 def _b64url(data: bytes) -> str:
@@ -184,7 +180,7 @@ def runtime(
 def directory(runtime: IntakeRuntime) -> Iterator[_AssignmentDirectory]:
     """每个用例一套作业目录（并注入接收入口）。
 
-    `accept` 现在必须能回答"这个作业存在吗、受众是谁"（规格 §5.2）。生产装配是把
+    `accept` 必须能回答"这个作业属于哪门课、是否 open、题目是哪些"（设计 §4）。生产装配是把
     `B3AssignmentDirectory` 放进 `IntakeRuntime`；测试替换的是**传输**，校验语义走真实服务代码。
     """
     global _DIRECTORY
@@ -195,6 +191,27 @@ def directory(runtime: IntakeRuntime) -> Iterator[_AssignmentDirectory]:
     _DIRECTORY = fresh
     yield fresh
     _DIRECTORY = None
+
+
+@pytest.fixture(autouse=True)
+def authorization(
+    runtime: IntakeRuntime, student: tuple[str, str, str, str]
+) -> Iterator[FakeAuthorizationDirectory]:
+    """每个用例一套 B4 权威授权目录（并注入接收入口）。
+
+    默认把 `student` 登记为"当前在 `course_id` 的第 `section_id` 课序"——大多数用例的合法请求
+    因此能过权威归属校验。用例可以通过 `authorization.unenroll(...)` / `enroll(...)` 改变
+    "当前归属"来验证 403、移出课程、权威 section 覆盖等语义；`set_unavailable()` 模拟 B4 不可达。
+    """
+    global _AUTHORIZATION
+    fresh = FakeAuthorizationDirectory()
+    fresh.enroll(student[0], course_id=student[1], section_id=student[2])
+    assert runtime.service is not None
+    runtime.authorization_directory = fresh
+    runtime.service.authorization_directory = fresh
+    _AUTHORIZATION = fresh
+    yield fresh
+    _AUTHORIZATION = None
 
 
 @pytest.fixture()
@@ -234,12 +251,11 @@ def _envelope(
         "files": files if files is not None else [_file(ANSWER_FILE, SOURCE)],
         "idempotency_key": idempotency_key,
     }
-    # 默认把该作业登记成"open、单课序、单题、全学生"的受众：合法请求因此能过作业校验。
+    # 默认把该作业登记成"open、单题"的课程级作业：合法请求因此能过作业校验。
     if _DIRECTORY is not None:
         _DIRECTORY.register(
             assignment,
             course_id=course_id,
-            section_id=section_id,
             question_version_id=question_version_id,
         )
     payload.update(overrides)
@@ -608,19 +624,42 @@ def test_token_signed_by_unknown_key_is_401(
     assert response.status_code == 401
 
 
-def test_course_scope_mismatch_is_403_not_404(
-    client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
+def test_token_course_scope_is_not_used_for_admission(
+    client: TestClient,
+    engine: Engine,
+    signer: _Signer,
+    student: tuple[str, str, str, str],
 ) -> None:
-    """作用域不符必须 403，且**不得**用 404 掩盖（契约与 identifiers.md 第 3 节）。"""
+    """令牌的课程 `scope` 只是签发时的快照，准入**不得**依赖它（v0.32.0 契约明文）。
+
+    该学生当前确实在课程里（B4 enrollment 存在），只是令牌 scope 指向另一门课（例如登录后
+    才被加入课程）——必须接受，而不是因旧快照 403。
+    """
     user_id, _, section_id, _ = student
     token = signer.token(
         user_id=user_id,
         roles=("student",),
         scope=[{"course_id": str(uuid.uuid4()), "section_id": section_id}],
     )
+    response = client.post(
+        ENDPOINT, json=_envelope(student, idempotency_key="stale-scope"), headers=_auth(token)
+    )
+    assert response.status_code == 202, response.text
+    assert _counts(engine)[0] == 1
+
+
+def test_staff_proxy_still_requires_the_token_course_scope(
+    client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
+) -> None:
+    """staff 代交保留既有令牌语义：教师令牌的课程作用域必须覆盖该课程（设计 §4）。"""
+    teacher = str(uuid.uuid4())
+    token = signer.token(
+        user_id=teacher,
+        roles=("teacher",),
+        scope=[{"course_id": str(uuid.uuid4())}],
+    )
     response = client.post(ENDPOINT, json=_envelope(student), headers=_auth(token))
     assert response.status_code == 403, response.text
-    assert response.json()["type"].endswith("forbidden")
     assert _counts(engine) == (0, 0, 0, 0)
 
 
@@ -650,18 +689,49 @@ def test_teacher_with_course_scope_may_submit_for_student(
     assert _counts(engine)[0] == 1
 
 
-def test_section_mismatch_within_course_is_403(
+def test_profile_section_is_no_longer_an_authorization_dimension(
     client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
 ) -> None:
+    """课程级受众下 section 不再是授权维度：令牌/请求里的旧课序不构成拒绝理由。
+
+    权威课序由 B4 的当前 enrollment 决定（覆盖请求值）；令牌只校验"角色 + 课程 + 身份"。
+    """
     user_id, course_id, _, _ = student
     token = signer.token(
         user_id=user_id,
         roles=("student",),
+        # 令牌作用域里的课序是旧的（学生登录后被换过课序），课程仍然覆盖。
         scope=[{"course_id": course_id, "section_id": str(uuid.uuid4())}],
     )
     response = client.post(ENDPOINT, json=_envelope(student), headers=_auth(token))
-    assert response.status_code == 403
-    assert _counts(engine) == (0, 0, 0, 0)
+    assert response.status_code == 202, response.text
+    assert _counts(engine)[0] == 1
+
+
+def test_section_scoped_staff_token_covers_any_section_of_the_course(
+    client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
+) -> None:
+    """课程级受众下 section 不再是授权维度：只覆盖某课序的 staff 也可代交同课程其他课序的学生。
+
+    这条钉住 `require_submission_authority(section_id=None)` 的语义（None = 只校验课程覆盖），
+    同时验证落库使用的是被代交学生的权威课序。
+    """
+    _, course_id, student_section, _ = student
+    teacher = str(uuid.uuid4())
+    teacher_section = str(uuid.uuid4())
+    token = signer.token(
+        user_id=teacher,
+        roles=("teacher",),
+        scope=[{"course_id": course_id, "section_id": teacher_section}],
+    )
+    response = client.post(
+        ENDPOINT, json=_envelope(student, idempotency_key="section-staff"), headers=_auth(token)
+    )
+    assert response.status_code == 202, response.text
+    with engine.connect() as connection:
+        stored_section = connection.execute(sa.select(submissions.c.section_id)).scalar_one()
+    assert str(stored_section) == student_section
+    assert student_section != teacher_section
 
 
 # --- 幂等 ---------------------------------------------------------------------------------
@@ -837,13 +907,12 @@ def test_unknown_assignment_is_422_assignment_not_found(
 def test_closed_assignment_is_422_assignment_closed(
     client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
 ) -> None:
-    _, course_id, section_id, question_version_id = student
+    _, course_id, _section, question_version_id = student
     assignment = str(uuid.uuid4())
     payload = _envelope(student, assignment_id=assignment)
     _DIRECTORY.register(  # type: ignore[union-attr]
         assignment,
         course_id=course_id,
-        section_id=section_id,
         question_version_id=question_version_id,
         status="closed",
     )
@@ -857,13 +926,12 @@ def test_course_mismatch_is_422_assignment_mismatch(
     client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
 ) -> None:
     """作业属于另一门课 → `assignment-mismatch`（422）：内容与作业不匹配，是输入错误。"""
-    _, _, section_id, question_version_id = student
+    _, _, _section, question_version_id = student
     assignment = str(uuid.uuid4())
     payload = _envelope(student, assignment_id=assignment)
     _DIRECTORY.register(  # type: ignore[union-attr]
         assignment,
         course_id=str(uuid.uuid4()),
-        section_id=section_id,
         question_version_id=question_version_id,
     )
     response = _rejected(client, signer, student, payload)
@@ -875,13 +943,12 @@ def test_course_mismatch_is_422_assignment_mismatch(
 def test_question_not_in_assignment_is_422_assignment_mismatch(
     client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
 ) -> None:
-    _, course_id, section_id, _question = student
+    _, course_id, _section, _question = student
     assignment = str(uuid.uuid4())
     payload = _envelope(student, assignment_id=assignment)
     _DIRECTORY.register(  # type: ignore[union-attr]
         assignment,
         course_id=course_id,
-        section_id=section_id,
         question_version_id=str(uuid.uuid4()),
     )
     response = _rejected(client, signer, student, payload)
@@ -890,42 +957,204 @@ def test_question_not_in_assignment_is_422_assignment_mismatch(
     assert _counts(engine) == (0, 0, 0, 0)
 
 
-def test_section_outside_the_assignment_is_403(
+def test_any_section_of_the_course_may_submit(
     client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
 ) -> None:
-    """课序不在作业目标里 → `403`（授权问题，不是"内容不匹配"）。"""
-    _, course_id, _section, question_version_id = student
+    """课程级作业：同一课程**两个不同课序**的学生都可以提交（"课程内任意课序学生可提交"）。"""
+    _, course_id, section_one, question_version_id = student
     assignment = str(uuid.uuid4())
-    payload = _envelope(student, assignment_id=assignment)
-    _DIRECTORY.register(  # type: ignore[union-attr]
-        assignment,
-        course_id=course_id,
-        section_id=str(uuid.uuid4()),
-        question_version_id=question_version_id,
+    other_student = str(uuid.uuid4())
+    section_two = str(uuid.uuid4())
+    assert _AUTHORIZATION is not None
+    _AUTHORIZATION.enroll(other_student, course_id=course_id, section_id=section_two)
+
+    first = _envelope(student, assignment_id=assignment, idempotency_key="section-one")
+    second = {
+        **_envelope(student, assignment_id=assignment, idempotency_key="section-two"),
+        "student_id": other_student,
+        "section_id": section_two,
+    }
+    responses = [
+        client.post(ENDPOINT, json=first, headers=_auth(_student_token(signer, student))),
+        client.post(
+            ENDPOINT,
+            json=second,
+            headers=_auth(
+                signer.token(
+                    user_id=other_student,
+                    roles=("student",),
+                    scope=[{"course_id": course_id, "section_id": section_two}],
+                )
+            ),
+        ),
+    ]
+    assert [item.status_code for item in responses] == [202, 202], [item.text for item in responses]
+    with engine.connect() as connection:
+        stored = {
+            str(row[0]): str(row[1])
+            for row in connection.execute(
+                sa.select(submissions.c.student_id, submissions.c.section_id)
+            ).fetchall()
+        }
+    assert stored == {str(student[0]): section_one, other_student: section_two}
+    # 作业题目列表不因"另一个课序"而改变。
+    assert _DIRECTORY is not None
+    assert _DIRECTORY.audiences[assignment].question_version_ids == (
+        str(uuid.UUID(question_version_id)),
     )
+
+
+def test_student_not_currently_enrolled_is_403(
+    client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
+) -> None:
+    """令牌作用域覆盖课程，但 B4 显示学生**当前不在**课程里 → 403（且不泄露作业是否存在）。"""
+    assert _AUTHORIZATION is not None
+    payload = _envelope(student)
+    _AUTHORIZATION.unenroll(student[0], student[1])
+    # 把作业目录清空：若实现先去问作业，就会得到 422 assignment-not-found 而泄露存在性。
+    assert _DIRECTORY is not None
+    _DIRECTORY.audiences.clear()
     response = _rejected(client, signer, student, payload)
     assert response.status_code == 403, response.text
     assert response.json()["type"].endswith("forbidden")
     assert _counts(engine) == (0, 0, 0, 0)
 
 
-def test_student_outside_a_narrowed_audience_is_403(
+def test_student_enrolled_only_in_another_course_is_403(
     client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
 ) -> None:
-    """作业收窄到指定学生名单时，名单外学生 → `403`（认证与课程作用域都对，但不在受众里）。"""
-    _, course_id, section_id, question_version_id = student
-    assignment = str(uuid.uuid4())
-    payload = _envelope(student, assignment_id=assignment)
-    _DIRECTORY.register(  # type: ignore[union-attr]
-        assignment,
-        course_id=course_id,
-        section_id=section_id,
-        question_version_id=question_version_id,
-        student_ids=(str(uuid.uuid4()),),
-    )
-    response = _rejected(client, signer, student, payload)
+    """学生当前只属于**另一门课**：请求课程没有归属 → 403（不是 422）。"""
+    assert _AUTHORIZATION is not None
+    other_course = str(uuid.uuid4())
+    _AUTHORIZATION.unenroll(student[0], student[1])
+    _AUTHORIZATION.enroll(student[0], course_id=other_course, section_id=str(uuid.uuid4()))
+    response = _rejected(client, signer, student, _envelope(student))
     assert response.status_code == 403, response.text
-    assert response.json()["type"].endswith("forbidden")
+    assert _counts(engine) == (0, 0, 0, 0)
+
+
+def test_student_enrolled_after_publication_may_submit(
+    client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
+) -> None:
+    """作业发布后新增的选课同样生效：归属判定取**当前**选课，不是发布时的快照。"""
+    assert _AUTHORIZATION is not None
+    _AUTHORIZATION.unenroll(student[0], student[1])
+    # 先登记作业（模拟"作业已发布"），此时学生不在课程里。
+    payload = _envelope(student, idempotency_key="before-enrollment")
+    before = _rejected(client, signer, student, payload)
+    assert before.status_code == 403, before.text
+    # 发布后把学生加进课程（同一课序）→ 同一请求体可以提交。
+    _AUTHORIZATION.enroll(student[0], course_id=student[1], section_id=student[2])
+    after = client.post(
+        ENDPOINT,
+        json=_envelope(student, idempotency_key="after-enrollment"),
+        headers=_auth(_student_token(signer, student)),
+    )
+    assert after.status_code == 202, after.text
+    assert _counts(engine) == (1, 1, 1, 1)
+
+
+def test_student_removed_from_the_course_after_login_is_403(
+    client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
+) -> None:
+    """移出课程后**无需换 token**：旧令牌仍覆盖课程作用域，但权威归属已不存在 → 403。"""
+    assert _AUTHORIZATION is not None
+    token = _student_token(signer, student)
+    first = client.post(
+        ENDPOINT, json=_envelope(student, idempotency_key="before-removal"), headers=_auth(token)
+    )
+    assert first.status_code == 202, first.text
+    _AUTHORIZATION.unenroll(student[0], student[1])
+    second = client.post(
+        ENDPOINT, json=_envelope(student, idempotency_key="after-removal"), headers=_auth(token)
+    )
+    assert second.status_code == 403, second.text
+    assert _counts(engine) == (1, 1, 1, 1), "移出后的提交不得落库"
+
+
+def test_authoritative_section_overrides_the_request(
+    client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
+) -> None:
+    """学生换过课序：请求里的 section 被 B4 的**当前** enrollment section 覆盖后落库。"""
+    assert _AUTHORIZATION is not None
+    user_id, course_id, requested_section, _ = student
+    authoritative_section = str(uuid.uuid4())
+    _AUTHORIZATION.enroll(user_id, course_id=course_id, section_id=authoritative_section)
+    response = client.post(
+        ENDPOINT,
+        json=_envelope(student, idempotency_key="moved-section"),
+        headers=_auth(_student_token(signer, student)),
+    )
+    assert response.status_code == 202, response.text
+    with engine.connect() as connection:
+        stored_section = connection.execute(sa.select(submissions.c.section_id)).scalar_one()
+    assert str(stored_section) == authoritative_section
+    assert authoritative_section != requested_section
+
+
+def test_staff_proxy_uses_the_students_authoritative_section(
+    client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
+) -> None:
+    """staff 代交：持久化用**被代交学生**的当前 enrollment section（不是 staff 手填的值）。"""
+    _, course_id, requested_section, _ = student
+    authoritative_section = str(uuid.uuid4())
+    assert _AUTHORIZATION is not None
+    _AUTHORIZATION.enroll(student[0], course_id=course_id, section_id=authoritative_section)
+    teacher = str(uuid.uuid4())
+    token = signer.token(user_id=teacher, roles=("teacher",), scope=[{"course_id": course_id}])
+    response = client.post(
+        ENDPOINT, json=_envelope(student, idempotency_key="proxy"), headers=_auth(token)
+    )
+    assert response.status_code == 202, response.text
+    with engine.connect() as connection:
+        stored_section = connection.execute(sa.select(submissions.c.section_id)).scalar_one()
+    assert str(stored_section) == authoritative_section != requested_section
+
+
+def test_staff_proxy_for_a_student_outside_the_course_is_403(
+    client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
+) -> None:
+    """staff 代交同样要求被代交学生**当前在课程里**：不能凭 staff 身份把课程外的学生塞进来。"""
+    _, course_id, _, _ = student
+    assert _AUTHORIZATION is not None
+    _AUTHORIZATION.unenroll(student[0], course_id)
+    teacher = str(uuid.uuid4())
+    token = signer.token(user_id=teacher, roles=("teacher",), scope=[{"course_id": course_id}])
+    response = client.post(
+        ENDPOINT, json=_envelope(student, idempotency_key="proxy-outside"), headers=_auth(token)
+    )
+    assert response.status_code == 403, response.text
+    assert _counts(engine) == (0, 0, 0, 0)
+
+
+def test_authorization_directory_unavailable_is_503_not_403(
+    client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
+) -> None:
+    """B4 授权目录不可达 → **503**（基础设施失败），绝不折算成"你不在课程里"（403）。"""
+    assert _AUTHORIZATION is not None
+    _AUTHORIZATION.set_unavailable(True)
+    response = _rejected(client, signer, student, _envelope(student))
+    assert response.status_code == 503, response.text
+    assert _counts(engine) == (0, 0, 0, 0)
+
+
+def test_unconfigured_authorization_directory_is_503(
+    client: TestClient,
+    runtime: IntakeRuntime,
+    engine: Engine,
+    signer: _Signer,
+    student: tuple[str, str, str, str],
+) -> None:
+    """没有 B4 授权目录 = 无法回答"当前有效归属" → 503（不是放行、也不是 403）。"""
+    assert runtime.service is not None
+    payload = _envelope(student)
+    saved = runtime.service.authorization_directory
+    runtime.service.authorization_directory = None
+    try:
+        response = _rejected(client, signer, student, payload)
+    finally:
+        runtime.service.authorization_directory = saved
+    assert response.status_code == 503, response.text
     assert _counts(engine) == (0, 0, 0, 0)
 
 
@@ -968,14 +1197,13 @@ def test_idempotency_scope_separates_two_assignments_that_share_one_question(
     旧作用域 `(student, question)` 会把第二个作业的提交当成第一个作业的重放，返回错误的
     `submission_id`（数据静默错位）。新作用域是 `(assignment, student, question)` 的规范化三元组。
     """
-    _, course_id, section_id, question_version_id = student
+    _, course_id, _section_id, question_version_id = student
     token = _student_token(signer, student)
     first_assignment, second_assignment = str(uuid.uuid4()), str(uuid.uuid4())
     for assignment in (first_assignment, second_assignment):
         _DIRECTORY.register(  # type: ignore[union-attr]
             assignment,
             course_id=course_id,
-            section_id=section_id,
             question_version_id=question_version_id,
         )
     first = client.post(
@@ -1112,12 +1340,14 @@ def test_plugin_router_serves_the_endpoint(
     app = FastAPI()
     install_problem_handlers(app)
     router = module.router(context)
-    # 插件的装配路径会构造 B2Runtime（含接收入口）。作业目录是外部依赖：测试把端口替身接到
-    # 真实装配出来的服务上（生产由 `B2_B3_BASE_URL`/`B2_B3_AUTHORIZATION` 装配 HTTP 客户端）。
+    # 插件的装配路径会构造 B2Runtime（含接收入口）。作业目录与 B4 授权目录都是外部依赖：测试把
+    # 端口替身接到真实装配出来的服务上（生产由 `B2_B3_*`/`B2_IDENTITY_*` 装配 HTTP 客户端）。
     assert module._runtime is not None
     assert module._runtime.intake.service is not None
     module._runtime.intake.assignment_directory = _DIRECTORY
     module._runtime.intake.service.assignment_directory = _DIRECTORY
+    module._runtime.intake.authorization_directory = _AUTHORIZATION
+    module._runtime.intake.service.authorization_directory = _AUTHORIZATION
     app.include_router(router)
     with TestClient(app) as plugin_client:
         accepted = plugin_client.post(
@@ -2092,8 +2322,6 @@ def _completion_directory(student: tuple[str, str, str, str], *, status: str = "
             course_id=student[1],
             title="unix homework",
             status=status,
-            section_ids=(student[2],),
-            student_ids=(),
             question_version_ids=(student[3],),
         )
     )
@@ -2102,11 +2330,17 @@ def _completion_directory(student: tuple[str, str, str, str], *, status: str = "
 class _FakeCompletedEmail:
     """只验证编排：取原信、按目标逐题生成提交、把 checkpoint 标为 processed。"""
 
-    def __init__(self, submission_id: str, directory: object | None = None) -> None:
+    def __init__(
+        self,
+        submission_id: str,
+        directory: object | None = None,
+        authorization: object | None = None,
+    ) -> None:
         self.submission_id = submission_id
         self.target: dict[str, object] | None = None
         self.marked = False
         self.assignment_directory = directory
+        self.authorization_directory = authorization
 
     def fetch_raw(self, *, uidvalidity: int, uid: int) -> bytes:
         assert (uidvalidity, uid) == (1, 7)
@@ -2130,7 +2364,14 @@ def test_quarantine_complete_writes_resolution_and_submission_id(
         engine, scope_course_id=student[1], scope_section_id=student[2]
     )
     submission_id = str(uuid.uuid4())
-    email = _FakeCompletedEmail(submission_id, directory=_completion_directory(student))
+    target_student = str(uuid.uuid4())
+    authorization = FakeAuthorizationDirectory()
+    authorization.enroll(target_student, course_id=student[1], section_id=student[2])
+    email = _FakeCompletedEmail(
+        submission_id,
+        directory=_completion_directory(student),
+        authorization=authorization,
+    )
     service = IntakeQuarantineService(engine, email=email)  # type: ignore[arg-type]
     principal = Principal(
         user_id=str(uuid.uuid4()),
@@ -2141,7 +2382,7 @@ def test_quarantine_complete_writes_resolution_and_submission_id(
     view = service.complete(
         principal=principal,
         intake_quarantine_id=quarantine_id,
-        student_id=str(uuid.uuid4()),
+        student_id=target_student,
         course_id=student[1],
         section_id=student[2],
         assignment_id=_COMPLETION_ASSIGNMENT_ID,
@@ -2154,5 +2395,112 @@ def test_quarantine_complete_writes_resolution_and_submission_id(
     assert view.held is False
     assert email.marked is True
     assert email.target is not None and email.target["course_id"] == student[1]
+    # 人工路径与网页/邮件入口同口径：持久化用 B4 的权威 section。
+    assert email.target is not None and email.target["section_id"] == student[2]
     row = _quarantine_row(engine, quarantine_id)
     assert row is not None and row.resolution == "completed"
+
+
+def _complete_harness(
+    engine: Engine,
+    student: tuple[str, str, str, str],
+    *,
+    authorization: FakeAuthorizationDirectory,
+):
+    """构造隔离复核的完整服务（真实库 + 两个端口替身）。
+
+    返回 `(service, email, principal, target_student_id, quarantine_id)`；目标学生与 quarantine
+    都是新生成的，调用方通过 `authorization.enroll(...)` 设置其当前归属。
+    """
+    from autograder_b2.auth.tokens import CourseScope, Principal
+    from autograder_b2.intake.quarantine import IntakeQuarantineService
+
+    quarantine_id = _seed_quarantine(
+        engine, scope_course_id=student[1], scope_section_id=student[2]
+    )
+    email = _FakeCompletedEmail(
+        str(uuid.uuid4()),
+        directory=_completion_directory(student),
+        authorization=authorization,
+    )
+    service = IntakeQuarantineService(engine, email=email)  # type: ignore[arg-type]
+    principal = Principal(
+        user_id=str(uuid.uuid4()),
+        roles=("teacher",),
+        scopes=(CourseScope(course_id=student[1], section_id=student[2]),),
+        token_id=str(uuid.uuid4()),
+    )
+    target_student = str(uuid.uuid4())
+    return service, email, principal, target_student, quarantine_id
+
+
+def test_quarantine_complete_rejects_a_section_that_disagrees_with_the_enrollment(
+    engine: Engine, student: tuple[str, str, str, str]
+) -> None:
+    """人工复核指定的 section 与 B4 当前 enrollment 不一致 → 422（与网页/邮件入口同口径）。"""
+    from autograder_b2.intake.quarantine import QuarantineTargetMismatch
+
+    authorization = FakeAuthorizationDirectory()
+    service, _email, principal, target_student, quarantine_id = _complete_harness(
+        engine, student, authorization=authorization
+    )
+    other_section = str(uuid.uuid4())
+    authorization.enroll(target_student, course_id=student[1], section_id=other_section)
+    with pytest.raises(QuarantineTargetMismatch):
+        service.complete(
+            principal=principal,
+            intake_quarantine_id=quarantine_id,
+            student_id=target_student,
+            course_id=student[1],
+            section_id=student[2],  # staff 填的是旧课序
+            assignment_id=_COMPLETION_ASSIGNMENT_ID,
+            note=None,
+        )
+    assert _resolved_state(engine, quarantine_id) == (False, None, None)
+
+
+def test_quarantine_complete_rejects_a_student_outside_the_course(
+    engine: Engine, student: tuple[str, str, str, str]
+) -> None:
+    """目标学生当前不在课程里 → 422（人工路径不得绕过"当前归属"判定）。"""
+    from autograder_b2.intake.quarantine import QuarantineTargetMismatch
+
+    authorization = FakeAuthorizationDirectory()  # 没有任何选课
+    service, _email, principal, target_student, quarantine_id = _complete_harness(
+        engine, student, authorization=authorization
+    )
+    with pytest.raises(QuarantineTargetMismatch):
+        service.complete(
+            principal=principal,
+            intake_quarantine_id=quarantine_id,
+            student_id=target_student,
+            course_id=student[1],
+            section_id=student[2],
+            assignment_id=_COMPLETION_ASSIGNMENT_ID,
+            note=None,
+        )
+    assert _resolved_state(engine, quarantine_id) == (False, None, None)
+
+
+def test_quarantine_complete_requires_the_authorization_directory(
+    engine: Engine, student: tuple[str, str, str, str]
+) -> None:
+    """没有 B4 授权目录 → 503 语义（`QuarantineAuthorizationUnavailable`），不猜归属。"""
+    from autograder_b2.intake.quarantine import QuarantineAuthorizationUnavailable
+
+    authorization = FakeAuthorizationDirectory()
+    authorization.set_unavailable(True)
+    service, _email, principal, target_student, quarantine_id = _complete_harness(
+        engine, student, authorization=authorization
+    )
+    with pytest.raises(QuarantineAuthorizationUnavailable):
+        service.complete(
+            principal=principal,
+            intake_quarantine_id=quarantine_id,
+            student_id=target_student,
+            course_id=student[1],
+            section_id=student[2],
+            assignment_id=_COMPLETION_ASSIGNMENT_ID,
+            note=None,
+        )
+    assert _resolved_state(engine, quarantine_id) == (False, None, None)

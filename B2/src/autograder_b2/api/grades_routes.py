@@ -66,6 +66,7 @@ from autograder_b2.grades import (
     parse_timestamp,
     resolve_export_columns,
 )
+from autograder_b2.integration.b4_authorization import AuthorizationUnavailable
 from autograder_b2.logging.logger import log_dependency_unavailable, log_event
 from autograder_b2.runtime import B2Runtime
 
@@ -77,11 +78,19 @@ DEFAULT_EXPORT_FORMAT = "xlsx"
 
 
 def build_grades_router(runtime: B2Runtime) -> APIRouter:
-    """成绩路径族的路由；闭包持有 `runtime`（与 `intake.api.build_router` 同一形态）。"""
+    """成绩路径族的路由；闭包持有 `runtime`（与 `intake.api.build_router` 同一形态）。
+
+    The handlers are deliberately **sync** (`def`): they call the synchronous SQLAlchemy
+    service, and a student read additionally performs a blocking B4 authorization call.
+    Declaring them `async def` ran that blocking work on the composition host's single event
+    loop, so the outbound call to B4 could not be served by the same process and timed out
+    after 10s -- the read then surfaced as a false 503 instead of the real 403. FastAPI runs
+    sync handlers in its threadpool, which is where blocking I/O belongs.
+    """
     router = APIRouter()
 
     @router.get("/api/v1/grades")
-    async def list_grades(
+    def list_grades(
         request: Request,
         course_id: str | None = None,
         section_id: str | None = None,
@@ -128,6 +137,14 @@ def build_grades_router(runtime: B2Runtime) -> APIRouter:
             )
         except AuthorizationError:
             return problem_response(FORBIDDEN, instance)
+        except AuthorizationUnavailable as error:
+            # 学生读者的"当前归属"查不了（B4 授权目录未配置/不可达）：503，不是 403。
+            # 教师/管理员读者不受影响（不查该目录）。
+            log_dependency_unavailable(
+                logger, dependency="b4-authorization", error=error, stage="grades"
+            )
+            runtime.record_failure()
+            return problem_response(SERVICE_UNAVAILABLE, instance)
         except (InvalidFilterError, InvalidCursorError) as error:
             # 过滤与游标的校验**只有**服务层这一处；这里只做状态码映射。
             return _unprocessable(instance, str(error))
@@ -144,7 +161,7 @@ def build_grades_router(runtime: B2Runtime) -> APIRouter:
         return JSONResponse(status_code=200, content=grade_page_body(page))
 
     @router.get("/api/v1/grades/export")
-    async def export_grades(
+    def export_grades(
         request: Request,
         course_id: str | None = None,
         section_id: str | None = None,
@@ -193,6 +210,13 @@ def build_grades_router(runtime: B2Runtime) -> APIRouter:
             )
         except AuthorizationError:
             return problem_response(FORBIDDEN, instance)
+        except AuthorizationUnavailable as error:
+            # 与查询同一口径：学生读者的当前归属查不了 ⇒ 503（导出同样不得放宽）。
+            log_dependency_unavailable(
+                logger, dependency="b4-authorization", error=error, stage="grades export"
+            )
+            runtime.record_failure()
+            return problem_response(SERVICE_UNAVAILABLE, instance)
         except UnsupportedExportFormat as error:
             return _unprocessable(instance, str(error))
         except (InvalidFilterError, InvalidCursorError) as error:

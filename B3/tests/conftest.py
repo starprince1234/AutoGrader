@@ -159,38 +159,37 @@ COURSE_B = uuid.UUID("22222222-2222-4222-8222-222222222222")
 #: are aggregates, so an exact expected number needs a scope nobody else adds rows to;
 #: COURSE_A accumulates questions from every HTTP test in the session.
 COURSE_C = uuid.UUID("55555555-5555-4555-8555-555555555555")
-SECTION_A = uuid.UUID("33333333-3333-4333-8333-333333333333")
-#: A second class of COURSE_A. Assignments target a *set* of sections now, so a test that
-#: only ever uses one section cannot tell the set model from the old single column.
-SECTION_A2 = uuid.UUID("33333333-3333-4333-8333-333333333334")
-#: A class of COURSE_B, used to prove a cross-course target is refused (422).
-SECTION_B = uuid.UUID("33333333-3333-4333-8333-333333333335")
-#: A course and class written by **no** assignment test other than the pagination one.
-#: Assignment rows are not truncated between tests, so an exact-served-set assertion needs
-#: a course nobody else writes; COURSE_C is equally "quiet" but the tag-coverage tests
-#: assert its exact question counts, which a published fixture question would break.
+#: Two courses written by exactly one assignment test each (pagination and the "filter in SQL"
+#: one), so an exact expected page needs data nobody else adds; COURSE_A accumulates rows
+#: across tests. COURSE_C is equally quiet but the tag-coverage tests assert its exact question
+#: counts, which a published fixture question would break.
 COURSE_D = uuid.UUID("77777777-7777-4777-8777-777777777777")
-SECTION_D = uuid.UUID("33333333-3333-4333-8333-333333333336")
+COURSE_E = uuid.UUID("99999999-9999-4999-8999-999999999999")
+SECTION_A = uuid.UUID("33333333-3333-4333-8333-333333333333")
+#: A second class of COURSE_A. An assignment is course-level now, so "every section of the
+#: course sees it" is a fact worth asserting with two real, distinct sections.
+SECTION_A2 = uuid.UUID("33333333-3333-4333-8333-333333333334")
+#: A class of COURSE_B, used to prove another course's student cannot read/write course-A work.
+SECTION_B = uuid.UUID("33333333-3333-4333-8333-333333333335")
+SECTION_E = uuid.UUID("33333333-3333-4333-8333-333333333337")
+CLASS_A = uuid.UUID("88888888-8888-4888-8888-888888888881")
+CLASS_A2 = uuid.UUID("88888888-8888-4888-8888-888888888882")
+CLASS_B = uuid.UUID("88888888-8888-4888-8888-888888888883")
+CLASS_E = uuid.UUID("88888888-8888-4888-8888-888888888885")
 TEACHER_ID = "44444444-4444-4444-8444-444444444444"
 STUDENT_A = uuid.UUID("66666666-6666-4666-8666-666666666666")
 STUDENT_B = uuid.UUID("66666666-6666-4666-8666-666666666667")
+#: A student of COURSE_B; reads of COURSE_A assignments must be refused for this account.
+STUDENT_C = uuid.UUID("66666666-6666-4666-8666-666666666668")
 
-#: Which course each known section belongs to. This is the identity/course module's fact,
-#: served to B3 through the internal validation endpoint; the test-only opener below
-#: answers from this mapping so target validation runs for real (no database, no network)
-#: while the HTTP client, parsing and failure classification are the production code.
-SECTION_COURSES: dict[uuid.UUID, uuid.UUID] = {
-    SECTION_A: COURSE_A,
-    SECTION_A2: COURSE_A,
-    SECTION_B: COURSE_B,
-    SECTION_D: COURSE_D,
-}
-
-#: ``student_id -> (course_id, section_id)`` for students that are actively enrolled.
-#: A student not in this mapping is "unknown / not actively enrolled" to the validator.
-ENROLLMENTS: dict[uuid.UUID, tuple[uuid.UUID, uuid.UUID]] = {
-    STUDENT_A: (COURSE_A, SECTION_A),
-    STUDENT_B: (COURSE_A, SECTION_A2),
+#: ``user_id -> (course_id, section_id, class_id)``: the authoritative **current** student
+#: enrollment, served by the fake identity/course module's authorization endpoint. B3 does
+#: not consult the token's scope for student reads any more (v0.32.0), so a test can change
+#: this mapping mid-test and the next request must see the new membership.
+ENROLLMENTS: dict[uuid.UUID, tuple[uuid.UUID, uuid.UUID, uuid.UUID]] = {
+    STUDENT_A: (COURSE_A, SECTION_A, CLASS_A),
+    STUDENT_B: (COURSE_A, SECTION_A2, CLASS_A2),
+    STUDENT_C: (COURSE_B, SECTION_B, CLASS_B),
 }
 
 
@@ -202,8 +201,8 @@ def tokens() -> dict[str, dict]:
             "roles": ["teacher"],
             "scope": [{"course_id": str(COURSE_A), "section_id": str(SECTION_A)}],
         },
-        # Same course, whole-course grant: the assignment audience model must let this
-        # token read every target-section variant of COURSE_A, unlike `teacher-a`.
+        # Same course, whole-course grant: teachers authorize from the token scope, and a
+        # whole-course grant covers every assignment of COURSE_A.
         "teacher-wide": {
             "sub": str(uuid.uuid4()),
             "roles": ["teacher"],
@@ -225,10 +224,26 @@ def tokens() -> dict[str, dict]:
             "roles": ["teacher"],
             "scope": [{"course_id": str(COURSE_D)}],
         },
+        # Only used by the "student list filters in SQL" test; COURSE_E exists for it alone.
+        "teacher-e": {
+            "sub": str(uuid.uuid4()),
+            "roles": ["teacher"],
+            "scope": [{"course_id": str(COURSE_E)}],
+        },
         "student-a": {
             "sub": str(STUDENT_A),
             "roles": ["student"],
             "scope": [{"course_id": str(COURSE_A), "section_id": str(SECTION_A)}],
+        },
+        "student-b": {
+            "sub": str(STUDENT_B),
+            "roles": ["student"],
+            "scope": [{"course_id": str(COURSE_A), "section_id": str(SECTION_A2)}],
+        },
+        "student-c": {
+            "sub": str(STUDENT_C),
+            "roles": ["student"],
+            "scope": [{"course_id": str(COURSE_B), "section_id": str(SECTION_B)}],
         },
     }
 
@@ -260,16 +275,15 @@ def publisher():
     return InMemoryEventPublisher()
 
 
-# --- identity/course module stand-in (assignment target validation) ------
+# --- identity/course module stand-in (authorization + notifications) -----
 #
-# Only the *HTTP endpoint* is replaced (same allowance as the B4 JWKS fetch): the
-# request B3 builds, the production client's parsing and its failure classification all
-# run for real. The answer is computed from the SECTION_COURSES/ENROLLMENTS mapping above,
-# so "unknown section", "student not enrolled in the given section" and "cross-course
-# student" are real decisions rather than scripted strings.
+# Only the *HTTP exchange* is replaced (same allowance as the B4 JWKS fetch): the request
+# B3 builds, the production clients' parsing and their failure classification all run for
+# real. The answers are computed from mutable state, so "this student was removed from the
+# course" and "B4 rejected this hand-off" are real decisions rather than scripted strings.
 
 
-class _B4Response:
+class _FakeResponse:
     def __init__(self, payload: dict, *, status: int = 200) -> None:
         self.status = status
         self._body = json.dumps(payload).encode("utf-8")
@@ -277,79 +291,121 @@ class _B4Response:
     def read(self) -> bytes:
         return self._body
 
-    def __enter__(self) -> _B4Response:
+    def __enter__(self) -> _FakeResponse:
         return self
 
     def __exit__(self, *exc_info: object) -> bool:
         return False
 
 
-def b4_validation_answer(request) -> dict:
-    """The identity/course module's ``CourseTargetValidation`` body for a request.
+class FakeB4Service:
+    """In-process stand-in for B4's two internal operations.
 
-    Kept a free function so the client tests can call it directly (or wrap it in a
-    custom opener) without duplicating the fixture mapping.
+    Served through the **real** HTTP clients (they are built with ``opener=self``), so the
+    documented URLs, headers, bodies and the production failure classification are
+    exercised. Mutable state lets a test change the authoritative answer between requests:
+    ``enrollments`` is the current membership, ``notification_status`` makes B4 reject one
+    hand-off, and every received request is recorded in ``requests`` for assertions.
     """
-    body = json.loads(bytes(request.data).decode("utf-8"))
-    course_id = uuid.UUID(str(body["course_id"]))
-    requested_sections = [uuid.UUID(str(value)) for value in body.get("section_ids", ())]
-    requested_students = [uuid.UUID(str(value)) for value in body.get("student_ids", ())]
-    sections: list[dict] = []
-    unknown_sections: list[str] = []
-    for section_id in requested_sections:
-        if SECTION_COURSES.get(section_id) != course_id:
-            unknown_sections.append(str(section_id))
-            continue
-        sections.append(
+
+    def __init__(self) -> None:
+        self.enrollments: dict[uuid.UUID, tuple[uuid.UUID, uuid.UUID, uuid.UUID]] = dict(
+            ENROLLMENTS
+        )
+        self.course_grants: dict[uuid.UUID, set[uuid.UUID]] = {}
+        self.notifications: dict[uuid.UUID, dict] = {}
+        #: Per-assignment status overrides plus the default for assignments a test has not
+        #: seen before (creation happens before the id is known).
+        self.notification_status: dict[uuid.UUID, int] = {}
+        self.default_notification_status = 201
+        self.requests: list[dict] = []
+
+    def authorization_answer(self, user_id: uuid.UUID) -> dict:
+        enrollment = self.enrollments.get(user_id)
+        return {
+            "user_id": str(user_id),
+            "platform_roles": ["student"] if enrollment is not None else [],
+            "course_grants": sorted(
+                str(course) for course in self.course_grants.get(user_id, set())
+            ),
+            "enrollments": (
+                []
+                if enrollment is None
+                else [
+                    {
+                        "course_id": str(enrollment[0]),
+                        "section_id": str(enrollment[1]),
+                        "class_id": str(enrollment[2]),
+                    }
+                ]
+            ),
+        }
+
+    def __call__(self, request, timeout: float):
+        method = request.get_method()
+        url = request.full_url
+        body = json.loads(bytes(request.data).decode("utf-8")) if request.data else None
+        self.requests.append(
             {
-                "section_id": str(section_id),
-                "course_id": str(course_id),
-                "section_code": f"S-{str(section_id)[:8]}",
-                "term": None,
+                "method": method,
+                "url": url,
+                "headers": {key.lower(): value for key, value in request.headers.items()},
+                "body": body,
+                "timeout": timeout,
             }
         )
-    students: list[dict] = []
-    unknown_students: list[str] = []
-    for student_id in requested_students:
-        enrollment = ENROLLMENTS.get(student_id)
-        if (
-            enrollment is not None
-            and enrollment[0] == course_id
-            and enrollment[1] in requested_sections
-        ):
-            students.append(
-                {"student_id": str(student_id), "section_id": str(enrollment[1])}
+        if method == "GET" and "/api/v1/internal/users/" in url and url.endswith("/authorization"):
+            user_id = uuid.UUID(
+                url.split("/api/v1/internal/users/")[1].split("/authorization")[0]
             )
-        else:
-            unknown_students.append(str(student_id))
-    return {
-        "course_id": str(course_id),
-        "sections": sections,
-        "unknown_section_ids": unknown_sections,
-        "students": students,
-        "unknown_student_ids": unknown_students,
-    }
-
-
-def b4_opener(request, timeout: float):
-    """Opener that serves :func:`b4_validation_answer` without a network call."""
-    return _B4Response(b4_validation_answer(request))
+            return _FakeResponse(self.authorization_answer(user_id))
+        if method == "POST" and url.endswith("/api/v1/internal/assignment-notifications"):
+            assignment_id = uuid.UUID(body["assignment_id"])
+            self.notifications[assignment_id] = body
+            status = self.notification_status.get(
+                assignment_id, self.default_notification_status
+            )
+            return _FakeResponse(
+                {
+                    "assignment_id": str(assignment_id),
+                    "status": "pending" if status in (200, 201) else "rejected",
+                },
+                status=status,
+            )
+        return _FakeResponse({"detail": "unknown fake operation"}, status=404)
 
 
 @pytest.fixture
-def b4_target_client():
-    from autograder_b3.integration.b4 import B4TargetClient
+def fake_b4() -> FakeB4Service:
+    return FakeB4Service()
 
-    return B4TargetClient(
+
+@pytest.fixture
+def b4_authorization(fake_b4: FakeB4Service):
+    from autograder_b3.integration.b4 import B4AuthorizationClient
+
+    return B4AuthorizationClient(
         base_url="http://identity.invalid",
         service_token="test-service-token",
         timeout_seconds=1.0,
-        opener=b4_opener,
+        opener=fake_b4,
     )
 
 
 @pytest.fixture
-def dependencies(settings, database, verifier, publisher, clock, b4_target_client):
+def b4_notifier(fake_b4: FakeB4Service):
+    from autograder_b3.integration.b4 import B4AssignmentNotifier
+
+    return B4AssignmentNotifier(
+        base_url="http://identity.invalid",
+        service_token="test-service-token",
+        timeout_seconds=1.0,
+        opener=fake_b4,
+    )
+
+
+@pytest.fixture
+def dependencies(settings, database, verifier, publisher, clock, b4_authorization, b4_notifier):
     from autograder_b3.api.deps import B3Dependencies
     from autograder_b3.auth import ServiceTokenVerifier
 
@@ -359,7 +415,8 @@ def dependencies(settings, database, verifier, publisher, clock, b4_target_clien
         token_verifier=verifier,
         service_verifier=ServiceTokenVerifier("test-service-token"),
         publisher=publisher,
-        b4_targets=b4_target_client,
+        b4_authorization=b4_authorization,
+        b4_notifier=b4_notifier,
         clock=clock,
     )
 

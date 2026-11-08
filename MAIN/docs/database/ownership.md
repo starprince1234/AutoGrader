@@ -10,9 +10,9 @@
 
 | schema | Owner 模块 | 主要实体 | 迁移事实源 | 运行角色 | Alembic 版本表 |
 |---|---|---|---|---|---|
-| `b4` | **B4** | user、credential、session、role、course、section、enrollment、audit | `B4/alembic/versions/**` | 仅 `b4` schema | 独立（B4 维护） |
-| `b3` | **B3** | question、question_version、assignment、test_suite、test_case、fixture、统计聚合 | `B3/alembic/versions/**` | 仅 `b3` schema | 独立（B3 维护） |
-| `b2` | **B2** | submission、artifact、evaluation_run、evaluation_result、case_evidence、security_finding、email_checkpoint、outbox、inbox | `B2/alembic/versions/**` | 仅 `b2` schema | 独立（B2 维护） |
+| `b4` | **B4** | user、credential、session、role、course、section、class、enrollment、registration allowlist/codes、roster import、assignment_notification(+delivery)、audit | `B4/alembic/versions/**` | 仅 `b4` schema | 独立（B4 维护） |
+| `b3` | **B3** | question、question_version、assignment（课程级；无目标表）、`notification_state`、test_suite、test_case、fixture、统计聚合 | `B3/alembic/versions/**` | 仅 `b3` schema | 独立（B3 维护） |
+| `b2` | **B2** | submission（带可空 `assignment_id`）、artifact、evaluation_run、evaluation_result、case_evidence、security_finding、email_checkpoint、email_verification_submissions、outbox、inbox | `B2/alembic/versions/**` | 仅 `b2` schema | 独立（B2 维护） |
 | （无） | **B1** | 无权威数据库 | — | 无数据库连接 | — |
 
 **当前 `main` migration head（每个模块一个）**：记录在各自 `module.yaml` 的 `database.migration_head`（当前均为 `baseline`）。MAIN 只记录 head，不维护 DDL。
@@ -59,8 +59,9 @@
 
 | 引用 | 谁引用 | 被引用 | 约束 |
 |---|---|---|---|
-| `course_id`、`section_id` | B2、B3 | B4（course/section） | 无 FK；由应用校验；事件驱动的一致性 |
+| `course_id`、`section_id`、`class_id` | B2、B3 | B4（course/section/class） | 无 FK；由应用校验；B2/B3 的**当前**归属以 B4 internal authorization 为准 |
 | `user_id`、`enrollment_id` | B2 | B4 | 无 FK |
+| `assignment_id` | B2（提交）、B4（通知） | B3（assignment） | 无 FK；B4 通知按 assignment_id 幂等 |
 | `question_version_id` | B2 | B3 | 无 FK；评测必须绑定其内容摘要 |
 | `submission_id`、`evaluation_run_id` | B3（统计，经事件） | B2 | 无 FK；仅作为去重/关联键 |
 
@@ -83,7 +84,8 @@
 | 题目与版本 | B3 | 长期 | 草稿可删；`published` 被引用则**仅可归档** | 不可变性 |
 | 参考答案 / 隐藏用例 | B3 | 与题目版本同寿命 | 仅随版本归档 | **受保护内容** |
 | 题目统计聚合 | B3 | 长期 | 可重建（事件重放） | 已去标识化 |
-| 用户 / 课程 / 选课 | B4 | 长期 | 用户为**停用**而非物理删除 | 审计完整性 |
+| 用户 / 课程 / 课序 / 班级 / 选课 | B4 | 长期 | 用户为**停用**而非物理删除；名单行删除即失效 | 审计完整性；同一课程最多一条有效名单行 |
+| 作业通知与投递记录 | B4 | 长期 | 随作业保留；**名单行删除后投递记录保留**（历史证据） | 「已安排」≠「已送达」 |
 | 会话与凭据 | B4 | 短期 | 可清理（过期） | 凭据不落日志 |
 | 审计记录 | B4 | 长期 | **不可删**（普通用户） | 追责基础 |
 | 事件流 / DLQ | B4（JetStream） | 配额内滚动 | 按保留策略 | ≤0.25 GB |

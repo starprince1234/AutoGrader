@@ -1,6 +1,6 @@
 # AutoGrader B3 — 题库与测试包插件
 
-B3 是 AutoGrader 的**题库与测试包（evaluation package）插件**。它按课程维护题目（题干、参考答案、测试用例）、不可变题目版本、assignment（作业集合）、三类测试框架（stdin / file / callable）的 package 编译，以及基于去标识化事件的答题统计。
+B3 是 AutoGrader 的**题库与测试包（evaluation package）插件**。它按课程维护题目（题干、参考答案、测试用例）、不可变题目版本、课程级 assignment（作业）、三类测试框架（stdin / file / callable）的 package 编译，以及基于去标识化事件的答题统计。
 
 - **当前状态：`已完成`**（B3 侧 7 条责任需求全部实现并有测试；见 [docs/README.md](docs/README.md) 状态表）。
 - 一句话边界：**B3 不执行学生代码、不计算分数、不拥有评测证据**。执行、安全判定、评分与证据属于 B2。
@@ -12,7 +12,7 @@ B3 是 AutoGrader 的**题库与测试包（evaluation package）插件**。它�
 **已实现（每项都有对应测试，见 [docs/testing/cases.md](docs/testing/cases.md)）**
 
 - **题目聚合**（`RQ-B-3-10`）：富文本题干 + 受控图片资源（内容摘要 + 安全响应头）、参考答案（受保护存储）、测试用例（隐藏/可见）。
-- **不可变版本与发布**（`RQ-B-3-20`）：`draft → published → archived`；已发布内容原地修改返回 `409`，数据库触发器（SQLSTATE `23001`）二次拦截；发布前完整性校验；assignment 只能引用已发布版本。
+- **不可变版本与发布**（`RQ-B-3-20`）：`draft → published → archived`；已发布内容原地修改返回 `409`，数据库触发器（SQLSTATE `23001`）二次拦截；发布前完整性校验；assignment 只能引用该课程的已发布版本，且是**课程级**（自动覆盖课程全部课序/班级/学生），发布通知交接状态如实落在 `notification_state`（`scheduled`/`unavailable`，失败不回滚、可幂等重试）。
 - **质量出口**（`CHG-0013`）：比较策略诊断端点（`CMP-001..004` 确定性规则，**不回显任何期望输出**）；版本 DTO 的 `revision_note`/`revision_diff`（键集合 = 契约 `RevisionDiff`，仅计数/长度/摘要/状态位）与写路径（无 `as_new_version` 即 `422`）；题目列表按标签**全部满足**检索。
 - **三类 adapter 与 package 编译**（`RQ-B-3-40/50/60`）：stdin/argv（args 为数组、逐字保留）、file I/O（fixture 内容寻址 + 摘要绑定 + 路径限定）、callable（点分标识符入口 + JSON 参数）；三型共用同一 package 结构与唯一编译入口，确定性 `package_digest`。
 - **去标识化统计**（`RQ-B-3-30`）：订阅 `evaluation.completed`，durable consumer + `event_inbox` 去重（`event_id` 主键、`evaluation_run_id` 唯一键），整数预聚合，支持从事件重放重建；payload 字段白名单，越界字段拒收且不 ack（走 DLQ）。

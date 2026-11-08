@@ -39,7 +39,9 @@
 
 **授权从哪里来**：邮件入口没有认证头、也没有调用者身份，因此它**不**走 API 那套 `Principal` 判定。
 这里的授权依据是两件服务端事实：能读到这个邮箱（凭据只来自部署配置）＋ 这封邮件携带的核验码
-属于发件账号且未过期/未被别的邮件消费。
+属于发件账号且未过期/未被别的邮件消费。v0.32.0 起课程级受众还要求作业仍 open、作业课程与核验码
+一致、且发件学生**当前**仍有该课程的有效选课（B4 `internal/users/{id}/authorization`）；当前
+`section_id` 以 B4 为准（可能不同于挑战签发时），"查不了"让整轮拉取失败重试而不是隔离。
 
 凭据只从配置来（构造参数，非隐式环境读取）。**绝不**给 `imaplib` 打开 `debug`：它会把发出的
 命令原文（含 `LOGIN` 口令）打到 stderr——这是最现实的凭据泄漏路径之一。
@@ -110,6 +112,10 @@ from autograder_b2.integration.assignments import (
     AssignmentAudience,
     AssignmentDirectory,
     AssignmentUnavailable,
+)
+from autograder_b2.integration.b4_authorization import (
+    AuthorizationUnavailable,
+    UserAuthorizationDirectory,
 )
 
 logger = logging.getLogger("autograder_b2.intake.email")
@@ -556,6 +562,7 @@ class EmailIntakeService:
         client_factory: type[ImapMailboxClient] = ImapMailboxClient,
         verification: EmailVerificationService | None = None,
         assignment_directory: AssignmentDirectory | None = None,
+        authorization_directory: UserAuthorizationDirectory | None = None,
     ) -> None:
         self._engine = engine
         self._settings = settings
@@ -568,6 +575,11 @@ class EmailIntakeService:
             assignment_directory
             if assignment_directory is not None
             else (None if verification is None else verification.assignment_directory)
+        )
+        self._authorization_directory = (
+            authorization_directory
+            if authorization_directory is not None
+            else (None if verification is None else verification.authorization_directory)
         )
         self._intake_state = IntakeStateStore(engine)
 
@@ -594,6 +606,11 @@ class EmailIntakeService:
     @property
     def assignment_directory(self) -> AssignmentDirectory | None:
         return self._assignment_directory
+
+    @property
+    def authorization_directory(self) -> UserAuthorizationDirectory | None:
+        """B4 权威授权目录（与提交入口/核验服务共用同一个实例；未配置为 `None`）。"""
+        return self._authorization_directory
 
     # --- 拉取 ------------------------------------------------------------------
 
@@ -948,12 +965,13 @@ class EmailIntakeService:
                 scope=scope,
             )
 
-        audience = self._load_audience(inspection)
-        if isinstance(audience, VerificationRejected):
-            verification.record_rejection(inspection.challenge_id, audience.reason_code)
+        loaded = self._load_audience(inspection)
+        if isinstance(loaded, VerificationRejected):
+            verification.record_rejection(inspection.challenge_id, loaded.reason_code)
             return self._quarantine_from_rejection(
-                uidvalidity=uidvalidity, uid=uid, message_id=message_id, rejected=audience
+                uidvalidity=uidvalidity, uid=uid, message_id=message_id, rejected=loaded
             )
+        audience, authoritative_section = loaded
         try:
             mapped = _mapped_attachments(accepted, audience)
         except AttachmentRejected as rejected:
@@ -981,6 +999,7 @@ class EmailIntakeService:
             consumed=resumed,
             mapped=mapped,
             message=message,
+            section_id=authoritative_section,
             uidvalidity=uidvalidity,
             uid=uid,
         )
@@ -1008,8 +1027,19 @@ class EmailIntakeService:
 
     def _load_audience(
         self, inspection: ChallengeInspection
-    ) -> AssignmentAudience | VerificationRejected:
-        """取作业受众；目录不可用 `AssignmentUnavailable` 原样上抛 → 本轮拉取失败重试。"""
+    ) -> tuple[AssignmentAudience, str] | VerificationRejected:
+        """取作业并判定**当前**归属；不可用原样上抛 → 本轮拉取失败重试。
+
+        课程级作业下这里判三件事（设计 §4）：
+
+        1. 作业仍存在且 open（否则可解释拒绝，不消费挑战）；
+        2. 作业属于核验码签发的课程（课程级受众没有 section/student 名单）；
+        3. 学生**此刻**仍有该课程的当前有效 enrollment，其 `section_id` 是本次提交的权威课序
+           （可能不同于挑战签发时的课序：以当前归属为准）。
+
+        第 3 步查不了（B4 授权目录不可达）→ `AuthorizationUnavailable` 上抛，与本轮拉取失败
+        同一语义；查到了但没有归属 → 可解释拒绝（隔离，不消费挑战）。
+        """
         directory = self._assignment_directory
         if directory is None:
             raise AssignmentUnavailable("assignment directory is not configured")
@@ -1028,16 +1058,43 @@ class EmailIntakeService:
                 course_id=inspection.course_id,
                 section_id=inspection.section_id,
             )
-        if audience.course_id != inspection.course_id or not audience.is_target(
-            section_id=inspection.section_id, student_id=inspection.student_id
-        ):
+        if audience.course_id != inspection.course_id:
             return VerificationRejected(
                 "email_verification_rejected",
-                "the sender is no longer in the assignment audience",
+                "the assignment belongs to another course than the one this code was issued for",
                 course_id=inspection.course_id,
                 section_id=inspection.section_id,
             )
-        return audience
+        section = self._current_section(inspection)
+        if isinstance(section, VerificationRejected):
+            return section
+        return audience, section
+
+    def _current_section(self, inspection: ChallengeInspection) -> str | VerificationRejected:
+        """按 B4 的当前归属返回权威课序；无归属 → 可解释拒绝。
+
+        B4 授权目录未配置/不可达 → `AuthorizationUnavailable`（本轮拉取失败，重试），
+        绝不把故障记成"学生已不在课程里"。
+        """
+        directory = self._authorization_directory
+        if directory is None:
+            raise AuthorizationUnavailable(
+                "the B4 user authorization directory is not configured;"
+                " current course membership cannot be verified"
+            )
+        authorization = directory.get(inspection.student_id)
+        if authorization.is_course_staff_for(inspection.course_id):
+            # 课程 staff 为自己签发/提交：没有学生选课可提供课序，保留签发时的权威课序。
+            return inspection.section_id
+        enrollment = authorization.enrollment_for_course(inspection.course_id)
+        if enrollment is None:
+            return VerificationRejected(
+                "email_verification_rejected",
+                "the sender is no longer enrolled in the course this assignment belongs to",
+                course_id=inspection.course_id,
+                section_id=inspection.section_id,
+            )
+        return enrollment.section_id
 
     def _persist_submissions(
         self,
@@ -1045,11 +1102,13 @@ class EmailIntakeService:
         consumed: ConsumedVerification,
         mapped: tuple[_MappedAttachment, ...],
         message: EmailMessage,
+        section_id: str,
         uidvalidity: int,
         uid: int,
     ) -> MessageOutcome:
         """逐题走同一个 `persist`；全部成功后才写 `processed_at` 与 processed checkpoint。
 
+        `section_id` 是**权威归属**的当前课序（见 `_load_audience`），不是客户端/邮件内容里的值。
         任一步失败**不写 checkpoint**（异常原样上抛，本轮拉取失败）：下一轮 resume 既有
         verification，已落库的题目按幂等键重放、缺失的补齐，不产生重复提交。
         """
@@ -1065,7 +1124,7 @@ class EmailIntakeService:
                 assignment_id=consumed.assignment_id,
                 student_id=consumed.student_id,
                 course_id=consumed.course_id,
-                section_id=consumed.section_id,
+                section_id=section_id,
                 question_version_id=item.question_version_id,
                 idempotency_key=email_question_idempotency_key(
                     mailbox=mailbox,
@@ -1588,6 +1647,10 @@ def _pull_failure_code(error: BaseException) -> str:
     if isinstance(error, ImapProtocolError):
         return "imap_unavailable"
     if isinstance(error, MatchingUnavailable):
+        return "identity_unavailable"
+    if isinstance(error, AuthorizationUnavailable):
+        # B4 的权威授权/归属查询是邮件身份链的一部分：查不了就让本轮失败，绝不把它
+        # 记成"发件人不在课程里"（那会隔离整批合法邮件）。
         return "identity_unavailable"
     if isinstance(error, AssignmentUnavailable):
         return "assignment_unavailable"
