@@ -289,7 +289,7 @@ describe("评语生成（教师/助教）", () => {
     await user.click(await screen.findByTestId("regenerate-commentary"));
     const banner = await screen.findByTestId("commentary-not-enabled");
     expect(banner).toHaveTextContent("本部署未启用评语生成");
-    expect(banner).toHaveTextContent("AUTOGRADER_COMMENTARY_PROVIDER");
+    expect(banner).toHaveTextContent("不影响成绩");
     expect(screen.queryByTestId("commentary-generate-error")).toBeNull();
     stub.restore();
   });

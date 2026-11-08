@@ -160,9 +160,6 @@ export function CommentarySection({
         {notEnabled ? (
           <Banner tone="info" testId="commentary-not-enabled">
             {t("commentary.notEnabled")}
-            {isApiError(generate.error) && generate.error.problem?.detail ? (
-              <span className="muted"> {generate.error.problem.detail}</span>
-            ) : null}
           </Banner>
         ) : generate.isError ? (
           <ErrorState error={generate.error} testId="commentary-generate-error" />

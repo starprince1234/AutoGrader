@@ -153,8 +153,8 @@ describe("证据下钻：权威分与 AI 参考分并列（RQ-T-30 / ADR-0014）
     await signIn("teacher1", "pw");
     renderWithProviders(<GradeDrilldown runId={UUID_RUN} view="teacher" />);
 
-    // 报告的错误照常展示……
-    expect(await screen.findByTestId("error-state")).toHaveTextContent("404");
+    // 报告不可得时给友好说明，而不是把 404 后端错误框直接丢给用户。
+    expect(await screen.findByTestId("report-missing")).toHaveTextContent("暂时没有可查看的详细结果");
     expect(await screen.findByTestId("commentary-text")).toHaveTextContent("第二个用例");
     // ……评语与参考分同时可用（错误框不得成为它们的唯一出口）。
     expect(screen.getByTestId("advisory-score")).toBeInTheDocument();

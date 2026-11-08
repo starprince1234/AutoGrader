@@ -1412,7 +1412,7 @@ export const messages = {
     "commentary.regenerate": "生成评语",
     "commentary.regenerating": "请求中…",
     "commentary.regenerateHint": "重新生成不会改变分数。",
-    "commentary.notEnabled": "本部署暂未启用评语生成。",
+    "commentary.notEnabled": "本部署未启用评语生成，不影响成绩。",
     "commentary.forbidden": "当前账号不能查看这段评语。",
     "commentary.notGenerated": "这次评测还没有生成评语。",
     "commentary.disclaimersMissing": "评语缺少必要的说明，因此暂不显示参考分。",

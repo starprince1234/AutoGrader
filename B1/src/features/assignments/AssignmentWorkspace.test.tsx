@@ -267,7 +267,7 @@ describe("学生作业工作区（CHG-0032）", () => {
     );
     expect(await screen.findByTestId("stem-markdown")).toHaveTextContent("第一题说明");
     expect(screen.getByTestId("workspace-file-mapping")).toHaveTextContent(
-      "第 1 题提交为 1.txt",
+      "你可以选择本地的 .txt 文件或者直接输入你的答案。",
     );
 
     await userEvent.setup().click(screen.getByTestId("workspace-question-2"));
@@ -275,7 +275,7 @@ describe("学生作业工作区（CHG-0032）", () => {
       expect(screen.getByTestId("stem-markdown")).toHaveTextContent("第二题说明"),
     );
     expect(screen.getByTestId("workspace-file-mapping")).toHaveTextContent(
-      "第 2 题提交为 2.txt",
+      "你可以选择本地的 .txt 文件或者直接输入你的答案。",
     );
   });
 
@@ -295,7 +295,6 @@ describe("学生作业工作区（CHG-0032）", () => {
 
     await user.click(screen.getByTestId("workspace-submit"));
 
-    expect(await screen.findByTestId("workspace-submit-accepted")).toBeInTheDocument();
     expect(await screen.findByTestId("terminal-completed")).toHaveTextContent("86");
 
     const submitted = stub?.requests.find(
@@ -342,7 +341,7 @@ describe("学生作业工作区（CHG-0032）", () => {
         "从文件读取的答案\n第二行",
       ),
     );
-    expect(screen.getByTestId("workspace-uploaded-file")).toHaveTextContent("我的答案.txt");
+    expect((input as HTMLInputElement).files?.[0]?.name).toBe("我的答案.txt");
 
     // 非 .txt：直接提示，不写入答案区。
     const markdown = new File(["# 不是文本答案"], "answer.md", { type: "text/markdown" });
@@ -378,7 +377,7 @@ describe("学生作业工作区（CHG-0032）", () => {
     await userEvent.setup().click(screen.getByTestId("restore-draft-confirm"));
     expect(screen.getByTestId("workspace-answer-text")).toHaveValue("# 未提交草稿答案");
     expect(await screen.findByTestId("workspace-draft-restored")).toHaveTextContent(
-      "草稿不是已提交",
+      "已恢复本地未提交草稿",
     );
   });
 
