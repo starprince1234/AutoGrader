@@ -49,6 +49,7 @@ import {
   type OptionalExportField,
 } from "./exportColumns";
 import { Select } from "../../ui/Select";
+import { useQuestionVersionRows } from "../questions/useQuestions";
 
 /**
  * 成绩页（P11；RQ-B-1-30 成绩与证据 + RQ-B-1-60 导出）。
@@ -221,8 +222,25 @@ export function GradesPage({
     onRunChange?.(null);
   };
 
+  // 学生没有题目筛选目录，但成绩行仍应显示题目名称而不是一串 UUID。
+  // 这里按成绩行里出现的版本号补取公开版本（含标题），失败时只影响这一列。
+  const gradeVersionIds = useMemo(
+    () => [...new Set(loaded.map((row) => row.question_version_id))],
+    [loaded],
+  );
+  const gradeVersionRows = useQuestionVersionRows(gradeVersionIds);
+  const gradeQuestionTitles = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const row of gradeVersionRows) {
+      if (row.question?.title) map.set(row.questionVersionId, row.question.title);
+    }
+    return map;
+  }, [gradeVersionRows]);
+
   const questionLabel = (versionId: string) =>
-    questionLabels.get(versionId) ?? shortenId(versionId);
+    questionLabels.get(versionId) ??
+    gradeQuestionTitles.get(versionId) ??
+    t("grades.questionUnavailable");
 
   const drilldownRow = displayRows.find((entry) => entry.row.evaluation_run_id === drilldownRunId);
 
@@ -234,7 +252,7 @@ export function GradesPage({
         data-testid={`drilldown-${row.evaluation_run_id}`}
         onClick={() => openRun(row.evaluation_run_id as string)}
       >
-        {t("grades.evidence")}
+        {t("grades.viewDetail")}
       </button>
     ) : (
       <span className="muted">{t("common.none")}</span>
@@ -454,7 +472,7 @@ export function GradesPage({
     <div className="stack">
       <PageTitle>{t("nav.grades")}</PageTitle>
 
-      <Panel title={t("grades.filter")}>
+      <Panel title={t("grades.filterTitle")}>
         <div className="form-grid">
           <Field label={t("grades.course")} htmlFor="grades-course">
             <Select
@@ -557,8 +575,6 @@ export function GradesPage({
             </>
           ) : null}
         </div>
-
-        <p className="muted">{t("grades.timeHint")}</p>
 
         {exportAllowed ? (
           <div className="inline">

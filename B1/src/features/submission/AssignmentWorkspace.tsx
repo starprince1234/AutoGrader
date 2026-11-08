@@ -12,7 +12,6 @@ import { log, newRequestId } from "../../logging/logger";
 import {
   Banner,
   ErrorState,
-  Field,
   InlineLoader,
   Modal,
   Panel,
@@ -174,6 +173,10 @@ export function AssignmentWorkspace({
     ? (progressByQuestion.get(currentRow.questionVersionId) ?? null)
     : null;
   const currentSubmission = currentProgress?.submission ?? null;
+  // 终态后不再挂着"正在准备评测"：成绩行已经给出结论，继续显示会让用户以为还在跑。
+  const currentSettled =
+    currentSubmission !== null &&
+    ["completed", "rejected", "failed"].includes(currentSubmission.state);
 
   // ---- 本地草稿 v2 -------------------------------------------------------
   const [content, setContent] = useState("");
@@ -403,15 +406,15 @@ export function AssignmentWorkspace({
           </span>
           {progress.complete ? (
             <span className="inline" data-testid="workspace-overall">
-              <StatusPill tone={overallStateTone(overall)}>
-                {overallStateLabel(overall)}
-              </StatusPill>
               <span className="muted">
                 {t("assignments.progressDone", {
                   done: completedCount,
                   total: progress.questions.length,
                 })}
               </span>
+              <StatusPill tone={overallStateTone(overall)}>
+                {overallStateLabel(overall)}
+              </StatusPill>
             </span>
           ) : progress.isError ? (
             <span className="muted" data-testid="workspace-progress-error">
@@ -545,7 +548,8 @@ export function AssignmentWorkspace({
                 ) : null}
               </div>
 
-              <Field label={t("workspace.answerLabel")} htmlFor="workspace-answer-text">
+              <label className="field" htmlFor="workspace-answer-text">
+                <span>{t("workspace.answerLabel")}</span>
                 <textarea
                   id="workspace-answer-text"
                   className="input workspace-answer__textarea"
@@ -558,7 +562,7 @@ export function AssignmentWorkspace({
                     setUploadedFileName(null);
                   }}
                 />
-              </Field>
+              </label>
 
               {draftSavedAt !== null ? (
                 <p className="muted" data-testid="workspace-draft-saved">
@@ -616,7 +620,7 @@ export function AssignmentWorkspace({
               {submit.isError ? (
                 <ApiErrorBanner error={submit.error} testId="workspace-submit-error" />
               ) : null}
-              {submit.isSuccess ? (
+              {submit.isSuccess && !currentSettled && terminal === null ? (
                 <Banner tone="success" testId="workspace-submit-accepted">
                   {t("workspace.submitted")}
                   {submit.data.idempotent_replay ? ` · ${t("submit.idempotentReplay")}` : ""}
@@ -633,22 +637,25 @@ export function AssignmentWorkspace({
                 <div className="stack" data-testid="workspace-current-result">
                   <p>
                     {t("workspace.currentResult")}：
+                    {currentSubmission.state === "completed" ? (
+                      typeof currentSubmission.score === "number" ? (
+                        <span className="muted">
+                          {t("grades.score")}：{currentSubmission.score} /{" "}
+                          {currentSubmission.max_score ?? "—"}
+                          {" · "}
+                        </span>
+                      ) : (
+                        <span className="muted">
+                          {t("grades.notScored")}
+                          {" · "}
+                        </span>
+                      )
+                    ) : null}
                     <StatusPill
                       tone={questionStateTone(currentProgress?.state ?? "not_submitted")}
                     >
                       {questionStateLabel(currentProgress?.state ?? "not_submitted")}
                     </StatusPill>
-                    {currentSubmission.state === "completed" ? (
-                      typeof currentSubmission.score === "number" ? (
-                        <span className="muted">
-                          {" "}
-                          · {t("grades.score")}：{currentSubmission.score} /{" "}
-                          {currentSubmission.max_score ?? "—"}
-                        </span>
-                      ) : (
-                        <span className="muted"> · {t("grades.notScored")}</span>
-                      )
-                    ) : null}
                   </p>
                   <div className="inline">
                     <span className="muted">
@@ -662,7 +669,7 @@ export function AssignmentWorkspace({
                         search={{ evaluation_run_id: knownRunId }}
                         data-testid="workspace-open-result"
                       >
-                        {t("submit.openResult")}
+                        {t("workspace.viewDetail")}
                       </Link>
                     ) : null}
                   </div>
@@ -744,7 +751,7 @@ export function AssignmentWorkspace({
 
       {emailOpen ? (
         <Modal
-          title={<span style={{ display: "none" }}>{t("submit.email.title")}</span>}
+          title={t("submit.email.title")}
           testId="email-modal"
           onClose={() => setEmailOpen(false)}
         >

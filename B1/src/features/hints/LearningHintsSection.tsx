@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { t } from "../../i18n";
 import { isApiError } from "../../api/problem";
 import type { GradeRow, LearningHintStep } from "../../api/types";
-import { Banner, ErrorState, Panel, Spinner, StatusPill } from "../../ui/components";
+import { Banner, Panel, Spinner, StatusPill } from "../../ui/components";
 import { useGenerateLearningHints, useLearningHints } from "./useLearningHints";
 
 /**
@@ -85,7 +85,9 @@ export function LearningHintsSection({
           {t("hints.forbidden")}
         </Banner>
       ) : hints.isError ? (
-        <ErrorState error={hints.error} testId="hints-error" />
+        <Banner tone="warn" testId="hints-error">
+          {t("hints.failed")}
+        </Banner>
       ) : null}
 
       {hints.isPending && completed ? <Spinner label={t("hints.loading")} /> : null}
@@ -167,11 +169,14 @@ export function LearningHintsSection({
           ) : null}
 
           {data.disclaimers.length > 0 ? (
-            <ul className="muted" data-testid="hints-disclaimers">
-              {data.disclaimers.map((line, index) => (
-                <li key={`${index}-${line}`}>{line}</li>
-              ))}
-            </ul>
+            <details data-testid="hints-disclaimers">
+              <summary>{t("hints.disclaimersTitle")}</summary>
+              <ul className="muted">
+                {data.disclaimers.map((line, index) => (
+                  <li key={`${index}-${line}`}>{line}</li>
+                ))}
+              </ul>
+            </details>
           ) : (
             <Banner tone="warn" testId="hints-disclaimers-missing">
               {t("hints.disclaimersMissing")}
@@ -211,7 +216,9 @@ export function LearningHintsSection({
       ) : null}
 
       {generate.isError && !rateLimited ? (
-        <ErrorState error={generate.error} testId="hints-generate-error" />
+        <Banner tone="warn" testId="hints-generate-error">
+          {t("hints.failed")}
+        </Banner>
       ) : null}
 
       <div className="inline">

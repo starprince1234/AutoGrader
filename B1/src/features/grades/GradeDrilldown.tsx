@@ -109,11 +109,14 @@ export function GradeDrilldown({
               {t("grades.notScored")}
             </strong>
           )}
-          <span className="muted">
-            {t("grades.totalCheck")}：
-            {data.total_check.matches_total ? t("grades.totalCheckOk") : t("common.no")}
-            （{data.total_check.sum_of_awards}）
-          </span>
+          <details className="muted">
+            <summary>{t("grades.technicalInfo")}</summary>
+            <span>
+              {t("grades.totalCheck")}：
+              {data.total_check.matches_total ? t("grades.totalCheckOk") : t("common.no")}
+              （{data.total_check.sum_of_awards}）
+            </span>
+          </details>
         </div>
         {/* 评语轨由服务端按角色收窄：学生即使调用也只会得到课程策略允许的内容；
             参考分只在教师/助教/管理员视图渲染（`isStaff`）。 */}

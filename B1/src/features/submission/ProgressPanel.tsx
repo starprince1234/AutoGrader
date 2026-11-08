@@ -34,16 +34,13 @@ export function ProgressPanel({
         <StatusPill tone={STATUS_TONE[status]}>{t(`submit.streamState.${status}`)}</StatusPill>
         {latest ? (
           <span className="muted" data-testid="progress-stage">
-            {t("submit.progress", {
-              stage: latest.stage,
-              done: done ?? 0,
-              total: total ?? 0,
-            })}
+            {progress.terminal === "completed"
+              ? t("submit.progressDone", { done: done ?? 0, total: total ?? 0 })
+              : t("submit.progressRunning", { done: done ?? 0, total: total ?? 0 })}
           </span>
         ) : (
           <span className="muted">{t("submit.noTerminalYet")}</span>
         )}
-        {latest ? <span className="muted">sequence {latest.sequence}</span> : null}
       </div>
 
       {percent !== null ? (
@@ -51,8 +48,6 @@ export function ProgressPanel({
           <div className="progress__bar" style={{ width: `${percent}%` }} />
         </div>
       ) : null}
-
-      <p className="muted">{t("submit.dedupNotice")}</p>
 
       {progress.terminal === "completed" ? (
         <Banner tone="success" testId="terminal-completed">
