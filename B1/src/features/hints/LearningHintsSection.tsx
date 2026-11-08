@@ -168,6 +168,21 @@ export function LearningHintsSection({
             </div>
           ) : null}
 
+          {completed &&
+          (data.status === "not_requested" || data.status === "failed") ? (
+            <div className="inline">
+              <button
+                type="button"
+                className="button"
+                data-testid="hints-generate"
+                disabled={generateDisabled}
+                onClick={() => generate.mutate()}
+              >
+                {generate.isPending ? t("hints.generating") : t("hints.generate")}
+              </button>
+            </div>
+          ) : null}
+
           {data.disclaimers.length > 0 ? (
             <details data-testid="hints-disclaimers">
               <summary>{t("hints.disclaimersTitle")}</summary>
@@ -222,7 +237,7 @@ export function LearningHintsSection({
       ) : null}
 
       <div className="inline">
-        {completed && (data?.status === "not_requested" || data?.status === "failed" || data === undefined) ? (
+        {completed && data === undefined ? (
           <button
             type="button"
             className="button"

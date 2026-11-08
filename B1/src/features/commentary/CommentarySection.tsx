@@ -214,25 +214,8 @@ export function CommentarySection({
           // 技术元数据默认收起：它用于复核"这次评语出自哪套系统"，不是主阅读内容。
           <details data-testid="commentary-provenance">
             <summary>{t("commentary.provenanceSummary")}</summary>
-            <p className="muted">{t("commentary.provenanceHint")}</p>
-            <ul className="muted">
-              <li>
-                {t("commentary.provider")}: {data.provenance.provider}
-              </li>
-              <li>
-                {t("commentary.model")}: {data.provenance.model}
-              </li>
-              <li>
-                {t("commentary.promptVersion")}: {data.provenance.prompt_version}
-              </li>
-            </ul>
             <h4>{t("commentary.inputScope")}</h4>
             <p className="muted">{t("commentary.inputScopeHint")}</p>
-            <ul className="muted" data-testid="commentary-input-scope">
-              {data.provenance.input_scope.map((field) => (
-                <li key={field}>{field}</li>
-              ))}
-            </ul>
           </details>
         ) : null}
 

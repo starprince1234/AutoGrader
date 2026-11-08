@@ -533,12 +533,6 @@ export function AssignmentWorkspace({
                 </label>
               </div>
 
-              {uploadedFileName !== null ? (
-                <span className="muted" data-testid="workspace-uploaded-file">
-                  {t("workspace.uploadedFile", { name: uploadedFileName })}
-                </span>
-              ) : null}
-
               <label className="field" htmlFor="workspace-answer-text">
                 <span>{t("workspace.answerLabel")}</span>
                 <textarea
@@ -611,7 +605,7 @@ export function AssignmentWorkspace({
               {submit.isError ? (
                 <ApiErrorBanner error={submit.error} testId="workspace-submit-error" />
               ) : null}
-              {submit.isSuccess ? (
+              {submit.isSuccess && currentSubmission === null && terminal === null ? (
                 <Banner tone="success" testId="workspace-submit-accepted">
                   {t("workspace.submitted")}
                   {submit.data.idempotent_replay ? ` · ${t("submit.idempotentReplay")}` : ""}
@@ -620,7 +614,7 @@ export function AssignmentWorkspace({
               {pendingSubmission !== null &&
               pendingSubmission.versionId === selectedVersionId ? (
                 <Banner tone="info" testId="workspace-run-pending">
-                  {t("submit.resolvingRunId")}
+                  {t("workspace.preparingSubmission")}
                 </Banner>
               ) : null}
 
@@ -633,15 +627,12 @@ export function AssignmentWorkspace({
                         <span className="muted">
                           {t("grades.score")}：{currentSubmission.score} /{" "}
                           {currentSubmission.max_score ?? "—"}
-                          {" · "}
                         </span>
                       ) : (
-                        <span className="muted">
-                          {t("grades.notScored")}
-                          {" · "}
-                        </span>
+                        <span className="muted">{t("grades.notScored")}</span>
                       )
                     ) : null}
+                    {" "}
                     <StatusPill
                       tone={questionStateTone(currentProgress?.state ?? "not_submitted")}
                     >
