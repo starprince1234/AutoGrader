@@ -83,6 +83,7 @@ export function GradeDrilldown({
   const data: EvaluationReport = report.data;
   const security = data.security_conclusion.status;
   const state = data.state ?? runState ?? "completed";
+  const passedCount = data.case_evidence.filter((evidence) => evidence.passed).length;
 
   return (
     <div className="stack" data-testid="grade-drilldown">
@@ -132,8 +133,17 @@ export function GradeDrilldown({
         />
       ) : null}
 
-      {data.overall.summary ? <p>{data.overall.summary}</p> : null}
+      <p data-testid="overall-summary">
+        {t("grades.friendlySummary", {
+          cases: data.case_evidence.length,
+          passed: passedCount,
+          score: data.overall.score,
+          max: data.overall.max_score,
+        })}
+      </p>
 
+      {!studentView ? (
+        <>
       <Panel title={t("grades.staticFindings")}>
         {data.static_findings.length === 0 ? (
           <p className="muted">{t("grades.noFindings")}</p>
@@ -188,9 +198,14 @@ export function GradeDrilldown({
           />
         ) : null}
       </Panel>
+        </>
+      ) : null}
 
-      <Panel title={t("grades.cases")} testId="case-evidence">
-        <p className="muted">{t("grades.evidenceRedaction")}</p>
+      <Panel
+        title={studentView ? t("grades.casesStudent") : t("grades.cases")}
+        testId="case-evidence"
+      >
+        {!studentView ? <p className="muted">{t("grades.evidenceRedaction")}</p> : null}
         {data.case_evidence.length === 0 ? (
           <p className="muted" data-testid="case-evidence-empty">
             {t("grades.noFindings")}
@@ -209,21 +224,24 @@ export function GradeDrilldown({
       </Panel>
 
       {/* 技术摘要默认收起：教师需要它来复核，但它不是学生的主阅读内容。 */}
-      <details data-testid="binding-details">
-        <summary>{t("grades.technicalDetails")}</summary>
-        <Panel title={t("grades.binding")}>
-          <ul className="muted">
-            <li>{t("grades.bindingSubmission")}：{data.binding.submission_digest}</li>
-            <li>{t("grades.bindingPackage")}：{data.binding.package_digest}</li>
-            <li>{t("grades.bindingPolicy")}：{data.binding.runner_policy_digest}</li>
-            <li>{t("grades.bindingEnvironment")}：{data.binding.environment_digest}</li>
-            <li>{t("grades.resultDigest")}：{data.result_digest}</li>
-          </ul>
-        </Panel>
-      </details>
+      {!studentView ? (
+        <>
+          <details data-testid="binding-details">
+            <summary>{t("grades.technicalDetails")}</summary>
+            <Panel title={t("grades.binding")}>
+              <ul className="muted">
+                <li>{t("grades.bindingSubmission")}：{data.binding.submission_digest}</li>
+                <li>{t("grades.bindingPackage")}：{data.binding.package_digest}</li>
+                <li>{t("grades.bindingPolicy")}：{data.binding.runner_policy_digest}</li>
+                <li>{t("grades.bindingEnvironment")}：{data.binding.environment_digest}</li>
+                <li>{t("grades.resultDigest")}：{data.result_digest}</li>
+              </ul>
+            </Panel>
+          </details>
 
-      {/* 证据包（CHG-0014）：按需加载。它是"可移动的"文件，复核者没登录本部署也要能凭它判断。 */}
-      <AppealPackPanel runId={runId} />
+          <AppealPackPanel runId={runId} />
+        </>
+      ) : null}
     </div>
   );
 }

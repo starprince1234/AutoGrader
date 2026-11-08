@@ -534,18 +534,15 @@ export function AssignmentWorkspace({
                     accept=".txt,text/plain"
                     data-testid="answer-file-input"
                     disabled={submit.isPending}
+                    onClick={(event) => {
+                      // 允许重复选择同一个文件；文件名仍由原生控件显示在框内。
+                      event.currentTarget.value = "";
+                    }}
                     onChange={(event) => {
                       void handleFile(event.target.files?.[0]);
-                      // 允许重复选择同一个文件触发 onChange。
-                      event.target.value = "";
                     }}
                   />
                 </label>
-                {uploadedFileName !== null ? (
-                  <span className="muted" data-testid="workspace-uploaded-file">
-                    {t("workspace.uploadedFile", { name: uploadedFileName })}
-                  </span>
-                ) : null}
               </div>
 
               <label className="field" htmlFor="workspace-answer-text">

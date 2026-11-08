@@ -235,16 +235,20 @@ export function CaseEvidenceCard({
           {evidence.passed ? t("grades.casePassed") : t("grades.caseFailed")}
         </StatusPill>
         <span className="muted">
-          {t("grades.caseWeight")}：{evidence.weight ?? 1}
-        </span>
-        <span className="muted">
           {t("grades.caseAwarded")}：{evidence.awarded ?? t("common.none")}
         </span>
-        {evidence.duration_ms === null || evidence.duration_ms === undefined ? null : (
-          <span className="muted">
-            {t("grades.duration")}：{evidence.duration_ms}
-          </span>
-        )}
+        {teacherView ? (
+          <>
+            <span className="muted">
+              {t("grades.caseWeight")}：{evidence.weight ?? 1}
+            </span>
+            {evidence.duration_ms === null || evidence.duration_ms === undefined ? null : (
+              <span className="muted">
+                {t("grades.duration")}：{evidence.duration_ms}
+              </span>
+            )}
+          </>
+        ) : null}
         {evidence.failure_category ? (
           // 枚举值放进 title：界面读中文，契约取值仍可核对。
           <StatusPill tone="warn">
@@ -255,30 +259,41 @@ export function CaseEvidenceCard({
         ) : null}
       </header>
 
-      {/* 确定性说明：契约规定它是固定规则推导的文本，因此可以当作报告的一部分。 */}
-      <div data-testid="case-explanation">
-        <h4>{t("grades.explanation")}</h4>
-        {evidence.explanation ? (
-          <p>{evidence.explanation}</p>
-        ) : (
-          <p className="muted" data-testid="explanation-missing">
-            {t("grades.explanationMissing")}
-          </p>
-        )}
-        <p className="muted">{t("grades.explanationHint")}</p>
-      </div>
+      {/* 确定性说明属于技术证据：学生只看结果，教师复核时再展开。 */}
+      {teacherView ? (
+        <div data-testid="case-explanation">
+          <h4>{t("grades.explanation")}</h4>
+          {evidence.explanation ? (
+            <p>{evidence.explanation}</p>
+          ) : (
+            <p className="muted" data-testid="explanation-missing">
+              {t("grades.explanationMissing")}
+            </p>
+          )}
+          <p className="muted">{t("grades.explanationHint")}</p>
+        </div>
+      ) : null}
 
-      {evidence.message ? <p className="muted">{evidence.message}</p> : null}
+      {teacherView && evidence.message ? <p className="muted">{evidence.message}</p> : null}
 
-      <ResourceBlock resource={evidence.resource ?? null} measured={evidence.resource !== undefined} />
-      <ArtifactsBlock
-        artifacts={evidence.artifacts ?? null}
-        present={evidence.artifacts !== undefined}
-        teacherView={teacherView}
-      />
+      {teacherView ? (
+        <>
+          <ResourceBlock
+            resource={evidence.resource ?? null}
+            measured={evidence.resource !== undefined}
+          />
+          <ArtifactsBlock
+            artifacts={evidence.artifacts ?? null}
+            present={evidence.artifacts !== undefined}
+            teacherView={teacherView}
+          />
+        </>
+      ) : null}
 
       <div>
-        <h4>{t("grades.actualOutput")}</h4>
+        <h4>
+          {teacherView ? t("grades.actualOutput") : t("grades.actualOutputStudent")}
+        </h4>
         <pre>
           <code>{evidence.actual_output_excerpt ?? ""}</code>
         </pre>

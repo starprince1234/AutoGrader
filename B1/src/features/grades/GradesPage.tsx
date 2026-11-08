@@ -377,7 +377,7 @@ export function GradesPage({
                   { key: "score", header: t("grades.scoreSlashMax"), align: "right", render: (entry) => scoreCell(entry.row) },
                   { key: "result", header: t("grades.result"), render: (entry) => resultCell(entry.row) },
                   { key: "grade", header: t("grades.gradeAction"), render: (entry) => gradeActionCell(entry.row) },
-                  { key: "evidence", header: t("grades.evidence"), render: (entry) => evidenceButton(entry.row) },
+                  { key: "evidence", header: t("grades.colDetail"), render: (entry) => evidenceButton(entry.row) },
                 ]
               : [
                   {
@@ -394,7 +394,7 @@ export function GradesPage({
                   { key: "state", header: t("grades.state"), render: (entry) => stateCell(entry.row) },
                   { key: "score", header: t("grades.scoreSlashMax"), align: "right", render: (entry) => scoreCell(entry.row) },
                   { key: "result", header: t("grades.result"), render: (entry) => resultCell(entry.row) },
-                  { key: "evidence", header: t("grades.evidence"), render: (entry) => evidenceButton(entry.row) },
+                  { key: "evidence", header: t("grades.colDetail"), render: (entry) => evidenceButton(entry.row) },
                 ]
           }
         />
@@ -621,9 +621,6 @@ export function GradesPage({
           </Banner>
         ) : null}
 
-        <Banner tone="info" testId="unfinished-notice">
-          {t("grades.stateNotice")}
-        </Banner>
       </Panel>
 
       {summaryPanel}

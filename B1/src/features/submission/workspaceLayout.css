@@ -61,7 +61,7 @@
 
 .workspace-answer__textarea {
   width: 100%;
-  min-height: 320px;
+  min-height: 480px;
   resize: vertical;
   font-family: var(--font-mono);
   line-height: 1.5;
