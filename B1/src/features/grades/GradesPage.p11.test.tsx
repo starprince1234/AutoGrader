@@ -175,25 +175,27 @@ describe("P11 成绩筛选、身份关联、导出与深链", () => {
     const from = screen.getByLabelText(/起始时间/);
     const to = screen.getByLabelText(/结束时间/);
     await user.clear(from);
-    await user.type(from, "2026-09-15T08:00");
+    await user.type(from, "2026-09-15");
     await user.clear(to);
-    await user.type(to, "2026-09-15T09:30");
+    await user.type(to, "2026-09-15");
 
     await waitFor(() => {
       const request = stub.requests
         .filter((item) => item.url.pathname === "/api/v1/grades")
         .at(-1);
+      // `<input type="date">` 是整天粒度：起始取当天 00:00，结束取当天 23:59:59（本地时区），
+      // 否则「结束=同一天」会把当天的提交排除。
       expect(request?.url.searchParams.get("from")).toBe(
-        new Date("2026-09-15T08:00").toISOString(),
+        new Date(2026, 8, 15, 0, 0, 0).toISOString(),
       );
       expect(request?.url.searchParams.get("to")).toBe(
-        new Date("2026-09-15T09:30").toISOString(),
+        new Date(2026, 8, 15, 23, 59, 59).toISOString(),
       );
     });
 
     // 反向区间：显示字段级提示，且不会把反向区间发出去（不静默扩大范围）。
     await user.clear(from);
-    await user.type(from, "2026-09-16T10:00");
+    await user.type(from, "2026-09-16");
     expect(await screen.findByTestId("grades-time-problem")).toHaveTextContent(
       "结束时间不能早于起始时间",
     );
@@ -202,7 +204,7 @@ describe("P11 成绩筛选、身份关联、导出与深链", () => {
       stub.requests.filter(
         (item) =>
           item.url.pathname === "/api/v1/grades" &&
-          item.url.searchParams.get("from") === new Date("2026-09-16T10:00").toISOString(),
+          item.url.searchParams.get("from") === new Date(2026, 8, 16, 0, 0, 0).toISOString(),
       ),
     ).toHaveLength(0);
     stub.restore();

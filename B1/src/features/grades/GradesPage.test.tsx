@@ -288,7 +288,7 @@ describe("成绩查询（RQ-B-1-30）", () => {
     // 汇总需要全量分页，因此页面会自动取完后续页（不再要求教师手工点"加载更多"）。
     await waitFor(() => expect(within(table).getAllByRole("row")).toHaveLength(3));
     expect(table).toHaveTextContent("20260003");
-    expect(screen.getByText(/成绩明细（已加载 2 行）/)).toBeInTheDocument();
+    expect(screen.getByText(/明细（已加载 2 行）/)).toBeInTheDocument();
     expect(screen.queryByTestId("grades-load-more")).toBeNull();
     expect(screen.getByTestId("grades-end")).toBeInTheDocument();
     stub.restore();
@@ -462,7 +462,7 @@ describe("谁还没交（RQ-B-1-30 验收 4 的操作化形态）", () => {
     await selectCourse(user);
     await screen.findByTestId("grades-table");
     await user.selectOptions(screen.getByLabelText("课序（可选）"), UUID_B);
-    await user.click(screen.getByRole("tab", { name: "谁还没交" }));
+    await user.click(screen.getByRole("tab", { name: "仍未提交" }));
     return { stub, user };
   }
 
@@ -557,7 +557,7 @@ describe("谁还没交（RQ-B-1-30 验收 4 的操作化形态）", () => {
 
   it("学生看不到这个标签页（服务端仍独立判定）", async () => {
     const { stub } = await openGrades("student");
-    expect(screen.queryByRole("tab", { name: "谁还没交" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: "仍未提交" })).toBeNull();
     stub.restore();
   });
 
