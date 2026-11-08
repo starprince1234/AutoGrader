@@ -120,17 +120,25 @@ class HttpCommentaryProvider:
             "model": self.config.model,
             "messages": [{"role": "user", "content": prompt}],
             "stream": False,
+            # MiMo/部分 OpenAI 兼容端点会拒绝没有输出上限的请求；上限只约束回复长度，
+            # 不改变 prompt 或证据范围。
+            "max_tokens": 1024,
         }
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {self.config.api_key}",
+            # MiMo 同时支持 api-key 头；带上它不改变鉴权语义，只避免某些网关只认这一种。
+            "api-key": self.config.api_key,
         }
         status, body = self._transport.post_json(
             self.config.endpoint, payload, headers, self.config.timeout_seconds
         )
         if status < 200 or status >= 300:
-            # 不回显响应正文：它可能包含 provider 侧的诊断细节（甚至回显请求）。
-            raise CommentaryProviderError(f"provider returned HTTP {status}")
+            # 400 通常是请求体/模型名问题；把 provider 的短说明带出来便于定位，
+            # 其它状态仍只报状态码，避免把上游整段响应暴露到界面。
+            detail = body.strip()[:500] if status == 400 and body.strip() else ""
+            suffix = f": {detail}" if detail else ""
+            raise CommentaryProviderError(f"provider returned HTTP {status}{suffix}")
         try:
             document = json.loads(body)
         except json.JSONDecodeError as error:

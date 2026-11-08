@@ -181,7 +181,10 @@ def settings_from_env(environ: Mapping[str, str] | None = None) -> Settings:
         ),
         workspace_root=Path(workspace_root) if workspace_root else None,
         environment_tag=(source.get("B2_ENVIRONMENT_TAG") or "").strip() or UNSET_ENVIRONMENT_TAG,
-        b4_base_url=(source.get("B2_B4_BASE_URL") or "").strip() or None,
+        b4_base_url=(
+            (source.get("B2_B4_BASE_URL") or source.get("B2_B3_BASE_URL") or "").strip()
+            or None
+        ),
         b4_timeout_seconds=_positive_float(
             source, "B2_B4_TIMEOUT_SECONDS", DEFAULT_B4_TIMEOUT_SECONDS
         ),

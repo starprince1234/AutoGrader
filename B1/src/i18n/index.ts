@@ -1296,7 +1296,7 @@ export const messages = {
 "grades.tabs.missing": "仍未提交",
 "grades.missing.title": "仍未提交",
 "grades.missing.needsSection": "请先在上方选择课序。",
-"grades.missing.loadingAll": "正在加载全部名单与成绩行",
+"grades.missing.loadingAll": "正在加载全部名单与成绩行...",
 "grades.missing.truncated": "分页被截断，且判定需要完整的名单与成绩，因此这里不显示任何「已提交 / 未提交」结论。要看到完整结果，请缩小课程/课序范围后重试。",
 "grades.missing.summary": "本课序 {total} 人：未提交 {missing}，技术失败 {failed}，评测未完成 {running}，已拒绝 {rejected}，已评分 {graded}，未绑定账号 {unbound}。",
 "grades.missing.filterLabel": "按状态筛选",
