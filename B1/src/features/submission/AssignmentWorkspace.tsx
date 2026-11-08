@@ -564,19 +564,15 @@ export function AssignmentWorkspace({
                 <p className="muted" data-testid="workspace-draft-saved">
                   {t("submit.draftSaved", {
                     time: formatDateTime(draftSavedAt, t("common.none")),
-                  })}{" "}
-                  {t("submit.draftNotSubmitted")}
+                  })}
                 </p>
-              ) : (
-                <p className="muted">{t("submit.draftNotSubmitted")}</p>
-              )}
+              ) : null}
 
               {restoredAt !== null ? (
                 <Banner tone="info" testId="workspace-draft-restored">
                   {t("submit.draftRestored", {
                     time: formatDateTime(restoredAt, t("common.none")),
-                  })}{" "}
-                  {t("submit.draftNotSubmitted")}
+                  })}
                 </Banner>
               ) : null}
 
@@ -615,7 +611,6 @@ export function AssignmentWorkspace({
                     ? t("submit.submitting")
                     : t("workspace.submitButton")}
                 </button>
-                <span className="muted">{t("submit.draftNotSubmitted")}</span>
               </div>
 
               {submit.isError ? (
@@ -744,13 +739,12 @@ export function AssignmentWorkspace({
               {t("submit.declineDraftButton")}
             </button>
           </div>
-          <p className="muted">{t("submit.draftNotSubmitted")}</p>
         </Modal>
       ) : null}
 
       {emailOpen ? (
         <Modal
-          title={t("submit.email.title")}
+          title={<span style={{ display: "none" }}>{t("submit.email.title")}</span>}
           testId="email-modal"
           onClose={() => setEmailOpen(false)}
         >

@@ -207,9 +207,9 @@ export function EmailSubmissionPanel({
     : null;
 
   return (
-    <Panel title={t("submit.email.title")} testId="email-submission-panel">
+    <Panel testId="email-submission-panel">
       <div className="stack">
-        <p>{t("submit.email.instructions")}</p>
+        <p style={{ whiteSpace: "pre-line" }}>{t("submit.email.instructions")}</p>
 
         <fieldset className="stack" data-testid="email-template-fields">
           <legend>{t("submit.email.templateTitle")}</legend>

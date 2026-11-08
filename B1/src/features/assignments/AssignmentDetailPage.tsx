@@ -58,9 +58,17 @@ export function AssignmentDetailPage({
 
       <div className="inline page-head">
         <PageTitle>{query.data?.title ?? t("assignments.detailTitle")}</PageTitle>
-        <Link to="/assignments" className="button button--ghost">
-          {t("assignments.backToList")}
-        </Link>
+        <button
+          type="button"
+          className="button button--ghost"
+          data-testid="assignment-back-button"
+          onClick={() => {
+            if (window.history.length > 1) window.history.back();
+            else window.location.assign("/app/assignments");
+          }}
+        >
+          {t("assignments.backPrevious")}
+        </button>
       </div>
 
       {query.isPending ? (

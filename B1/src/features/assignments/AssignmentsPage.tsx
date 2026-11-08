@@ -166,17 +166,9 @@ function StudentAssignmentList({
               assignmentId: row.assignment_id,
             });
             return (
-              <span className="inline">
-                <StatusPill tone={overallStateTone(own.overall)}>
-                  {overallStateLabel(own.overall)}
-                </StatusPill>
-                <span className="muted" data-testid={`my-progress-${row.assignment_id}`}>
-                  {t("assignments.progressDone", {
-                    done: own.completedCount,
-                    total: own.total,
-                  })}
-                </span>
-              </span>
+              <StatusPill tone={overallStateTone(own.overall)}>
+                {overallStateLabel(own.overall)}
+              </StatusPill>
             );
           },
         },
