@@ -106,14 +106,35 @@ def normalize_text(text: str) -> str:
 
 
 def _load(raw: str) -> Any:
+    text = raw.strip()
+    # OpenAI 兼容端点（包括 MiMo）会把 JSON 包进 ```json 围栏，或前后加一句解释。
+    # 只剥掉外层包装；解析后的顶层键仍由 `parse_generation` 严格校验。
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
     try:
-        # `parse_float=Decimal`：JSON 里的数字直接进位精确十进制，避免 float 的二进制表示
-        # 混进与证据比较的路径（满分也是 Decimal）。
-        # `parse_constant` 拒绝 NaN/Infinity：它们会让区间比较全部为假（NaN < 0 是 False），
-        # 从而绕过越界判定——必须在解析阶段就挡住。
-        return json.loads(raw, parse_float=Decimal, parse_constant=_reject_constant)
+        return _loads(text)
     except (json.JSONDecodeError, ValueError, InvalidOperation) as error:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end > start:
+            try:
+                return _loads(text[start : end + 1])
+            except (json.JSONDecodeError, ValueError, InvalidOperation):
+                pass
         raise CommentaryResponseError("模型响应不是合法 JSON") from error
+
+
+def _loads(text: str) -> Any:
+    # `parse_float=Decimal`：JSON 里的数字直接进位精确十进制，避免 float 的二进制表示
+    # 混进与证据比较的路径（满分也是 Decimal）。
+    # `parse_constant` 拒绝 NaN/Infinity：它们会让区间比较全部为假（NaN < 0 是 False），
+    # 从而绕过越界判定——必须在解析阶段就挡住。
+    return json.loads(text, parse_float=Decimal, parse_constant=_reject_constant)
 
 
 def _reject_constant(name: str) -> Any:
