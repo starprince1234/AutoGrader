@@ -2,8 +2,8 @@ import { useState } from "react";
 import { t } from "../../i18n";
 import { useSession } from "../../auth/sessionContext";
 import { appealPackView } from "../../auth/visibility";
-import { Banner, ErrorState, InlineLoader, Panel, Spinner } from "../../ui/components";
-import { formatDateTime, shortenId } from "../../ui/format";
+import { ErrorState, InlineLoader, Panel, Spinner } from "../../ui/components";
+import { formatDateTime } from "../../ui/format";
 import { downloadAppealPack, useAppealPack } from "./useAppealPack";
 
 /**
@@ -42,19 +42,6 @@ export function AppealPackPanel({ runId }: { runId: string }) {
 
   return (
     <Panel title={t("appeal.title")} testId="appeal-pack">
-      <p className="muted">{t("appeal.intro")}</p>
-
-      {view === null ? (
-        <Banner tone="warn" testId="appeal-view-unknown">
-          {t("appeal.viewUnknown")}
-        </Banner>
-      ) : (
-        <p className="muted" data-testid="appeal-view">
-          {t("appeal.viewExplicit", { view })}
-          {view === "student" ? t("appeal.viewStudent") : t("appeal.viewTeacher")}
-        </p>
-      )}
-
       <div className="inline">
         <button
           type="button"
@@ -87,7 +74,6 @@ export function AppealPackPanel({ runId }: { runId: string }) {
               {t("appeal.reportCases")}: {data.pack.report.case_evidence.length}
             </li>
           </ul>
-          <p className="muted">{t("appeal.digestHint")}</p>
 
           <div className="inline">
             <button
@@ -116,22 +102,18 @@ export function AppealPackPanel({ runId }: { runId: string }) {
               </span>
             ) : null}
           </div>
-          <p className="muted">{t("appeal.downloadVerbatim")}</p>
 
           <div data-testid="appeal-redactions">
             <h3>{t("appeal.redactions")}</h3>
-            <p className="muted">{t("appeal.redactionsHint")}</p>
             <ul>
               {data.pack.redactions.map((line) => (
                 <li key={line}>{line}</li>
               ))}
             </ul>
-            <p className="muted">{t("appeal.hostPathNote")}</p>
           </div>
 
           <div data-testid="appeal-binding">
             <h3>{t("appeal.binding")}</h3>
-            <p className="muted">{t("appeal.bindingHint")}</p>
             <ul className="muted">
               <li>submission_digest: {data.pack.binding.submission_digest}</li>
               <li>
@@ -151,14 +133,8 @@ export function AppealPackPanel({ runId }: { runId: string }) {
 
           <div data-testid="appeal-policy-summary">
             <h3>{t("appeal.policySummary")}</h3>
-            <p className="muted">{t("appeal.policySummaryHint")}</p>
             <KeyValueList record={data.pack.runner_policy_summary ?? {}} />
           </div>
-
-          <p className="muted" data-testid="appeal-report-hint">
-            {t("appeal.reportHint")}
-            {t("appeal.report")}：{shortenId(data.pack.report.evaluation_run_id)}
-          </p>
         </div>
       ) : null}
     </Panel>
