@@ -191,9 +191,26 @@ def _fenced_blocks(text: str) -> list[str]:
 
 
 def _load(raw: str) -> Any:
+    text = raw.strip()
+    # 有些 OpenAI 兼容模型即使被要求“不要 Markdown”，仍会把 JSON 包在 ```json 围栏里。
+    # 这里只剥掉最外层围栏/前后解释，再交给严格 JSON 解析；结构仍由下面的字段校验兜底。
+    if text.startswith("```"):
+        lines = text.splitlines()
+        if lines and lines[0].startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip() == "```":
+            lines = lines[:-1]
+        text = "\n".join(lines).strip()
     try:
-        return json.loads(raw)
+        return json.loads(text)
     except json.JSONDecodeError as error:
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end > start:
+            try:
+                return json.loads(text[start : end + 1])
+            except json.JSONDecodeError:
+                pass
         raise HintResponseError("模型响应不是合法 JSON") from error
 
 
