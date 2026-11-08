@@ -78,11 +78,19 @@ DEFAULT_EXPORT_FORMAT = "xlsx"
 
 
 def build_grades_router(runtime: B2Runtime) -> APIRouter:
-    """成绩路径族的路由；闭包持有 `runtime`（与 `intake.api.build_router` 同一形态）。"""
+    """成绩路径族的路由；闭包持有 `runtime`（与 `intake.api.build_router` 同一形态）。
+
+    The handlers are deliberately **sync** (`def`): they call the synchronous SQLAlchemy
+    service, and a student read additionally performs a blocking B4 authorization call.
+    Declaring them `async def` ran that blocking work on the composition host's single event
+    loop, so the outbound call to B4 could not be served by the same process and timed out
+    after 10s -- the read then surfaced as a false 503 instead of the real 403. FastAPI runs
+    sync handlers in its threadpool, which is where blocking I/O belongs.
+    """
     router = APIRouter()
 
     @router.get("/api/v1/grades")
-    async def list_grades(
+    def list_grades(
         request: Request,
         course_id: str | None = None,
         section_id: str | None = None,
@@ -153,7 +161,7 @@ def build_grades_router(runtime: B2Runtime) -> APIRouter:
         return JSONResponse(status_code=200, content=grade_page_body(page))
 
     @router.get("/api/v1/grades/export")
-    async def export_grades(
+    def export_grades(
         request: Request,
         course_id: str | None = None,
         section_id: str | None = None,
