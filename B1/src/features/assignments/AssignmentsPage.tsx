@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { t } from "../../i18n";
+import { isApiError } from "../../api/problem";
 import { MAX_AUTO_PAGES } from "../../api/pagination";
 import type { AssignmentPublic, GradeRow } from "../../api/types";
 import { useSession } from "../../auth/sessionContext";
@@ -13,12 +14,12 @@ import {
   ErrorState,
   Field,
   InlineLoader,
+  Modal,
   PageTitle,
   Panel,
   Spinner,
   StatusPill,
   Table,
-  Tabs,
 } from "../../ui/components";
 import {
   courseLabel,
@@ -29,7 +30,7 @@ import {
 import { useCurrentUser } from "../../api/currentUser";
 import { useCohort } from "../grades/useCohort";
 import { useAllGrades, gradesAvailability, type GradesAvailability } from "../grades/useGrades";
-import { useAllAssignments } from "./useAssignments";
+import { useAllAssignments, useCloseAssignment } from "./useAssignments";
 import { AssignmentComposer } from "./AssignmentComposer";
 import {
   buildOwnProgress,
@@ -210,144 +211,140 @@ function StudentAssignmentList({
   );
 }
 
-function CountCell({
-  counts,
-  field,
-  assignmentId,
-}: {
-  counts: Map<string, AssignmentProgressCounts> | null;
-  field: keyof Pick<
-    AssignmentProgressCounts,
-    "notSubmitted" | "partial" | "submitted" | "evaluating" | "failed"
-  >;
-  assignmentId: string;
-}) {
+/**
+ * 「已处理作业数量」= 至少提交过一题的人数 / 可判定人数。
+ *
+ * 口径来自 `buildCounts`：`unbound`（名单行未绑定账号）既不是已交也不是未交，
+ * 因此分子只数真提交过的四类，分母把 `unbound` 排除。取数没取全时 `counts === null`，
+ * 这里返回 `null` 让调用方显示"—"，绝不用 0 假装。
+ */
+function handledCounts(
+  counts: Map<string, AssignmentProgressCounts> | null,
+  assignmentId: string,
+): { handled: number; judged: number } | null {
   const value = counts?.get(assignmentId);
-  return (
-    <span data-testid={`${field}-${assignmentId}`}>
-      {value ? value[field] : t("common.none")}
-    </span>
-  );
+  if (!value) return null;
+  const handled =
+    value.submitted + value.partial + value.evaluating + value.failed;
+  return { handled, judged: value.all - value.unbound };
 }
 
-function TeacherProgress({
+/** 教师视角的作业状态：`open` = 进行，其余（`closed` / `archived`）= 结束。 */
+function isEnded(status: AssignmentStatus): boolean {
+  return status !== "open";
+}
+
+type StatusFilter = "all" | "running" | "ended";
+
+/** 班级/课序在列表里不展示：作业是课程级的，课序只是统计筛选。 */
+
+/** 教师「作业列表」：一页回答"这些作业现在什么状态、多少人交了、点进去批改"。 */
+function TeacherAssignmentList({
   assignments,
-  cohort,
+  counts,
+  onClose,
+  closing,
 }: {
-  assignments: AssignmentPublic[];
-  cohort: ReturnType<typeof useCohort>;
+  assignments: readonly AssignmentPublic[];
+  counts: Map<string, AssignmentProgressCounts> | null;
+  onClose: (assignment: AssignmentPublic) => void;
+  closing: boolean;
 }) {
-  const complete =
-    !cohort.isPending && !cohort.truncated && !cohort.incomplete && !cohort.error;
-  const counts = useMemo(
-    () =>
-      complete
-        ? perAssignmentCounts(assignments, cohort.roster, cohort.gradeRows)
-        : null,
-    [complete, assignments, cohort.roster, cohort.gradeRows],
-  );
-
-  if (cohort.error) return <ErrorState error={cohort.error} />;
-  if (cohort.isPending) {
-    return (
-      <>
-        <Spinner />
-        <Banner tone="info" testId="assignment-progress-loading">
-          {t("assignments.notComplete")}
-        </Banner>
-      </>
-    );
-  }
-  if (cohort.truncated) {
-    // 永久状态：不渲染 spinner，也不渲染任何"已提交 / 未提交"数字。
-    return (
-      <Banner tone="warn" testId="assignment-progress-truncated">
-        {t("common.paginationTruncated", { pages: MAX_AUTO_PAGES })}{" "}
-        {t("assignments.gradesTruncated")}
-      </Banner>
-    );
-  }
-  if (cohort.incomplete) {
-    return (
-      <>
-        <Spinner />
-        <Banner tone="info" testId="assignment-progress-loading">
-          {t("assignments.notComplete")}
-        </Banner>
-      </>
-    );
-  }
   if (assignments.length === 0) {
-    return (
-      <Panel title={t("assignments.progressTitle")}>
-        <EmptyState>{t("assignments.empty")}</EmptyState>
-      </Panel>
-    );
+    return <EmptyState>{t("assignments.emptyTeacher")}</EmptyState>;
   }
-
   return (
-    <div className="stack">
-      <Banner tone="info" testId="assignment-progress-rule">
-        {t("assignments.progressIntro")} {t("assignments.progressRule")}
-      </Banner>
-      <Table<AssignmentPublic>
-        testId="assignment-progress-table"
-        label={t("assignments.progressTitle")}
-        rows={assignments}
-        getRowKey={(row) => row.assignment_id}
-        columns={[
-          {
-            key: "title",
-            header: t("assignments.col.title"),
-            render: (row) => (
-              <Link to="/assignments/$assignmentId" params={{ assignmentId: row.assignment_id }}>
-                {row.title}
-              </Link>
+    <Table<AssignmentPublic>
+      testId="teacher-assignments-table"
+      label={t("assignments.tabs.list")}
+      rows={[...assignments]}
+      getRowKey={(row) => row.assignment_id}
+      columns={[
+        {
+          key: "title",
+          header: t("assignments.col.title"),
+          render: (row) => (
+            <Link to="/assignments/$assignmentId" params={{ assignmentId: row.assignment_id }}>
+              {row.title}
+            </Link>
+          ),
+        },
+        {
+          key: "status",
+          header: t("assignments.col.status"),
+          render: (row) => (
+            <StatusPill tone={isEnded(row.status) ? "idle" : "ok"}>
+              {isEnded(row.status) ? t("assignments.state.ended") : t("assignments.state.running")}
+            </StatusPill>
+          ),
+        },
+        {
+          key: "due_at",
+          header: t("assignments.col.due"),
+          render: (row) => (
+            <span className="stack" data-testid={`due-${row.assignment_id}`}>
+              <span className="muted">
+                {t("assignments.windowStart")}：
+                {formatDateTime(row.created_at, t("common.none"))}
+              </span>
+              {row.due_at ? (
+                <DueCell dueAt={row.due_at} now={Date.now()} />
+              ) : (
+                <span className="muted" data-testid={`no-end-${row.assignment_id}`}>
+                  {t("assignments.noEnd")}
+                </span>
+              )}
+            </span>
+          ),
+        },
+        {
+          key: "questions",
+          header: t("assignments.col.questions"),
+          align: "right",
+          render: (row) => (
+            <Link
+              to="/assignments/$assignmentId/grading"
+              params={{ assignmentId: row.assignment_id }}
+              search={{}}
+              data-testid={`grading-link-${row.assignment_id}`}
+            >
+              {(row.question_version_ids ?? []).length}
+            </Link>
+          ),
+        },
+        {
+          key: "handled",
+          header: t("assignments.col.handled"),
+          align: "right",
+          render: (row) => {
+            const value = handledCounts(counts, row.assignment_id);
+            return (
+              <span data-testid={`handled-${row.assignment_id}`}>
+                {value ? `${value.handled} / ${value.judged}` : t("common.none")}
+              </span>
+            );
+          },
+        },
+        {
+          key: "action",
+          header: t("assignments.col.action"),
+          render: (row) =>
+            isEnded(row.status) ? (
+              <span className="muted">{t("assignments.closeDone")}</span>
+            ) : (
+              <button
+                type="button"
+                className="button button--ghost"
+                data-testid={`close-assignment-${row.assignment_id}`}
+                disabled={closing}
+                onClick={() => onClose(row)}
+              >
+                {t("assignments.closeAction")}
+              </button>
             ),
-          },
-          {
-            key: "due_at",
-            header: t("assignments.col.due"),
-            render: (row) => <DueCell dueAt={row.due_at} now={Date.now()} />,
-          },
-          {
-            key: "status",
-            header: t("assignments.col.status"),
-            render: (row) => (
-              <StatusPill tone={assignmentStatusTone(row.status)}>
-                {t(`assignments.status.${row.status}`)}
-              </StatusPill>
-            ),
-          },
-          {
-            key: "questions",
-            header: t("assignments.col.questions"),
-            align: "right",
-            render: (row) => (row.question_version_ids ?? []).length,
-          },
-          {
-            key: "submitted",
-            header: t("assignments.count.submitted"),
-            align: "right",
-            render: (row) => <CountCell counts={counts} field="submitted" assignmentId={row.assignment_id} />,
-          },
-          {
-            key: "partial",
-            header: t("assignments.count.partial"),
-            align: "right",
-            render: (row) => <CountCell counts={counts} field="partial" assignmentId={row.assignment_id} />,
-          },
-          {
-            key: "missing",
-            header: t("assignments.count.notSubmitted"),
-            align: "right",
-            render: (row) => (
-              <CountCell counts={counts} field="notSubmitted" assignmentId={row.assignment_id} />
-            ),
-          },
-        ]}
-      />
-    </div>
+        },
+      ]}
+    />
   );
 }
 
@@ -401,12 +398,18 @@ export function AssignmentsPage() {
   const session = useSession();
   const cohortView = canViewCohortGrades(session);
   const quarantineIdentity = session.subject ?? session.username ?? "anonymous";
-  const [tab, setTab] = useState<"list" | "progress">("list");
   const [composerOpen, setComposerOpen] = useState(false);
   const [createdNotice, setCreatedNotice] = useState<string | null>(null);
   const [courseId, setCourseId] = useState("");
   const [sectionId, setSectionId] = useState("");
   const [studentCourseId, setStudentCourseId] = useState("");
+  // 状态下拉筛选（进行 / 结束）：列表在取全后才渲染，所以这是完整集合上的筛选，
+  // 不会把"还没加载到"的作业当成"不存在"。
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
+  // 手动结束的二次确认目标：点错一下不能直接把全班关在门外。
+  const [closeTarget, setCloseTarget] = useState<AssignmentPublic | null>(null);
+  const [closeError, setCloseError] = useState<string | null>(null);
+  const closeAssignment = useCloseAssignment();
 
   const courses = useCourses({ enabled: cohortView });
   const courseOptions = loadedCourses(courses.data?.pages);
@@ -437,6 +440,13 @@ export function AssignmentsPage() {
     [cohortView, selectedCourseId, studentCourseScope],
   );
   const assignments = useAllAssignments(listFilter);
+  /** 状态下拉只筛"进行 / 结束"，而这两个值是逐行从服务端 `status` 推出的。 */
+  const visibleAssignments = useMemo(() => {
+    const rows = assignments.assignments;
+    if (statusFilter === "all") return rows;
+    const wantEnded = statusFilter === "ended";
+    return rows.filter((row) => isEnded(row.status) === wantEnded);
+  }, [assignments.assignments, statusFilter]);
   /**
    * 复核入口旁的数字：必须和点进去看到的「待处理记录」是**同一批**——
    * 同样的课程与统计课序、同样的 `resolved=false & held=false`、同样的分页大小
@@ -559,6 +569,17 @@ export function AssignmentsPage() {
             ))}
           </Select>
         </Field>
+        <Field label={t("assignments.col.status")} htmlFor="assignment-status">
+          <Select
+            id="assignment-status"
+            value={statusFilter}
+            onChange={(event) => setStatusFilter(event.target.value as StatusFilter)}
+          >
+            <option value="all">{t("assignments.state.all")}</option>
+            <option value="running">{t("assignments.state.running")}</option>
+            <option value="ended">{t("assignments.state.ended")}</option>
+          </Select>
+        </Field>
       </div>
       {courses.isError ? <ErrorState error={courses.error} /> : null}
       {sections.isError ? <ErrorState error={sections.error} /> : null}
@@ -631,27 +652,57 @@ export function AssignmentsPage() {
       {cohortView ? (
         <>
           {teacherFilterPanel}
-          <Tabs
-            label={t("assignments.tabs.label")}
-            testId="assignments-tabs"
-            activeId={tab}
-            onChange={(id) => setTab(id as "list" | "progress")}
-            tabs={[
-              { id: "list", label: t("assignments.tabs.list"), content: listView },
-              {
-                id: "progress",
-                label: t("assignments.tabs.progress"),
-                content:
-                  sectionScope === "" ? (
-                    <Panel title={t("assignments.progressTitle")}>
-                      <EmptyState>{t("assignments.progressNeedsSection")}</EmptyState>
-                    </Panel>
-                  ) : (
-                    <TeacherProgress assignments={assignments.assignments} cohort={cohort} />
-                  ),
-              },
-            ]}
-          />
+          <Panel title={t("assignments.tabs.list")}>
+            <div className="stack">
+              <p className="muted">{t("assignments.teacherHint")}</p>
+              {assignments.isPending ? (
+                <Spinner label={t("assignments.loadingAll")} />
+              ) : assignments.isError ? (
+                <ErrorState error={assignments.error} />
+              ) : assignments.truncated ? (
+                <Banner tone="warn" testId="assignments-truncated">
+                  {t("common.paginationTruncated", { pages: MAX_AUTO_PAGES })}{" "}
+                  {t("assignments.truncated")}
+                </Banner>
+              ) : !assignments.complete ? (
+                <>
+                  <Spinner label={t("assignments.loadingAll")} />
+                  <Banner tone="info" testId="assignments-loading-all">
+                    {t("assignments.notComplete")}
+                  </Banner>
+                </>
+              ) : cohort.error ? (
+                <ErrorState error={cohort.error} />
+              ) : cohort.truncated ? (
+                // 永久状态：不渲染任何「已处理作业数量」数字。
+                <Banner tone="warn" testId="assignment-progress-truncated">
+                  {t("common.paginationTruncated", { pages: MAX_AUTO_PAGES })}{" "}
+                  {t("assignments.gradesTruncated")}
+                </Banner>
+              ) : cohort.isPending || cohort.incomplete ? (
+                <>
+                  <Spinner />
+                  <Banner tone="info" testId="assignment-progress-loading">
+                    {t("assignments.notComplete")}
+                  </Banner>
+                </>
+              ) : (
+                <TeacherAssignmentList
+                  assignments={visibleAssignments}
+                  counts={perAssignmentCounts(
+                    visibleAssignments,
+                    cohort.roster,
+                    cohort.gradeRows,
+                  )}
+                  closing={closeAssignment.isPending}
+                  onClose={(assignment) => {
+                    setCloseError(null);
+                    setCloseTarget(assignment);
+                  }}
+                />
+              )}
+            </div>
+          </Panel>
         </>
       ) : (
         <>
@@ -688,6 +739,61 @@ export function AssignmentsPage() {
           onClose={() => setComposerOpen(false)}
           onCreated={() => setCreatedNotice(t("assignments.create.success"))}
         />
+      ) : null}
+
+      {closeTarget !== null ? (
+        <Modal
+          title={t("assignments.closeConfirmTitle")}
+          onClose={() => {
+            if (!closeAssignment.isPending) setCloseTarget(null);
+          }}
+          testId="assignment-close-confirm"
+        >
+          <div className="stack">
+            <p>{t("assignments.closeConfirmBody", { title: closeTarget.title })}</p>
+            <p className="muted">{t("assignments.closeConfirmHint")}</p>
+            {closeError ? (
+              <Banner tone="error" testId="assignment-close-error">
+                {closeError}
+              </Banner>
+            ) : null}
+            <div className="inline">
+              <button
+                type="button"
+                className="button button--ghost"
+                disabled={closeAssignment.isPending}
+                onClick={() => setCloseTarget(null)}
+              >
+                {t("common.cancel")}
+              </button>
+              <button
+                type="button"
+                className="button"
+                data-testid="assignment-close-confirm-button"
+                disabled={closeAssignment.isPending}
+                onClick={() => {
+                  setCloseError(null);
+                  closeAssignment.mutate(closeTarget.assignment_id, {
+                    onSuccess: () => {
+                      setCloseTarget(null);
+                      setCreatedNotice(t("assignments.closeSuccess"));
+                    },
+                    onError: (failure) => {
+                      // 409/403/404 都是有意义的结论：保留弹窗，把服务端的说法摆出来。
+                      setCloseError(
+                        isApiError(failure) ? failure.message : t("common.requestFailed"),
+                      );
+                    },
+                  });
+                }}
+              >
+                {closeAssignment.isPending
+                  ? t("assignments.closePending")
+                  : t("assignments.closeConfirm")}
+              </button>
+            </div>
+          </div>
+        </Modal>
       ) : null}
     </div>
   );

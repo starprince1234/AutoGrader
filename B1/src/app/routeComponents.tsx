@@ -1,6 +1,7 @@
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { AssignmentDetailPage } from "../features/assignments/AssignmentDetailPage";
 import { AssignmentsPage } from "../features/assignments/AssignmentsPage";
+import { GradingPage } from "../features/assignments/GradingPage";
 import { AuthoringPage } from "../features/authoring/AuthoringPage";
 import { GradesPage } from "../features/grades/GradesPage";
 import { ReviewPage } from "../features/review/ReviewPage";
@@ -142,6 +143,25 @@ export function AssignmentDetailRoute() {
       <AssignmentDetailPage
         assignmentId={assignmentId}
         initialQuestionVersionId={question ?? null}
+      />
+    </RequireAuth>
+  );
+}
+
+/**
+ * 批改界面（`/assignments/{assignment_id}/grading`）= PDF 的「作业情况（子界面）」。
+ *
+ * 只用 `RequireAuth`：页面自身按角色渲染（非教师显示权限结论），服务端 403/404 原样展示。
+ */
+export function AssignmentGradingRoute() {
+  const { assignmentId } = useParams({ from: "/assignments/$assignmentId/grading" });
+  const { version, student } = useSearch({ from: "/assignments/$assignmentId/grading" });
+  return (
+    <RequireAuth>
+      <GradingPage
+        assignmentId={assignmentId}
+        initialVersionId={version ?? null}
+        initialStudentId={student ?? null}
       />
     </RequireAuth>
   );

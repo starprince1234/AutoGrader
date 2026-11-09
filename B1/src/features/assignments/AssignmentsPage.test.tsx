@@ -234,6 +234,11 @@ function routes(options: {
             : { items: options.enrollments, next_cursor: null },
         ),
     },
+    {
+      method: "POST",
+      path: `/api/v1/assignments/${UUID_A}/close`,
+      respond: () => jsonResponse({ ...A1, status: "closed" }),
+    },
   ];
 }
 
@@ -245,13 +250,18 @@ function renderAt(path: string, element: () => ReactElement) {
     path: "/assignments/$assignmentId",
     component: () => <span>detail target</span>,
   });
+  const assignmentGrading = createRoute({
+    getParentRoute: () => rootRoute,
+    path: "/assignments/$assignmentId/grading",
+    component: () => <span>grading target</span>,
+  });
   const review = createRoute({
     getParentRoute: () => rootRoute,
     path: "/review",
     component: () => <span>review target</span>,
   });
   const testRouter = createRouter({
-    routeTree: rootRoute.addChildren([assignmentDetail, review]),
+    routeTree: rootRoute.addChildren([assignmentDetail, assignmentGrading, review]),
     history: createMemoryHistory({ initialEntries: [path] }),
   });
   return renderWithProviders(<RouterProvider router={testRouter} />);
@@ -425,9 +435,9 @@ describe("作业中心（学生侧）", () => {
   });
 });
 
-describe("作业中心（教师侧提交情况）", () => {
+describe("作业中心（教师侧作业列表）", () => {
   const teacherGrades = [
-    // A1：张三只交第一题（部分）；李四两题都完成（已交）；王五未交。
+    // A1：张三只交第一题（部分提交）；李四两题都完成；王五未交。
     gradeRow({
       submission_id: "00000000-0000-4000-8000-0000000000f1",
       assignment_id: UUID_A,
@@ -463,74 +473,51 @@ describe("作业中心（教师侧提交情况）", () => {
     }),
   ];
 
-  async function openProgress(
+  async function openTeacherList(
     extra: Omit<Parameters<typeof routes>[0], "role"> = {},
   ) {
     stub = installFetchStub(routes({ ...extra, role: "teacher" }));
     const user = userEvent.setup();
     await signIn("teacher1", "pw");
     renderAt("/", () => <AssignmentsPage />);
-    await user.click(await screen.findByRole("tab", { name: "提交情况" }));
-    await screen.findByTestId("assignment-progress-table");
+    await screen.findByTestId("teacher-assignments-table");
     return user;
   }
 
-  it("「邮件提交」旁的条数与复核页同一批：同样的课程/课序与待处理筛选", async () => {
-    stub = installFetchStub(routes({ role: "teacher", pendingQuarantines: 3 }));
-    await signIn("teacher1", "pw");
-    renderAt("/", () => <AssignmentsPage />);
-    const badge = await screen.findByTestId("assignments-quarantine-badge");
-    await waitFor(() => expect(badge).toHaveTextContent("3"));
-    expect(badge).toHaveAttribute("aria-label", "有 3 条待处理的邮件记录");
+  it("作业列表按 PDF 结构：作业名 / 状态 / 截止时间 / 题目数 / 已处理作业数量", async () => {
+    await openTeacherList({ grades: teacherGrades });
 
-    // 徽标请求必须和「邮件提交」链接带过去的条件一致，否则会出现"徽标 7 条、复核页更少"。
-    const request = stub!.requests.find(
-      (item) => item.method === "GET" && item.url.pathname === "/api/v1/intake/quarantines",
-    );
-    expect(request?.url.searchParams.get("resolved")).toBe("false");
-    expect(request?.url.searchParams.get("held")).toBe("false");
-    expect(request?.url.searchParams.get("course_id")).toBe(COURSE);
-    expect(request?.url.searchParams.get("section_id")).toBe(SECTION);
-    // 与复核页第一页同一分页大小，两个数字才对得上。
-    expect(request?.url.searchParams.get("limit")).toBe("50");
+    // 已处理作业数量 = 至少交过一题的人数 / 可判定人数。
+    expect(await screen.findByTestId(`handled-${UUID_A}`)).toHaveTextContent("2 / 3");
+    expect(screen.getByTestId(`handled-${UUID_C}`)).toHaveTextContent("1 / 3");
+
+    // 状态：服务端 status 决定 —— open = 进行，archived = 结束。
+    expect(screen.getByTestId("teacher-assignments-table")).toHaveTextContent("进行");
+    expect(screen.getByTestId("teacher-assignments-table")).toHaveTextContent("结束");
+
+    // 未设置结束时间的行必须明确写出来（这是"手动结束"存在的理由）。
+    expect(screen.getByTestId(`no-end-${UUID_C}`)).toHaveTextContent("未设置结束时间");
+
+    // 题目数量可点，直达批改界面。
+    const gradingLink = screen.getByTestId(`grading-link-${UUID_A}`);
+    expect(gradingLink).toHaveTextContent("2");
+    expect(gradingLink.getAttribute("href")).toContain(`/assignments/${UUID_A}/grading`);
   });
 
-  it("待处理超过一页时显示「50+」（不把一页计数当总数）", async () => {
-    stub = installFetchStub(routes({ role: "teacher", pendingQuarantines: 150 }));
-    await signIn("teacher1", "pw");
-    renderAt("/", () => <AssignmentsPage />);
-    const badge = await screen.findByTestId("assignments-quarantine-badge");
-    await waitFor(() => expect(badge).toHaveTextContent("50+"));
+  it("状态下拉按「进行 / 结束」筛选列表", async () => {
+    const user = await openTeacherList({ grades: teacherGrades });
+
+    await user.selectOptions(screen.getByLabelText("状态"), "ended");
+    expect(screen.getByTestId("teacher-assignments-table")).toHaveTextContent("第二次作业");
+    expect(screen.getByTestId("teacher-assignments-table")).not.toHaveTextContent("第一次作业");
+
+    await user.selectOptions(screen.getByLabelText("状态"), "running");
+    expect(screen.getByTestId("teacher-assignments-table")).toHaveTextContent("第一次作业");
+    expect(screen.getByTestId("teacher-assignments-table")).not.toHaveTextContent("第二次作业");
   });
 
-  it("按新分类统计已交/部分/未交；列表视图说明作业是课程级受众", async () => {
-    await openProgress({ grades: teacherGrades });
-
-    expect(await screen.findByTestId(`submitted-${UUID_A}`)).toHaveTextContent("1");
-    expect(screen.getByTestId(`partial-${UUID_A}`)).toHaveTextContent("1");
-    expect(screen.getByTestId(`notSubmitted-${UUID_A}`)).toHaveTextContent("1");
-
-    expect(screen.getByTestId(`submitted-${UUID_C}`)).toHaveTextContent("1");
-    expect(screen.getByTestId(`notSubmitted-${UUID_C}`)).toHaveTextContent("2");
-
-    // 旧的多课序展示（assignment-sections-*）已删除：作业不再有目标课序列表。
-    expect(screen.queryByTestId(`assignment-sections-${UUID_A}`)).toBeNull();
-  });
-
-  it("教师列表视图显示课程级受众说明，且不出现 section_ids 派生列", async () => {
-    stub = installFetchStub(routes({ role: "teacher", grades: teacherGrades }));
-    await signIn("teacher1", "pw");
-    renderAt("/", () => <AssignmentsPage />);
-
-    expect(await screen.findByTestId("my-assignments-table")).toBeInTheDocument();
-    expect(screen.getByTestId("assignment-course-wide")).toHaveTextContent(
-      "发布后对该课程全部课序与班级",
-    );
-    expect(screen.queryByText("目标课序")).toBeNull();
-  });
-
-  it("未绑定账号的名单行不参与「未交」判定", async () => {
-    await openProgress({
+  it("未绑定账号的名单行不进「已处理作业数量」的分母", async () => {
+    await openTeacherList({
       grades: [],
       enrollments: [
         enrollmentPublic({
@@ -556,16 +543,14 @@ describe("作业中心（教师侧提交情况）", () => {
       ],
     });
 
-    // 可判定人数是 1（另一行没绑定账号）→ 未交 1，而不是 2。
-    expect(await screen.findByTestId(`notSubmitted-${UUID_A}`)).toHaveTextContent("1");
+    // 可判定人数是 1（另一行没绑定账号）→ 0 / 1，而不是 0 / 2。
+    expect(await screen.findByTestId(`handled-${UUID_A}`)).toHaveTextContent("0 / 1");
   });
 
   it("成绩行到自动翻页上限时说明被截断，不渲染任何计数", async () => {
     stub = installFetchStub(routes({ role: "teacher", gradeNextCursor: "always-more" }));
-    const user = userEvent.setup();
     await signIn("teacher1", "pw");
     renderAt("/", () => <AssignmentsPage />);
-    await user.click(await screen.findByRole("tab", { name: "提交情况" }));
 
     const notice = await screen.findByTestId(
       "assignment-progress-truncated",
@@ -574,7 +559,37 @@ describe("作业中心（教师侧提交情况）", () => {
     );
     expect(notice).toHaveTextContent(`已达到自动翻页上限（${MAX_AUTO_PAGES} 页）`);
     expect(within(notice).queryAllByRole("status")).toHaveLength(0);
-    expect(screen.queryByTestId("assignment-progress-table")).toBeNull();
-    expect(screen.queryByTestId(`notSubmitted-${UUID_A}`)).toBeNull();
+    expect(screen.queryByTestId("teacher-assignments-table")).toBeNull();
+    expect(screen.queryByTestId(`handled-${UUID_A}`)).toBeNull();
+  });
+
+  it("手动结束：二次确认后只发一次 close 请求，成功后列表状态变为结束", async () => {
+    const user = await openTeacherList({ grades: teacherGrades });
+
+    // 已结束的作业没有「手动结束」按钮，避免重复结束。
+    expect(screen.queryByTestId(`close-assignment-${UUID_C}`)).toBeNull();
+
+    await user.click(screen.getByTestId(`close-assignment-${UUID_A}`));
+    const dialog = await screen.findByTestId("assignment-close-confirm");
+    expect(dialog).toHaveTextContent("结束后，学生将无法再提交");
+
+    await user.click(screen.getByTestId("assignment-close-confirm-button"));
+
+    await waitFor(() =>
+      expect(
+        stub!.requests.filter(
+          (item) =>
+            item.method === "POST" &&
+            item.url.pathname === `/api/v1/assignments/${UUID_A}/close`,
+        ),
+      ).toHaveLength(1),
+    );
+    expect(await screen.findByTestId("assignments-created-notice")).toHaveTextContent(
+      "作业已结束",
+    );
+    // 服务端返回 closed 后，该行的状态列必须写成「结束」而不是「进行」。
+    await waitFor(() =>
+      expect(screen.getByTestId(`due-${UUID_A}`).closest("tr")).toHaveTextContent("结束"),
+    );
   });
 });

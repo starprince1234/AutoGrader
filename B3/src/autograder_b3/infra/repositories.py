@@ -548,6 +548,18 @@ class QuestionBankRepository:
     def get_assignment(self, assignment_id: uuid.UUID) -> Assignment | None:
         return self.session.get(Assignment, assignment_id)
 
+    def close_assignment(self, assignment: Assignment, *, now: datetime) -> None:
+        """Move an assignment to ``closed`` (teacher's manual end).
+
+        ``closed`` is not a display flag: B2 admits a submission only while the status is
+        ``open``, so this single column change is what stops web and mail submissions. The
+        caller decides whether the transition is legal (``archived`` is refused with 409 and
+        an already-closed assignment is a no-op), this method only writes the row.
+        """
+        assignment.status = "closed"
+        assignment.updated_at = now
+        self.session.flush()
+
     def list_assignment_items(self, assignment_id: uuid.UUID) -> list[AssignmentItem]:
         statement = (
             select(AssignmentItem)

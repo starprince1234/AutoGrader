@@ -206,11 +206,20 @@ assignment_notifications = Table(
     "assignment_notifications",
     metadata,
     Column("notification_id", PGUUID(as_uuid=True), primary_key=True),
-    Column("assignment_id", PGUUID(as_uuid=True), nullable=False, unique=True),
+    Column("assignment_id", PGUUID(as_uuid=True), nullable=False),
     Column("course_id", PGUUID(as_uuid=True), nullable=False),
     Column("title", Text, nullable=False),
     Column("due_at", TIMESTAMPTZ, nullable=True),
     Column("published_at", TIMESTAMPTZ, nullable=False),
+    #: `publication` = the announcement sent when the assignment was published (one per
+    #: assignment, enforced by a partial unique index); `reminder` = a teacher's later nudge
+    #: to whoever has not submitted yet. They are separate campaigns because each campaign
+    #: is the evidence of "I told this audience at this moment" -- merging them would make
+    #: the delivery counts of two different messages indistinguishable.
+    Column("kind", Text, nullable=False, server_default="publication"),
+    #: Teacher free text for a reminder. The fixed prompt is composed by the server and is
+    #: never stored here, so no client can omit it.
+    Column("note", Text, nullable=True),
     #: `pending` (materialised, nothing attempted yet), `sending`, `completed`, `partial`,
     #: `failed` -- derived from the delivery rows by the sender, never guessed by the caller.
     Column("status", Text, nullable=False, server_default="pending"),

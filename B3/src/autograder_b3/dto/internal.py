@@ -39,9 +39,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 Language = Literal["python", "bash"]
 AdapterKind = Literal["stdin", "file", "callable"]
 FixtureMount = Literal["input", "expected_output"]
-#: An assignment's lifecycle state (``open`` / ``archived``); the same enum the public
-#: DTO carries. Restated here because the internal module must not import the public one.
-AssignmentStatus = Literal["open", "archived"]
+#: An assignment's lifecycle state (``open`` / ``closed`` / ``archived``); the same enum the
+#: public DTO carries. Restated here because the internal module must not import the public
+#: one. B2 refuses a submission for anything but ``open``, so ``closed`` is a real refusal.
+AssignmentStatus = Literal["open", "closed", "archived"]
 CompareMode = Literal["exact", "ignore_trailing_whitespace", "numeric_tolerance", "ignored"]
 StderrCompareMode = Literal["exact", "ignore_trailing_whitespace", "ignored"]
 AuthoringTopic = Literal["quality", "comparison_policy", "wording", "difficulty", "coverage"]

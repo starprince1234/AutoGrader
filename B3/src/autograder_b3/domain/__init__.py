@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from .assignments import (
     AssignmentView,
+    close_assignment,
     create_assignment,
     get_assignment_detail,
     list_assignment_versions,
@@ -53,6 +54,7 @@ from .versions import (
 
 __all__ = [
     "AssignmentView",
+    "close_assignment",
     "DrainReport",
     "GenerationCapabilities",
     "LearningContext",

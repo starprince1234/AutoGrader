@@ -719,3 +719,97 @@ def test_assignment_list_items_carry_the_notification_state(
         item for item in response.json()["items"] if item["assignment_id"] == assignment_id
     )
     assert item["notification_state"] == "scheduled"
+
+
+# --- manual end: `closed` is an admission change, not a display flag ---------
+
+
+def test_close_assignment_ends_it_server_side(
+    client, auth_headers, service_headers, published_version
+):
+    """``closed`` must reach the internal audience too: B2 admits only ``open``.
+
+    The point of this test is not "a status changed". It is that the *same* fact B2 reads
+    when accepting a submission (``GET /api/v1/assignment-audiences/{id}``) reports the end,
+    which is what makes the teacher's button a real refusal instead of a hidden one.
+    """
+    created = _create_assignment(client, auth_headers, version_ids=(published_version,))
+    assert created.status_code == 201, created.text
+    assignment_id = created.json()["assignment_id"]
+    assert created.json()["status"] == "open"
+
+    closed = client.post(
+        f"{ASSIGNMENTS}/{assignment_id}/close", headers=auth_headers("teacher-a")
+    )
+    assert closed.status_code == 200, closed.text
+    assert closed.json()["status"] == "closed"
+    # Closing must not drop the question list the detail page renders.
+    assert closed.json()["question_version_ids"] == [str(published_version)]
+
+    detail = _detail(client, auth_headers, "teacher-a", assignment_id)
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["status"] == "closed"
+
+    internal = client.get(
+        f"{INTERNAL_ASSIGNMENT}/{assignment_id}", headers=service_headers
+    )
+    assert internal.status_code == 200, internal.text
+    assert internal.json()["status"] == "closed"
+
+
+def test_close_assignment_is_idempotent_and_moves_updated_at(
+    client, auth_headers, published_version
+):
+    created = _create_assignment(client, auth_headers, version_ids=(published_version,))
+    assignment_id = created.json()["assignment_id"]
+
+    first = client.post(
+        f"{ASSIGNMENTS}/{assignment_id}/close", headers=auth_headers("teacher-a")
+    )
+    second = client.post(
+        f"{ASSIGNMENTS}/{assignment_id}/close", headers=auth_headers("teacher-a")
+    )
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert second.json()["status"] == "closed"
+    # A repeat is a no-op on the row, not a new transition.
+    assert second.json()["updated_at"] == first.json()["updated_at"]
+    assert second.json()["assignment_id"] == first.json()["assignment_id"]
+
+
+def test_close_assignment_outside_the_callers_course_is_forbidden(
+    client, auth_headers, published_version
+):
+    created = _create_assignment(client, auth_headers, version_ids=(published_version,))
+    assignment_id = created.json()["assignment_id"]
+
+    # teacher-d is authorized for COURSE_D only; COURSE_A is outside that scope.
+    response = client.post(
+        f"{ASSIGNMENTS}/{assignment_id}/close", headers=auth_headers("teacher-d")
+    )
+    assert response.status_code == 403
+    # The refused call must not have changed anything.
+    detail = _detail(client, auth_headers, "teacher-a", assignment_id)
+    assert detail.json()["status"] == "open"
+
+
+def test_close_unknown_assignment_is_not_found(client, auth_headers):
+    response = client.post(
+        f"{ASSIGNMENTS}/{uuid.uuid4()}/close", headers=auth_headers("teacher-a")
+    )
+    assert response.status_code == 404
+
+
+def test_closed_assignment_still_reads_and_lists(client, auth_headers, published_version):
+    created = _create_assignment(client, auth_headers, version_ids=(published_version,))
+    assignment_id = created.json()["assignment_id"]
+    client.post(f"{ASSIGNMENTS}/{assignment_id}/close", headers=auth_headers("teacher-a"))
+
+    listed = client.get(
+        ASSIGNMENTS, params={"course_id": str(COURSE_A)}, headers=auth_headers("teacher-a")
+    )
+    assert listed.status_code == 200, listed.text
+    item = next(
+        row for row in listed.json()["items"] if row["assignment_id"] == assignment_id
+    )
+    assert item["status"] == "closed"

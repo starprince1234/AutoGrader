@@ -1,6 +1,6 @@
-schema_version: 1
+﻿schema_version: 1
 module: B4
-contract_version: 0.32.0
+contract_version: 0.33.0
 entry_point: autograder_b4.plugin:create_module
 provides: [b4-auth, b4-course, postgres, nats]
 requires: [host]
@@ -14,9 +14,9 @@ routes:
   - /api/v1/roster-imports
   - /api/v1/audit-records
   - /api/v1/modules
-  # CHG-0032：当前登录账号本人的资料（作业邮件正文需要姓名/学号）。
+  # CHG-0032锛氬綋鍓嶇櫥褰曡处鍙锋湰浜虹殑璧勬枡锛堜綔涓氶偖浠舵鏂囬渶瑕佸鍚?瀛﹀彿锛夈€?
   - /api/v1/me
-  # 内部服务端点（B2 邮件收信按发件人查账号）：以 serviceToken 鉴权，不对浏览器开放。
+  # 鍐呴儴鏈嶅姟绔偣锛圔2 閭欢鏀朵俊鎸夊彂浠朵汉鏌ヨ处鍙凤級锛氫互 serviceToken 閴存潈锛屼笉瀵规祻瑙堝櫒寮€鏀俱€?
   - /api/v1/internal
   - /api/v1/registration-allowlists
 events:
@@ -24,4 +24,4 @@ events:
   subscribes: []
 database:
   schema: b4
-  migration_head: "20261108_0010"
+  migration_head: "20261108_0011"

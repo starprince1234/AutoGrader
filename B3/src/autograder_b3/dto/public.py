@@ -32,7 +32,10 @@ AdapterKind = Literal["stdin", "file", "callable"]
 #: the public module must not import the internal one (ADR-0004); the contract's
 #: ``common.yaml#ExecutionMode`` is the authority for these four names.
 ExecutionMode = Literal["per_case", "single_run", "ssh_session", "email_delivery"]
-AssignmentStatus = Literal["open", "archived"]
+#: `open` admits submissions; `closed` is a teacher's manual end and refuses them;
+#: `archived` is a stronger, separate state. B2 admits only `open`, so closing is enforced
+#: server-side rather than being a display flag.
+AssignmentStatus = Literal["open", "closed", "archived"]
 #: The publication-notification hand-off state (v0.32.0). It describes **scheduling**, not
 #: delivery: ``scheduled`` means B4 received the audience, ``unavailable`` means it did not
 #: (a teacher may retry), ``pending`` is the transitional "never attempted" value.

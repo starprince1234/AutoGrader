@@ -25,6 +25,7 @@ from ..audit import (
     ACTION_COURSE_RENAMED,
     ACTION_ENROLLMENT_DELETED,
     ACTION_ENROLLMENT_UPDATED,
+    ACTION_NOTIFICATION_REMINDED,
     ACTION_NOTIFICATION_RETRIED,
     ACTION_SECTION_CREATED,
     ACTION_SECTION_DELETED,
@@ -65,6 +66,7 @@ from ..logging import get_logger
 from ..notifications import (
     campaign_for_teacher,
     deliveries,
+    materialise_reminder,
     notification_id_of,
     retry_failed,
 )
@@ -135,6 +137,22 @@ class ClassRenameRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     class_name: str = Field(min_length=1, max_length=MAX_CLASS_NAME_LENGTH)
+
+
+class AssignmentReminderRequest(BaseModel):
+    """One-click reminder to the students who have not submitted yet (v0.33.0).
+
+    `title` / `due_at` are message-body facts supplied by the page that owns the assignment
+    (B4 must not read B3's schema). The recipient list is validated against the course's
+    current active roster in `notifications.materialise_reminder`, not trusted here.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    title: str = Field(min_length=1, max_length=200)
+    due_at: datetime | None = None
+    enrollment_ids: list[uuid.UUID] = Field(min_length=1, max_length=500)
+    note: str | None = Field(default=None, max_length=500)
 
 
 class EnrollmentUpdate(BaseModel):
@@ -783,6 +801,53 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
                 detail=(
                     f"re-armed failed deliveries: pending={summary['pending_count']} "
                     f"failed={summary['failed_count']}"
+                ),
+            )
+        return summary
+
+    @router.post(
+        "/api/v1/courses/{course_id}/assignments/{assignment_id}/notifications/remind"
+    )
+    def remind_assignment_students(
+        course_id: uuid.UUID,
+        assignment_id: uuid.UUID,
+        payload: AssignmentReminderRequest,
+        caller=Depends(dependencies.principal),
+    ) -> dict[str, object]:
+        """One-click reminder to the students who have not submitted yet (staff).
+
+        The caller decides *who* is missing -- only the teacher page has the grades -- but the
+        id list is not trusted: every id must be on the course's current active roster, or the
+        request is refused with ``422``. The fixed prompt is composed by the mailer, so the
+        part that says what is missing and when it is due cannot be edited away by a client.
+
+        Creating a campaign is not delivering it: the same resumable sender pass claims the
+        rows, so ``sent_count`` only moves after SMTP accepted the message.
+        """
+        ensure_course_write(
+            principal=caller, course_id=course_id, dependencies=dependencies
+        )
+        summary = materialise_reminder(
+            engine,
+            assignment_id=assignment_id,
+            course_id=course_id,
+            title=payload.title,
+            due_at=payload.due_at,
+            enrollment_ids=payload.enrollment_ids,
+            note=payload.note,
+            now=_now(),
+        ).summary
+        with engine.begin() as write:
+            AuditLog(write).record(
+                action=ACTION_NOTIFICATION_REMINDED,
+                outcome=OUTCOME_SUCCESS,
+                actor=actor_of(caller),
+                target_type="assignment_notification",
+                target_id=assignment_id,
+                course_id=course_id,
+                detail=(
+                    f"reminder campaign for {summary['recipient_total']} recipients "
+                    f"(pending={summary['pending_count']})"
                 ),
             )
         return summary

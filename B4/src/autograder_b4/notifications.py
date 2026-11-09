@@ -52,6 +52,12 @@ CAMPAIGN_STATUSES = (
     CAMPAIGN_FAILED,
 )
 
+#: Campaign kinds (`b4.assignment_notifications.kind`). A publication announcement is one
+#: per assignment (partial unique index); a reminder is one per teacher click, because each
+#: campaign is the evidence of "I told this audience at this moment".
+CAMPAIGN_KIND_PUBLICATION = "publication"
+CAMPAIGN_KIND_REMINDER = "reminder"
+
 #: Delivery status values (`b4.assignment_notification_deliveries.status`).
 DELIVERY_PENDING = "pending"
 DELIVERY_SENDING = "sending"
@@ -161,19 +167,40 @@ def summary_for_assignment(
     return _summary(connection, campaign)
 
 
-def _campaign(connection: Connection, *, course_id: uuid.UUID, assignment_id: uuid.UUID):
+def _campaign(
+    connection: Connection,
+    *,
+    course_id: uuid.UUID,
+    assignment_id: uuid.UUID,
+    kind: str = CAMPAIGN_KIND_PUBLICATION,
+):
+    """The campaign of one assignment for one kind.
+
+    Teacher reads and the retry path mean the *announcement* unless they say otherwise: a
+    reminder has its own recipients and its own delivery evidence, so folding it into the
+    announcement would make two different messages look like one.
+    """
     return connection.execute(
         select(campaigns).where(
             and_(
                 campaigns.c.assignment_id == assignment_id,
                 campaigns.c.course_id == course_id,
+                campaigns.c.kind == kind,
             )
         )
     ).fetchone()
 
 
-def _require_campaign(connection: Connection, *, course_id: uuid.UUID, assignment_id: uuid.UUID):
-    campaign = _campaign(connection, course_id=course_id, assignment_id=assignment_id)
+def _require_campaign(
+    connection: Connection,
+    *,
+    course_id: uuid.UUID,
+    assignment_id: uuid.UUID,
+    kind: str = CAMPAIGN_KIND_PUBLICATION,
+):
+    campaign = _campaign(
+        connection, course_id=course_id, assignment_id=assignment_id, kind=kind
+    )
     if campaign is None:
         raise not_found("No notification has been scheduled for this assignment.")
     return campaign
@@ -207,7 +234,12 @@ def materialise(
 
     with engine.begin() as connection:
         existing = connection.execute(
-            select(campaigns).where(campaigns.c.assignment_id == assignment_id)
+            select(campaigns).where(
+                and_(
+                    campaigns.c.assignment_id == assignment_id,
+                    campaigns.c.kind == CAMPAIGN_KIND_PUBLICATION,
+                )
+            )
         ).fetchone()
         if existing is not None:
             return Materialised(_summary(connection, existing), False)
@@ -249,6 +281,7 @@ def materialise(
                 title=clean_title,
                 due_at=due_at,
                 published_at=published_at,
+                kind=CAMPAIGN_KIND_PUBLICATION,
                 status=CAMPAIGN_PENDING,
                 recipient_total=len(rows),
                 created_at=moment,
@@ -267,6 +300,120 @@ def materialise(
                     for row in rows
                 ],
             )
+        campaign = connection.execute(
+            select(campaigns).where(campaigns.c.notification_id == notification_id)
+        ).fetchone()
+        _refresh_campaign(connection, campaign, moment)
+        campaign = connection.execute(
+            select(campaigns).where(campaigns.c.notification_id == notification_id)
+        ).fetchone()
+        return Materialised(_summary(connection, campaign), True)
+
+
+def materialise_reminder(
+    engine: Engine,
+    *,
+    assignment_id: uuid.UUID,
+    course_id: uuid.UUID,
+    title: str,
+    due_at: datetime | None,
+    enrollment_ids: list[uuid.UUID],
+    note: str | None = None,
+    now: datetime | None = None,
+) -> Materialised:
+    """Create one reminder campaign for the given enrollments (a teacher's nudge).
+
+    Two rules make this honest rather than convenient:
+
+    * **the caller's recipient list is not trusted.** Every id must belong to the course's
+      current active roster, otherwise the whole request is refused (``422``). Silently
+      dropping an unknown id would let a stale page believe the reminder reached everyone,
+      and sending to an id from another course would notify the wrong person.
+    * **a reminder is not idempotent.** Each call is a new campaign: "I reminded them again
+      on Tuesday" is a separate act with its own delivery evidence. That is why the
+      publication announcement keeps its unique index and this path does not.
+
+    The reachability rules are the same as the announcement's: no account, no address and a
+    deactivated account are recorded as *skipped with a reason*, never as delivered.
+    """
+    moment = now or utcnow()
+    clean_title = title.strip()
+    if not clean_title:
+        raise unprocessable("The assignment title must not be blank.")
+    if len(clean_title) > 200:
+        raise unprocessable("The assignment title must be at most 200 characters.")
+    clean_note = (note or "").strip() or None
+    if clean_note is not None and len(clean_note) > 500:
+        raise unprocessable("The reminder note must be at most 500 characters.")
+    wanted = list(dict.fromkeys(enrollment_ids))
+    if not wanted:
+        raise unprocessable("A reminder needs at least one recipient.")
+
+    with engine.begin() as connection:
+        course = connection.execute(
+            select(courses.c.course_id).where(courses.c.course_id == course_id)
+        ).fetchone()
+        if course is None:
+            raise not_found("The course does not exist.")
+
+        rows = connection.execute(
+            select(
+                enrollments.c.enrollment_id,
+                enrollments.c.student_number,
+                enrollments.c.display_name,
+                enrollments.c.section_id,
+                enrollments.c.class_id,
+                enrollments.c.user_id,
+                users.c.email,
+                users.c.is_active,
+            )
+            .select_from(
+                enrollments.outerjoin(users, enrollments.c.user_id == users.c.user_id)
+            )
+            .where(
+                and_(
+                    enrollments.c.course_id == course_id,
+                    enrollments.c.is_active.is_(True),
+                    enrollments.c.enrollment_id.in_(wanted),
+                )
+            )
+            .order_by(enrollments.c.student_number)
+        ).fetchall()
+
+        found = {row[0] for row in rows}
+        missing = [str(value) for value in wanted if value not in found]
+        if missing:
+            # Refuse rather than partially send: a caller that believes it reminded 30 people
+            # must not have silently reminded 27.
+            raise unprocessable(
+                "Some recipients are not on this course's current roster: "
+                + ", ".join(sorted(missing))
+            )
+
+        notification_id = uuid.uuid4()
+        connection.execute(
+            campaigns.insert().values(
+                notification_id=notification_id,
+                assignment_id=assignment_id,
+                course_id=course_id,
+                title=clean_title,
+                due_at=due_at,
+                published_at=moment,
+                kind=CAMPAIGN_KIND_REMINDER,
+                note=clean_note,
+                status=CAMPAIGN_PENDING,
+                recipient_total=len(rows),
+                created_at=moment,
+                updated_at=moment,
+            )
+        )
+        connection.execute(
+            deliveries.insert(),
+            [
+                _delivery_values(notification_id=notification_id, row=row, moment=moment)
+                for row in rows
+            ],
+        )
         campaign = connection.execute(
             select(campaigns).where(campaigns.c.notification_id == notification_id)
         ).fetchone()
@@ -431,14 +578,25 @@ def send_pass(
             skipped += 1
             continue
         try:
-            send_email(
-                settings,
-                to=row.email,
-                student_name=row.display_name,
-                course_title=course_titles.get(row.course_id, ""),
-                assignment_title=row.title,
-                due_at=row.due_at,
-            )
+            if row.kind == CAMPAIGN_KIND_REMINDER:
+                send_email(
+                    settings,
+                    to=row.email,
+                    student_name=row.display_name,
+                    course_title=course_titles.get(row.course_id, ""),
+                    assignment_title=row.title,
+                    due_at=row.due_at,
+                    note=row.note,
+                )
+            else:
+                send_email(
+                    settings,
+                    to=row.email,
+                    student_name=row.display_name,
+                    course_title=course_titles.get(row.course_id, ""),
+                    assignment_title=row.title,
+                    due_at=row.due_at,
+                )
         except Exception as error:  # noqa: BLE001 - translated to a status, never hidden
             reason = _failure_reason(error)
             results[row.delivery_id] = {
@@ -480,6 +638,8 @@ class _Claimed:
     course_id: uuid.UUID
     title: str
     due_at: datetime | None
+    kind: str
+    note: str | None
 
 
 def _claim(engine: Engine, *, limit: int, now: datetime) -> list[_Claimed]:
@@ -497,6 +657,8 @@ def _claim(engine: Engine, *, limit: int, now: datetime) -> list[_Claimed]:
                 campaigns.c.course_id,
                 campaigns.c.title,
                 campaigns.c.due_at,
+                campaigns.c.kind,
+                campaigns.c.note,
             )
             .select_from(
                 deliveries.join(
@@ -547,6 +709,8 @@ def _claim(engine: Engine, *, limit: int, now: datetime) -> list[_Claimed]:
                 course_id=row[8],
                 title=row[9],
                 due_at=row[10],
+                kind=str(row[11]),
+                note=row[12],
             )
         )
     return claimed
@@ -674,6 +838,8 @@ def deliveries_filter(notification_id: uuid.UUID):
 
 
 __all__ = [
+    "CAMPAIGN_KIND_PUBLICATION",
+    "CAMPAIGN_KIND_REMINDER",
     "CAMPAIGN_STATUSES",
     "DELIVERY_STATUSES",
     "MAX_DELIVERY_ATTEMPTS",
@@ -684,6 +850,7 @@ __all__ = [
     "deliveries",
     "deliveries_filter",
     "materialise",
+    "materialise_reminder",
     "notification_id_of",
     "retry_failed",
     "send_pass",

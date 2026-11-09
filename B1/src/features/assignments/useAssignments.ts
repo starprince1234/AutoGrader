@@ -136,3 +136,25 @@ export function useCreateAssignment() {
     },
   });
 }
+
+/**
+ * 手动结束作业（`POST /api/v1/assignments/{assignment_id}/close`）。
+ *
+ * 这是**准入**变更而不是展示标记：B2 只受理 `open` 的作业，所以结束之后网页与邮件提交都会
+ * 被真实拒绝。服务端幂等，重复点击不会产生额外副作用；成功后把响应写回单条缓存并失效列表族，
+ * 因为列表里同一行的状态与计数都变了。
+ */
+export function useCloseAssignment() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (assignmentId: string): Promise<AssignmentPublic> =>
+      apiRequest<AssignmentPublic>(
+        `/api/v1/assignments/${encodeURIComponent(assignmentId)}/close`,
+        { method: "POST", body: {} },
+      ),
+    onSuccess: async (closed) => {
+      queryClient.setQueryData(queryKeys.assignment(closed.assignment_id), closed);
+      await queryClient.invalidateQueries({ queryKey: ["assignments"] });
+    },
+  });
+}

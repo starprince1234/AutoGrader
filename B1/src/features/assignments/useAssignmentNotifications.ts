@@ -122,6 +122,52 @@ export function useAssignmentNotifications(
 }
 
 /**
+ * 一键提醒未提交学生（B4 `POST /courses/{cid}/assignments/{aid}/notifications/remind`）。
+ *
+ * 与「安排/重试通知」是两件事，界面文案不得混用：
+ * - 本端点**新建一条提醒 campaign**，收件人由页面给出（页面才知道谁没交），但服务端会与
+ *   课程当前有效名单求交，越界整体 422；
+ * - 返回的 `pending_count` 表示"已排入投递"，`sent_count` 才是 SMTP 已接受。
+ *   因此成功提示只说"已安排提醒"，绝不写成"已发送给 N 人"。
+ *
+ * 成功后失效投递记录缓存（新 campaign 可能立刻被发送进程处理）。
+ */
+export function useRemindAssignmentStudents(
+  courseId: string | null,
+  assignmentId: string | null,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      title: string;
+      dueAt: string | null;
+      enrollmentIds: string[];
+      note?: string;
+    }): Promise<AssignmentNotificationSummary> =>
+      apiRequest<AssignmentNotificationSummary>(
+        `/api/v1/courses/${encodeURIComponent(courseId as string)}/assignments/${encodeURIComponent(
+          assignmentId as string,
+        )}/notifications/remind`,
+        {
+          method: "POST",
+          body: {
+            title: input.title,
+            // `due_at` 只在真的有时才发送：契约允许 null，但省略更贴近"没有截止时间"。
+            due_at: input.dueAt ?? undefined,
+            enrollment_ids: input.enrollmentIds,
+            note: input.note?.trim() ? input.note.trim() : undefined,
+          },
+        },
+      ),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.assignmentNotifications(courseId ?? "", assignmentId ?? ""),
+      });
+    },
+  });
+}
+
+/**
  * 安排（或重试）作业通知：B3 的幂等调度端点。
  *
  * 成功后必须同时失效两处缓存：B4 的投递记录（可能刚刚被材料化）与作业本身

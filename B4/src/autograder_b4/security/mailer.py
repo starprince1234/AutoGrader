@@ -40,6 +40,21 @@ ASSIGNMENT_BODY: Final = """你好 {student_name}:
 —— AutoGrader
 """
 
+REMINDER_SUBJECT_TEMPLATE: Final = "AutoGrader 作业提醒: {course_title} · {assignment_title}"
+
+#: The fixed prompt of a reminder. It is composed **here**, not by the client, so a teacher
+#: cannot remove the part that states what is missing and when it is due. `note_block` is the
+#: only caller-provided text and is placed after the prompt.
+REMINDER_BODY: Final = """你好 {student_name}:
+
+提醒一下:你还没有提交课程《{course_title}》的作业《{assignment_title}》。
+截止时间:{due_text}
+
+请尽快登录 AutoGrader 完成提交。如果已经提交,请忽略本邮件。
+{note_block}
+—— AutoGrader
+"""
+
 NO_DUE_TEXT: Final = "未设置截止时间"
 
 BODY: Final = """你好:
@@ -151,6 +166,49 @@ def send_assignment_published(
         )
     )
     _deliver(settings, message, event="assignment.notification.sent")
+
+
+def send_assignment_reminder(
+    settings: Settings,
+    *,
+    to: str,
+    student_name: str,
+    course_title: str,
+    assignment_title: str,
+    due_at: datetime | None,
+    note: str | None = None,
+) -> None:
+    """Remind one student that their submission for an assignment is still missing.
+
+    The prompt ("you have not submitted X, due Y, please finish it in the platform") is
+    **composed here** rather than accepted from the caller, so the sentence that makes the
+    mail a reminder cannot be edited away by a client. `note` is the only teacher-provided
+    text and is appended after the prompt, blank line separated.
+
+    Personal data stays the same as the publication notification: the recipient's own name,
+    the course and assignment titles and the due time. No other student, no token, no link.
+    """
+    due_text = NO_DUE_TEXT
+    if due_at is not None:
+        due_text = due_at.strftime("%Y-%m-%d %H:%M UTC")
+    trimmed_note = (note or "").strip()
+    note_block = f"\n老师补充:{trimmed_note}\n" if trimmed_note else ""
+    message = EmailMessage()
+    message["Subject"] = REMINDER_SUBJECT_TEMPLATE.format(
+        course_title=course_title, assignment_title=assignment_title
+    )
+    message["From"] = formataddr((settings.smtp_from_name, settings.smtp_from))
+    message["To"] = to
+    message.set_content(
+        REMINDER_BODY.format(
+            student_name=student_name,
+            course_title=course_title,
+            assignment_title=assignment_title,
+            due_text=due_text,
+            note_block=note_block,
+        )
+    )
+    _deliver(settings, message, event="assignment.reminder.sent")
 
 
 def send_verification_code(settings: Settings, *, to: str, code: str, ttl_seconds: int) -> None:

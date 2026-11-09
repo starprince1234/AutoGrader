@@ -202,6 +202,58 @@ def retry_assignment_notification(
     )
 
 
+def close_assignment(
+    database: Database,
+    *,
+    principal: Principal | None,
+    assignment_id: uuid.UUID,
+    now: datetime,
+) -> AssignmentView:
+    """End an assignment so it stops accepting submissions (``RQ-B-3-20``).
+
+    The teacher UI needs this exactly when an assignment was published **without** a
+    ``due_at``: nothing would otherwise ever move it out of ``open``. Closing is a real
+    admission change rather than a display flag -- B2 admits a submission only while the
+    status is ``open`` -- so ending an assignment here is enforced server-side instead of
+    being hidden by the client.
+
+    Idempotent: closing a closed assignment returns the same row untouched. ``archived`` is
+    a different, stronger state and is refused with ``409`` rather than silently downgraded.
+    """
+    with database.app_session() as session:
+        bank = QuestionBankRepository(session)
+        assignment = bank.get_assignment(assignment_id)
+        if assignment is None:
+            raise NotFound(f"assignment {assignment_id} not found")
+        require_course_write(principal, assignment.course_id)
+        if assignment.status == "archived":
+            raise Conflict(
+                "an archived assignment cannot be closed; it already refuses submissions"
+            )
+        already_closed = assignment.status == "closed"
+        version_ids = tuple(
+            item.question_version_id for item in bank.list_assignment_items(assignment_id)
+        )
+        session.expunge(assignment)
+    if not already_closed:
+        # Writes go through the protected engine: the read/authorization path above only
+        # ever holds the application session, same split as the notification hand-off.
+        with database.protected_session() as session:
+            row = session.get(Assignment, assignment_id)
+            if row is None:  # pragma: no cover - the row was read in this request
+                raise NotFound(f"assignment {assignment_id} not found")
+            QuestionBankRepository(session).close_assignment(row, now=now)
+            assignment.status = row.status
+            assignment.updated_at = row.updated_at
+        log_event(
+            get_logger("domain.assignments"),
+            "assignment.closed",
+            assignment_id=str(assignment_id),
+            course_id=str(assignment.course_id),
+        )
+    return AssignmentView(assignment=assignment, question_version_ids=version_ids)
+
+
 def get_assignment_detail(
     database: Database,
     *,

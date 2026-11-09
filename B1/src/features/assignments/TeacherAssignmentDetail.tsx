@@ -29,11 +29,9 @@ import {
 } from "./progressDisplay";
 import { useAssignmentProgress } from "./useAssignmentProgress";
 import { useQuestionVersionRows } from "../questions/useQuestions";
-import {
-  MAX_ANSWER_PREVIEW_CHARS,
-  useSubmissionFileText,
-} from "../submission/useSubmissionFile";
 import { answerFileName } from "../submission/validation";
+// 答案预览与批改界面共用同一份实现（带鉴权读取、文本转义、字符上限）。
+import { AnswerViewer } from "./AnswerViewer";
 import {
   useAssignmentNotifications,
 } from "./useAssignmentNotifications";
@@ -58,48 +56,6 @@ import {
  * - 答案文件带 `Authorization` 读取（不能裸 `<a href>`），以 `<pre>` 文本转义展示，
  *   有字符上限，内容不写日志。
  */
-
-/** 答案预览：带鉴权读取 + 转义文本展示 + 字符上限。 */
-function AnswerViewer({ submissionId, path }: { submissionId: string; path: string }) {
-  const query = useSubmissionFileText(submissionId, path);
-  if (query.isPending) {
-    return (
-      <p className="muted" data-testid="answer-loading">
-        <InlineLoader />
-      </p>
-    );
-  }
-  if (query.isError) {
-    if (isApiError(query.error) && query.error.isForbidden) {
-      return (
-        <Banner tone="error" testId="answer-forbidden">
-          {t("assignments.answerForbidden")}
-        </Banner>
-      );
-    }
-    if (isApiError(query.error) && query.error.isNotFound) {
-      return (
-        <Banner tone="warn" testId="answer-missing">
-          {t("assignments.answerMissing")}
-        </Banner>
-      );
-    }
-    return <ErrorState error={query.error} testId="answer-error" />;
-  }
-  const text = query.data ?? "";
-  const truncated = text.length > MAX_ANSWER_PREVIEW_CHARS;
-  const shown = truncated ? text.slice(0, MAX_ANSWER_PREVIEW_CHARS) : text;
-  return (
-    <div className="stack" data-testid="answer-content">
-      <pre>{shown}</pre>
-      {truncated ? (
-        <p className="muted" data-testid="answer-truncated">
-          {t("assignments.answerTruncated", { max: MAX_ANSWER_PREVIEW_CHARS })}
-        </p>
-      ) : null}
-    </div>
-  );
-}
 
 /** 名单/成绩读取失败：403 是权限结论，必须说清楚而不是一个通用错误框。 */
 function progressErrorContent(error: unknown, testId: string) {

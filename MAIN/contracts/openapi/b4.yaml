@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AutoGrader B4 Platform API
-  version: 0.32.0
+  version: 0.33.0
   description: |
     Identity, courses, sections, enrollments, roster import, audit and the runtime
     module registry. Owned by B4 (RQ-B-4-10/20/30/40/50/99).
@@ -684,6 +684,52 @@ paths:
         '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
         '403': {$ref: './common.yaml#/components/responses/Forbidden'}
         '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
+  /api/v1/courses/{course_id}/assignments/{assignment_id}/notifications/remind:
+    parameters:
+      - {name: course_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+      - {name: assignment_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    post:
+      operationId: remindAssignmentStudents
+      summary: Remind the students who have not submitted yet (staff)
+      description: |
+        Staff-only (write access to the course). Creates one **reminder campaign** for the
+        given enrollments and returns its summary; delivery is the same resumable sender pass
+        that delivers the publication notification, so `sent` is still only written after the
+        SMTP server accepted the message.
+
+        The reminder text has two parts and only the second is a caller input:
+        * a **server-composed prompt** naming the course, the assignment and the due time
+          ("please finish it in the platform"). It is generated here, so a client cannot
+          remove or rewrite it -- that is what "自动包括提示语" means;
+        * an optional `note` from the teacher, appended after the prompt.
+
+        Reminders are separate from the publication notification on purpose: a campaign is a
+        record of "I told this audience at this moment", and its per-recipient delivery rows
+        are the evidence. Repeating the call creates a new campaign (a second reminder), which
+        is why recipient counts must be read per campaign rather than assumed idempotent.
+
+        `enrollment_ids` outside the course's current active roster are **refused with 422**
+        rather than silently dropped: sending to an unknown id would notify the wrong person,
+        and silently ignoring it would let a stale UI believe the reminder reached everyone.
+        Rows that cannot be reached (no account, no address, inactive account) are recorded as
+        skipped with a reason, exactly like the publication notification.
+      tags: [notifications]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AssignmentReminderRequest'}
+      responses:
+        '200':
+          description: The reminder campaign summary created by this call.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AssignmentNotificationSummary'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
 
   /api/v1/me:
     get:
@@ -1595,6 +1641,35 @@ components:
         due_at:
           anyOf: [{$ref: './common.yaml#/components/schemas/Timestamp'}, {type: "null"}]
         published_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+      additionalProperties: false
+
+    AssignmentReminderRequest:
+      type: object
+      description: |
+        A one-click reminder to the students who have not submitted yet. The recipient set is
+        decided by the caller (the teacher page knows who is missing), but it is not trusted:
+        every id must belong to the course's current active roster or the whole request is
+        refused with `422`.
+
+        `title` and `due_at` are copied into the message only. B4 does not own assignments and
+        cannot read B3's schema, so the page that already has the assignment supplies them --
+        exactly like `AssignmentNotificationRequest`. The fixed prompt is composed by the
+        server; `note` is the only free text and is appended after it.
+      required: [title, enrollment_ids]
+      properties:
+        title: {type: string, minLength: 1, maxLength: 200}
+        due_at:
+          anyOf: [{$ref: './common.yaml#/components/schemas/Timestamp'}, {type: "null"}]
+        enrollment_ids:
+          type: array
+          minItems: 1
+          maxItems: 500
+          uniqueItems: true
+          items: {$ref: './common.yaml#/components/schemas/Uuid'}
+        note:
+          type: string
+          maxLength: 500
+          description: "Optional teacher sentence appended after the server-composed prompt."
       additionalProperties: false
 
     AssignmentNotificationSummary:

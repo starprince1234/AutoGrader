@@ -66,6 +66,9 @@ ACTION_CLASS_CREATED = "class.created"
 ACTION_CLASS_RENAMED = "class.renamed"
 ACTION_CLASS_DELETED = "class.deleted"
 ACTION_NOTIFICATION_RETRIED = "notification.retried"
+#: A teacher reminded the students who have not submitted yet. Recorded separately from the
+#: publication hand-off because it is a different act with different recipients.
+ACTION_NOTIFICATION_REMINDED = "notification.reminded"
 ACTION_ENROLLMENT_UPDATED = "enrollment.updated"
 ACTION_ENROLLMENT_DELETED = "enrollment.deleted"
 ACTION_AUDIT_QUERIED = "audit.queried"

@@ -30,8 +30,9 @@ from autograder_b4.db.tables import (
 from autograder_b4.db.tables import (
     assignment_notifications as campaigns,
 )
-from autograder_b4.db.tables import users
+from autograder_b4.db.tables import enrollments, users
 from autograder_b4.notifications import MAX_DELIVERY_ATTEMPTS, STALE_CLAIM_MINUTES, send_pass
+from autograder_b4.security import mailer
 from autograder_b4.security.mailer import MailDeliveryError, MailNotConfigured
 
 PASSWORD = "correct horse battery staple"
@@ -677,3 +678,251 @@ def test_an_account_that_lost_its_address_is_skipped_at_send_time(
     row = _delivery_row(engine, assignment_id, "202400000001")
     assert row.status == "skipped_no_contact"
     assert row.reason_code == "no_email"
+
+
+# ------------------------------------------------------------------------------ reminders
+
+
+def _reminder_course(factory) -> dict[str, object]:
+    """One course with three students: mailable, no address, and not registered."""
+    teacher = factory.user(username="owner", password=PASSWORD, roles=("teacher",))
+    course_id = factory.course(code="CS101", title="软件工程", created_by=teacher)
+    factory.grant(user_id=teacher, course_id=course_id, role="teacher")
+    section_id = factory.section(course_id=course_id, code="01", term="2026F")
+
+    reachable = factory.user(
+        username="reachable",
+        password=PASSWORD,
+        roles=("student",),
+        display_name="可发学生",
+        student_number="202400000011",
+        email="reachable@example.edu.cn",
+    )
+    reachable_enrollment = factory.enrollment(
+        section_id=section_id,
+        student_number="202400000011",
+        display_name="可发学生",
+        user_id=reachable,
+    )
+    silent = factory.user(
+        username="silent",
+        password=PASSWORD,
+        roles=("student",),
+        display_name="无邮箱学生",
+        student_number="202400000012",
+    )
+    silent_enrollment = factory.enrollment(
+        section_id=section_id,
+        student_number="202400000012",
+        display_name="无邮箱学生",
+        user_id=silent,
+    )
+    unbound_enrollment = factory.enrollment(
+        section_id=section_id, student_number="202400000013", display_name="未注册学生"
+    )
+    return {
+        "teacher": teacher,
+        "course_id": course_id,
+        "section_id": section_id,
+        "reachable": reachable_enrollment,
+        "silent": silent_enrollment,
+        "unbound": unbound_enrollment,
+    }
+
+
+def _remind(
+    client,
+    headers,
+    course_id,
+    assignment_id,
+    enrollment_ids,
+    *,
+    title: str = "第一次作业",
+    note: str | None = None,
+    due_at: datetime | None = None,
+):
+    payload: dict[str, object] = {
+        "title": title,
+        "enrollment_ids": [str(value) for value in enrollment_ids],
+    }
+    if note is not None:
+        payload["note"] = note
+    if due_at is not None:
+        payload["due_at"] = _iso(due_at)
+    return client.post(
+        f"/api/v1/courses/{course_id}/assignments/{assignment_id}/notifications/remind",
+        headers=headers,
+        json=payload,
+    )
+
+
+def test_a_reminder_covers_only_the_requested_recipients_and_is_its_own_campaign(
+    client, factory, sign_in_as, engine
+) -> None:
+    setup = _reminder_course(factory)
+    headers = sign_in_as("owner").headers
+    assignment_id = uuid.uuid4()
+
+    response = _remind(
+        client,
+        headers,
+        setup["course_id"],
+        assignment_id,
+        [setup["reachable"], setup["silent"], setup["unbound"]],
+    )
+    assert response.status_code == 200, response.text
+    summary = response.json()
+    assert set(summary) == SUMMARY_KEYS
+    assert summary["recipient_total"] == 3
+    assert summary["pending_count"] == 1
+    assert summary["skipped_no_contact_count"] == 1
+    assert summary["skipped_unbound_count"] == 1
+    assert summary["sent_count"] == 0
+
+    campaign = _campaign_row(engine, assignment_id)
+    assert campaign.kind == "reminder"
+
+    # The reminder is a separate campaign: it does not invent a publication announcement,
+    # so the teacher's announcement view stays "never scheduled" (404).
+    view = _teacher_view(client, headers, setup["course_id"], assignment_id)
+    assert view.status_code == 404
+
+
+def test_a_second_reminder_is_a_new_campaign_with_its_own_evidence(
+    client, factory, sign_in_as, engine
+) -> None:
+    setup = _reminder_course(factory)
+    headers = sign_in_as("owner").headers
+    assignment_id = uuid.uuid4()
+
+    first = _remind(client, headers, setup["course_id"], assignment_id, [setup["reachable"]])
+    second = _remind(client, headers, setup["course_id"], assignment_id, [setup["reachable"]])
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    assert first.json()["created_at"] != second.json()["created_at"]
+
+    with engine.connect() as connection:
+        kinds = [
+            row.kind
+            for row in connection.execute(
+                select(campaigns).where(campaigns.c.assignment_id == assignment_id)
+            ).fetchall()
+        ]
+    assert kinds == ["reminder", "reminder"]
+    # Two reminders to the same student are two messages, so two delivery rows exist.
+    assert _delivery_count(engine, assignment_id) == 2
+
+
+def test_an_enrollment_outside_the_roster_refuses_the_whole_reminder(
+    client, factory, sign_in_as, engine
+) -> None:
+    setup = _reminder_course(factory)
+    headers = sign_in_as("owner").headers
+    assignment_id = uuid.uuid4()
+
+    # A stale page may still hold an id that has since left the roster. Refusing is the only
+    # safe answer: silently dropping it would report "reminded 2" when 1 was reached.
+    stranger = factory.enrollment(
+        section_id=setup["section_id"], student_number="202400000099", display_name="外人"
+    )
+    # `is_active = False` makes it *outside the current roster* while the row still exists.
+    with engine.begin() as connection:
+        connection.execute(
+            update(enrollments)
+            .where(enrollments.c.enrollment_id == stranger)
+            .values(is_active=False)
+        )
+    refused = _remind(
+        client,
+        headers,
+        setup["course_id"],
+        assignment_id,
+        [setup["reachable"], stranger],
+    )
+    assert refused.status_code == 422, refused.text
+    with engine.connect() as connection:
+        assert (
+            connection.execute(
+                select(func.count())
+                .select_from(campaigns)
+                .where(campaigns.c.assignment_id == assignment_id)
+            ).scalar_one()
+            == 0
+        )
+
+
+def test_reminding_is_staff_only(client, factory, sign_in_as) -> None:
+    setup = _reminder_course(factory)
+    assignment_id = uuid.uuid4()
+    student_headers = sign_in_as("reachable").headers
+    response = _remind(
+        client, student_headers, setup["course_id"], assignment_id, [setup["reachable"]]
+    )
+    assert response.status_code == 403
+
+
+def test_the_sender_uses_the_reminder_composer_for_reminder_campaigns(
+    client, factory, sign_in_as, engine, settings
+) -> None:
+    setup = _reminder_course(factory)
+    headers = sign_in_as("owner").headers
+    assignment_id = uuid.uuid4()
+
+    assert _remind(
+        client,
+        headers,
+        setup["course_id"],
+        assignment_id,
+        [setup["reachable"]],
+        note="下周一上课前交",
+    ).status_code == 200
+
+    inbox, sender = _collecting_sender()
+    report = send_pass(engine, settings=settings, send_email=sender)
+    assert report.sent == 1
+    assert len(inbox) == 1
+    # The sender must take the reminder branch; `note` only exists there, so its presence
+    # proves the message is composed by the reminder composer rather than the announcement.
+    assert inbox[0]["note"] == "下周一上课前交"
+    assert inbox[0]["assignment_title"] == "第一次作业"
+    assert _campaign_row(engine, assignment_id).status == "completed"
+
+
+def test_the_reminder_mail_always_carries_the_server_composed_prompt(
+    monkeypatch, settings
+) -> None:
+    captured: list = []
+    monkeypatch.setattr(
+        mailer, "_deliver", lambda settings, message, event: captured.append(message)
+    )
+    due_at = datetime(2026, 11, 20, 12, 0, tzinfo=UTC)
+    mailer.send_assignment_reminder(
+        settings,
+        to="reachable@example.edu.cn",
+        student_name="可发学生",
+        course_title="软件工程",
+        assignment_title="第一次作业",
+        due_at=due_at,
+        note=None,
+    )
+    body = captured[0].get_content()
+    # The sentence that makes this a reminder is generated by the server; a caller cannot
+    # remove it ("自动包括提示语").
+    assert "你还没有提交" in body
+    assert "第一次作业" in body
+    assert "2026-11-20 12:00 UTC" in body
+    assert captured[0]["Subject"].startswith("AutoGrader 作业提醒")
+
+    captured.clear()
+    mailer.send_assignment_reminder(
+        settings,
+        to="reachable@example.edu.cn",
+        student_name="可发学生",
+        course_title="软件工程",
+        assignment_title="第一次作业",
+        due_at=due_at,
+        note="下周一上课前交",
+    )
+    with_note = captured[0].get_content()
+    assert "你还没有提交" in with_note
+    assert "下周一上课前交" in with_note

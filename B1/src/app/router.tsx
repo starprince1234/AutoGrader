@@ -13,6 +13,7 @@ import { safeRedirectTarget } from "../auth/redirect";
 import { parseReviewSearch } from "../features/review/search";
 import {
   AssignmentDetailRoute,
+  AssignmentGradingRoute,
   AssignmentsRoute,
   AuthoringEditRoute,
   AuthoringNewRoute,
@@ -210,6 +211,33 @@ const gradesRoute = createRoute({
 });
 
 /**
+ * 批改界面（PDF 的「作业情况（子界面）」）：`/assignments/{assignment_id}/grading`。
+ *
+ * 左栏 作业题目内容 + 已完成/未完成（可展开学生），右栏 大窗口（作业详情 / 作答情况 /
+ * ai 评价 / 老师改分）。查询串只承载对象 id：`version`（预选题目）与 `student`（预选学生），
+ * 刷新、复制链接、浏览器后退都回到同一处；无效值按缺省处理，不渲染第三个页面。
+ */
+type GradingSearch = { version?: string; student?: string };
+
+function validateGradingSearch(search: Record<string, unknown>): GradingSearch {
+  const result: GradingSearch = {};
+  if (typeof search.version === "string" && search.version !== "") {
+    result.version = search.version;
+  }
+  if (typeof search.student === "string" && search.student !== "") {
+    result.student = search.student;
+  }
+  return result;
+}
+
+const assignmentGradingRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/assignments/$assignmentId/grading",
+  validateSearch: validateGradingSearch,
+  component: AssignmentGradingRoute,
+});
+
+/**
  * P12 工作区：`view`（名单 / 导入名单）、课程/课序作用域、导入任务 ID 全部住在 query。
  * 刷新、前进后退、复制链接都回到同一处状态；无效值按缺省处理，不渲染第三个页面。
  */
@@ -291,6 +319,9 @@ const routeTree = rootRoute.addChildren([
   questionEditRoute,
   assignmentsRoute,
   assignmentDetailRoute,
+  // 更长的动态段写在后面：批改界面是详情页的"子界面"，但按完整路径注册，
+  // 不依赖 `$assignmentId` 的子路由嵌套。
+  assignmentGradingRoute,
   gradesRoute,
   rosterRoute,
   usersRoute,

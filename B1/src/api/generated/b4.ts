@@ -463,6 +463,49 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/courses/{course_id}/assignments/{assignment_id}/notifications/remind": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                course_id: components["schemas"]["Uuid"];
+                assignment_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Remind the students who have not submitted yet (staff)
+         * @description Staff-only (write access to the course). Creates one **reminder campaign** for the
+         *     given enrollments and returns its summary; delivery is the same resumable sender pass
+         *     that delivers the publication notification, so `sent` is still only written after the
+         *     SMTP server accepted the message.
+         *
+         *     The reminder text has two parts and only the second is a caller input:
+         *     * a **server-composed prompt** naming the course, the assignment and the due time
+         *       ("please finish it in the platform"). It is generated here, so a client cannot
+         *       remove or rewrite it -- that is what "自动包括提示语" means;
+         *     * an optional `note` from the teacher, appended after the prompt.
+         *
+         *     Reminders are separate from the publication notification on purpose: a campaign is a
+         *     record of "I told this audience at this moment", and its per-recipient delivery rows
+         *     are the evidence. Repeating the call creates a new campaign (a second reminder), which
+         *     is why recipient counts must be read per campaign rather than assumed idempotent.
+         *
+         *     `enrollment_ids` outside the course's current active roster are **refused with 422**
+         *     rather than silently dropped: sending to an unknown id would notify the wrong person,
+         *     and silently ignoring it would let a stale UI believe the reminder reached everyone.
+         *     Rows that cannot be reached (no account, no address, inactive account) are recorded as
+         *     skipped with a reason, exactly like the publication notification.
+         */
+        post: operations["remindAssignmentStudents"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/me": {
         parameters: {
             query?: never;
@@ -1104,6 +1147,24 @@ export interface components {
             title: string;
             due_at?: components["schemas"]["Timestamp"] | null;
             published_at: components["schemas"]["Timestamp"];
+        };
+        /**
+         * @description A one-click reminder to the students who have not submitted yet. The recipient set is
+         *     decided by the caller (the teacher page knows who is missing), but it is not trusted:
+         *     every id must belong to the course's current active roster or the whole request is
+         *     refused with `422`.
+         *
+         *     `title` and `due_at` are copied into the message only. B4 does not own assignments and
+         *     cannot read B3's schema, so the page that already has the assignment supplies them --
+         *     exactly like `AssignmentNotificationRequest`. The fixed prompt is composed by the
+         *     server; `note` is the only free text and is appended after it.
+         */
+        AssignmentReminderRequest: {
+            title: string;
+            due_at?: components["schemas"]["Timestamp"] | null;
+            enrollment_ids: components["schemas"]["Uuid"][];
+            /** @description Optional teacher sentence appended after the server-composed prompt. */
+            note?: string;
         };
         /**
          * @description Delivery counts of one assignment's publication notification. The counts are the
@@ -2096,6 +2157,37 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    remindAssignmentStudents: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                course_id: components["schemas"]["Uuid"];
+                assignment_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssignmentReminderRequest"];
+            };
+        };
+        responses: {
+            /** @description The reminder campaign summary created by this call. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssignmentNotificationSummary"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["UnprocessableEntity"];
         };
     };
     getCurrentUser: {

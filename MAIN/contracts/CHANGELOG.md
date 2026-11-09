@@ -12,6 +12,48 @@
 
 ---
 
+## 0.33.0 — 作业可手动结束（`closed`）与「未完成学生」提醒
+
+- **类型**：P3 最小新增（一个枚举值 + 两个端点；无字段删除、无数据回填）
+- **状态**：有效
+- **背景**：
+  1. 作业发布时 `due_at` 是可选字段，而 `status` 只有 `open`/`archived`。**没有截止时间**的作业
+     因此永远停在 `open`：没有任何计划任务会移动它，教师界面只能描述这个状态、不能改变它。
+     页面设计明确要求「如果不设置结束，要有手动结束提示和对应 button」，因此需要一个真实的结束动作。
+  2. 页面设计的「未完成」板块要求「邮件提醒 / 自动包括提示语 / 一键提醒」：已有的通知机制只在
+     **发布时**向全课程名单广播一次，无法只提醒尚未提交的那部分学生，也没有第二次提醒的位置。
+- **变更**：
+  - `openapi/b3.yaml`：`AssignmentPublic.status` 与 `AssignmentInternal.status` 枚举扩为
+    `[open, closed, archived]`；新增 `POST /api/v1/assignments/{assignment_id}/close`
+    （`closeAssignment`，200 返回 `AssignmentPublic`，幂等，`archived` 时 409）。
+  - `openapi/b4.yaml`：新增 `POST /api/v1/courses/{course_id}/assignments/{assignment_id}/notifications/remind`
+    （`remindAssignmentStudents`）与 `AssignmentReminderRequest`（`title`、`due_at?`、
+    `enrollment_ids` 1..500、`note?` ≤500），返回既有 `AssignmentNotificationSummary`。
+- **语义**：
+  - `closed` 是**提交准入**的变更，不是展示标记——B2 每次受理提交都向 B3 读取作业状态，只接受
+    `open`，因此关闭作业会真正停止网页与邮件提交。`archived` 的含义不变。
+  - 提醒是**独立 campaign**：发布公告每个作业一条（部分唯一索引 `WHERE kind='publication'`），
+    提醒每次调用一条（教师可在不同时间再次提醒，各自保留投递证据）。收件人由调用方给出但与
+    课程当前有效名单求交，越界即整体 422，绝不静默丢弃。固定提示语由 B4 模板生成，
+    `note` 是唯一可传入的自由文本。
+- **签名与数据**：
+  - B3 迁移 `20261108_0011`（`ck_assignments_status` 放宽到三个值；无新列，`updated_at` 已记录变更）。
+  - B4 迁移 `20261108_0011`（`assignment_notifications` 增 `kind`/`note`，`UNIQUE (assignment_id)`
+    改为 `WHERE kind='publication'` 的部分唯一索引）。
+- **受影响模块**：
+  - **B3**：`domain/assignments.py` 新增 `close_assignment`，`infra/repositories.py` 新增写方法，
+    `api/router.py` 新增端点，DTO 枚举同步，迁移 `20261108_0011`。
+  - **B4**：`notifications.py` 新增 `materialise_reminder` 与 campaign `kind` 维度，
+    `security/mailer.py` 新增 `send_assignment_reminder`（固定提示语），`api/courses.py` 新增端点，
+    审计动作 `notification.reminded`，迁移 `20261108_0011`。
+  - **B2**：**无需改动**——`AssignmentAudience.open` 只认 `status == "open"`，`closed` 已被拒绝。
+  - **B1**：作业列表与批改界面增加「手动结束」，`closed` 与 `open` 一起参与状态筛选；
+    批改界面「未完成」板块增加邮件提醒（只读提示语 + 可选补充语 + 一键提醒 + 真实计数）。
+- **兼容性**：旧调用方若把 `status` 当两个值穷举，现在会看到第三个值；这是契约声明的枚举扩展，
+  而非字段语义改变。提醒是纯新增端点，不影响既有通知读取与重试语义（它们仍只针对公告 campaign）。
+
+---
+
 ## 0.32.0 — 课程→课序→班级→名单模型、课程级作业与作业发布通知
 
 - **类型**：P2 模型重构（新增班级实体与班级/全课程名单端点；删除作业目标模型与目标校验端点；

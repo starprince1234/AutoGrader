@@ -947,6 +947,37 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/assignments/{assignment_id}/close": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                assignment_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * End an assignment (stop accepting submissions)
+         * @description Ends an assignment by moving its `status` from `open` to `closed`. This is the only
+         *     way to end an assignment that was published without a `due_at`, which is exactly the
+         *     case the teacher UI must be able to resolve: an assignment with no end time otherwise
+         *     stays `open` forever.
+         *
+         *     Closing is a **real** admission change, not a display flag: B2 refuses submissions for
+         *     any status other than `open`, so a closed assignment no longer accepts web or mail
+         *     submissions. It is idempotent -- closing an already-closed assignment returns the same
+         *     body. `archived` is a separate, stronger state and is not reachable through this
+         *     operation; closing an archived assignment is refused with `409`.
+         */
+        post: operations["closeAssignment"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/assignment-audiences/{assignment_id}": {
         parameters: {
             query?: never;
@@ -1684,8 +1715,15 @@ export interface components {
             assignment_id: components["schemas"]["Uuid"];
             course_id: components["schemas"]["Uuid"];
             title: string;
-            /** @enum {string} */
-            status: "open" | "archived";
+            /**
+             * @description `open` accepts submissions. `closed` is a teacher's manual end
+             *     (`POST /api/v1/assignments/{assignment_id}/close`) and refuses submissions.
+             *     `archived` is a stronger, separate state. B2 admits a submission only while the
+             *     status is `open`, so ending an assignment is enforced server-side rather than
+             *     hidden in the UI.
+             * @enum {string}
+             */
+            status: "open" | "closed" | "archived";
             due_at?: components["schemas"]["Timestamp"] | null;
             question_version_ids: components["schemas"]["Uuid"][];
             /** @enum {string} */
@@ -1705,8 +1743,11 @@ export interface components {
             assignment_id: components["schemas"]["Uuid"];
             course_id: components["schemas"]["Uuid"];
             title: string;
-            /** @enum {string} */
-            status: "open" | "archived";
+            /**
+             * @description Only `open` admits a submission; `closed` (teacher manual end) and `archived` refuse it.
+             * @enum {string}
+             */
+            status: "open" | "closed" | "archived";
             question_version_ids: components["schemas"]["Uuid"][];
         };
         /**
@@ -3048,6 +3089,32 @@ export interface operations {
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
             503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    closeAssignment: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                assignment_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The assignment after closing (or the already-closed assignment). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AssignmentPublic"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
         };
     };
     getInternalAssignment: {

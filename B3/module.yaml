@@ -1,6 +1,6 @@
 schema_version: 1
 module: B3
-contract_version: 0.32.0
+contract_version: 0.33.0
 entry_point: autograder_b3.plugin:create_module
 provides: [b3-questions]
 requires: [host, b4-course]
@@ -10,4 +10,4 @@ events:
   subscribes: [autograder.v1.evaluation.completed]
 database:
   schema: b3
-  migration_head: "20261108_0010"
+  migration_head: "20261108_0011"

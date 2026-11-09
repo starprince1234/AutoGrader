@@ -1,0 +1,96 @@
+/* 批改界面（教师）的页面私有布局：左栏 作业题目内容 + 已完成/未完成，右栏 大窗口。
+ *
+ * 与共享 `styles.css` 的关系：这里只放这一页的栅格与列表外观，不改任何全局 token 或组件样式。
+ */
+
+.grading-workspace {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: var(--space-4, 16px);
+  align-items: start;
+}
+
+.grading-workspace__rail {
+  position: sticky;
+  top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3, 12px);
+}
+
+.grading-workspace__window {
+  min-width: 0;
+}
+
+.grading-question-list,
+.grading-student-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.grading-question-list button,
+.grading-student-list button {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-2, 8px);
+  padding: 8px 10px;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.grading-question-list button:hover,
+.grading-student-list button:hover {
+  border-color: var(--color-border);
+}
+
+.grading-question-list button[aria-current="true"],
+.grading-student-list button[aria-current="true"] {
+  border-color: var(--color-border);
+  background: var(--color-surface);
+}
+
+.grading-student-list__meta {
+  display: block;
+  font-size: 12px;
+}
+
+.grading-group__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  background: transparent;
+  border: 0;
+  padding: 4px 0;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.grading-answer__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.grading-score {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 960px) {
+  .grading-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .grading-workspace__rail {
+    position: static;
+  }
+}

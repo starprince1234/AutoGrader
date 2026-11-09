@@ -638,7 +638,9 @@ class Assignment(Base):
     __tablename__ = "assignments"
     __table_args__ = (
         CheckConstraint("length(title) BETWEEN 1 AND 200", name="ck_assignments_title_length"),
-        CheckConstraint("status IN ('open', 'archived')", name="ck_assignments_status"),
+        CheckConstraint(
+            "status IN ('open', 'closed', 'archived')", name="ck_assignments_status"
+        ),
         CheckConstraint(
             "notification_state IN ('pending', 'scheduled', 'unavailable')",
             name="ck_assignments_notification_state",

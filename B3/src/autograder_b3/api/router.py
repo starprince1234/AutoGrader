@@ -27,6 +27,7 @@ from ..domain import (
     AssignmentView,
     archive_version,
     authoring_assistance,
+    close_assignment,
     create_assignment,
     create_question,
     delete_version,
@@ -1110,10 +1111,37 @@ def schedule_assignment_notifications_endpoint(
     return serialize_public(_assignment_public(view))
 
 
+@router.post("/api/v1/assignments/{assignment_id}/close")
+def close_assignment_endpoint(request: Request, assignment_id: uuid.UUID) -> dict:
+    """End one assignment so it stops accepting submissions (teacher/admin).
+
+    This is the endpoint behind the teacher's 「手动结束」 action, which is the only way to
+    end an assignment published without a ``due_at``. ``closed`` is enforced by B2 (it admits
+    a submission only while the status is ``open``), so this is a real refusal rather than a
+    display flag. Idempotent: closing an already-closed assignment answers the same body.
+    """
+    context = _context(request)
+    dependencies = _dependencies(request)
+    view = close_assignment(
+        dependencies.database,
+        principal=context.principal,
+        assignment_id=assignment_id,
+        now=dependencies.now,
+    )
+    log_event(
+        get_logger("api.assignments"),
+        "assignment.closed",
+        request_id=context.request_id,
+        assignment_id=str(assignment_id),
+        course_id=str(view.assignment.course_id),
+        status_code=200,
+    )
+    return serialize_public(_assignment_public(view))
+
+
 @router.get("/api/v1/assignment-audiences/{assignment_id}")
 def get_internal_assignment_endpoint(request: Request, assignment_id: uuid.UUID) -> dict:
     """INTERNAL. The assignment audience B2 needs to admit or refuse a submission.
-
     ``serviceToken`` only. Two ordering decisions:
 
     * an **unconfigured** service credential is ``503``, checked before the caller's
