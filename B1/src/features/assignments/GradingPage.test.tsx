@@ -308,20 +308,21 @@ describe("批改界面（作业情况子界面）", () => {
     expect(await screen.findByTestId("manual-grade-drawer")).toBeInTheDocument();
   });
 
-  it("「返回作业列表」在题干框架内、题干上方", async () => {
+  it("「返回作业列表」在题干上方（右栏顶部），不在题干下方", async () => {
     stub = installFetchStub(routes());
     await signIn("teacher1", "pw");
     renderGrading();
 
     const stem = await screen.findByTestId("grading-question-window");
     const back = screen.getByTestId("grading-back-to-list");
-    expect(stem).toContainElement(back);
     expect(back).toHaveTextContent("返回作业列表");
-    // 题干标题在按钮下方（DOM 顺序），不是页头里的悬浮按钮。
-    const title = screen.getByTestId("grading-question-title");
+
+    // 位置关系：按钮在题干面板**之前**（DOM 顺序），并且同属右栏、不在左栏名单里。
     expect(
-      back.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING,
+      back.compareDocumentPosition(stem) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
+    expect(screen.getByTestId("grading-completed-group")).not.toContainElement(back);
+    expect(back.closest(".grading-workspace__window")).not.toBeNull();
   });
 
   it("成绩行被截断时不给任何已完成/未完成数字", async () => {

@@ -385,6 +385,18 @@ export function GradingPage({
           </aside>
 
           <section className="grading-workspace__window">
+            {/* 返回作业列表在「题干」上方（右栏第一个元素）：它属于这一块的导航，
+                而不是页面头部；选中学生时同样可见。 */}
+            <div className="grading-question__actions">
+              <Link
+                to="/assignments"
+                className="button button--ghost"
+                data-testid="grading-back-to-list"
+              >
+                <span aria-hidden="true">←</span> {t("grading.backToList")}
+              </Link>
+            </div>
+
             {selectedStudent !== null ? (
               <Panel
                 title={t("grading.studentWindow", { name: selectedStudent.displayName })}
@@ -434,17 +446,6 @@ export function GradingPage({
               <div className="stack">
               <Panel title={t("grading.questionWindow")} testId="grading-question-window">
                 <div className="stack">
-                  {/* 返回作业列表属于「题干」这一块：放在题干上方，而不是页面头部。
-                      这样它和题干同处一个框架，滚动时也一起走。 */}
-                  <div className="inline grading-question__actions">
-                    <Link
-                      to="/assignments"
-                      className="button button--ghost"
-                      data-testid="grading-back-to-list"
-                    >
-                      <span aria-hidden="true">←</span> {t("grading.backToList")}
-                    </Link>
-                  </div>
                   <div className="inline">
                     <span className="muted">
                       {t("questions.version", {

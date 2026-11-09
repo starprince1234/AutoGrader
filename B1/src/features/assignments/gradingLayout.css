@@ -116,3 +116,10 @@
 .grading-student-list button {
   overflow-wrap: anywhere;
 }
+
+/* 「返回作业列表」在右栏顶部、题干面板之上：独立一行，不与卡片粘连。 */
+.grading-question__actions {
+  display: flex;
+  justify-content: flex-start;
+  margin-bottom: var(--space-3, 12px);
+}

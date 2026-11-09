@@ -8,6 +8,7 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
+import { createPortal } from "react-dom";
 import { t } from "../i18n";
 import { describeApiError, isApiError } from "../api/problem";
 import { CONTRACT_VERSION } from "../app/contractVersion";
@@ -673,7 +674,7 @@ export function Modal({
     }
   };
 
-  return (
+  const overlay = (
     <div className="modal__backdrop" role="presentation" onKeyDown={handleKeyDown}>
       <div
         className={className ? `modal ${className}` : "modal"}
@@ -694,6 +695,12 @@ export function Modal({
       </div>
     </div>
   );
+
+  // 挂到 `document.body`：弹窗要覆盖整个视口，留在页面树里时任何祖先的
+  // `transform` / `animation` / `filter` 都会把它变成 fixed 的包含块——表现就是遮罩不覆盖
+  // 视口、卡片随页面滚动并被粘性导航栏压住。挂到 body 后与页面布局彻底解耦。
+  if (typeof document === "undefined") return overlay;
+  return createPortal(overlay, document.body);
 }
 
 /**
