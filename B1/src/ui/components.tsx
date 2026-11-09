@@ -620,6 +620,7 @@ export function Modal({
   testId,
   className,
   initialFocus,
+  footer,
 }: {
   title: ReactNode;
   onClose: () => void;
@@ -628,6 +629,14 @@ export function Modal({
   className?: string;
   /** 可选的初始焦点选择器；默认把焦点放在弹窗本体。 */
   initialFocus?: string;
+  /**
+   * 固定在弹窗底部的主操作区。
+   *
+   * 必须是 `.modal__body` 的**兄弟**而不是里面的 sticky 元素：sticky 只在滚动容器内一段
+   * 区间里生效，长列表滚到底之前它会跟着内容走，行内容还会从它下面穿过。放在滚动区外，
+   * 它才真正"钉"在卡片底部，滚动条只滚中间那块。
+   */
+  footer?: ReactNode;
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
@@ -692,6 +701,7 @@ export function Modal({
           </button>
         </header>
         <div className="modal__body">{children}</div>
+        {footer ? <footer className="modal__foot">{footer}</footer> : null}
       </div>
     </div>
   );

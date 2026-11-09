@@ -2545,6 +2545,17 @@ samp {
   min-height: 0;
 }
 
+/* 弹窗底部操作区：滚动区之外，永远贴在卡片底部（见 Modal 的 footer 参数）。 */
+.modal__foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  flex: 0 0 auto;
+  padding: var(--space-4) var(--space-5);
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
 .modal--login {
   max-width: 420px;
 }

@@ -203,6 +203,12 @@ describe("新建作业（v0.32.0 课程级）", () => {
     expect(screen.getByTestId("compose-score-scale")).toHaveTextContent("百分制");
     expect(screen.getByTestId("compose-version-count")).toHaveTextContent("0 个题目版本");
 
+    // 底部主操作在 `.modal__foot` 里 —— 滚动区之外，题目不会再从这一行下面穿过。
+    const foot = dialog.querySelector(".modal__foot");
+    expect(foot).not.toBeNull();
+    expect(foot).toContainElement(screen.getByTestId("assignment-compose-preview"));
+    expect(dialog.querySelector(".modal__body .modal__foot")).toBeNull();
+
     // 全选 / 清空：真实改变选择，不发请求。
     await userEvent.click(screen.getByTestId("compose-version-all"));
     expect(screen.getByTestId("compose-version-count")).toHaveTextContent("1 个题目版本");

@@ -203,6 +203,22 @@ export function AssignmentComposer({
         onClose={onClose}
         testId="assignment-composer"
         className="modal--tall assignment-composer"
+        footer={
+          <>
+            <button type="button" className="button button--ghost" onClick={onClose}>
+              {t("common.cancel")}
+            </button>
+            <button
+              type="button"
+              className="button"
+              data-testid="assignment-compose-preview"
+              disabled={create.isPending}
+              onClick={submit}
+            >
+              {t("assignments.create.preview")}
+            </button>
+          </>
+        }
       >
         <div className="composer">
           <div className="composer__grid">
@@ -350,20 +366,6 @@ export function AssignmentComposer({
             </Banner>
           ) : null}
 
-          <div className="composer__foot">
-            <button type="button" className="button button--ghost" onClick={onClose}>
-              {t("common.cancel")}
-            </button>
-            <button
-              type="button"
-              className="button"
-              data-testid="assignment-compose-preview"
-              disabled={create.isPending}
-              onClick={submit}
-            >
-              {t("assignments.create.preview")}
-            </button>
-          </div>
         </div>
       </Modal>
 

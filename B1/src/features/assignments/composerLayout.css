@@ -83,29 +83,13 @@
   background: var(--color-surface-raised, rgba(127, 127, 127, 0.08));
 }
 
-/* 底部主操作：吸在滚动区底部，长列表时也始终可点。 */
-.assignment-composer .composer__foot {
-  position: sticky;
-  bottom: 0;
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--space-3, 12px);
-  margin: 0 calc(-1 * var(--space-5)) calc(-1 * var(--space-5));
-  padding: var(--space-3, 12px) var(--space-5);
-  background: var(--color-surface);
-  border-top: 1px solid var(--color-border);
-}
-
 @media (max-width: 640px) {
   .assignment-composer .composer__version-list {
     max-height: 30vh;
   }
 
-  .assignment-composer .composer__foot {
-    justify-content: stretch;
-  }
-
-  .assignment-composer .composer__foot .button {
+  /* 窄屏主操作铺满：footer 由 Modal 渲染，按钮仍是这两颗。 */
+  .assignment-composer .modal__foot .button {
     flex: 1;
   }
 }
