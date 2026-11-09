@@ -137,12 +137,14 @@ export function AssignmentsRoute() {
  */
 export function AssignmentDetailRoute() {
   const { assignmentId } = useParams({ from: "/assignments/$assignmentId" });
-  const { question } = useSearch({ from: "/assignments/$assignmentId" });
+  const { question, version, student } = useSearch({ from: "/assignments/$assignmentId" });
   return (
     <RequireAuth>
       <AssignmentDetailPage
         assignmentId={assignmentId}
         initialQuestionVersionId={question ?? null}
+        initialSelectedVersionId={version ?? null}
+        initialSelectedStudentId={student ?? null}
       />
     </RequireAuth>
   );

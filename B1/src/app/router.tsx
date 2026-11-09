@@ -183,16 +183,32 @@ const assignmentsRoute = createRoute({
  * 学生从作业列表「继续作答」进入时用 `?question=<version_id>` 预选题目；该值不是本作业的
  * 题目时页面忽略它并停在第一题（查询串只承载对象 id，不承载答案内容）。
  */
+/**
+ * 作业详情的查询串。
+ *
+ * `question` 是学生从列表「继续作答」进入时的预选题目；`version` / `student` 是教师详情页
+ * （= 批改界面）当前选中的题目与学生。三者都只承载对象 id。
+ *
+ * 为什么 `version` / `student` 也在**详情**路由上：教师的详情页就是批改界面，选中状态必须
+ * 写回当前路由；若沿用 `/grading`，点一名学生就会跳到另一条路由并把整页卸载。
+ */
+type AssignmentDetailSearch = { question?: string; version?: string; student?: string };
+
+function validateAssignmentDetailSearch(
+  search: Record<string, unknown>,
+): AssignmentDetailSearch {
+  const result: AssignmentDetailSearch = {};
+  for (const key of ["question", "version", "student"] as const) {
+    const value = search[key];
+    if (typeof value === "string" && value !== "") result[key] = value;
+  }
+  return result;
+}
+
 const assignmentDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/assignments/$assignmentId",
-  validateSearch: (search: Record<string, unknown>) => {
-    const result: { question?: string } = {};
-    if (typeof search.question === "string" && search.question !== "") {
-      result.question = search.question;
-    }
-    return result;
-  },
+  validateSearch: validateAssignmentDetailSearch,
   component: AssignmentDetailRoute,
 });
 

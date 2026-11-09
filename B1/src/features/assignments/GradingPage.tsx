@@ -30,6 +30,9 @@ import {
   questionStateTone,
 } from "./progressDisplay";
 import { ReminderPanel } from "./ReminderPanel";
+import { AssignmentNotificationPanel } from "./AssignmentNotificationPanel";
+import { useAssignmentNotifications } from "./useAssignmentNotifications";
+import { useRosterSummary } from "../../api/directory";
 import { useAssignment } from "./useAssignments";
 import { useAssignmentProgress, type StudentProgress } from "./useAssignmentProgress";
 import {
@@ -115,12 +118,21 @@ export function GradingPage({
   assignmentId,
   initialVersionId = null,
   initialStudentId = null,
+  embedded = false,
 }: {
   assignmentId: string;
   /** 深链预选题目（属于本作业时才生效）。 */
   initialVersionId?: string | null;
   /** 深链预选学生（`student_id`，未绑定账号的学生无法预选）。 */
   initialStudentId?: string | null;
+  /**
+   * `true` = 本页就是作业详情页（`/assignments/{id}` 的教师视图）。
+   *
+   * PDF 的「查看作业 → 点击题目直接进入批改界面 → 作业情况（子界面）」说明教师的作业
+   * 详情就是批改界面，因此详情路由直接渲染本组件。此时面包屑不再自指、标题不再叠一层
+   * 「批改界面」，避免同一个页面出现两个名字。
+   */
+  embedded?: boolean;
 }) {
   const assignmentQuery = useAssignment(assignmentId);
   const assignment = assignmentQuery.data ?? null;
@@ -137,6 +149,13 @@ export function GradingPage({
     versionId !== null && versions.includes(versionId) ? versionId : (versions[0] ?? null);
 
   const progress = useAssignmentProgress(assignment);
+  // 发布通知（B4 投递记录）与受众规模（服务端聚合）仍然可达：它们原本在旧的教师详情页上，
+  // 详情页改成批改界面后不能把这两个能力弄丢。
+  const notifications = useAssignmentNotifications(
+    assignment?.course_id ?? null,
+    assignment?.assignment_id ?? null,
+  );
+  const rosterSummary = useRosterSummary(assignment?.course_id ?? null);
   const groups = useMemo(() => splitByCompletion(progress.rows), [progress.rows]);
   const versionRows = useQuestionVersionRows(versions);
   const currentRow =
@@ -151,13 +170,24 @@ export function GradingPage({
   const select = (nextVersion: string | null, nextStudent: string | null) => {
     setVersionId(nextVersion);
     setStudentId(nextStudent);
+    const search = {
+      version: nextVersion ?? undefined,
+      student: nextStudent ?? undefined,
+    };
+    // 选中状态必须写回**当前**路由：详情页嵌入本组件时，跳到 `/grading` 会换掉页面，
+    // 老师点一名学生就"迷路"。两条路由都声明了 `version` / `student`。
+    if (embedded) {
+      void navigate({
+        to: "/assignments/$assignmentId",
+        params: { assignmentId },
+        search: { ...search, question: undefined },
+      });
+      return;
+    }
     void navigate({
       to: "/assignments/$assignmentId/grading",
       params: { assignmentId },
-      search: {
-        version: nextVersion ?? undefined,
-        student: nextStudent ?? undefined,
-      },
+      search,
     });
   };
 
@@ -175,16 +205,29 @@ export function GradingPage({
       <nav className="muted" aria-label={t("assignments.breadcrumb")}>
         <Link to="/assignments">{t("nav.assignments")}</Link>
         <span aria-hidden="true"> / </span>
-        <Link to="/assignments/$assignmentId" params={{ assignmentId }}>
-          {assignment?.title ?? t("assignments.detailTitle")}
-        </Link>
-        <span aria-hidden="true"> / </span>
-        <span data-testid="grading-breadcrumb-current">{t("grading.title")}</span>
+        {embedded ? (
+          // 详情路由就是批改界面：不在面包屑里指向自己。
+          <span data-testid="grading-breadcrumb-current">
+            {assignment?.title ?? t("assignments.detailTitle")}
+          </span>
+        ) : (
+          <>
+            <Link to="/assignments/$assignmentId" params={{ assignmentId }}>
+              {assignment?.title ?? t("assignments.detailTitle")}
+            </Link>
+            <span aria-hidden="true"> / </span>
+            <span data-testid="grading-breadcrumb-current">{t("grading.title")}</span>
+          </>
+        )}
       </nav>
 
       <div className="inline page-head">
         <PageTitle>
-          {t("grading.heading", { title: assignment?.title ?? t("assignments.detailTitle") })}
+          {embedded
+            ? (assignment?.title ?? t("assignments.detailTitle"))
+            : t("grading.heading", {
+                title: assignment?.title ?? t("assignments.detailTitle"),
+              })}
         </PageTitle>
         <div className="row-actions">
           <span className="muted" data-testid="grading-processed">
@@ -435,6 +478,49 @@ export function GradingPage({
           </section>
         </div>
       )}
+
+      {assignment !== null ? (
+        <details data-testid="grading-notifications-details">
+          <summary>{t("grading.notificationsSummary")}</summary>
+          <div className="stack">
+            <Banner tone="info">{t("grading.notificationsIntro")}</Banner>
+            {rosterSummary.data ? (
+              <div className="inline" data-testid="grading-roster-summary">
+                <span className="muted" data-testid="roster-section-count">
+                  {t("assignments.audienceSectionCount")}：{rosterSummary.data.section_count}
+                </span>
+                <span className="muted" data-testid="roster-class-count">
+                  {t("assignments.audienceClassCount")}：{rosterSummary.data.class_count}
+                </span>
+                <span className="muted" data-testid="roster-student-total">
+                  {t("assignments.audienceStudentTotal")}：{rosterSummary.data.student_total}
+                </span>
+                <span className="muted" data-testid="roster-bound-count">
+                  {t("assignments.audienceBound")}：{rosterSummary.data.bound_count}
+                </span>
+                <span className="muted" data-testid="roster-unbound-count">
+                  {t("assignments.audienceUnbound")}：{rosterSummary.data.unbound_count}
+                </span>
+              </div>
+            ) : rosterSummary.isError ? (
+              <Banner tone="warn" testId="assignment-roster-summary-error">
+                {t("assignments.audienceSummaryIncomplete")}
+              </Banner>
+            ) : (
+              <p className="muted" data-testid="assignment-roster-summary-loading">
+                <InlineLoader />
+              </p>
+            )}
+            <AssignmentNotificationPanel
+              courseId={assignment.course_id}
+              assignmentId={assignment.assignment_id}
+              notificationState={assignment.notification_state}
+              notifications={notifications}
+              rosterSummary={rosterSummary.data ?? null}
+            />
+          </div>
+        </details>
+      ) : null}
 
       {gradeTarget !== null ? (
         <ManualGradeDrawer

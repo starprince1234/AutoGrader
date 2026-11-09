@@ -1076,6 +1076,8 @@ export const messages = {
 "grading.remindScheduled": "已安排提醒：{count} 名收件人。",
 "grading.remindCounts": "已送达 {sent} · 待发送 {pending} · 失败 {failed} · 跳过 {skipped}（以服务端投递记录为准）",
 "grading.remindStaleRoster": "名单已变化：有收件人不在该课程当前名单里。请刷新后再提醒。",
+"grading.notificationsSummary": "作业通知与受众规模（发布通知的投递记录）",
+"grading.notificationsIntro": "这里是发布通知的真实投递记录：sent 才是 SMTP 已接受，skipped_* 是缺少账号或邮箱。受众规模来自服务端聚合，不由已加载名单页加总。",
 
 "common.collapse": "收起",
 "common.expand": "展开",

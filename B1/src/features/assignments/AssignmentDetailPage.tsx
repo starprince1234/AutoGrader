@@ -5,7 +5,7 @@ import { useSession } from "../../auth/sessionContext";
 import { canViewCohortGrades } from "../../auth/visibility";
 import { EmptyState, ErrorState, PageTitle, Spinner } from "../../ui/components";
 import { AssignmentWorkspace } from "../submission/AssignmentWorkspace";
-import { TeacherAssignmentDetail } from "./TeacherAssignmentDetail";
+import { GradingPage } from "./GradingPage";
 import { useAssignment } from "./useAssignments";
 
 /**
@@ -35,14 +35,35 @@ function assignmentErrorContent(error: unknown) {
 export function AssignmentDetailPage({
   assignmentId,
   initialQuestionVersionId = null,
+  initialSelectedVersionId = null,
+  initialSelectedStudentId = null,
 }: {
   assignmentId: string;
   /** 学生从列表「继续作答」进入时带上的题目（属于该作业时才生效）。 */
   initialQuestionVersionId?: string | null;
+  /** 教师详情页（批改界面）当前选中的题目，来自 `?version=`。 */
+  initialSelectedVersionId?: string | null;
+  /** 教师详情页当前选中的学生，来自 `?student=`。 */
+  initialSelectedStudentId?: string | null;
 }) {
   const query = useAssignment(assignmentId);
   const session = useSession();
   const teacherView = canViewCohortGrades(session);
+
+  // 教师的「作业详情」就是 PDF 的「作业情况（子界面）」：左栏题目 + 已完成/未完成，
+  // 右栏大窗口看题干/作答/评测并改分。因此详情路由直接渲染批改界面，而不是再维护
+  // 一份矩阵表式的旧页面——两套 UI 并存必然漂移，"点作业进哪一页"也会变成歧义。
+  // 学生仍然进入作业工作区（多题列表 + 逐题提交），不变。
+  if (teacherView) {
+    return (
+      <GradingPage
+        assignmentId={assignmentId}
+        initialVersionId={initialSelectedVersionId ?? initialQuestionVersionId}
+        initialStudentId={initialSelectedStudentId}
+        embedded
+      />
+    );
+  }
 
   return (
     <div className="stack">
@@ -75,8 +96,6 @@ export function AssignmentDetailPage({
         <Spinner label={t("assignments.detailLoading")} />
       ) : query.isError ? (
         assignmentErrorContent(query.error)
-      ) : teacherView ? (
-        <TeacherAssignmentDetail assignment={query.data} />
       ) : (
         <AssignmentWorkspace
           assignment={query.data}
