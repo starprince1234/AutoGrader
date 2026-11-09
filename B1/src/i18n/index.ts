@@ -930,7 +930,11 @@ export const messages = {
 "assignments.create.dueHint": "留空表示不设置截止时间。",
 "assignments.create.versions": "题目版本",
 "assignments.create.versionsHint": "只列出本课程已发布的版本，草稿不出现在这里。",
-"assignments.create.noVersions": "该课程还没有已发布的题目版本。",
+
+"assignments.create.scoreScale": "打分标准",
+"assignments.create.scoreScaleValue": "百分制：作业得分 = 各题得分率之和 ÷ 作业题数 × 100（缺交的题按 0 计）。",
+"assignments.create.selectAll": "全选",
+"assignments.create.clearAll": "清空","assignments.create.noVersions": "该课程还没有已发布的题目版本。",
 "assignments.create.preview": "预览并发布",
 "assignments.create.confirmTitle": "发布这个作业？",
 "assignments.create.confirmBody": "发布后学生可以开始作答。",

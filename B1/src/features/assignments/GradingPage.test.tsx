@@ -146,6 +146,14 @@ function routes(options: { gradeNextCursor?: string | null } = {}): StubbedRoute
     },
     { path: `/api/v1/assignments/${UUID_A}`, respond: () => jsonResponse(ASSIGNMENT) },
     {
+      path: `/api/v1/courses/${COURSE}/roster-summary`,
+      respond: () => jsonResponse({ detail: "not found" }, 404),
+    },
+    {
+      path: `/api/v1/courses/${COURSE}/assignments/${UUID_A}/notifications`,
+      respond: () => jsonResponse({ detail: "not found" }, 404),
+    },
+    {
       path: `/api/v1/courses/${COURSE}/enrollments`,
       respond: () => jsonResponse(enrollmentPage(ROSTER)),
     },
@@ -298,6 +306,22 @@ describe("批改界面（作业情况子界面）", () => {
     await user.click(screen.getByTestId(`grading-student-completed-${E1}`));
     await user.click(await screen.findByTestId("grading-manual-grade"));
     expect(await screen.findByTestId("manual-grade-drawer")).toBeInTheDocument();
+  });
+
+  it("「返回作业列表」在题干框架内、题干上方", async () => {
+    stub = installFetchStub(routes());
+    await signIn("teacher1", "pw");
+    renderGrading();
+
+    const stem = await screen.findByTestId("grading-question-window");
+    const back = screen.getByTestId("grading-back-to-list");
+    expect(stem).toContainElement(back);
+    expect(back).toHaveTextContent("返回作业列表");
+    // 题干标题在按钮下方（DOM 顺序），不是页头里的悬浮按钮。
+    const title = screen.getByTestId("grading-question-title");
+    expect(
+      back.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("成绩行被截断时不给任何已完成/未完成数字", async () => {

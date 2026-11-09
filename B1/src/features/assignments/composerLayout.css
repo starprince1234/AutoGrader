@@ -1,0 +1,111 @@
+/* 新建作业（AssignmentComposer）的页面私有布局。
+ *
+ * 只作用于 `.assignment-composer` 这一层：不改共享表单控件，也不改 `.modal` 的通用规则
+ * （通用规则里的 `overflow: hidden` + `min-height: 0` 是修 bug 的最小改动，见 styles.css）。
+ *
+ * 目标：把"一列长表单"整理成有分区的可滚动面板 —— 头部与底部固定，中间滚动，
+ * 于是任何视口下都能看到标题、字段和主操作按钮。
+ */
+
+.assignment-composer .composer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4, 16px);
+  min-height: 0;
+}
+
+/* 课程 / 名称 / 截止时间 / 打分标准：两列，窄屏自动变一列。 */
+.assignment-composer .composer__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: var(--space-3, 12px) var(--space-4, 16px);
+  align-items: start;
+}
+
+/* 跨两列的行（课程、名称） */
+.assignment-composer .composer__row--wide {
+  grid-column: 1 / -1;
+}
+
+.assignment-composer .composer__scale {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-2, 8px);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* 题目选择区：列表自己有滚动条，模态框整体不再被撑长。 */
+.assignment-composer .composer__versions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2, 8px);
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.assignment-composer .composer__versions-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3, 12px);
+  flex-wrap: wrap;
+}
+
+.assignment-composer .composer__version-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 34vh;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2, 8px);
+  padding: 6px;
+}
+
+.assignment-composer .composer__version-list li label {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-2, 8px);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+
+.assignment-composer .composer__version-list li label:hover {
+  background: var(--color-surface-raised, rgba(127, 127, 127, 0.08));
+}
+
+/* 底部主操作：吸在滚动区底部，长列表时也始终可点。 */
+.assignment-composer .composer__foot {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3, 12px);
+  margin: 0 calc(-1 * var(--space-5)) calc(-1 * var(--space-5));
+  padding: var(--space-3, 12px) var(--space-5);
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-border);
+}
+
+@media (max-width: 640px) {
+  .assignment-composer .composer__version-list {
+    max-height: 30vh;
+  }
+
+  .assignment-composer .composer__foot {
+    justify-content: stretch;
+  }
+
+  .assignment-composer .composer__foot .button {
+    flex: 1;
+  }
+}

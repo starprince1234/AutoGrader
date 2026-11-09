@@ -2492,11 +2492,30 @@ samp {
   width: 100%;
   max-width: 900px;
   max-height: 85vh;
+  /* 内容超过 max-height 时由 `.modal__body` 内部滚动，圆角以外的溢出必须裁掉：
+     否则卡片会被撑出可视范围，顶部钻到粘性导航栏下面、滚不回来。 */
+  overflow: hidden;
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-raised);
   animation: rise var(--dur-slow) var(--ease-out);
+}
+
+/**
+ * 高弹窗（长表单）：把它限制在"视口减去顶部粘性导航栏"的空间里。
+ *
+ * `.modal__body` 是 flex 子项，默认 `min-height: auto` 会让它拒绝收缩，于是内容把整个
+ * 卡片顶出 max-height —— 表现就是"上方显示不全、往下滚被导航栏盖住"。这里显式允许收缩。
+ */
+.modal--tall {
+  max-height: calc(100dvh - var(--app-header-height, 64px) - 2 * var(--space-4));
+}
+
+.modal__backdrop:has(> .modal--tall) {
+  /* 高弹窗在导航栏下方居中，而不是压到导航栏底下。 */
+  padding-top: calc(var(--app-header-height, 64px) + var(--space-4));
+  align-items: center;
 }
 
 .modal:focus {
@@ -2521,6 +2540,8 @@ samp {
 .modal__body {
   padding: var(--space-5);
   overflow: auto;
+  /* flex 子项必须能被压小，滚动才会发生在卡片内部（见 `.modal--tall` 的说明）。 */
+  min-height: 0;
 }
 
 .modal--login {

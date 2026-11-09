@@ -14,6 +14,7 @@ import { Banner, ErrorState, Field, InlineLoader, Modal } from "../../ui/compone
 import { shortenId } from "../../ui/format";
 import { Select } from "../../ui/Select";
 import { useCreateAssignment } from "./useAssignments";
+import "./composerLayout.css";
 
 /**
  * 新建作业（v0.32.0：课程级作业）。
@@ -197,29 +198,73 @@ export function AssignmentComposer({
 
   return (
     <>
-      <Modal title={t("assignments.create.title")} onClose={onClose} testId="assignment-composer">
-        <div className="stack">
-          <Field label={t("grades.course")} htmlFor="compose-course">
-            <Select
-              id="compose-course"
-              value={selectedCourseId}
-              onChange={(event) => {
-                setCourseId(event.target.value);
-                // 换课程等于换题目来源与受众：已选版本不能沿用。
-                setSelected([]);
-              }}
-              disabled={create.isPending}
+      <Modal
+        title={t("assignments.create.title")}
+        onClose={onClose}
+        testId="assignment-composer"
+        className="modal--tall assignment-composer"
+      >
+        <div className="composer">
+          <div className="composer__grid">
+            <div className="composer__row--wide">
+              <Field label={t("grades.course")} htmlFor="compose-course">
+                <Select
+                  id="compose-course"
+                  value={selectedCourseId}
+                  onChange={(event) => {
+                    setCourseId(event.target.value);
+                    // 换课程等于换题目来源与受众：已选版本不能沿用。
+                    setSelected([]);
+                  }}
+                  disabled={create.isPending}
+                >
+                  {courseOptions.length === 0 ? (
+                    <option value="">{t("common.selectPrompt")}</option>
+                  ) : null}
+                  {courseOptions.map((course) => (
+                    <option key={course.course_id} value={course.course_id}>
+                      {courseOptionLabel(course)}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+            </div>
+
+            <div className="composer__row--wide">
+              <Field label={t("assignments.create.name")} htmlFor="compose-title">
+                <input
+                  id="compose-title"
+                  value={title}
+                  maxLength={200}
+                  placeholder={t("assignments.create.namePlaceholder")}
+                  onChange={(event) => setTitle(event.target.value)}
+                  disabled={create.isPending}
+                />
+              </Field>
+            </div>
+
+            <Field
+              label={t("assignments.create.due")}
+              htmlFor="compose-due"
+              hint={t("assignments.create.dueHint")}
             >
-              {courseOptions.length === 0 ? (
-                <option value="">{t("common.selectPrompt")}</option>
-              ) : null}
-              {courseOptions.map((course) => (
-                <option key={course.course_id} value={course.course_id}>
-                  {courseOptionLabel(course)}
-                </option>
-              ))}
-            </Select>
-          </Field>
+              <input
+                id="compose-due"
+                type="datetime-local"
+                value={dueAt}
+                onChange={(event) => setDueAt(event.target.value)}
+                disabled={create.isPending}
+              />
+            </Field>
+
+            {/* 打分标准（PDF 要求）：百分制是固定口径，不新增契约字段，这里只做说明。 */}
+            <div className="field">
+              <span>{t("assignments.create.scoreScale")}</span>
+              <p className="muted composer__scale" data-testid="compose-score-scale">
+                {t("assignments.create.scoreScaleValue")}
+              </p>
+            </div>
+          </div>
 
           {courses.isError ? <ErrorState error={courses.error} testId="compose-courses-error" /> : null}
 
@@ -227,36 +272,42 @@ export function AssignmentComposer({
             {t("assignments.create.courseWideNotice")}
           </Banner>
 
-          <Field label={t("assignments.create.name")} htmlFor="compose-title">
-            <input
-              id="compose-title"
-              value={title}
-              maxLength={200}
-              placeholder={t("assignments.create.namePlaceholder")}
-              onChange={(event) => setTitle(event.target.value)}
-              disabled={create.isPending}
-            />
-          </Field>
-
-          <Field
-            label={t("assignments.create.due")}
-            htmlFor="compose-due"
-            hint={t("assignments.create.dueHint")}
-          >
-            <input
-              id="compose-due"
-              type="datetime-local"
-              value={dueAt}
-              onChange={(event) => setDueAt(event.target.value)}
-              disabled={create.isPending}
-            />
-          </Field>
-
-          <fieldset className="stack">
+          <fieldset className="composer__versions">
             <legend>
               {t("assignments.create.versions")}
               <span className="muted"> · {t("assignments.create.versionsHint")}</span>
             </legend>
+
+            <div className="composer__versions-bar">
+              <span className="muted" data-testid="compose-version-count">
+                {t("assignments.create.chosen", { count: selected.length })}
+              </span>
+              {publishedVersions.length > 0 ? (
+                <div className="inline">
+                  <button
+                    type="button"
+                    className="button button--ghost"
+                    data-testid="compose-version-all"
+                    disabled={create.isPending}
+                    onClick={() =>
+                      setSelected(publishedVersions.map((version) => version.question_version_id))
+                    }
+                  >
+                    {t("assignments.create.selectAll")}
+                  </button>
+                  <button
+                    type="button"
+                    className="button button--ghost"
+                    data-testid="compose-version-none"
+                    disabled={create.isPending || selected.length === 0}
+                    onClick={() => setSelected([])}
+                  >
+                    {t("assignments.create.clearAll")}
+                  </button>
+                </div>
+              ) : null}
+            </div>
+
             {questions.isPending ? (
               <p className="muted">
                 <InlineLoader />
@@ -264,12 +315,12 @@ export function AssignmentComposer({
             ) : publishedVersions.length === 0 ? (
               <p className="muted">{t("assignments.create.noVersions")}</p>
             ) : (
-              <ul className="stack" data-testid="compose-version-list">
+              <ul className="composer__version-list" data-testid="compose-version-list">
                 {publishedVersions.map((version) => {
                   const checked = selected.includes(version.question_version_id);
                   return (
                     <li key={version.question_version_id}>
-                      <label className="inline">
+                      <label>
                         <input
                           type="checkbox"
                           checked={checked}
@@ -299,7 +350,7 @@ export function AssignmentComposer({
             </Banner>
           ) : null}
 
-          <div className="inline">
+          <div className="composer__foot">
             <button type="button" className="button button--ghost" onClick={onClose}>
               {t("common.cancel")}
             </button>

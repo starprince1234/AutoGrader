@@ -193,6 +193,22 @@ describe("新建作业（v0.32.0 课程级）", () => {
     );
     expect(screen.queryByTestId("compose-section-list")).toBeNull();
     expect(screen.queryByTestId("compose-student-fieldset")).toBeNull();
+
+    // 长表单必须在视口内自己滚动：高模态 + 底部固定操作（否则顶部会钻到导航栏下面）。
+    const dialog = screen.getByTestId("assignment-composer");
+    expect(dialog.className).toContain("modal--tall");
+    expect(dialog.className).toContain("assignment-composer");
+
+    // 打分标准（PDF 要求）：百分制是固定口径，表单上必须写清楚。
+    expect(screen.getByTestId("compose-score-scale")).toHaveTextContent("百分制");
+    expect(screen.getByTestId("compose-version-count")).toHaveTextContent("0 个题目版本");
+
+    // 全选 / 清空：真实改变选择，不发请求。
+    await userEvent.click(screen.getByTestId("compose-version-all"));
+    expect(screen.getByTestId("compose-version-count")).toHaveTextContent("1 个题目版本");
+    await userEvent.click(screen.getByTestId("compose-version-none"));
+    expect(screen.getByTestId("compose-version-count")).toHaveTextContent("0 个题目版本");
+    expect(postRequests(stub)).toHaveLength(0);
   });
 
   it("预览显示服务端受众统计；发布请求体只有课程/名称/题目（无 section_ids/student_ids）", async () => {
