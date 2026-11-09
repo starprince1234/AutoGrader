@@ -94,3 +94,25 @@
     position: static;
   }
 }
+
+/* 提示语是服务端模板拼出来的长句：保留其中的换行，同时在任意位置断行，
+   否则窄栏里的 `<pre>` 会把面板横向撑破（教师反馈的实际问题）。 */
+.grading-remind__prompt {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2, 8px);
+  background: var(--color-surface);
+  color: var(--color-text-muted, inherit);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+
+/* 左栏的题目名与学生行同样可能很长：一律允许断词，不允许横向溢出。 */
+.grading-question-list button,
+.grading-student-list button {
+  overflow-wrap: anywhere;
+}

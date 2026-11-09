@@ -385,18 +385,6 @@ export function GradingPage({
               </Banner>
             ) : null}
 
-            {/* 「未完成」的第二个动作：邮件提醒（PDF 的「自动包括提示语 / 一键提醒」）。
-                收件人就是上面这份未完成名单；未绑定账号的行没有可投递的账号，单独说明。 */}
-            {assignment !== null ? (
-              <ReminderPanel
-                courseId={assignment.course_id}
-                assignmentId={assignment.assignment_id}
-                title={assignment.title}
-                dueAt={assignment.due_at ?? null}
-                pending={groups.pending}
-                unboundCount={groups.unbound.length}
-              />
-            ) : null}
           </aside>
 
           <section className="grading-workspace__window">
@@ -446,6 +434,7 @@ export function GradingPage({
                 </div>
               </Panel>
             ) : (
+              <div className="stack">
               <Panel title={t("grading.questionWindow")} testId="grading-question-window">
                 <div className="stack">
                   <div className="inline">
@@ -474,6 +463,20 @@ export function GradingPage({
                   <p className="muted">{t("grading.pickStudentHint")}</p>
                 </div>
               </Panel>
+
+              {/* 邮件提醒就在题干下方：它是这一页的动作，而不是左栏名单的一部分。
+                  收件人来自「未完成」名单；未绑定账号的行没有可投递账号，单独说明。 */}
+              {assignment !== null ? (
+                <ReminderPanel
+                  courseId={assignment.course_id}
+                  assignmentId={assignment.assignment_id}
+                  title={assignment.title}
+                  dueAt={assignment.due_at ?? null}
+                  pending={groups.pending}
+                  unboundCount={groups.unbound.length}
+                />
+              ) : null}
+              </div>
             )}
           </section>
         </div>

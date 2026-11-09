@@ -320,6 +320,15 @@ describe("批改界面 · 邮件提醒（自动提示语 / 一键提醒）", () 
     renderGrading();
 
     const prompt = await screen.findByTestId("grading-remind-prompt");
+    // 位置：邮件提醒在右栏题干下方（与题干面板同一列），不单独占左栏一栏。
+    const stem = screen.getByTestId("grading-question-window");
+    const reminder = screen.getByTestId("grading-reminder");
+    expect(stem.parentElement).toContainElement(reminder);
+    expect(screen.getByTestId("grading-completed-group")).not.toContainElement(reminder);
+    // 长提示语必须可换行：用带样式的块而不是不换行的 <pre>（否则会把面板撑破）。
+    expect(prompt.querySelector("pre")).toBeNull();
+    expect(prompt.querySelector(".grading-remind__prompt")).not.toBeNull();
+
     expect(prompt).toHaveTextContent("你还没有提交课程");
     expect(prompt).toHaveTextContent("第一次作业");
     // 没有截止时间时提示语要写明，而不是留空。

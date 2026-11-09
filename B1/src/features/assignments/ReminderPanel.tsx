@@ -88,7 +88,8 @@ export function ReminderPanel({
         <p className="muted">{t("grading.remindIntro")}</p>
         <div className="stack" data-testid="grading-remind-prompt">
           <span className="muted">{t("grading.remindPromptLabel")}</span>
-          <pre className="muted">{prompt}</pre>
+          {/* 用 pre-wrap 而不是 <pre>：提示语是一段长句，`<pre>` 不换行会把面板撑破。 */}
+          <p className="grading-remind__prompt">{prompt}</p>
         </div>
 
         <Field label={t("grading.remindRecipients")} htmlFor="grading-remind-recipients">
