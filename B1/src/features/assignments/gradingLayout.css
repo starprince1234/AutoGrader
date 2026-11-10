@@ -32,6 +32,21 @@
   gap: 4px;
 }
 
+/* 已完成 / 未完成的名单只占固定高度，超出后在名单内部滚动：
+ * 一整班全展开会把左栏撑到几屏高，右侧题干和大窗口就被挤下去了。
+ * 用 clamp 让高分辨率屏幕多显示几行、矮屏不至于只剩两行。 */
+.grading-student-list {
+  max-height: clamp(200px, 34vh, 320px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 4px;
+}
+
+/* 名单里最后一行不要贴着边框。 */
+.grading-student-list > li:last-child {
+  padding-bottom: 2px;
+}
+
 .grading-question-list button,
 .grading-student-list button {
   width: 100%;

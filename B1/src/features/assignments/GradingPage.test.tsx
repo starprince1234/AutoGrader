@@ -279,6 +279,10 @@ describe("批改界面（作业情况子界面）", () => {
     const unboundRow = await screen.findByTestId(`grading-student-pending-${E3}`);
     expect(unboundRow.tagName).toBe("DIV");
     expect(unboundRow).toHaveTextContent("未绑定账号");
+    // 名单是"固定高度 + 内部滚动"的区域：可聚焦，键盘能滚动查看全班。
+    const pendingList = screen.getByTestId("grading-pending-list");
+    expect(pendingList).toHaveAttribute("tabindex", "0");
+    expect(pendingList).toHaveAttribute("aria-label", expect.stringContaining("未完成"));
     // 顶部「已处理作业数量」与左栏同一口径。
     expect(screen.getByTestId("grading-processed")).toHaveTextContent("1 / 3");
   });

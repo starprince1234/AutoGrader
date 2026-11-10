@@ -318,7 +318,14 @@ export function GradingPage({
                 groups.completed.length === 0 ? (
                   <p className="muted">{t("grading.completedEmpty")}</p>
                 ) : (
-                  <ul className="grading-student-list">
+                  <ul
+                    className="grading-student-list"
+                    tabIndex={0}
+                    aria-label={t("grading.completedCount", {
+                      done: groups.completed.length,
+                      total: judgedTotal(groups),
+                    })}
+                  >
                     {groups.completed.map((row) => (
                       <StudentRow
                         key={row.enrollmentId}
@@ -369,7 +376,16 @@ export function GradingPage({
                       {t("grading.pendingEmpty")}
                     </p>
                   ) : (
-                    <ul className="grading-student-list" data-testid="grading-pending-list">
+                    <ul
+                      className="grading-student-list"
+                      data-testid="grading-pending-list"
+                      // 固定高度内滚动：可聚焦才能用键盘滚动，读屏也能读到这是一个区域。
+                      tabIndex={0}
+                      aria-label={t("grading.pendingCount", {
+                        missing: groups.pending.length,
+                        total: judgedTotal(groups),
+                      })}
+                    >
                       {groups.pending.map((row) => (
                         <StudentRow
                           key={row.enrollmentId}
