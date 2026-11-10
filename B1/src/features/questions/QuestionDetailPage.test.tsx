@@ -1,7 +1,5 @@
-import { useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { screen, within } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import {
   RouterProvider,
   createMemoryHistory,
@@ -23,8 +21,6 @@ import { QuestionDetailPage } from "./QuestionDetailPage";
 
 const QUESTION_ID = questionPublic().question_id;
 const VERSION_A = UUID_A;
-const VERSION_B = "00000000-0000-4000-8000-0000000000b9";
-const SHA_B = "b".repeat(64);
 
 let stub: FetchStub | null = null;
 
@@ -33,27 +29,9 @@ afterEach(() => {
   stub = null;
 });
 
-/** 受控容器：模拟路由 `?version=` 深链的选择行为（状态由测试驱动）。 */
+/** 版本卡已删除，页面不再有切换入口：直接以深链的形式给出 `versionId`。 */
 function Harness() {
-  const [versionId, setVersionId] = useState<string | null>(null);
-  return (
-    <div>
-      <button type="button" onClick={() => setVersionId(VERSION_A)}>
-        选择版本 A
-      </button>
-      <button type="button" onClick={() => setVersionId(VERSION_B)}>
-        选择版本 B
-      </button>
-      <button type="button" onClick={() => setVersionId(null)}>
-        清除版本
-      </button>
-      <QuestionDetailPage
-        questionId={QUESTION_ID}
-        versionId={versionId}
-        onSelectVersion={setVersionId}
-      />
-    </div>
-  );
+  return <QuestionDetailPage questionId={QUESTION_ID} versionId={VERSION_A} />;
 }
 
 /**
@@ -97,8 +75,13 @@ describe("题目详情与版本机制（RQ-B-1-40）", () => {
     expect(document.querySelector("img")).toBeNull();
   });
 
-  it("版本下拉来自契约的 versions 列表，且渲染的是该版本自己的题干", async () => {
+  it("「题目版本」卡片整块不再渲染；学生仍能在题干下方看到作答入口", async () => {
     stub = installFetchStub([
+      {
+        method: "POST",
+        path: "/api/v1/auth/session",
+        respond: () => jsonResponse(sessionCreated({ roles: ["student"] })),
+      },
       {
         path: `/api/v1/questions/${QUESTION_ID}`,
         respond: () => jsonResponse(questionPublic()),
@@ -110,83 +93,31 @@ describe("题目详情与版本机制（RQ-B-1-40）", () => {
             questionVersionPublic({
               question_version_id: VERSION_A,
               version: 3,
+              status: "published",
               stem_markdown: "第三版题干",
             }),
           ),
       },
-      {
-        path: `/api/v1/question-versions/${VERSION_B}`,
-        respond: () =>
-          jsonResponse(
-            questionVersionPublic({
-              question_version_id: VERSION_B,
-              version: 2,
-              stem_markdown: "第二版题干",
-            }),
-          ),
-      },
     ]);
-
-    const user = userEvent.setup();
+    await signIn("student1", "pw");
     renderQuestionDetail();
 
-    // 契约给出完整版本历史，因此不再需要手工粘贴 question_version_id。
-    // 未显式选择时默认最新**已发布**版本（不猜、也不留空）。
-    const picker = await screen.findByTestId("version-select");
-    expect(within(picker).getAllByRole("option")).toHaveLength(2);
-    expect(await screen.findByTestId("version-panel")).toHaveTextContent("版本 3");
-    // 两处题干：当前题干（页面主体）+ 选中版本的冻结题干（内容不同，必须都渲染）。
-    expect(screen.getByTestId("question-stem-body")).toBeInTheDocument();
-    expect(screen.getByTestId("version-stem-body")).toHaveTextContent("第三版题干");
-    expect(screen.getByTestId("version-stem-label")).toBeInTheDocument();
+    // 题干仍然是主要内容。
+    expect(await screen.findByTestId("question-stem-body")).toBeInTheDocument();
 
-    // 切换到历史版本：渲染的是**该版本自己的**题干，而不是当前题干。
-    await user.selectOptions(picker, VERSION_B);
-    expect(await screen.findByTestId("version-panel")).toHaveTextContent("版本 2");
-    expect(screen.getByTestId("historical-version-notice")).toBeInTheDocument();
-    expect(screen.getByTestId("version-stem-body")).toHaveTextContent("第二版题干");
-
-    // 切回版本 A：命中查询缓存，渲染内容与第一次一致（不因切换而改变）
-    await user.selectOptions(picker, VERSION_A);
-    expect(await screen.findByTestId("version-panel")).toHaveTextContent("版本 3");
-
-    const versionRequests = stub.requests.filter((request) =>
-      request.url.pathname.startsWith("/api/v1/question-versions/"),
-    );
-    expect([...new Set(versionRequests.map((request) => request.url.pathname))].sort()).toEqual(
-      [
-        `/api/v1/question-versions/${VERSION_A}`,
-        `/api/v1/question-versions/${VERSION_B}`,
-      ].sort(),
-    );
-  });
-
-  it("版本冻结题干与当前题干一致时不重复渲染（同一段富文本不出现两次）", async () => {
-    const sameStem = questionPublic().stem_markdown;
-    stub = installFetchStub([
-      {
-        path: `/api/v1/questions/${QUESTION_ID}`,
-        respond: () => jsonResponse(questionPublic()),
-      },
-      {
-        path: `/api/v1/question-versions/${VERSION_A}`,
-        respond: () =>
-          jsonResponse(
-            questionVersionPublic({
-              question_version_id: VERSION_A,
-              version: 1,
-              stem_markdown: sameStem,
-            }),
-          ),
-      },
-    ]);
-
-    renderQuestionDetail();
-
-    await screen.findByTestId("version-panel");
-    // 只有题目主体那一份 stem；3.0 之后连"内容一致"那行说明也删掉了。
+    // 版本卡（选择版本 / 版本详情 / 此版本题干 / 相关信息）整体消失，且不留空白卡片。
+    expect(screen.queryByTestId("version-select")).toBeNull();
+    expect(screen.queryByTestId("version-panel")).toBeNull();
+    expect(screen.queryByTestId("version-related")).toBeNull();
     expect(screen.queryByTestId("version-stem-body")).toBeNull();
-    expect(screen.queryByTestId("version-stem-same")).toBeNull();
+    expect(screen.queryByTestId("version-stem-label")).toBeNull();
+    expect(screen.queryByTestId("historical-version-notice")).toBeNull();
+    expect(screen.queryByText("选择版本")).toBeNull();
+    expect(screen.queryByText("相关信息")).toBeNull();
+
+    // 学生入口保留，只是从版本卡里挪到了题干下面；提交是作业范围的，所以它指向「我的作业」。
+    const entry = await screen.findByTestId("go-to-assignments");
+    expect(entry.getAttribute("href") ?? "").toContain("/assignments");
   });
 
   it("公开 DTO 若混入受保护字段，页面拒绝渲染并报错（UI 层双重校验）", async () => {
@@ -201,77 +132,6 @@ describe("题目详情与版本机制（RQ-B-1-40）", () => {
 
     expect(await screen.findByTestId("error-state")).toHaveTextContent("受保护字段");
     expect(screen.queryByTestId("stem")).toBeNull();
-  });
-
-  it("版本面板显示修订说明与结构差异（CHG-0013 的可审计部分）", async () => {
-    stub = installFetchStub([
-      {
-        path: `/api/v1/questions/${QUESTION_ID}`,
-        respond: () => jsonResponse(questionPublic()),
-      },
-      {
-        path: `/api/v1/question-versions/${VERSION_A}`,
-        respond: () =>
-          jsonResponse(
-            questionVersionPublic({
-              question_version_id: VERSION_A,
-              version: 3,
-              stem_markdown: "第三版题干",
-              revision_note: "例题里的截止时间写错了",
-              revision_diff: {
-                case_count_before: 2,
-                case_count_after: 3,
-                case_set_changed: true,
-                weights_changed: false,
-                fixtures_changed: null,
-                stem_length_before: 40,
-                stem_length_after: 52,
-                adapter_kind_changed: false,
-                size_limits_changed: null,
-                reference_answer_digest_before: SHA_B,
-                reference_answer_digest_after: SHA_A,
-              },
-            }),
-          ),
-      },
-    ]);
-
-    renderQuestionDetail();
-
-    // 3.0：版本框只留「选择版本 / 题型 / 状态 / 相关信息」。
-    const related = await screen.findByTestId("version-related");
-    expect(within(related).getByTestId("version-related-note")).toHaveTextContent(
-      "例题里的截止时间写错了",
-    );
-    // 「这一版改了什么 / 与上一版相比」两套板块已删除。
-    expect(screen.queryByTestId("revision-summary")).toBeNull();
-  });
-
-  it("首个版本的 revision_diff 为 null 时说明「没有可比较的上一版」，不是「缺数据」", async () => {
-    stub = installFetchStub([
-      {
-        path: `/api/v1/questions/${QUESTION_ID}`,
-        respond: () => jsonResponse(questionPublic()),
-      },
-      {
-        path: `/api/v1/question-versions/${VERSION_A}`,
-        respond: () =>
-          jsonResponse(
-            questionVersionPublic({
-              question_version_id: VERSION_A,
-              version: 1,
-              revision_note: null,
-              revision_diff: null,
-            }),
-          ),
-      },
-    ]);
-
-    renderQuestionDetail();
-
-    // 没写改动说明时固定显示「无」。
-    const related = await screen.findByTestId("version-related");
-    expect(within(related).getByTestId("version-related-note")).toHaveTextContent("无");
   });
 
   it("版本框里不再有「作答入口对学生开放…」这句提示；返回题库列表在右上角", async () => {
@@ -293,7 +153,7 @@ describe("题目详情与版本机制（RQ-B-1-40）", () => {
     await signIn("teacher1", "pw");
     renderQuestionDetail();
 
-    await screen.findByTestId("version-panel");
+    await screen.findByTestId("question-stem-body");
     expect(screen.queryByTestId("submit-student-only")).toBeNull();
     expect(screen.queryByText(/作答入口对学生开放/)).toBeNull();
     // 返回按钮在标题同一行的右上角。
@@ -345,7 +205,7 @@ describe("题目详情与版本机制（RQ-B-1-40）", () => {
     await signIn("student1", "pw");
     renderQuestionDetail();
 
-    await screen.findByTestId("version-panel");
+    await screen.findByTestId("question-stem-body");
     expect(screen.queryByTestId("edit-question")).toBeNull();
   });
 
@@ -389,49 +249,3 @@ describe("题目详情与版本机制（RQ-B-1-40）", () => {
   });
 });
 
-describe("评分方式（Unix 作业扩展）", () => {
-  it("版本面板显示公开的评分方式枚举；受保护配置不出现在详情页", async () => {
-    stub = installFetchStub([
-      {
-        path: `/api/v1/questions/${QUESTION_ID}`,
-        respond: () => jsonResponse(questionPublic()),
-      },
-      {
-        path: `/api/v1/question-versions/${VERSION_A}`,
-        respond: () =>
-          jsonResponse({
-            ...questionVersionPublic({ question_version_id: VERSION_A, version: 3 }),
-            execution_mode: "email_delivery",
-          }),
-      },
-    ]);
-
-    renderQuestionDetail();
-
-    const mode = await screen.findByTestId("version-execution-mode");
-    expect(mode).toHaveTextContent("评分方式");
-    expect(mode).toHaveTextContent("邮件投递");
-    // 公开面只有模式本身：练习环境地址、尝试次数这些配置不会出现在这里。
-    expect(document.body.textContent ?? "").not.toContain("127.0.0.1");
-  });
-
-  it("旧版本没有 execution_mode 字段时按「每个用例单独运行」显示", async () => {
-    stub = installFetchStub([
-      {
-        path: `/api/v1/questions/${QUESTION_ID}`,
-        respond: () => jsonResponse(questionPublic()),
-      },
-      {
-        path: `/api/v1/question-versions/${VERSION_A}`,
-        respond: () =>
-          jsonResponse(questionVersionPublic({ question_version_id: VERSION_A, version: 3 })),
-      },
-    ]);
-
-    renderQuestionDetail();
-
-    expect(await screen.findByTestId("version-execution-mode")).toHaveTextContent(
-      "每个用例单独运行",
-    );
-  });
-});

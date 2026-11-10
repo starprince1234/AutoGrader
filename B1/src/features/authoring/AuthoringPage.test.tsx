@@ -1292,7 +1292,7 @@ describe("两类信号（确定性规则 vs 模型建议）", () => {
     expect(screen.queryByTestId("assistance-suggestions")).toBeNull();
   });
 
-  it("有建议时：建议、provenance 与 disclaimers 原文一起显示，并标明是模型建议", async () => {
+  it("有建议时：建议表格与「AI意见仅供参考」一起显示，底部说明已删除", async () => {
     stub = installFetchStub(
       baseRoutes([
         {
@@ -1328,10 +1328,9 @@ describe("两类信号（确定性规则 vs 模型建议）", () => {
     expect(await screen.findByTestId("assistance-suggestions")).toHaveTextContent(
       "题干第 2 段",
     );
-    expect(screen.getByTestId("assistance-provenance")).toHaveTextContent("example-model-v1");
-    const disclaimers = screen.getByTestId("assistance-disclaimers");
-    expect(disclaimers).toHaveTextContent("由模型生成，非确定性结论。");
-    expect(disclaimers).toHaveTextContent("不参与判分，不作为申诉依据。");
+    // 底部那两块（生成信息 + 免责声明）已按需求删除，建议本身照旧展示。
+    expect(screen.queryByTestId("assistance-provenance")).toBeNull();
+    expect(screen.queryByTestId("assistance-disclaimers")).toBeNull();
     expect(screen.getByTestId("authoring-assistance")).toHaveTextContent("AI意见仅供参考");
 
     const request = stub.requests.find(

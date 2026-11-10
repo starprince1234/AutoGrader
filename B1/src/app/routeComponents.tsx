@@ -40,20 +40,10 @@ export function QuestionDetailRoute() {
   // 通过已注册的路由类型读取参数，避免与 `router.tsx` 形成循环依赖。
   const { questionId } = useParams({ from: "/questions/$questionId" });
   const { version } = useSearch({ from: "/questions/$questionId" });
-  const navigate = useNavigate();
+  // 版本卡删除后页面上没有切换入口，`?version=` 只是"用哪个版本取数"的深链，因此不再需要 navigate。
   return (
     <RequireAuth>
-      <QuestionDetailPage
-        questionId={questionId}
-        versionId={version ?? null}
-        onSelectVersion={(next) => {
-          void navigate({
-            to: "/questions/$questionId",
-            params: { questionId },
-            search: { version: next ?? undefined },
-          });
-        }}
-      />
+      <QuestionDetailPage questionId={questionId} versionId={version ?? null} />
     </RequireAuth>
   );
 }

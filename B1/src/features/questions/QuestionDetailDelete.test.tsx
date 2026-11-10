@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { afterEach, describe, expect, it } from "vitest";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -39,14 +38,8 @@ afterEach(() => {
 });
 
 function Harness() {
-  const [versionId, setVersionId] = useState<string | null>(null);
-  return (
-    <QuestionDetailPage
-      questionId={QUESTION_ID}
-      versionId={versionId}
-      onSelectVersion={setVersionId}
-    />
-  );
+  // 版本卡已删除，页面不再需要外部注入版本状态；深链由 `versionId` 属性表达。
+  return <QuestionDetailPage questionId={QUESTION_ID} versionId={null} />;
 }
 
 function renderDetail() {

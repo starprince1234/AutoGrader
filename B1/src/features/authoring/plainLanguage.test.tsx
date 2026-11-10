@@ -184,10 +184,10 @@ describe("教师界面只说人话", () => {
     ]);
     await signIn("teacher1", "pw");
     renderAt(
-      <QuestionDetailPage questionId={questionPublic().question_id} versionId={UUID_A} onSelectVersion={() => {}} />,
+      <QuestionDetailPage questionId={questionPublic().question_id} versionId={UUID_A} />,
     );
 
-    await screen.findByTestId("version-panel");
+    await screen.findByTestId("question-stem-body");
     assertPlainLanguage(document.body.textContent ?? "");
   });
 

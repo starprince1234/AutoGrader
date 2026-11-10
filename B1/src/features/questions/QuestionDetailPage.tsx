@@ -8,19 +8,15 @@ import {
   Banner,
   EmptyState,
   ErrorState,
-  Field,
   Modal,
   PageTitle,
   Panel,
   Spinner,
   StatusPill,
 } from "../../ui/components";
-import { formatDateTime } from "../../ui/format";
-import { readExecutionMode } from "../authoring/execution";
 import { ReferenceVerificationPanel } from "../authoring/ReferenceVerificationPanel";
 import { SafeMarkdown } from "./SafeMarkdown";
 import { useDeleteQuestionVersion, useQuestion, useQuestionVersion } from "./useQuestions";
-import { Select } from "../../ui/Select";
 
 /**
  * 题目详情（P07，RQ-B-1-40）。
@@ -29,23 +25,22 @@ import { Select } from "../../ui/Select";
  * 不再把"标题卡"与"版本卡"叠成两层同一件事。题干是主要内容，图片走受控资源路径。
  *
  * 版本：
- * - `?version=<question_version_id>` 是唯一状态来源，切换后写回 URL，刷新或复制链接都回到同一版本；
- * - 渲染的是**该版本自己的冻结题干**（`QuestionVersionPublic.stem_markdown`），不是题目当前题干；
- * - 与当前题干逐字相同时只显示一份（避免两段一模一样的富文本看起来像渲染了两次），不同则在上方
- *   标注"此版本题干"，历史版本还会给出"正在查看历史版本 v{n}"的提示。
+ * - `?version=<question_version_id>` 仍决定**用哪个版本取数**（质量入口、验证并发布面板、学生入口），
+ *   刷新或复制链接都回到同一版本；
+ * - **版本卡（选择版本 / 版本详情 / 相关信息 / 此版本题干）已删除**：页面上不再有切换版本的入口，
+ *   也不再渲染历史版本的冻结题干。
  *
- * 授权：学生只在**已发布**版本上看到作答入口；未发布版本对学生显示"这个版本尚未发布，暂不能作答。"。
+ * 授权：学生只在**已发布**版本上看到入口（作业范围内提交，因此指向「我的作业」）；
  * 教师看到编辑入口（草稿 → 编辑草稿；已发布 → 另存为新版本）与题目质量深链，后者携带**当前选中的
  * `question_version_id`**，页面不恢复独立的质量路由。
  */
 export function QuestionDetailPage({
   questionId,
   versionId,
-  onSelectVersion,
 }: {
   questionId: string;
+  /** `?version=` 深链：决定用哪个版本取数（质量入口、验证并发布面板、学生入口），不再有切换 UI。 */
   versionId: string | null;
-  onSelectVersion: (next: string | null) => void;
 }) {
   const question = useQuestion(questionId);
   const session = useSession();
@@ -63,14 +58,8 @@ export function QuestionDetailPage({
   const effectiveId = versionId ?? preferred?.question_version_id ?? null;
   // 必须用 effectiveId 取数：传原始 prop 会让"未显式选择"时根本不发请求，
   // 面板因此永远空白（集成时踩到过）。
+  // 版本卡删除后这个查询仍有用途：验证并发布面板需要 `version.data`，学生入口也依赖它的状态。
   const version = useQuestionVersion(effectiveId);
-  const versionStemDiffers =
-    version.data !== undefined &&
-    version.data.stem_markdown.trim() !== (question.data?.stem_markdown ?? "").trim();
-  const isHistorical =
-    version.data !== undefined &&
-    preferred !== null &&
-    version.data.question_version_id !== preferred.question_version_id;
 
   if (question.isPending) return <Spinner />;
   if (question.isError) return <ErrorState error={question.error} />;
@@ -168,99 +157,15 @@ export function QuestionDetailPage({
         <SafeMarkdown source={shown.stem_markdown} testId="question-stem-body" />
       </Panel>
 
-      <Panel title={t("questions.versionPicker")}>
-        {versions.length === 0 ? (
-          <EmptyState>{t("questions.noVersions")}</EmptyState>
-        ) : (
-          <div className="form-grid">
-            <Field label={t("questions.versionSelect")} htmlFor="version-select">
-              <Select
-                id="version-select"
-                data-testid="version-select"
-                value={effectiveId ?? ""}
-                onChange={(event) => onSelectVersion(event.target.value || null)}
-              >
-                {versions.map((item) => (
-                  <option key={item.question_version_id} value={item.question_version_id}>
-                    {t("questions.version", { version: item.version })} ·{" "}
-                    {t(`questions.status.${item.status}`)}
-                    {item.published_at
-                      ? ` · ${formatDateTime(item.published_at, t("common.none"))}`
-                      : ""}
-                  </option>
-                ))}
-              </Select>
-            </Field>
-          </div>
-        )}
-
-        {!effectiveId ? null : version.isPending ? (
-          <Spinner />
-        ) : version.isError ? (
-          <ErrorState error={version.error} />
-        ) : version.data ? (
-          <div className="stack" data-testid="version-panel">
-            <div className="inline">
-              <span>{t("questions.version", { version: version.data.version })}</span>
-              <span className="muted">
-                {t("questions.adapterKind")}：{t(`questions.adapter.${version.data.adapter_kind}`)}
-              </span>
-              {/* 公开面只有模式本身；分段标记、邮件尝试次数与 SSH 配置都不在这里出现。 */}
-              <span className="muted" data-testid="version-execution-mode">
-                {t("questions.executionMode")}：
-                {t(`questions.executionMode.${readExecutionMode(version.data)}`)}
-              </span>
-              <StatusPill
-                tone={
-                  version.data.status === "published"
-                    ? "ok"
-                    : version.data.status === "draft"
-                      ? "warn"
-                      : "idle"
-                }
-              >
-                {t(`questions.status.${version.data.status}`)}
-              </StatusPill>
-            </div>
-
-            {isHistorical ? (
-              <Banner tone="info" testId="historical-version-notice">
-                {t("questions.historicalVersion", { version: version.data.version })}
-              </Banner>
-            ) : null}
-
-            {/* 该版本自己的题干。与当前题干逐字相同时不再重复渲染；不同时，历史版本要标出
-                "此版本题干"，否则读者会把冻结内容当成当前内容。 */}
-            {version.data.stem_markdown === "" ? null : versionStemDiffers ? (
-              <>
-                <h3 data-testid="version-stem-label">{t("questions.versionStemLabel")}</h3>
-                <SafeMarkdown source={version.data.stem_markdown} testId="version-stem-body" />
-              </>
-            ) : null}
-
-            {version.data.status === "published" && canSubmitAnswer(session) ? (
-              <div className="inline">
-                {/* 作答入口只存在于作业工作区（一次提交 = 一道题，必须知道 assignment 与题号）。
-                    题目页没有作业上下文，因此这里只把学生带到「我的作业」。 */}
-                <Link className="button" to="/assignments" data-testid="go-to-assignments">
-                  {t("questions.goToAssignments")}
-                </Link>
-              </div>
-            ) : null}
-
-            {/* 3.0：版本框只留「选择版本 / 题型 / 状态 / 相关信息」。
-                有改动说明就原样展示，没有就固定写「无」。 */}
-            <div className="stack" data-testid="version-related">
-              <h3>{t("questions.versionRelated")}</h3>
-              <p data-testid="version-related-note">
-                {version.data.revision_note && version.data.revision_note.trim() !== ""
-                  ? version.data.revision_note
-                  : t("common.none")}
-              </p>
-            </div>
-          </div>
-        ) : null}
-      </Panel>
+      {/* 「提交答案」原本长在版本卡里；版本卡删除后仍保留这个入口。作答现在是「作业范围内提交」，
+          所以只把学生带到「我的作业」，不再直接链到 /submit。 */}
+      {version.data && version.data.status === "published" && canSubmitAnswer(session) ? (
+        <div className="inline">
+          <Link className="button" to="/assignments" data-testid="go-to-assignments">
+            {t("questions.goToAssignments")}
+          </Link>
+        </div>
+      ) : null}
 
       {/* 未发布版本看到这里时，读者会去找"发布"动作。入口在 `ReferenceVerificationPanel`
           （请求平台验证 → 全通过且存证已记录才可发布），**只对出题角色渲染**：

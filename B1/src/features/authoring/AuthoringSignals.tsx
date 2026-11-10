@@ -102,20 +102,6 @@ function SuggestionList({ assistance }: { assistance: AuthoringAssistance }) {
           ]}
         />
       )}
-      {assistance.provenance ? (
-        <details data-testid="assistance-provenance">
-          <summary>{t("authoring.assign.provenanceLabel")}</summary>
-          <ul className="muted">
-            <li>{t("authoring.assign.provenanceModel", { model: assistance.provenance.model })}</li>
-          </ul>
-        </details>
-      ) : null}
-      {/* 契约要求 `disclaimers` 非空并与建议一起展示：原文照录，不改写、不折叠。 */}
-      <ul className="muted" data-testid="assistance-disclaimers">
-        {assistance.disclaimers.map((line, index) => (
-          <li key={index}>{line}</li>
-        ))}
-      </ul>
     </>
   );
 }
