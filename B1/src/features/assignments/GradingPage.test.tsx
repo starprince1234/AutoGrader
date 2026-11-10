@@ -384,24 +384,27 @@ describe("批改界面（作业情况子界面）", () => {
     expect(await screen.findByTestId("grading-score-feedback")).toHaveTextContent("已保存");
   });
 
-  it("详情页两个视图都不再出现「返回作业列表」按钮", async () => {
+  it("题干视图标题行右侧是「返回作业列表」；学生视图同一位置换成「返回作业题干」", async () => {
     stub = installFetchStub(routes());
     const user = userEvent.setup();
     await signIn("teacher1", "pw");
     renderGrading();
 
+    // 题干视图：按钮在标题行右侧（`.panel__actions`），与题干标题平行。
     const stem = await screen.findByTestId("grading-question-window");
-    expect(stem).toBeInTheDocument();
-    expect(screen.queryByTestId("grading-back-to-list")).toBeNull();
+    const backToList = screen.getByTestId("grading-back-to-list");
+    expect(backToList).toHaveTextContent("返回作业列表");
+    expect(stem.querySelector(".panel__head")).toContainElement(backToList);
+    expect(backToList.closest(".panel__actions")).not.toBeNull();
+    expect(backToList).toHaveAttribute("href", "/assignments");
 
+    // 学生视图：同一个位置是「返回作业题干」，不再出现「返回作业列表」。
     await user.click(screen.getByTestId("grading-toggle-completed"));
     await user.click(await screen.findByTestId(`grading-student-completed-${E1}`));
-    await screen.findByTestId("grading-student-window");
+    const window = await screen.findByTestId("grading-student-window");
     expect(screen.queryByTestId("grading-back-to-list")).toBeNull();
-    // 回列表仍走面包屑（「作业」链接）。
-    expect(screen.getByRole("navigation").querySelector("a")).toHaveAttribute(
-      "href",
-      "/assignments",
+    expect(window.querySelector(".panel__actions")).toContainElement(
+      screen.getByTestId("grading-back-to-question"),
     );
   });
 

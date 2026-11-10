@@ -1060,6 +1060,7 @@ export const messages = {
 "grading.evaluationTitle": "评测结果与 ai 评价",
 "grading.noRun": "这道题还没有评测运行，因此没有权威分与评语。",
 
+"grading.backToList": "返回作业列表",
 "grading.scoreLabel": "评分（0–100，最多一位小数）",
 "grading.scorePlaceholder": "待评分",
 "grading.scoreAiHint": "当前分数 {score}：不改就按它；改动后失焦或回车即保存为教师分。",

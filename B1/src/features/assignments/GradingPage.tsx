@@ -468,7 +468,19 @@ export function GradingPage({
               </Panel>
             ) : (
               <div className="stack">
-              <Panel title={t("grading.questionWindow")} testId="grading-question-window">
+              <Panel
+                title={t("grading.questionWindow")}
+                testId="grading-question-window"
+                actions={
+                  <Link
+                    to="/assignments"
+                    className="button button--ghost"
+                    data-testid="grading-back-to-list"
+                  >
+                    <span aria-hidden="true">←</span> {t("grading.backToList")}
+                  </Link>
+                }
+              >
                 <div className="stack">
                   <div className="inline">
                     <span className="muted">
