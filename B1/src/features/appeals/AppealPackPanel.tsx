@@ -42,6 +42,18 @@ export function AppealPackPanel({ runId }: { runId: string }) {
 
   return (
     <Panel title={t("appeal.title")} testId="appeal-pack">
+      {/* 先把"这一份是谁的视图"讲清楚：契约的默认值是 teacher，学生若沿用默认值
+          就会拿到教师视图的包。角色未知时不猜（按钮禁用），并说明因此一个请求都不发。 */}
+      {view === null ? (
+        <p className="muted" data-testid="appeal-view-unknown">
+          {t("appeal.viewUnknown")}
+        </p>
+      ) : (
+        <p className="muted" data-testid="appeal-view">
+          {t("appeal.viewExplicit", { view })}{" "}
+          {view === "student" ? t("appeal.viewStudent") : t("appeal.viewTeacher")}
+        </p>
+      )}
       <div className="inline">
         <button
           type="button"
