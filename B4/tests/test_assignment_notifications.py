@@ -40,6 +40,8 @@ SERVICE_TOKEN = "test-service-token"
 PUBLISHED_AT = datetime(2026, 11, 8, 4, 0, tzinfo=UTC)
 
 SUMMARY_KEYS = {
+    "notification_id",
+    "kind",
     "assignment_id",
     "course_id",
     "status",
@@ -104,10 +106,19 @@ def _materialise(
     )
 
 
-def _teacher_view(client, headers, course_id: uuid.UUID, assignment_id: uuid.UUID):
+def _teacher_view(
+    client,
+    headers,
+    course_id: uuid.UUID,
+    assignment_id: uuid.UUID,
+    *,
+    kind: str | None = None,
+):
+    params = {"kind": kind} if kind is not None else None
     return client.get(
         f"/api/v1/courses/{course_id}/assignments/{assignment_id}/notifications",
         headers=headers,
+        params=params,
     )
 
 
@@ -778,6 +789,8 @@ def test_a_reminder_covers_only_the_requested_recipients_and_is_its_own_campaign
     assert summary["skipped_no_contact_count"] == 1
     assert summary["skipped_unbound_count"] == 1
     assert summary["sent_count"] == 0
+    # 响应自报 campaign 类别 前端据此确认这一页读到的就是提醒本身
+    assert summary["kind"] == "reminder"
 
     campaign = _campaign_row(engine, assignment_id)
     assert campaign.kind == "reminder"
@@ -811,6 +824,50 @@ def test_a_second_reminder_is_a_new_campaign_with_its_own_evidence(
     assert kinds == ["reminder", "reminder"]
     # Two reminders to the same student are two messages, so two delivery rows exist.
     assert _delivery_count(engine, assignment_id) == 2
+
+
+def test_a_reminder_campaign_is_readable_and_retryable_on_its_own(
+    client, factory, sign_in_as, engine
+) -> None:
+    """Reading by `kind` is what lets the teacher page explain a failed reminder.
+
+    Without it the only readable campaign was the announcement, so "why did the nudge fail"
+    had no answer anywhere in the API -- counts without recipients. Retrying by `kind` keeps
+    the two campaigns' evidence separate in both directions.
+    """
+    setup = _reminder_course(factory)
+    headers = sign_in_as("owner").headers
+    assignment_id = uuid.uuid4()
+
+    assert _remind(
+        client, headers, setup["course_id"], assignment_id, [setup["reachable"], setup["silent"]]
+    ).status_code == 200
+
+    reminder = _teacher_view(
+        client, headers, setup["course_id"], assignment_id, kind="reminder"
+    )
+    assert reminder.status_code == 200, reminder.text
+    body = reminder.json()
+    assert body["summary"]["kind"] == "reminder"
+    assert body["summary"]["recipient_total"] == 2
+    rows = body["deliveries"]["items"]
+    assert {row["student_number"] for row in rows} == {"202400000001", "202400000002"}
+    by_number = {row["student_number"]: row for row in rows}
+    assert by_number["202400000002"]["status"] == "skipped_no_contact"
+    assert by_number["202400000002"]["reason_code"] == "no_email"
+
+    # The announcement view is untouched by the reminder: still "never scheduled".
+    assert _teacher_view(client, headers, setup["course_id"], assignment_id).status_code == 404
+
+    # Retrying the reminder re-arms only its own failed rows.
+    retry = client.post(
+        f"/api/v1/courses/{setup['course_id']}/assignments/{assignment_id}"
+        "/notifications/retry",
+        headers=headers,
+        params={"kind": "reminder"},
+    )
+    assert retry.status_code == 200, retry.text
+    assert retry.json()["kind"] == "reminder"
 
 
 def test_an_enrollment_outside_the_roster_refuses_the_whole_reminder(

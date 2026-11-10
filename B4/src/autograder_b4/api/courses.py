@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, ConfigDict, Field
@@ -82,6 +83,10 @@ from .pagination import clamp_limit, descending_page_filter, page_envelope
 from .problem import ProblemRoute
 from .timestamps import rfc3339 as _rfc3339
 from .timestamps import same_instant as _same_instant
+
+#: The contract's `kind` domain. Defaulting to `publication` keeps every older caller
+#: unchanged, while a reminder batch is addressed explicitly instead of "whatever is newest".
+NotificationKind = Literal["publication", "reminder"]
 
 logger = get_logger("courses")
 
@@ -744,17 +749,22 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
         connection: Connection = Depends(dependencies.connection),
         cursor: str | None = Query(default=None),
         limit: int | None = Query(default=None, ge=1, le=200),
+        kind: NotificationKind = Query(default="publication"),
     ) -> dict[str, object]:
-        """Staff-only view of one assignment's publication notification (summary + rows)."""
+        """Staff-only view of one campaign's delivery rows: announcement or one reminder.
+
+        `kind` is explicit rather than "latest campaign": a reminder must never be mistaken
+        for the announcement, and the two have different audiences and different evidence.
+        """
         size = clamp_limit(limit)
         ensure_course_write(
             principal=caller, course_id=course_id, dependencies=dependencies
         )
         summary = campaign_for_teacher(
-            connection, course_id=course_id, assignment_id=assignment_id
+            connection, course_id=course_id, assignment_id=assignment_id, kind=kind
         )
         notification_id = notification_id_of(
-            connection, course_id=course_id, assignment_id=assignment_id
+            connection, course_id=course_id, assignment_id=assignment_id, kind=kind
         )
         statement = (
             select(deliveries)
@@ -782,13 +792,18 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
         course_id: uuid.UUID,
         assignment_id: uuid.UUID,
         caller=Depends(dependencies.principal),
+        kind: NotificationKind = Query(default="publication"),
     ) -> dict[str, object]:
-        """Re-arm transport failures; skipped identity reasons are shown, not retried."""
+        """Re-arm transport failures of one campaign.
+
+        Skipped identity reasons are reported, never retried: a second attempt cannot create
+        an account or an address, so retrying them would only hide the real reason.
+        """
         ensure_course_write(
             principal=caller, course_id=course_id, dependencies=dependencies
         )
         summary = retry_failed(
-            engine, course_id=course_id, assignment_id=assignment_id, now=_now()
+            engine, course_id=course_id, assignment_id=assignment_id, kind=kind, now=_now()
         )
         with engine.begin() as write:
             AuditLog(write).record(

@@ -12,6 +12,31 @@
 
 ---
 
+## 0.34.0 — 通知按 campaign 读取与重试（`kind`）
+
+- **类型**：P1 最小新增（两个可选查询参数 + 两个响应字段；无删除、无回填）
+- **状态**：有效
+- **背景**：提醒（`remind`）是**独立 campaign**，而读取与重试端点只认 `publication`：
+  `GET /notifications`、`POST /notifications/retry` 都按 `kind='publication'` 定位 campaign，
+  于是提醒的逐人投递证据在 API 上**不可读、不可重试**。教师页只能看到四个计数，
+  无法回答"哪几个人没收到、为什么"——而这正是提醒这件事唯一要留下的证据。
+  退回"取最新一条 campaign"也不行：两个 campaign 的受众不同，混在一起会把两份证据合并。
+- **变更**：
+  - `openapi/b4.yaml`：`GET /api/v1/courses/{course_id}/assignments/{assignment_id}/notifications`
+    与 `POST .../notifications/retry` 新增可选查询参数 `kind`（`publication` 默认 | `reminder`）。
+  - `AssignmentNotificationSummary` 新增必填 `notification_id` 与 `kind`：响应自报这是哪一份
+    campaign，调用方不必靠"请求了什么"去推断。
+- **语义**：
+  - 默认值仍是 `publication`，既有调用方行为不变；旧 B4 忽略未知查询参数，
+    此时响应里的 `kind` 仍为 `publication`，页面据此不会把公告的投递当成提醒的投递（版本漂移安全）。
+  - 重试只作用于被点名的那一份 campaign 的 `failed` 行；跳过（未绑定账号 / 无邮箱 / 已停用）
+    的行照旧不重试——重发不能造出账号或地址。
+- **影响**：
+  - B4：`campaign_for_teacher`/`notification_id_of`/`retry_failed` 接受 `kind`；两个端点透传；
+    `_summary` 返回 `notification_id`/`kind`。
+  - B1：读取投递时显式带 `kind=reminder`，用于在提醒浮窗里列出失败者与原因并提供重试。
+  - B2/B3/B5：无影响（不涉及通知 campaign）。
+
 ## 0.33.0 — 作业可手动结束（`closed`）与「未完成学生」提醒
 
 - **类型**：P3 最小新增（一个枚举值 + 两个端点；无字段删除、无数据回填）

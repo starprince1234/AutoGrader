@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AutoGrader B4 Platform API
-  version: 0.33.0
+  version: 0.34.0
   description: |
     Identity, courses, sections, enrollments, roster import, audit and the runtime
     module registry. Owned by B4 (RQ-B-4-10/20/30/40/50/99).
@@ -638,6 +638,19 @@ paths:
       parameters:
         - $ref: './common.yaml#/components/parameters/Cursor'
         - $ref: './common.yaml#/components/parameters/Limit'
+        - name: kind
+          in: query
+          required: false
+          description: |
+            Which campaign to read. `publication` (default) is the announcement materialised when
+            the assignment was published; `reminder` is the teacher's later nudge created by
+            `/notifications/remind`. Each campaign keeps its own recipient snapshot and its own
+            delivery evidence, so a reminder's failures can be read and retried on their own
+            without disturbing the announcement.
+          schema:
+            type: string
+            enum: [publication, reminder]
+            default: publication
       responses:
         '200':
           description: The notification summary and one delivery page.
@@ -675,6 +688,20 @@ paths:
         again cannot fix those reasons, and pretending otherwise would hide them. Returns the
         updated summary.
       tags: [notifications]
+      parameters:
+        - name: kind
+          in: query
+          required: false
+          description: |
+            Which campaign to read. `publication` (default) is the announcement materialised when
+            the assignment was published; `reminder` is the teacher's later nudge created by
+            `/notifications/remind`. Each campaign keeps its own recipient snapshot and its own
+            delivery evidence, so a reminder's failures can be read and retried on their own
+            without disturbing the announcement.
+          schema:
+            type: string
+            enum: [publication, reminder]
+            default: publication
       responses:
         '200':
           description: The updated notification summary.
@@ -1680,8 +1707,17 @@ components:
         counts attempted deliveries that failed, and the three `skipped_*` counts name the
         students that had no usable channel at publication time. A summary with `sent_count`
         0 and `skipped_unbound_count` > 0 means "nothing was delivered", never "delivered".
-      required: [assignment_id, course_id, status, recipient_total, sent_count, pending_count, failed_count, skipped_unbound_count, skipped_no_contact_count, skipped_inactive_count, created_at, updated_at]
+      required: [notification_id, kind, assignment_id, course_id, status, recipient_total, sent_count, pending_count, failed_count, skipped_unbound_count, skipped_no_contact_count, skipped_inactive_count, created_at, updated_at]
       properties:
+        notification_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        kind:
+          type: string
+          enum: [publication, reminder]
+          description: |
+            Which campaign this summary describes. A caller that asked for `reminder` can check
+            this field instead of assuming: while an older B4 ignores the `kind` parameter, the
+            answer still says `publication`, and the page must not present those rows as the
+            reminder's own evidence.
         assignment_id: {$ref: './common.yaml#/components/schemas/Uuid'}
         course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
         status:

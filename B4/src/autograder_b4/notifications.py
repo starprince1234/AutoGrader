@@ -142,6 +142,8 @@ def _summary(connection: Connection, campaign) -> dict[str, object]:
     sent = counts[DELIVERY_SENT]
     failed = counts[DELIVERY_FAILED]
     return {
+        "notification_id": str(campaign.notification_id),
+        "kind": campaign.kind,
         "assignment_id": str(campaign.assignment_id),
         "course_id": str(campaign.course_id),
         "status": campaign.status,
@@ -509,13 +511,22 @@ def _refresh_campaign(connection: Connection, campaign, now: datetime) -> None:
 
 # ------------------------------------------------------------------------------- retry
 def retry_failed(
-    engine: Engine, *, course_id: uuid.UUID, assignment_id: uuid.UUID, now: datetime | None = None
+    engine: Engine,
+    *,
+    course_id: uuid.UUID,
+    assignment_id: uuid.UUID,
+    kind: str = CAMPAIGN_KIND_PUBLICATION,
+    now: datetime | None = None,
 ) -> dict[str, object]:
-    """Re-arm transport failures; skipped identity reasons are deliberately left alone."""
+    """Re-arm transport failures of one campaign; skipped identity reasons stay untouched.
+
+    A reminder batch is retried on its own: re-arming the announcement because a reminder
+    failed (or the reverse) would rewrite evidence of a different message.
+    """
     moment = now or utcnow()
     with engine.begin() as connection:
         campaign = _require_campaign(
-            connection, course_id=course_id, assignment_id=assignment_id
+            connection, course_id=course_id, assignment_id=assignment_id, kind=kind
         )
         connection.execute(
             deliveries.update()
@@ -819,17 +830,32 @@ def _failure_detail(reason: str) -> str:
 
 # ------------------------------------------------------------------------ teacher reads
 def campaign_for_teacher(
-    connection: Connection, *, course_id: uuid.UUID, assignment_id: uuid.UUID
+    connection: Connection,
+    *,
+    course_id: uuid.UUID,
+    assignment_id: uuid.UUID,
+    kind: str = CAMPAIGN_KIND_PUBLICATION,
 ) -> dict[str, object]:
-    campaign = _require_campaign(connection, course_id=course_id, assignment_id=assignment_id)
+    """Delivery counts of **one** campaign: the announcement, or one reminder batch.
+
+    Reminders are separate campaigns (`kind='reminder'`), so they must be addressed
+    explicitly; defaulting to `publication` keeps every pre-existing caller unchanged.
+    """
+    campaign = _require_campaign(
+        connection, course_id=course_id, assignment_id=assignment_id, kind=kind
+    )
     return _summary(connection, campaign)
 
 
 def notification_id_of(
-    connection: Connection, *, course_id: uuid.UUID, assignment_id: uuid.UUID
+    connection: Connection,
+    *,
+    course_id: uuid.UUID,
+    assignment_id: uuid.UUID,
+    kind: str = CAMPAIGN_KIND_PUBLICATION,
 ) -> uuid.UUID:
     return _require_campaign(
-        connection, course_id=course_id, assignment_id=assignment_id
+        connection, course_id=course_id, assignment_id=assignment_id, kind=kind
     ).notification_id
 
 

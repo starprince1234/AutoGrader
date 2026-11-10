@@ -1174,6 +1174,15 @@ export interface components {
          *     0 and `skipped_unbound_count` > 0 means "nothing was delivered", never "delivered".
          */
         AssignmentNotificationSummary: {
+            notification_id: components["schemas"]["Uuid"];
+            /**
+             * @description Which campaign this summary describes. A caller that asked for `reminder` can check
+             *     this field instead of assuming: while an older B4 ignores the `kind` parameter, the
+             *     answer still says `publication`, and the page must not present those rows as the
+             *     reminder's own evidence.
+             * @enum {string}
+             */
+            kind: "publication" | "reminder";
             assignment_id: components["schemas"]["Uuid"];
             course_id: components["schemas"]["Uuid"];
             /** @enum {string} */
@@ -2104,6 +2113,14 @@ export interface operations {
             query?: {
                 cursor?: components["parameters"]["Cursor"];
                 limit?: components["parameters"]["Limit"];
+                /**
+                 * @description Which campaign to read. `publication` (default) is the announcement materialised when
+                 *     the assignment was published; `reminder` is the teacher's later nudge created by
+                 *     `/notifications/remind`. Each campaign keeps its own recipient snapshot and its own
+                 *     delivery evidence, so a reminder's failures can be read and retried on their own
+                 *     without disturbing the announcement.
+                 */
+                kind?: "publication" | "reminder";
             };
             header?: never;
             path: {
@@ -2135,7 +2152,16 @@ export interface operations {
     };
     retryAssignmentNotifications: {
         parameters: {
-            query?: never;
+            query?: {
+                /**
+                 * @description Which campaign to read. `publication` (default) is the announcement materialised when
+                 *     the assignment was published; `reminder` is the teacher's later nudge created by
+                 *     `/notifications/remind`. Each campaign keeps its own recipient snapshot and its own
+                 *     delivery evidence, so a reminder's failures can be read and retried on their own
+                 *     without disturbing the announcement.
+                 */
+                kind?: "publication" | "reminder";
+            };
             header?: never;
             path: {
                 course_id: components["schemas"]["Uuid"];
