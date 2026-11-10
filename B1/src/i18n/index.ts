@@ -1076,7 +1076,13 @@ export const messages = {
 "grading.remindTitle": "邮件提醒",
 
 "grading.remindOpen": "一键提醒","grading.remindIntro": "向「未完成」名单里的学生发送提醒邮件（未绑定账号的学生也会列入，发送后说明未送达原因）。提示语由系统固定生成，不能删改；你可以追加一句补充。",
-"grading.remindPromptLabel": "系统提示语（只读）",
+
+"grading.remindDeliveries": "投递明细",
+"grading.remindDeliveriesHint": "逐人状态取自服务端记录：只有「已送达」算送到；失败与跳过的人在这里点名，并写明原因。",
+"grading.remindDeliveriesEmpty": "这一批没有未送达的人。",
+"grading.remindKindMismatch": "当前后端还没有按 kind 返回，无法确认这批记录属于本次提醒；先看「作业通知」里的公告投递。",
+"grading.remindRetry": "重试失败的人",
+"grading.remindRetryPending": "重试中…","grading.remindPromptLabel": "系统提示语（只读）",
 "grading.remindPrompt": "提醒一下：你还没有提交课程《{course}》的作业《{title}》。截止时间：{due}。\n请尽快登录 AutoGrader 完成提交。如果已经提交，请忽略本邮件。",
 "grading.remindRecipients": "收件人",
 "grading.remindRecipientCount": "{count} 名学生（未完成）",

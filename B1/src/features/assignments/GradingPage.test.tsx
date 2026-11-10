@@ -18,6 +18,7 @@ import {
 } from "../../testing/httpBoundary";
 import {
   UUID_A,
+  assignmentNotificationDelivery,
   assignmentNotificationSummary,
   assignmentPublic,
   coursePage,
@@ -58,6 +59,9 @@ const V2 = "00000000-0000-4000-8000-000000000102";
 const Q1 = "00000000-0000-4000-8000-000000000201";
 const Q2 = "00000000-0000-4000-8000-000000000202";
 const SUB_S1_V1 = "00000000-0000-4000-8000-000000000301";
+const UUID_NOTIFICATION = "00000000-0000-4000-8000-000000000401";
+const UUID_DELIVERY_FAILED = "00000000-0000-4000-8000-000000000402";
+const UUID_DELIVERY_UNBOUND = "00000000-0000-4000-8000-000000000403";
 
 const ASSIGNMENT = assignmentPublic({
   assignment_id: UUID_A,
@@ -151,7 +155,65 @@ function routes(options: { gradeNextCursor?: string | null } = {}): StubbedRoute
     },
     {
       path: `/api/v1/courses/${COURSE}/assignments/${UUID_A}/notifications`,
-      respond: () => jsonResponse({ detail: "not found" }, 404),
+      // 公告没有记录（404）；提醒那份返回逐人投递，用于浮窗里的「投递明细」。
+      respond: ({ url }) => {
+        const kind = url.searchParams.get("kind") ?? "publication";
+        if (kind !== "reminder") {
+          return jsonResponse({ detail: "not found" }, 404);
+        }
+        return jsonResponse({
+          summary: assignmentNotificationSummary({
+            notification_id: UUID_NOTIFICATION,
+            kind: "reminder",
+            recipient_total: 2,
+            sent_count: 0,
+            pending_count: 1,
+            failed_count: 1,
+            skipped_unbound_count: 1,
+            status: "partial",
+          }),
+          deliveries: {
+            items: [
+              assignmentNotificationDelivery({
+                delivery_id: UUID_DELIVERY_FAILED,
+                student_number: "20260002",
+                display_name: "李四",
+                status: "failed",
+                reason_code: "smtp_error",
+                reason_detail: "SMTP 发送失败(已记录失败, 稍后按退避重试; 教师也可手动重试)",
+              }),
+              assignmentNotificationDelivery({
+                delivery_id: UUID_DELIVERY_UNBOUND,
+                student_number: "20260003",
+                display_name: "王五",
+                status: "skipped_unbound",
+                reason_code: "no_account",
+                reason_detail: "学生尚未注册账号, 未发送",
+                user_id: null,
+              }),
+            ],
+            next_cursor: null,
+          },
+        });
+      },
+    },
+    {
+      // 重试：只重置失败行，返回更新后的 summary。
+      method: "POST",
+      path: `/api/v1/courses/${COURSE}/assignments/${UUID_A}/notifications/retry`,
+      respond: () =>
+        jsonResponse(
+          assignmentNotificationSummary({
+            notification_id: UUID_NOTIFICATION,
+            kind: "reminder",
+            recipient_total: 2,
+            sent_count: 0,
+            pending_count: 2,
+            failed_count: 0,
+            skipped_unbound_count: 0,
+            status: "pending",
+          }),
+        ),
     },
     {
       path: `/api/v1/courses/${COURSE}/enrollments`,
@@ -482,6 +544,26 @@ describe("批改界面 · 邮件提醒（自动提示语 / 一键提醒）", () 
     expect(screen.getByTestId("grading-remind-skipped-unbound")).toHaveTextContent(
       "还没有绑定账号",
     );
+
+    // 投递明细：逐人列出未送达的人与原因，并且只读 kind=reminder 那一份。
+    const detail = await screen.findByTestId("grading-remind-delivery-list");
+    expect(detail).toHaveTextContent("李四");
+    expect(detail).toHaveTextContent("SMTP 发送失败");
+    expect(detail).toHaveTextContent("王五");
+    expect(detail).toHaveTextContent("未绑定账号");
+
+    // 重试只针对提醒这一批：请求必须带 kind=reminder。
+    await user.click(screen.getByTestId("grading-remind-retry"));
+    await waitFor(() => {
+      const call = stub!.requests.find(
+        (item) =>
+          item.method === "POST" &&
+          item.url.pathname ===
+            `/api/v1/courses/${COURSE}/assignments/${UUID_A}/notifications/retry`,
+      );
+      expect(call).toBeTruthy();
+      expect(call!.url.searchParams.get("kind")).toBe("reminder");
+    });
 
     // 关闭后回到页面，随时随地可以再打开。
     await user.click(screen.getByTestId("grading-remind-close"));

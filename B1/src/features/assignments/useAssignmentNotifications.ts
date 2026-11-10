@@ -49,10 +49,14 @@ export type AssignmentNotificationsState = {
   truncated: boolean;
 };
 
+/** 一份 campaign 的类别：发布公告，或某一次「一键提醒」。 */
+export type NotificationKind = "publication" | "reminder";
+
 async function fetchNotificationPage(input: {
   courseId: string;
   assignmentId: string;
   cursor: string | null;
+  kind: NotificationKind;
 }): Promise<AssignmentNotificationPage> {
   const body = await apiRequest<{
     summary: AssignmentNotificationSummary;
@@ -61,7 +65,14 @@ async function fetchNotificationPage(input: {
     `/api/v1/courses/${encodeURIComponent(input.courseId)}/assignments/${encodeURIComponent(
       input.assignmentId,
     )}/notifications`,
-    { query: { limit: NOTIFICATION_PAGE_SIZE, cursor: input.cursor ?? undefined } },
+    {
+      query: {
+        limit: NOTIFICATION_PAGE_SIZE,
+        cursor: input.cursor ?? undefined,
+        // 显式带上 kind：默认 publication，提醒必须点名，不能靠"最新一条"猜。
+        kind: input.kind,
+      },
+    },
   );
   return {
     summary: body.summary,
@@ -80,13 +91,15 @@ async function fetchNotificationPage(input: {
 export function useAssignmentNotifications(
   courseId: string | null,
   assignmentId: string | null,
-  options?: { enabled?: boolean },
+  options?: { enabled?: boolean; kind?: NotificationKind },
 ): AssignmentNotificationsState {
   const enabled = Boolean(courseId) && Boolean(assignmentId) && (options?.enabled ?? true);
+  const kind = options?.kind ?? "publication";
   const query = useInfiniteQuery({
     queryKey: queryKeys.assignmentNotifications(
       courseId ?? "",
       assignmentId ?? "",
+      kind,
     ),
     enabled,
     retry: false,
@@ -96,6 +109,7 @@ export function useAssignmentNotifications(
         courseId: courseId as string,
         assignmentId: assignmentId as string,
         cursor: pageParam,
+        kind,
       }),
     getNextPageParam: (lastPage) => lastPage.nextCursor,
   });
@@ -160,8 +174,41 @@ export function useRemindAssignmentStudents(
         },
       ),
     onSuccess: async () => {
+      // 前缀失效：公告与提醒两份缓存都要重取（这里故意省略 kind 这一层）。
       await queryClient.invalidateQueries({
-        queryKey: queryKeys.assignmentNotifications(courseId ?? "", assignmentId ?? ""),
+        queryKey: ["assignment-notifications", courseId ?? "", assignmentId ?? ""],
+      });
+    },
+  });
+}
+
+/**
+ * 重试某一类 campaign 里**发送失败**的投递（B4 `POST .../notifications/retry?kind=`）。
+ *
+ * 只重置 `failed`：未绑定账号 / 没有邮箱 / 账号停用这些原因重发也修不好，继续显示而不是假装重试。
+ * 成功后失效该类 campaign 的缓存，让页面重新读到服务端算出来的计数。
+ */
+export function useRetryAssignmentNotifications(
+  courseId: string | null,
+  assignmentId: string | null,
+  kind: NotificationKind,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (): Promise<AssignmentNotificationSummary> =>
+      apiRequest<AssignmentNotificationSummary>(
+        `/api/v1/courses/${encodeURIComponent(courseId as string)}/assignments/${encodeURIComponent(
+          assignmentId as string,
+        )}/notifications/retry`,
+        { method: "POST", query: { kind } },
+      ),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: queryKeys.assignmentNotifications(
+          courseId ?? "",
+          assignmentId ?? "",
+          kind,
+        ),
       });
     },
   });
@@ -186,7 +233,7 @@ export function useScheduleAssignmentNotifications(
       ),
     onSuccess: async () => {
       await queryClient.invalidateQueries({
-        queryKey: queryKeys.assignmentNotifications(courseId ?? "", assignmentId ?? ""),
+        queryKey: ["assignment-notifications", courseId ?? "", assignmentId ?? ""],
       });
       await queryClient.invalidateQueries({
         queryKey: queryKeys.assignment(assignmentId ?? ""),

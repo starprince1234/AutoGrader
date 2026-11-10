@@ -187,6 +187,8 @@ export function assignmentNotificationSummary(
   overrides?: Partial<AssignmentNotificationSummary>,
 ): AssignmentNotificationSummary {
   return {
+    notification_id: UUID_F,
+    kind: "publication",
     assignment_id: UUID_A,
     course_id: UUID_B,
     status: "completed",

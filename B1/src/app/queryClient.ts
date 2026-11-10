@@ -62,8 +62,12 @@ export const queryKeys = {
    * 作业发布通知（B4 拥有投递状态）。键含课程与作业：两个 id 共同确定唯一记录，
    * 同一作业在不同课程下不是同一条通知。
    */
-  assignmentNotifications: (courseId: string, assignmentId: string) =>
-    ["assignment-notifications", courseId, assignmentId] as const,
+  // 第三个元素是 campaign 类别：公告与每一条提醒是**不同的**证据，不能共用缓存。
+  assignmentNotifications: (
+    courseId: string,
+    assignmentId: string,
+    kind: "publication" | "reminder" = "publication",
+  ) => ["assignment-notifications", courseId, assignmentId, kind] as const,
   question: (questionId: string) => ["question", questionId] as const,
   questionVersion: (versionId: string) => ["question-version", versionId] as const,
   questionDiagnostics: (questionId: string) =>

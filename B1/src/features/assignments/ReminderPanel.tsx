@@ -3,9 +3,14 @@ import { t } from "../../i18n";
 import { isApiError } from "../../api/problem";
 import type { AssignmentNotificationSummary } from "../../api/types";
 import { loadedCourses, useCourses } from "../../api/directory";
-import { Banner, Field, Modal } from "../../ui/components";
+import { Banner, Field, InlineLoader, Modal } from "../../ui/components";
 import { formatDateTime } from "../../ui/format";
-import { useRemindAssignmentStudents } from "./useAssignmentNotifications";
+import {
+  useAssignmentNotifications,
+  useRemindAssignmentStudents,
+  useRetryAssignmentNotifications,
+} from "./useAssignmentNotifications";
+import { deliveryStatusLabel, notificationReasonLabel } from "./notificationDisplay";
 import type { StudentProgress } from "./useAssignmentProgress";
 
 /**
@@ -56,6 +61,16 @@ export function ReminderPanel({
   const [result, setResult] = useState<AssignmentNotificationSummary | null>(null);
   const [error, setError] = useState<unknown>(null);
   const remind = useRemindAssignmentStudents(courseId, assignmentId);
+
+  // 提醒是独立 campaign：明细必须按 kind=reminder 读，不能借用公告那一份。
+  // 只有真的发过一次（result 非空）才去读，避免打开浮窗就发一个必然 404 的请求。
+  const deliveries = useAssignmentNotifications(courseId, assignmentId, {
+    enabled: result !== null,
+    kind: "reminder",
+  });
+  const retry = useRetryAssignmentNotifications(courseId, assignmentId, "reminder");
+  const undelivered = deliveries.deliveries.filter((row) => row.status !== "sent");
+  const reminderKindConfirmed = deliveries.summary?.kind === "reminder";
 
   const dueText = dueAt
     ? formatDateTime(dueAt, t("assignments.noDue"))
@@ -204,6 +219,58 @@ export function ReminderPanel({
           </Banner>
         ) : null}
 
+
+        {result !== null ? (
+          <div className="stack" data-testid="grading-remind-deliveries">
+            <div className="inline">
+              <strong>{t("grading.remindDeliveries")}</strong>
+              <button
+                type="button"
+                className="button button--ghost"
+                data-testid="grading-remind-retry"
+                disabled={
+                  retry.isPending ||
+                  !reminderKindConfirmed ||
+                  (deliveries.summary?.failed_count ?? 0) === 0
+                }
+                onClick={() => retry.mutate()}
+              >
+                {retry.isPending ? t("grading.remindRetryPending") : t("grading.remindRetry")}
+              </button>
+            </div>
+            <p className="muted">{t("grading.remindDeliveriesHint")}</p>
+            {!reminderKindConfirmed && !deliveries.isPending ? (
+              <p className="muted" data-testid="grading-remind-kind-mismatch">
+                {t("grading.remindKindMismatch")}
+              </p>
+            ) : deliveries.isPending ? (
+              <p className="muted">
+                <InlineLoader />
+              </p>
+            ) : undelivered.length === 0 ? (
+              <p className="muted" data-testid="grading-remind-deliveries-empty">
+                {t("grading.remindDeliveriesEmpty")}
+              </p>
+            ) : (
+              <ul className="stack" data-testid="grading-remind-delivery-list">
+                {undelivered.map((row) => (
+                  <li key={row.delivery_id} data-testid={`grading-remind-delivery-${row.delivery_id}`}>
+                    <span>
+                      {row.display_name}（{row.student_number}）
+                    </span>{" "}
+                    <span className="muted">
+                      {deliveryStatusLabel(row.status)}
+                      {row.reason_code !== null && row.reason_code !== undefined
+                        ? ` · ${notificationReasonLabel(row.reason_code)}`
+                        : ""}
+                      {row.reason_detail ? ` · ${row.reason_detail}` : ""}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        ) : null}
       </div>
     </Modal>
   );
