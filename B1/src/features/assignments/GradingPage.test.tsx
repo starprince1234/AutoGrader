@@ -427,13 +427,22 @@ describe("批改界面 · 邮件提醒（自动提示语 / 一键提醒）", () 
     await signIn("teacher1", "pw");
     renderGrading();
 
+    // 浮窗默认不出现：题干下方不再常驻提醒方框。
+    await screen.findByTestId("grading-question-window");
+    expect(screen.queryByTestId("grading-reminder")).toBeNull();
+
+    // 触发点是「未完成」标题行右侧的「一键提醒」。
+    const openButton = screen.getByTestId("grading-remind-open");
+    expect(openButton).toHaveTextContent("一键提醒");
+    expect(openButton.closest(".grading-group__head")).not.toBeNull();
+    await user.click(openButton);
+
     const prompt = await screen.findByTestId("grading-remind-prompt");
-    // 位置：邮件提醒在右栏题干下方（与题干面板同一列），不单独占左栏一栏。
-    const stem = screen.getByTestId("grading-question-window");
+    // 位置：浮窗（不是嵌在页面里的方框）。
     const reminder = screen.getByTestId("grading-reminder");
-    expect(stem.parentElement).toContainElement(reminder);
-    expect(screen.getByTestId("grading-completed-group")).not.toContainElement(reminder);
-    // 长提示语必须可换行：用带样式的块而不是不换行的 <pre>（否则会把面板撑破）。
+    expect(reminder).toHaveAttribute("role", "dialog");
+    expect(screen.getByTestId("grading-question-window")).not.toContainElement(reminder);
+    // 长提示语必须可换行：用带样式的块而不是不换行的 <pre>（否则会把浮窗撑破）。
     expect(prompt.querySelector("pre")).toBeNull();
     expect(prompt.querySelector(".grading-remind__prompt")).not.toBeNull();
 
@@ -473,5 +482,11 @@ describe("批改界面 · 邮件提醒（自动提示语 / 一键提醒）", () 
     expect(screen.getByTestId("grading-remind-skipped-unbound")).toHaveTextContent(
       "还没有绑定账号",
     );
+
+    // 关闭后回到页面，随时随地可以再打开。
+    await user.click(screen.getByTestId("grading-remind-close"));
+    await waitFor(() => expect(screen.queryByTestId("grading-reminder")).toBeNull());
+    await user.click(screen.getByTestId("grading-remind-open"));
+    expect(await screen.findByTestId("grading-reminder")).toBeInTheDocument();
   });
 });

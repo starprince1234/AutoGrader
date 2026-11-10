@@ -3,13 +3,15 @@ import { t } from "../../i18n";
 import { isApiError } from "../../api/problem";
 import type { AssignmentNotificationSummary } from "../../api/types";
 import { loadedCourses, useCourses } from "../../api/directory";
-import { Banner, Field, Panel } from "../../ui/components";
+import { Banner, Field, Modal } from "../../ui/components";
 import { formatDateTime } from "../../ui/format";
 import { useRemindAssignmentStudents } from "./useAssignmentNotifications";
 import type { StudentProgress } from "./useAssignmentProgress";
 
 /**
- * 「未完成」板块里的邮件提醒（PDF：邮件提醒 → 自动包括提示语 / 一键提醒）。
+ * 「未完成」右侧「一键提醒」弹出的浮窗（PDF：邮件提醒 → 自动包括提示语 / 一键提醒）。
+ *
+ * 浮窗内容与原来的内嵌方框一致；区别只是它按需出现，不再长期占着题干下方那一列。
  *
  * 三条口径不能含糊：
  * 1. **提示语由服务端生成**。这里只做只读预览，措辞与 B4 的模板一致；教师最多追加一句补充语，
@@ -28,11 +30,14 @@ export function ReminderPanel({
   title,
   dueAt,
   pending,
+  onClose,
 }: {
   courseId: string;
   assignmentId: string;
   title: string;
   dueAt: string | null;
+  /** 关闭浮窗（Esc、遮罩点击、取消按钮都走这里）。 */
+  onClose: () => void;
   /**
    * 「未完成」名单 = 收件人。**不再按是否绑定账号过滤**：没绑定账号的学生同样会出现在
    * 名单里并被提交为收件人，服务端把他们记为 `skipped_unbound/no_account` 并在结果里说明，
@@ -81,7 +86,38 @@ export function ReminderPanel({
   const canSend = recipients.length > 0 && !remind.isPending && note.length <= NOTE_LIMIT;
 
   return (
-    <Panel title={t("grading.remindTitle")} testId="grading-reminder">
+    <Modal
+      title={t("grading.remindTitle")}
+      onClose={onClose}
+      testId="grading-reminder"
+      initialFocus="[data-testid='grading-remind-note']"
+      footer={
+        <div className="inline">
+          <button
+            type="button"
+            className="button"
+            data-testid="grading-remind-send"
+            disabled={!canSend}
+            onClick={send}
+          >
+            {remind.isPending ? t("grading.remindSending") : t("grading.remindSend")}
+          </button>
+          {recipients.length === 0 ? (
+            <span className="muted" data-testid="grading-remind-empty">
+              {t("grading.remindNoRecipient")}
+            </span>
+          ) : null}
+          <button
+            type="button"
+            className="button button--ghost"
+            data-testid="grading-remind-close"
+            onClick={onClose}
+          >
+            {t("common.cancel")}
+          </button>
+        </div>
+      }
+    >
       <div className="stack">
         <p className="muted">{t("grading.remindIntro")}</p>
         <div className="stack" data-testid="grading-remind-prompt">
@@ -168,23 +204,7 @@ export function ReminderPanel({
           </Banner>
         ) : null}
 
-        <div className="inline">
-          <button
-            type="button"
-            className="button"
-            data-testid="grading-remind-send"
-            disabled={!canSend}
-            onClick={send}
-          >
-            {remind.isPending ? t("grading.remindSending") : t("grading.remindSend")}
-          </button>
-          {recipients.length === 0 ? (
-            <span className="muted" data-testid="grading-remind-empty">
-              {t("grading.remindNoRecipient")}
-            </span>
-          ) : null}
-        </div>
       </div>
-    </Panel>
+    </Modal>
   );
 }

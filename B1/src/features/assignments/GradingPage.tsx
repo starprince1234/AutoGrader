@@ -150,6 +150,8 @@ export function GradingPage({
   const [versionId, setVersionId] = useState<string | null>(initialVersionId);
   const [studentId, setStudentId] = useState<string | null>(initialStudentId);
   const [openGroup, setOpenGroup] = useState<"completed" | "pending" | null>("pending");
+  /** 「一键提醒」浮窗：内容与原来的内嵌方框一致，只是改成按需弹出。 */
+  const [reminderOpen, setReminderOpen] = useState(false);
 
   const versions = assignment?.question_version_ids ?? [];
   const currentVersionId =
@@ -296,23 +298,25 @@ export function GradingPage({
               title={t("grading.completedTitle")}
               testId="grading-completed-group"
             >
-              <button
-                type="button"
-                className="grading-group__head"
-                aria-expanded={openGroup === "completed"}
-                data-testid="grading-toggle-completed"
-                onClick={() => setOpenGroup(openGroup === "completed" ? null : "completed")}
-              >
-                <span className="muted">
-                  {t("grading.completedCount", {
-                    done: groups.completed.length,
-                    total: judgedTotal(groups),
-                  })}
-                </span>
-                <span className="muted" aria-hidden="true">
-                  {openGroup === "completed" ? t("common.collapse") : t("common.expand")}
-                </span>
-              </button>
+              <div className="grading-group__head">
+                <button
+                  type="button"
+                  className="grading-group__toggle"
+                  aria-expanded={openGroup === "completed"}
+                  data-testid="grading-toggle-completed"
+                  onClick={() => setOpenGroup(openGroup === "completed" ? null : "completed")}
+                >
+                  <span className="muted">
+                    {t("grading.completedCount", {
+                      done: groups.completed.length,
+                      total: judgedTotal(groups),
+                    })}
+                  </span>
+                  <span className="muted" aria-hidden="true">
+                    {openGroup === "completed" ? t("common.collapse") : t("common.expand")}
+                  </span>
+                </button>
+              </div>
               {openGroup === "completed" ? (
                 groups.completed.length === 0 ? (
                   <p className="muted">{t("grading.completedEmpty")}</p>
@@ -350,23 +354,34 @@ export function GradingPage({
             </Panel>
 
             <Panel title={t("grading.pendingTitle")} testId="grading-pending-group">
-              <button
-                type="button"
-                className="grading-group__head"
-                aria-expanded={openGroup === "pending"}
-                data-testid="grading-toggle-pending"
-                onClick={() => setOpenGroup(openGroup === "pending" ? null : "pending")}
-              >
-                <span className="muted">
-                  {t("grading.pendingCount", {
-                    missing: groups.pending.length,
-                    total: judgedTotal(groups),
-                  })}
-                </span>
-                <span className="muted" aria-hidden="true">
-                  {openGroup === "pending" ? t("common.collapse") : t("common.expand")}
-                </span>
-              </button>
+              <div className="grading-group__head">
+                <button
+                  type="button"
+                  className="grading-group__toggle"
+                  aria-expanded={openGroup === "pending"}
+                  data-testid="grading-toggle-pending"
+                  onClick={() => setOpenGroup(openGroup === "pending" ? null : "pending")}
+                >
+                  <span className="muted">
+                    {t("grading.pendingCount", {
+                      missing: groups.pending.length,
+                      total: judgedTotal(groups),
+                    })}
+                  </span>
+                  <span className="muted" aria-hidden="true">
+                    {openGroup === "pending" ? t("common.collapse") : t("common.expand")}
+                  </span>
+                </button>
+                {/* 一键提醒：浮窗按需打开，不再长期占着题干下方那一列。 */}
+                <button
+                  type="button"
+                  className="button button--ghost grading-group__action"
+                  data-testid="grading-remind-open"
+                  onClick={() => setReminderOpen(true)}
+                >
+                  {t("grading.remindOpen")}
+                </button>
+              </div>
               {openGroup === "pending" ? (
                 <>
                   <p className="muted">{t("grading.submissionState")}</p>
@@ -509,22 +524,22 @@ export function GradingPage({
                 </div>
               </Panel>
 
-              {/* 邮件提醒就在题干下方：它是这一页的动作，而不是左栏名单的一部分。
-                  收件人来自「未完成」名单；未绑定账号的行没有可投递账号，单独说明。 */}
-              {assignment !== null ? (
-                <ReminderPanel
-                  courseId={assignment.course_id}
-                  assignmentId={assignment.assignment_id}
-                  title={assignment.title}
-                  dueAt={assignment.due_at ?? null}
-                  pending={groups.pending}
-                />
-              ) : null}
               </div>
             )}
           </section>
         </div>
       )}
+
+      {reminderOpen && assignment !== null ? (
+        <ReminderPanel
+          courseId={assignment.course_id}
+          assignmentId={assignment.assignment_id}
+          title={assignment.title}
+          dueAt={assignment.due_at ?? null}
+          pending={groups.pending}
+          onClose={() => setReminderOpen(false)}
+        />
+      ) : null}
 
       {assignment !== null ? (
         <details data-testid="grading-notifications-details">

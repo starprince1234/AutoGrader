@@ -76,18 +76,35 @@
   font-size: 12px;
 }
 
+/* 分组标题行：左边是折叠开关（撑满），右边是「一键提醒」动作。 */
 .grading-group__head {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   width: 100%;
+  padding: 0;
+}
+
+.grading-group__toggle {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
   background: transparent;
   border: 0;
   padding: 4px 0;
   cursor: pointer;
   color: inherit;
   font: inherit;
+  text-align: left;
+}
+
+.grading-group__action {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 .grading-answer__back {

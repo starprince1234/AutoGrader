@@ -1074,7 +1074,8 @@ export const messages = {
 "grading.scoreReasonPlaceholder": "说明为什么改这一分（会写进历史记录）",
 "grading.scoreReasonRequired": "已经改过一次分，再改需要填写理由。","grading.courseUnknown": "（课程名由服务端填写）",
 "grading.remindTitle": "邮件提醒",
-"grading.remindIntro": "向「未完成」名单里的学生发送提醒邮件（未绑定账号的学生也会列入，发送后说明未送达原因）。提示语由系统固定生成，不能删改；你可以追加一句补充。",
+
+"grading.remindOpen": "一键提醒","grading.remindIntro": "向「未完成」名单里的学生发送提醒邮件（未绑定账号的学生也会列入，发送后说明未送达原因）。提示语由系统固定生成，不能删改；你可以追加一句补充。",
 "grading.remindPromptLabel": "系统提示语（只读）",
 "grading.remindPrompt": "提醒一下：你还没有提交课程《{course}》的作业《{title}》。截止时间：{due}。\n请尽快登录 AutoGrader 完成提交。如果已经提交，请忽略本邮件。",
 "grading.remindRecipients": "收件人",
