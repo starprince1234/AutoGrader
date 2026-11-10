@@ -95,21 +95,29 @@ function StudentRow({
   meta: string;
   tone: "ok" | "warn" | "bad" | "idle";
   label: string;
-  onSelect: () => void;
+  /** `null` = 该名单行还没绑定账号：仍然列出，但没有可查看的作答。 */
+  onSelect: (() => void) | null;
   testId: string;
 }) {
+  const body = (
+    <>
+      <span>{name}</span>
+      <span className="grading-student-list__meta muted">{meta}</span>
+      <StatusPill tone={tone}>{label}</StatusPill>
+    </>
+  );
   return (
     <li>
-      <button
-        type="button"
-        aria-current={selected}
-        data-testid={testId}
-        onClick={onSelect}
-      >
-        <span>{name}</span>
-        <span className="grading-student-list__meta muted">{meta}</span>
-        <StatusPill tone={tone}>{label}</StatusPill>
-      </button>
+      {onSelect === null ? (
+        // 未绑定账号：显示在名单里（他也确实没交），但点进去没有任何可看的东西。
+        <div className="grading-student-list__row" data-testid={testId}>
+          {body}
+        </div>
+      ) : (
+        <button type="button" aria-current={selected} data-testid={testId} onClick={onSelect}>
+          {body}
+        </button>
+      )}
     </li>
   );
 }
@@ -323,7 +331,11 @@ export function GradingPage({
                         tone={overallStateTone(row.status)}
                         label={overallStateLabel(row.status)}
                         testId={`grading-student-completed-${row.enrollmentId}`}
-                        onSelect={() => select(currentVersionId, row.studentId)}
+                        onSelect={
+                          row.studentId === null
+                            ? null
+                            : () => select(currentVersionId, row.studentId)
+                        }
                       />
                     ))}
                   </ul>
@@ -361,13 +373,28 @@ export function GradingPage({
                       {groups.pending.map((row) => (
                         <StudentRow
                           key={row.enrollmentId}
-                          selected={row.studentId === selectedStudent?.studentId}
+                          selected={
+                            row.studentId !== null &&
+                            row.studentId === selectedStudent?.studentId
+                          }
                           name={row.displayName}
-                          meta={`${row.studentNumber} · ${row.className}`}
+                          meta={
+                            row.studentId === null
+                              ? `${row.studentNumber} · ${row.className} · ${t("grading.unboundRow")}`
+                              : `${row.studentNumber} · ${row.className}`
+                          }
                           tone="idle"
-                          label={t("grades.missing.statusNotSubmitted")}
+                          label={
+                            row.studentId === null
+                              ? t("grades.missing.statusUnbound")
+                              : t("grades.missing.statusNotSubmitted")
+                          }
                           testId={`grading-student-pending-${row.enrollmentId}`}
-                          onSelect={() => select(currentVersionId, row.studentId)}
+                          onSelect={
+                            row.studentId === null
+                              ? null
+                              : () => select(currentVersionId, row.studentId)
+                          }
                         />
                       ))}
                     </ul>
@@ -376,27 +403,9 @@ export function GradingPage({
               ) : null}
             </Panel>
 
-            {groups.unbound.length > 0 ? (
-              <Banner tone="warn" testId="grading-unbound">
-                {t("grading.unbound", { count: groups.unbound.length })}
-              </Banner>
-            ) : null}
-
           </aside>
 
           <section className="grading-workspace__window">
-            {/* 返回作业列表在「题干」上方（右栏第一个元素）：它属于这一块的导航，
-                而不是页面头部；选中学生时同样可见。 */}
-            <div className="grading-question__actions">
-              <Link
-                to="/assignments"
-                className="button button--ghost"
-                data-testid="grading-back-to-list"
-              >
-                <span aria-hidden="true">←</span> {t("grading.backToList")}
-              </Link>
-            </div>
-
             {selectedStudent !== null ? (
               <Panel
                 title={t("grading.studentWindow", { name: selectedStudent.displayName })}
@@ -446,6 +455,16 @@ export function GradingPage({
               <div className="stack">
               <Panel title={t("grading.questionWindow")} testId="grading-question-window">
                 <div className="stack">
+                  {/* 返回作业列表和题干在同一个框里：它是这一块的导航，不单独占一行。 */}
+                  <div className="inline grading-question__actions">
+                    <Link
+                      to="/assignments"
+                      className="button button--ghost"
+                      data-testid="grading-back-to-list"
+                    >
+                      <span aria-hidden="true">←</span> {t("grading.backToList")}
+                    </Link>
+                  </div>
                   <div className="inline">
                     <span className="muted">
                       {t("questions.version", {
@@ -482,7 +501,6 @@ export function GradingPage({
                   title={assignment.title}
                   dueAt={assignment.due_at ?? null}
                   pending={groups.pending}
-                  unboundCount={groups.unbound.length}
                 />
               ) : null}
               </div>

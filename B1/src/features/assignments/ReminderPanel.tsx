@@ -28,16 +28,17 @@ export function ReminderPanel({
   title,
   dueAt,
   pending,
-  unboundCount,
 }: {
   courseId: string;
   assignmentId: string;
   title: string;
   dueAt: string | null;
-  /** 「未完成」名单（只有已绑定账号的行会成为收件人）。 */
+  /**
+   * 「未完成」名单 = 收件人。**不再按是否绑定账号过滤**：没绑定账号的学生同样会出现在
+   * 名单里并被提交为收件人，服务端把他们记为 `skipped_unbound/no_account` 并在结果里说明，
+   * 而不是在页面上悄悄少一个人。
+   */
   pending: readonly StudentProgress[];
-  /** 未绑定账号的名单行数：它们不能成为收件人。 */
-  unboundCount: number;
 }) {
   const courses = useCourses();
   const courseOptions = useMemo(() => loadedCourses(courses.data?.pages), [courses.data]);
@@ -45,10 +46,7 @@ export function ReminderPanel({
     courseOptions.find((course) => course.course_id === courseId)?.title ??
     t("grading.courseUnknown");
 
-  const recipients = useMemo(
-    () => pending.filter((row) => row.studentId !== null),
-    [pending],
-  );
+  const recipients = useMemo(() => [...pending], [pending]);
   const [note, setNote] = useState("");
   const [result, setResult] = useState<AssignmentNotificationSummary | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -95,9 +93,6 @@ export function ReminderPanel({
         <Field label={t("grading.remindRecipients")} htmlFor="grading-remind-recipients">
           <p data-testid="grading-remind-recipients">
             {t("grading.remindRecipientCount", { count: recipients.length })}
-            {unboundCount > 0
-              ? ` · ${t("grading.remindUnboundSkipped", { count: unboundCount })}`
-              : null}
           </p>
         </Field>
 
@@ -130,21 +125,46 @@ export function ReminderPanel({
 
         {result !== null ? (
           <Banner tone="info" testId="grading-remind-result">
-            <span data-testid="grading-remind-scheduled">
-              {t("grading.remindScheduled", { count: result.recipient_total })}
-            </span>
-            <span className="muted" data-testid="grading-remind-counts">
-              {" "}
-              {t("grading.remindCounts", {
-                sent: result.sent_count,
-                pending: result.pending_count,
-                failed: result.failed_count,
-                skipped:
-                  result.skipped_unbound_count +
-                  result.skipped_no_contact_count +
-                  result.skipped_inactive_count,
-              })}
-            </span>
+            <div className="stack">
+              <span data-testid="grading-remind-scheduled">
+                {t("grading.remindScheduled", { count: result.recipient_total })}
+              </span>
+              <span className="muted" data-testid="grading-remind-counts">
+                {t("grading.remindDelivered", {
+                  sent: result.sent_count,
+                  pending: result.pending_count,
+                })}
+              </span>
+              {/* 未成功的人必须点名原因：未绑定账号 / 没有邮箱 / 账号停用 / 发送失败。 */}
+              <ul className="stack" data-testid="grading-remind-reasons">
+                {result.skipped_unbound_count > 0 ? (
+                  <li data-testid="grading-remind-skipped-unbound">
+                    {t("grading.remindSkippedUnbound", {
+                      count: result.skipped_unbound_count,
+                    })}
+                  </li>
+                ) : null}
+                {result.skipped_no_contact_count > 0 ? (
+                  <li data-testid="grading-remind-skipped-no-contact">
+                    {t("grading.remindSkippedNoContact", {
+                      count: result.skipped_no_contact_count,
+                    })}
+                  </li>
+                ) : null}
+                {result.skipped_inactive_count > 0 ? (
+                  <li data-testid="grading-remind-skipped-inactive">
+                    {t("grading.remindSkippedInactive", {
+                      count: result.skipped_inactive_count,
+                    })}
+                  </li>
+                ) : null}
+                {result.failed_count > 0 ? (
+                  <li data-testid="grading-remind-failed">
+                    {t("grading.remindFailed", { count: result.failed_count })}
+                  </li>
+                ) : null}
+              </ul>
+            </div>
           </Banner>
         ) : null}
 

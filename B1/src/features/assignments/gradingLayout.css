@@ -117,9 +117,19 @@
   overflow-wrap: anywhere;
 }
 
-/* 「返回作业列表」在右栏顶部、题干面板之上：独立一行，不与卡片粘连。 */
+/* 「返回作业列表」在题干面板内部、题干上方：属于这一块的导航，跟着卡片一起走。 */
 .grading-question__actions {
   display: flex;
   justify-content: flex-start;
-  margin-bottom: var(--space-3, 12px);
+}
+
+/* 未绑定账号的名单行不可点，但外观与可点行保持一致，避免看起来像"缺数据"。 */
+.grading-student-list__row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-2, 8px);
+  opacity: 0.85;
 }

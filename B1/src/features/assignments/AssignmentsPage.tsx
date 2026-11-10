@@ -212,11 +212,11 @@ function StudentAssignmentList({
 }
 
 /**
- * 「已处理作业数量」= 至少提交过一题的人数 / 可判定人数。
+ * 「已处理作业数量」= 至少提交过一题的人数 / 全班人数。
  *
- * 口径来自 `buildCounts`：`unbound`（名单行未绑定账号）既不是已交也不是未交，
- * 因此分子只数真提交过的四类，分母把 `unbound` 排除。取数没取全时 `counts === null`，
- * 这里返回 `null` 让调用方显示"—"，绝不用 0 假装。
+ * 分母是**整个名单**（含还没绑定账号的名单行）：他们同样没有提交，不能被排除在分母之外，
+ * 否则"已交 3 / 总 5"会变成"已交 3 / 总 4"，把一个没交的学生算没了。能否收到邮件是
+ * 提醒结果的问题，不是名单归属的问题。取数没取全时返回 `null`，界面显示"—"，不用 0 假装。
  */
 function handledCounts(
   counts: Map<string, AssignmentProgressCounts> | null,
@@ -226,7 +226,7 @@ function handledCounts(
   if (!value) return null;
   const handled =
     value.submitted + value.partial + value.evaluating + value.failed;
-  return { handled, judged: value.all - value.unbound };
+  return { handled, judged: value.all };
 }
 
 /** 教师视角的作业状态：`open` = 进行，其余（`closed` / `archived`）= 结束。 */

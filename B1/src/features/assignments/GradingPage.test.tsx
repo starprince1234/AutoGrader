@@ -37,7 +37,7 @@ import { GradingPage } from "./GradingPage";
  * 批改界面（PDF 的「作业情况（子界面）」）。
  *
  * 不变量：
- * 1. 「已完成 / 未完成」只数**可判定**的名单行，未绑定账号单列；
+ * 1. 「已完成 / 未完成」覆盖**全班名单**（含未绑定账号的学生），分母就是全班人数；
  * 2. 名单/成绩未取全或截断时**不给任何数字**；
  * 3. 点学生进入右栏大窗口，左上角「返回」回到作业题干；
  * 4. 右栏给出作答内容与「修改分数」入口（老师有权修改）；
@@ -211,12 +211,13 @@ function routes(options: { gradeNextCursor?: string | null } = {}): StubbedRoute
           assignmentNotificationSummary({
             assignment_id: UUID_A,
             course_id: COURSE,
-            status: "pending",
-            recipient_total: 1,
+            status: "partial",
+            // 收件人 = 两名未完成学生；其中未绑定账号的那位会被服务端记为 skipped。
+            recipient_total: 2,
             sent_count: 0,
             pending_count: 1,
             failed_count: 0,
-            skipped_unbound_count: 0,
+            skipped_unbound_count: 1,
             skipped_no_contact_count: 0,
             skipped_inactive_count: 0,
           }),
@@ -262,19 +263,24 @@ function renderGrading() {
 }
 
 describe("批改界面（作业情况子界面）", () => {
-  it("已完成/未完成只数可判定人数，未绑定账号单列", async () => {
+  it("已完成/未完成覆盖全班名单：未绑定账号的学生也在未完成里", async () => {
     stub = installFetchStub(routes());
     await signIn("teacher1", "pw");
     renderGrading();
 
-    // 可判定人数 = 2（王五那行未绑定账号）→ 已完成 1 / 2、未完成 1 / 2。
-    expect(await screen.findByTestId("grading-completed-group")).toHaveTextContent("已完成 1 / 2");
-    expect(screen.getByTestId("grading-pending-group")).toHaveTextContent("未完成 1 / 2");
-    expect(screen.getByTestId("grading-unbound")).toHaveTextContent(
-      "另有 1 名学生的名单行未绑定账号",
-    );
+    // 全班 3 人（张三交了一题、李四没交、王五未绑定账号）→ 已完成 1 / 3、未完成 2 / 3。
+    expect(await screen.findByTestId("grading-completed-group")).toHaveTextContent("已完成 1 / 3");
+    expect(screen.getByTestId("grading-pending-group")).toHaveTextContent("未完成 2 / 3");
+    // 不再有"另有 N 名未绑定账号"的旁注：他们就在未完成名单里。
+    expect(screen.queryByTestId("grading-unbound")).toBeNull();
+
+    // 未绑定账号的行照样列出，但不可点（没有账号就没有作答可看）。
+    // 「未完成」分组默认展开，这里不再点折叠按钮（点了反而会收起）。
+    const unboundRow = await screen.findByTestId(`grading-student-pending-${E3}`);
+    expect(unboundRow.tagName).toBe("DIV");
+    expect(unboundRow).toHaveTextContent("未绑定账号");
     // 顶部「已处理作业数量」与左栏同一口径。
-    expect(screen.getByTestId("grading-processed")).toHaveTextContent("1 / 2");
+    expect(screen.getByTestId("grading-processed")).toHaveTextContent("1 / 3");
   });
 
   it("点学生进入右栏大窗口：作答内容 + 百分制得分 + 返回题干 + 改分入口", async () => {
@@ -308,7 +314,7 @@ describe("批改界面（作业情况子界面）", () => {
     expect(await screen.findByTestId("manual-grade-drawer")).toBeInTheDocument();
   });
 
-  it("「返回作业列表」在题干上方（右栏顶部），不在题干下方", async () => {
+  it("「返回作业列表」在题干面板内部、题干上方", async () => {
     stub = installFetchStub(routes());
     await signIn("teacher1", "pw");
     renderGrading();
@@ -317,12 +323,13 @@ describe("批改界面（作业情况子界面）", () => {
     const back = screen.getByTestId("grading-back-to-list");
     expect(back).toHaveTextContent("返回作业列表");
 
-    // 位置关系：按钮在题干面板**之前**（DOM 顺序），并且同属右栏、不在左栏名单里。
+    // 和题干同一个框：不再单独挂在框外，也不再出现在左栏名单里。
+    expect(stem).toContainElement(back);
+    const title = screen.getByTestId("grading-question-title");
     expect(
-      back.compareDocumentPosition(stem) & Node.DOCUMENT_POSITION_FOLLOWING,
+      back.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(screen.getByTestId("grading-completed-group")).not.toContainElement(back);
-    expect(back.closest(".grading-workspace__window")).not.toBeNull();
   });
 
   it("成绩行被截断时不给任何已完成/未完成数字", async () => {
@@ -359,9 +366,8 @@ describe("批改界面 · 邮件提醒（自动提示语 / 一键提醒）", () 
     // 没有截止时间时提示语要写明，而不是留空。
     expect(prompt).toHaveTextContent("未设置截止时间");
 
-    // 收件人 = 未完成且已绑定账号：李四；未绑定账号的王五被排除并单独说明。
-    expect(screen.getByTestId("grading-remind-recipients")).toHaveTextContent("1 名学生");
-    expect(screen.getByTestId("grading-remind-recipients")).toHaveTextContent("1 名未绑定账号");
+    // 收件人 = 全部未完成学生（李四 + 未绑定账号的王五）：不再把未绑定的人排除掉。
+    expect(screen.getByTestId("grading-remind-recipients")).toHaveTextContent("2 名学生");
 
     await user.type(screen.getByTestId("grading-remind-note"), "下周一上课前交");
     await user.click(screen.getByTestId("grading-remind-send"));
@@ -380,13 +386,16 @@ describe("批改界面 · 邮件提醒（自动提示语 / 一键提醒）", () 
         note?: string;
       };
       expect(body.title).toBe("第一次作业");
-      // 只提醒未完成且已绑定账号的学生：E2（李四）。未绑定的 E3 不能出现在收件人里。
-      expect(body.enrollment_ids).toEqual([E2]);
+      // 两名未完成学生都提交为收件人：E2（李四）与 E3（王五，未绑定账号）。
+      expect(body.enrollment_ids).toEqual([E2, E3]);
       expect(body.note).toBe("下周一上课前交");
     });
 
-    // 「已安排」不等于「已送达」：两者分别显示。
+    // 「已安排」不等于「已送达」：两者分别显示，并逐条说明未成功的原因。
     expect(await screen.findByTestId("grading-remind-scheduled")).toHaveTextContent("已安排提醒");
     expect(screen.getByTestId("grading-remind-counts")).toHaveTextContent("待发送 1");
+    expect(screen.getByTestId("grading-remind-skipped-unbound")).toHaveTextContent(
+      "还没有绑定账号",
+    );
   });
 });

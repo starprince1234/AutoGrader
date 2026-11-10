@@ -82,7 +82,7 @@ const ROSTER = [
     student_number: "20260002",
     display_name: "李四",
   }),
-  // 未绑定账号：不参与「已交/未交」判定。
+  // 未绑定账号：仍算未完成（他也确实没交），只是不能点进去看作答。
   enrollmentPublic({
     enrollment_id: E3,
     course_id: COURSE,
@@ -314,19 +314,17 @@ describe("作业详情页（教师）= 批改界面", () => {
     expect(screen.getByTestId("grading-breadcrumb-current")).toHaveTextContent("第一次作业");
   });
 
-  it("已完成/未完成按全课程名单聚合，未绑定账号单列且不进分母", async () => {
+  it("已完成/未完成覆盖全班名单，未绑定账号的学生计入未完成", async () => {
     stub = installFetchStub(routes());
     await signIn("teacher1", "pw");
     renderDetail();
 
-    // 可判定人数 = 2（王五那行未绑定账号）。
+    // 全班 3 人（2 人已绑定账号 + 1 人未绑定）：没人提交 → 已完成 0 / 3、未完成 3 / 3。
     expect(await screen.findByTestId("grading-completed-group")).toHaveTextContent(
-      "已完成 0 / 2",
+      "已完成 0 / 3",
     );
-    expect(screen.getByTestId("grading-pending-group")).toHaveTextContent("未完成 2 / 2");
-    expect(screen.getByTestId("grading-unbound")).toHaveTextContent(
-      "另有 1 名学生的名单行未绑定账号",
-    );
+    expect(screen.getByTestId("grading-pending-group")).toHaveTextContent("未完成 3 / 3");
+    expect(screen.queryByTestId("grading-unbound")).toBeNull();
   });
 
   it("点学生后右栏显示作答内容；答案 403 时给出明确的权限文案", async () => {

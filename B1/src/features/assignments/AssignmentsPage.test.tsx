@@ -516,7 +516,7 @@ describe("作业中心（教师侧作业列表）", () => {
     expect(screen.getByTestId("teacher-assignments-table")).not.toHaveTextContent("第二次作业");
   });
 
-  it("未绑定账号的名单行不进「已处理作业数量」的分母", async () => {
+  it("未绑定账号的名单行同样计入「已处理作业数量」的分母", async () => {
     await openTeacherList({
       grades: [],
       enrollments: [
@@ -543,8 +543,8 @@ describe("作业中心（教师侧作业列表）", () => {
       ],
     });
 
-    // 可判定人数是 1（另一行没绑定账号）→ 0 / 1，而不是 0 / 2。
-    expect(await screen.findByTestId(`handled-${UUID_A}`)).toHaveTextContent("0 / 1");
+    // 分母是整份名单 2 人（含未绑定账号的那一行）→ 0 / 2：不能把人算没了。
+    expect(await screen.findByTestId(`handled-${UUID_A}`)).toHaveTextContent("0 / 2");
   });
 
   it("成绩行到自动翻页上限时说明被截断，不渲染任何计数", async () => {

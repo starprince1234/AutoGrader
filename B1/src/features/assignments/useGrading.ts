@@ -23,10 +23,14 @@ export function isSubmittedStudent(row: StudentProgress): boolean {
 export type CompletionGroups = {
   /** 已完成：至少提交过一题。 */
   completed: StudentProgress[];
-  /** 未完成：一题都没交。 */
+  /**
+   * 未完成：一题都没交。
+   *
+   * 名单行是否绑定账号**不影响归组**：没绑定账号的学生同样没有提交，因此算未完成，
+   * 也出现在未完成名单里（教师要给全班发提醒时必须能看到他们）。"能不能收到邮件"
+   * 是发送结果的问题，由提醒结果里的 skipped 计数和原因说明，而不是把人从名单里摘掉。
+   */
   pending: StudentProgress[];
-  /** 名单行尚未绑定账号：不参与"已交/未交"判定。 */
-  unbound: StudentProgress[];
 };
 
 function byStudentNumber(left: StudentProgress, right: StudentProgress): number {
@@ -38,19 +42,17 @@ function byStudentNumber(left: StudentProgress, right: StudentProgress): number 
 export function splitByCompletion(
   rows: readonly StudentProgress[],
 ): CompletionGroups {
-  const groups: CompletionGroups = { completed: [], pending: [], unbound: [] };
+  const groups: CompletionGroups = { completed: [], pending: [] };
   for (const row of rows) {
-    if (row.status === "unbound") groups.unbound.push(row);
-    else if (isSubmittedStudent(row)) groups.completed.push(row);
+    if (isSubmittedStudent(row)) groups.completed.push(row);
     else groups.pending.push(row);
   }
   groups.completed.sort(byStudentNumber);
   groups.pending.sort(byStudentNumber);
-  groups.unbound.sort(byStudentNumber);
   return groups;
 }
 
-/** 已完成 / 未完成 的分母：只数**可判定**的名单行（未绑定账号不进分母）。 */
+/** 已完成 / 未完成 的分母：全班名单行（含尚未绑定账号的学生）。 */
 export function judgedTotal(groups: CompletionGroups): number {
   return groups.completed.length + groups.pending.length;
 }
