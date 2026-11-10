@@ -285,11 +285,18 @@ export function QuestionListPage() {
     return [...seen].sort((left, right) => left.localeCompare(right, "zh"));
   }, [tagUniverse, loadedRows, tagValue]);
 
+  // 归档题默认不出现：契约只允许删除草稿，已发布题只能归档，而归档后的题既不能再布置、
+  // 也不该继续占据题库列表。需要看归档题的场景（复核历史）不在这一页。
+  const nonArchivedRows = useMemo(
+    () => loadedRows.filter((row) => row.status !== "archived"),
+    [loadedRows],
+  );
+
   const statusRows = useMemo(() => {
     // 「草稿」这一档在客户端筛（契约没有"只要草稿"的参数）；「全部状态」不过滤。
-    if (publishedState === "draft") return loadedRows.filter((row) => row.status === "draft");
-    return loadedRows;
-  }, [loadedRows, publishedState]);
+    if (publishedState === "draft") return nonArchivedRows.filter((row) => row.status === "draft");
+    return nonArchivedRows;
+  }, [nonArchivedRows, publishedState]);
 
   const query = debouncedStemQuery.trim().toLowerCase();
   const rows = useMemo(() => {
