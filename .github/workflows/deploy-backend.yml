@@ -60,6 +60,7 @@ on:
           - preflight
           - diagnose
           - check-mail
+          - purge-retired-questions
           - deploy
         default: preflight
 
@@ -498,6 +499,77 @@ jobs:
             --username "$IMAP_USER" \
             --mailbox "${B2_IMAP_MAILBOX:-INBOX}" \
             --limit 3
+
+      - name: Purge retired questions (archived in every version)
+        if: github.event_name == 'workflow_dispatch' && inputs.operation == 'purge-retired-questions'
+        env:
+          DEPLOY_SSH_HOST: ${{ steps.doppler.outputs.DEPLOY_SSH_HOST }}
+          DEPLOY_SSH_USER: ${{ steps.doppler.outputs.DEPLOY_SSH_USER }}
+          DEPLOY_SSH_PASSWORD: ${{ steps.doppler.outputs.DEPLOY_SSH_PASSWORD }}
+          DEPLOY_SSH_PORT: ${{ steps.doppler.outputs.DEPLOY_SSH_PORT }}
+        run: |
+          set -euo pipefail
+          bash .github/scripts/deploy-ssh.sh ssh "$DEPLOY_SSH_USER@$DEPLOY_SSH_HOST" bash -s <<'REMOTE'
+          set -euo pipefail
+          # 只有"每个版本都已归档"的题目才会被删除：两个新导入的题目是草稿，不会被这条规则命中，
+          # 因此这个操作重复执行也不会误删。
+          sudo install -d -m 0700 /root/.purge
+          sudo env HOME=/root bash -c '
+            set -euo pipefail
+            set -a
+            . /etc/autograder/runtime.env
+            set +a
+            cd /opt/autograder/current/MAIN
+            .venv/bin/python - <<"PY"
+          import os, psycopg
+
+          url = os.environ["B3_DATABASE_URL"]
+          with psycopg.connect(url) as conn:
+              with conn.cursor() as cur:
+                  cur.execute(
+                      """
+                      SELECT q.question_id, q.title
+                      FROM b3.questions q
+                      WHERE NOT EXISTS (
+                          SELECT 1 FROM b3.question_versions v
+                          WHERE v.question_id = q.question_id AND v.status <> 'archived'
+                      )
+                      AND EXISTS (
+                          SELECT 1 FROM b3.question_versions v2 WHERE v2.question_id = q.question_id
+                      )
+                      """
+                  )
+                  doomed = cur.fetchall()
+                  print(f"questions to purge: {len(doomed)}")
+                  for question_id, title in doomed:
+                      cur.execute("SELECT question_version_id FROM b3.question_versions WHERE question_id = %s", (question_id,))
+                      version_ids = [row[0] for row in cur.fetchall()]
+                      if version_ids:
+                          cur.execute("DELETE FROM b3.assignment_items WHERE question_version_id = ANY(%s)", (version_ids,))
+                          cur.execute("DELETE FROM b3.question_version_stats WHERE question_version_id = ANY(%s)", (version_ids,))
+                          cur.execute("DELETE FROM b3.question_version_score_buckets WHERE question_version_id = ANY(%s)", (version_ids,))
+                          cur.execute("DELETE FROM b3.question_version_failure_categories WHERE question_version_id = ANY(%s)", (version_ids,))
+                      cur.execute("DELETE FROM b3.question_versions WHERE question_id = %s", (question_id,))
+                      cur.execute("DELETE FROM b3.question_assets WHERE question_id = %s", (question_id,))
+                      cur.execute("DELETE FROM b3.questions WHERE question_id = %s", (question_id,))
+                      print(f"purged: {title} ({question_id})")
+              conn.commit()
+          print("purge committed")
+          PY
+          '
+          printf '%s\n' 'remaining questions by status:'
+          sudo env HOME=/root bash -c '
+            set -a; . /etc/autograder/runtime.env; set +a
+            cd /opt/autograder/current/MAIN
+            .venv/bin/python - <<"PY"
+          import os, psycopg
+          with psycopg.connect(os.environ["B3_DATABASE_URL"]) as conn, conn.cursor() as cur:
+              cur.execute("SELECT status, count(*) FROM b3.question_versions GROUP BY status ORDER BY status")
+              for status, count in cur.fetchall():
+                  print(f"  {status}: {count}")
+          PY
+          '
+          REMOTE
 
       - name: Validate deployment credentials and SSH host fingerprint
         env:
