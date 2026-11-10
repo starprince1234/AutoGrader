@@ -426,6 +426,15 @@ export function GradingPage({
               <Panel
                 title={t("grading.studentWindow", { name: selectedStudent.displayName })}
                 testId="grading-student-window"
+                actions={
+                  <Link
+                    to="/assignments"
+                    className="button button--ghost"
+                    data-testid="grading-back-to-list"
+                  >
+                    <span aria-hidden="true">←</span> {t("grading.backToList")}
+                  </Link>
+                }
               >
                 <div className="stack">
                   <div className="inline">
@@ -462,25 +471,26 @@ export function GradingPage({
                       versionRows.find((row) => row.questionVersionId === currentVersionId)
                         ?.ordinal ?? 1
                     }
-                    stemMarkdown={currentRow?.question?.stem_markdown ?? null}
                     onGrade={(submissionId) => setGradeTarget(submissionId)}
                   />
                 </div>
               </Panel>
             ) : (
               <div className="stack">
-              <Panel title={t("grading.questionWindow")} testId="grading-question-window">
+              <Panel
+                title={t("grading.questionWindow")}
+                testId="grading-question-window"
+                actions={
+                  <Link
+                    to="/assignments"
+                    className="button button--ghost"
+                    data-testid="grading-back-to-list"
+                  >
+                    <span aria-hidden="true">←</span> {t("grading.backToList")}
+                  </Link>
+                }
+              >
                 <div className="stack">
-                  {/* 返回作业列表和题干在同一个框里：它是这一块的导航，不单独占一行。 */}
-                  <div className="inline grading-question__actions">
-                    <Link
-                      to="/assignments"
-                      className="button button--ghost"
-                      data-testid="grading-back-to-list"
-                    >
-                      <span aria-hidden="true">←</span> {t("grading.backToList")}
-                    </Link>
-                  </div>
                   <div className="inline">
                     <span className="muted">
                       {t("questions.version", {
@@ -584,14 +594,12 @@ function QuestionAnswer({
   versionId,
   versionTitle,
   ordinal,
-  stemMarkdown,
   onGrade,
 }: {
   student: StudentProgress;
   versionId: string | null;
   versionTitle: string;
   ordinal: number;
-  stemMarkdown: string | null;
   onGrade: (submissionId: string) => void;
 }) {
   const question =
@@ -600,27 +608,18 @@ function QuestionAnswer({
 
   return (
     <div className="stack">
-      <Panel title={t("grading.detailTitle")} testId="grading-student-detail">
-        <div className="stack">
-          <div className="inline">
-            <strong>
-              {ordinal}. {versionTitle}
-            </strong>
-            {question ? (
-              <StatusPill tone={questionStateTone(question.state)}>
-                {questionStateLabel(question.state)}
-              </StatusPill>
-            ) : null}
-          </div>
-          {stemMarkdown ? (
-            <SafeMarkdown source={stemMarkdown} testId="grading-student-stem" />
-          ) : (
-            <p className="muted">{t("grading.stemUnavailable")}</p>
-          )}
-        </div>
-      </Panel>
-
-      <Panel title={t("grading.answerTitle")} testId="grading-answer">
+      {/* 选中学生后直接看他的作答：题干已经在「返回作业题干」那一侧，这里不重复占空间。 */}
+      <Panel
+        title={`${ordinal}. ${versionTitle}`}
+        testId="grading-answer"
+        actions={
+          question ? (
+            <StatusPill tone={questionStateTone(question.state)}>
+              {questionStateLabel(question.state)}
+            </StatusPill>
+          ) : null
+        }
+      >
         {submission === null ? (
           <EmptyState>{t("grading.answerNotSubmitted")}</EmptyState>
         ) : (

@@ -691,7 +691,8 @@ samp {
 .drawer__backdrop {
   position: fixed;
   inset: 0;
-  z-index: 40;
+  /* 高于粘性导航栏（20）与页面内容，避免抽屉被压在下面。 */
+  z-index: 60;
   display: flex;
   background: rgba(8, 9, 10, 0.42);
   backdrop-filter: blur(6px);
@@ -702,12 +703,18 @@ samp {
 .drawer {
   display: flex;
   flex-direction: column;
+  /* 导航抽屉的窄宽度；表单类抽屉用 `.drawer--wide`。 */
   width: min(84vw, 304px);
   height: 100%;
   background: var(--color-surface);
   border-right: 1px solid var(--color-border);
   box-shadow: var(--shadow-raised);
   animation: slide-in var(--dur-slow) var(--ease-out);
+}
+
+/* 表单类抽屉（人工评分）：640px 的表单需要自己的宽度，不能沿用导航的 304px。 */
+.drawer--wide {
+  width: min(92vw, 640px);
 }
 
 .drawer__head {
@@ -726,6 +733,8 @@ samp {
 }
 
 .drawer__body {
+  flex: 1;
+  min-height: 0;
   padding: var(--space-4) var(--space-3) var(--space-6);
   overflow-y: auto;
 }

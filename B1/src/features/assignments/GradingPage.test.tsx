@@ -299,6 +299,14 @@ describe("批改界面（作业情况子界面）", () => {
     const window = await screen.findByTestId("grading-student-window");
     expect(window).toHaveTextContent("张三");
 
+    // 选中学生后直接看作答详情：不再重复渲染题干，但「返回作业列表」仍在标题行里。
+    expect(screen.queryByTestId("grading-student-detail")).toBeNull();
+    expect(screen.queryByTestId("grading-student-stem")).toBeNull();
+    expect(screen.getByTestId("grading-answer")).toBeInTheDocument();
+    expect(window.querySelector(".panel__head")).toContainElement(
+      screen.getByTestId("grading-back-to-list"),
+    );
+
     // 答案文件带 Authorization 读取后以文本呈现。
     expect(await screen.findByTestId("answer-content")).toHaveTextContent("进程是资源分配单位");
 
@@ -318,7 +326,7 @@ describe("批改界面（作业情况子界面）", () => {
     expect(await screen.findByTestId("manual-grade-drawer")).toBeInTheDocument();
   });
 
-  it("「返回作业列表」在题干面板内部、题干上方", async () => {
+  it("「返回作业列表」在题干面板的标题行右侧（与题干平行）", async () => {
     stub = installFetchStub(routes());
     await signIn("teacher1", "pw");
     renderGrading();
@@ -327,12 +335,11 @@ describe("批改界面（作业情况子界面）", () => {
     const back = screen.getByTestId("grading-back-to-list");
     expect(back).toHaveTextContent("返回作业列表");
 
-    // 和题干同一个框：不再单独挂在框外，也不再出现在左栏名单里。
-    expect(stem).toContainElement(back);
-    const title = screen.getByTestId("grading-question-title");
-    expect(
-      back.compareDocumentPosition(title) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    // 在面板头里：与「作业题干」标题同一行、位于右侧（`.panel__actions`）。
+    const head = stem.querySelector(".panel__head");
+    expect(head).not.toBeNull();
+    expect(head).toContainElement(back);
+    expect(back.closest(".panel__actions")).not.toBeNull();
     expect(screen.getByTestId("grading-completed-group")).not.toContainElement(back);
   });
 

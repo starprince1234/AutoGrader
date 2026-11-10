@@ -132,12 +132,6 @@
   overflow-wrap: anywhere;
 }
 
-/* 「返回作业列表」在题干面板内部、题干上方：属于这一块的导航，跟着卡片一起走。 */
-.grading-question__actions {
-  display: flex;
-  justify-content: flex-start;
-}
-
 /* 未绑定账号的名单行不可点，但外观与可点行保持一致，避免看起来像"缺数据"。 */
 .grading-student-list__row {
   display: flex;

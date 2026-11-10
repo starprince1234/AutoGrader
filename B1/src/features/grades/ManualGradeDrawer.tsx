@@ -79,7 +79,12 @@ export function ManualGradeDrawer({
   }
 
   return (
-    <Drawer title={t("manualGrade.title")} onClose={onClose} testId="manual-grade-drawer">
+    <Drawer
+      title={t("manualGrade.title")}
+      onClose={onClose}
+      testId="manual-grade-drawer"
+      size="wide"
+    >
       <div className="stack">
         <section>
           <h3>{t("manualGrade.intake")}</h3>

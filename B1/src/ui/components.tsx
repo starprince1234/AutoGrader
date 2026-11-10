@@ -726,6 +726,7 @@ export function Drawer({
   children,
   testId,
   hideCloseButton = false,
+  size = "nav",
 }: {
   title: ReactNode;
   onClose: () => void;
@@ -733,6 +734,11 @@ export function Drawer({
   testId?: string;
   /** 抽屉内不再重复导航的关闭控件时置 true；Esc 与遮罩点击仍可关闭。 */
   hideCloseButton?: boolean;
+  /**
+   * `nav`（默认）= 移动端导航抽屉的窄宽度；`wide` = 表单类抽屉（如人工评分）。
+   * 之前所有抽屉都套用导航宽度（304px），一张评分表塞进去会被挤成一条。
+   */
+  size?: "nav" | "wide";
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
@@ -778,7 +784,7 @@ export function Drawer({
     }
   };
 
-  return (
+  const overlay = (
     <div
       className="drawer__backdrop"
       role="presentation"
@@ -788,7 +794,7 @@ export function Drawer({
       }}
     >
       <div
-        className="drawer"
+        className={size === "wide" ? "drawer drawer--wide" : "drawer"}
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
@@ -811,4 +817,9 @@ export function Drawer({
       </div>
     </div>
   );
+
+  // 与 Modal 同理：抽屉要贴住视口，不能受页面里任何祖先的 transform/animation 影响，
+  // 否则会变成一个"贴在左边、内容跑到别处"的白色空条。
+  if (typeof document === "undefined") return overlay;
+  return createPortal(overlay, document.body);
 }
