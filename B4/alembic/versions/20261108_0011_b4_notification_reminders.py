@@ -56,7 +56,14 @@ def upgrade() -> None:
                 CHECK (kind IN ('publication', 'reminder'))
         """
     )
-    # `assignment_id` carried an inline UNIQUE; the announcement keeps it, reminders do not.
+    # `0010` created the constraint **by name** (`uq_assignment_notifications_assignment_id`),
+    # so dropping only the auto-generated `..._assignment_id_key` left the unconditional
+    # UNIQUE alive and the second reminder campaign died on it. Drop both spellings: named
+    # constraint first, then the inline form for databases built by `create_all`.
+    op.execute(
+        f"ALTER TABLE {CAMPAIGNS} "
+        f"DROP CONSTRAINT IF EXISTS uq_assignment_notifications_assignment_id"
+    )
     op.execute(
         f"ALTER TABLE {CAMPAIGNS} "
         f"DROP CONSTRAINT IF EXISTS assignment_notifications_assignment_id_key"
@@ -88,7 +95,7 @@ def downgrade() -> None:
     op.execute("DROP INDEX IF EXISTS b4.uq_assignment_notifications_publication")
     op.execute(
         f"ALTER TABLE {CAMPAIGNS} "
-        f"ADD CONSTRAINT assignment_notifications_assignment_id_key UNIQUE (assignment_id)"
+        f"ADD CONSTRAINT uq_assignment_notifications_assignment_id UNIQUE (assignment_id)"
     )
     op.execute(
         f"ALTER TABLE {CAMPAIGNS} "
