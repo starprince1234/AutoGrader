@@ -142,3 +142,36 @@
   border-radius: var(--radius-2, 8px);
   opacity: 0.85;
 }
+
+/* 评分输入框（替代原来的「修改分数」抽屉）：
+   一个受限高度的输入框 + 一行"默认取 AI 分"的说明，理由框按需出现。 */
+.grading-score-box {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-2, 8px);
+  background: var(--color-surface);
+}
+
+.grading-score-box__field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.grading-score-box__field > span {
+  font-size: 13px;
+}
+
+.grading-score-box__input {
+  width: 140px;
+  font-variant-numeric: tabular-nums;
+}
+
+.grading-score-box__hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}

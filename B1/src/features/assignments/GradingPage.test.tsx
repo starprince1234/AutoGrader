@@ -190,8 +190,20 @@ function routes(options: { gradeNextCursor?: string | null } = {}): StubbedRoute
         }),
     },
     {
+      // GET = 当前人工评分（204 表示还没评过）；POST = 保存教师分。
       path: `/api/v1/submissions/${SUB_S1_V1}/manual-grade`,
-      respond: () => new Response(null, { status: 204 }),
+      respond: ({ request }) =>
+        request.method === "POST"
+          ? jsonResponse({
+              submission_id: SUB_S1_V1,
+              score: 88,
+              score_source: "manual",
+              grade_status: "graded",
+              graded_at: "2026-11-10T00:00:00.000Z",
+              updated_at: "2026-11-10T00:00:00.000Z",
+              revision: 2,
+            })
+          : new Response(null, { status: 204 }),
     },
     {
       // 人工评分抽屉会顺带读一次来信内容；这不是邮件提交，按契约返回 404。
@@ -287,7 +299,7 @@ describe("批改界面（作业情况子界面）", () => {
     expect(screen.getByTestId("grading-processed")).toHaveTextContent("1 / 3");
   });
 
-  it("点学生进入右栏大窗口：作答内容 + 百分制得分 + 返回题干 + 改分入口", async () => {
+  it("点学生进入右栏大窗口：作答内容 + 评分输入框（默认 AI 分）", async () => {
     stub = installFetchStub(routes());
     const user = userEvent.setup();
     await signIn("teacher1", "pw");
@@ -299,12 +311,12 @@ describe("批改界面（作业情况子界面）", () => {
     const window = await screen.findByTestId("grading-student-window");
     expect(window).toHaveTextContent("张三");
 
-    // 选中学生后直接看作答详情：不再重复渲染题干，但「返回作业列表」仍在标题行里。
+    // 选中学生后直接看作答详情：不重复渲染题干；标题行右侧是「返回作业题干」。
     expect(screen.queryByTestId("grading-student-detail")).toBeNull();
     expect(screen.queryByTestId("grading-student-stem")).toBeNull();
     expect(screen.getByTestId("grading-answer")).toBeInTheDocument();
     expect(window.querySelector(".panel__head")).toContainElement(
-      screen.getByTestId("grading-back-to-list"),
+      screen.getByTestId("grading-back-to-question"),
     );
 
     // 答案文件带 Authorization 读取后以文本呈现。
@@ -320,27 +332,77 @@ describe("批改界面（作业情况子界面）", () => {
     );
     expect(screen.getByTestId("grading-question-window")).toHaveTextContent("进程与线程");
 
-    // 再点学生 →「修改分数」打开人工评分抽屉（老师有权修改）。
+    // 再点学生：评分是一个输入框，默认就是 AI 分；没有「修改分数」按钮、也没有抽屉。
     await user.click(screen.getByTestId(`grading-student-completed-${E1}`));
-    await user.click(await screen.findByTestId("grading-manual-grade"));
-    expect(await screen.findByTestId("manual-grade-drawer")).toBeInTheDocument();
+    const scoreInput = (await screen.findByTestId("grading-score-input")) as HTMLInputElement;
+    expect(scoreInput.value).toBe("80");
+    expect(screen.queryByTestId("grading-manual-grade")).toBeNull();
+    expect(screen.queryByTestId("manual-grade-drawer")).toBeNull();
+    expect(screen.getByTestId("grading-score-hint")).toHaveTextContent("不改就按它");
   });
 
-  it("「返回作业列表」在题干面板的标题行右侧（与题干平行）", async () => {
+  it("评分输入：改数字后失焦即按教师分保存；非法输入不发请求", async () => {
     stub = installFetchStub(routes());
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderGrading();
+
+    await user.click(await screen.findByTestId("grading-toggle-completed"));
+    await user.click(await screen.findByTestId(`grading-student-completed-${E1}`));
+    const input = (await screen.findByTestId("grading-score-input")) as HTMLInputElement;
+
+    // 1) 非法值（超过 100）：只提示，不发请求。
+    await user.clear(input);
+    await user.type(input, "120");
+    await user.tab();
+    expect(await screen.findByTestId("grading-score-feedback")).toHaveTextContent(
+      "0–100 的数字",
+    );
+    expect(
+      stub!.requests.filter(
+        (item) =>
+          item.method === "POST" &&
+          item.url.pathname === `/api/v1/submissions/${SUB_S1_V1}/manual-grade`,
+      ),
+    ).toHaveLength(0);
+
+    // 2) 合规值：保存为教师分，请求体带分数与乐观锁版本。
+    await user.clear(input);
+    await user.type(input, "88");
+    await user.keyboard("{Enter}");
+    await waitFor(() => {
+      const call = stub!.requests.find(
+        (item) =>
+          item.method === "POST" &&
+          item.url.pathname === `/api/v1/submissions/${SUB_S1_V1}/manual-grade`,
+      );
+      expect(call).toBeTruthy();
+      const body = call!.body as { score: number; expected_updated_at: string };
+      expect(body.score).toBe(88);
+      expect(typeof body.expected_updated_at).toBe("string");
+    });
+    expect(await screen.findByTestId("grading-score-feedback")).toHaveTextContent("已保存");
+  });
+
+  it("详情页两个视图都不再出现「返回作业列表」按钮", async () => {
+    stub = installFetchStub(routes());
+    const user = userEvent.setup();
     await signIn("teacher1", "pw");
     renderGrading();
 
     const stem = await screen.findByTestId("grading-question-window");
-    const back = screen.getByTestId("grading-back-to-list");
-    expect(back).toHaveTextContent("返回作业列表");
+    expect(stem).toBeInTheDocument();
+    expect(screen.queryByTestId("grading-back-to-list")).toBeNull();
 
-    // 在面板头里：与「作业题干」标题同一行、位于右侧（`.panel__actions`）。
-    const head = stem.querySelector(".panel__head");
-    expect(head).not.toBeNull();
-    expect(head).toContainElement(back);
-    expect(back.closest(".panel__actions")).not.toBeNull();
-    expect(screen.getByTestId("grading-completed-group")).not.toContainElement(back);
+    await user.click(screen.getByTestId("grading-toggle-completed"));
+    await user.click(await screen.findByTestId(`grading-student-completed-${E1}`));
+    await screen.findByTestId("grading-student-window");
+    expect(screen.queryByTestId("grading-back-to-list")).toBeNull();
+    // 回列表仍走面包屑（「作业」链接）。
+    expect(screen.getByRole("navigation").querySelector("a")).toHaveAttribute(
+      "href",
+      "/assignments",
+    );
   });
 
   it("成绩行被截断时不给任何已完成/未完成数字", async () => {

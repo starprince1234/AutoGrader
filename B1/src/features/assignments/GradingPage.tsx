@@ -20,7 +20,6 @@ import {
 import { SafeMarkdown } from "../questions/SafeMarkdown";
 import { useQuestionVersionRows } from "../questions/useQuestions";
 import { GradeDrilldown } from "../grades/GradeDrilldown";
-import { ManualGradeDrawer } from "../grades/ManualGradeDrawer";
 import { answerFileName } from "../submission/validation";
 import { AnswerViewer } from "./AnswerViewer";
 import {
@@ -41,6 +40,7 @@ import {
   splitByCompletion,
   type CompletionGroups,
 } from "./useGrading";
+import { ScoreInput } from "./ScoreInput";
 
 /**
  * 批改界面 = PDF 的「作业情况（子界面）」：
@@ -150,7 +150,6 @@ export function GradingPage({
   const [versionId, setVersionId] = useState<string | null>(initialVersionId);
   const [studentId, setStudentId] = useState<string | null>(initialStudentId);
   const [openGroup, setOpenGroup] = useState<"completed" | "pending" | null>("pending");
-  const [gradeTarget, setGradeTarget] = useState<string | null>(null);
 
   const versions = assignment?.question_version_ids ?? [];
   const currentVersionId =
@@ -427,25 +426,18 @@ export function GradingPage({
                 title={t("grading.studentWindow", { name: selectedStudent.displayName })}
                 testId="grading-student-window"
                 actions={
-                  <Link
-                    to="/assignments"
+                  <button
+                    type="button"
                     className="button button--ghost"
-                    data-testid="grading-back-to-list"
+                    data-testid="grading-back-to-question"
+                    onClick={() => select(currentVersionId, null)}
                   >
-                    <span aria-hidden="true">←</span> {t("grading.backToList")}
-                  </Link>
+                    <span aria-hidden="true">←</span> {t("grading.backToQuestion")}
+                  </button>
                 }
               >
                 <div className="stack">
                   <div className="inline">
-                    <button
-                      type="button"
-                      className="button button--ghost grading-answer__back"
-                      data-testid="grading-back-to-question"
-                      onClick={() => select(currentVersionId, null)}
-                    >
-                      <span aria-hidden="true">←</span> {t("grading.backToQuestion")}
-                    </button>
                     <span className="muted">
                       {selectedStudent.studentNumber} · {selectedStudent.className}
                     </span>
@@ -471,25 +463,12 @@ export function GradingPage({
                       versionRows.find((row) => row.questionVersionId === currentVersionId)
                         ?.ordinal ?? 1
                     }
-                    onGrade={(submissionId) => setGradeTarget(submissionId)}
                   />
                 </div>
               </Panel>
             ) : (
               <div className="stack">
-              <Panel
-                title={t("grading.questionWindow")}
-                testId="grading-question-window"
-                actions={
-                  <Link
-                    to="/assignments"
-                    className="button button--ghost"
-                    data-testid="grading-back-to-list"
-                  >
-                    <span aria-hidden="true">←</span> {t("grading.backToList")}
-                  </Link>
-                }
-              >
+              <Panel title={t("grading.questionWindow")} testId="grading-question-window">
                 <div className="stack">
                   <div className="inline">
                     <span className="muted">
@@ -578,29 +557,21 @@ export function GradingPage({
         </details>
       ) : null}
 
-      {gradeTarget !== null ? (
-        <ManualGradeDrawer
-          submissionId={gradeTarget}
-          onClose={() => setGradeTarget(null)}
-        />
-      ) : null}
     </div>
   );
 }
 
-/** 右栏大窗口里的"一名学生 × 一道题"：作业详情 + 作答情况 + 评测结果与 ai 评价 + 改分。 */
+/** 右栏大窗口里的"一名学生 × 一道题"：作答详情 + 评分输入 + 评测结果与 ai 评价。 */
 function QuestionAnswer({
   student,
   versionId,
   versionTitle,
   ordinal,
-  onGrade,
 }: {
   student: StudentProgress;
   versionId: string | null;
   versionTitle: string;
   ordinal: number;
-  onGrade: (submissionId: string) => void;
 }) {
   const question =
     student.questions.find((item) => item.questionVersionId === versionId) ?? null;
@@ -629,14 +600,10 @@ function QuestionAnswer({
                 {t("grades.submittedAt")}：
                 {formatDateTime(submission.submitted_at, t("common.none"))}
               </span>
-              <button
-                type="button"
-                className="button button--ghost"
-                data-testid="grading-manual-grade"
-                onClick={() => onGrade(submission.submission_id)}
-              >
-                {t("grading.manualGrade")}
-              </button>
+              <ScoreInput
+                submissionId={submission.submission_id}
+                aiScore={typeof submission.score === "number" ? submission.score : null}
+              />
             </div>
             <AnswerViewer
               submissionId={submission.submission_id}
