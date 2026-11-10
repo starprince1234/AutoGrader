@@ -851,10 +851,12 @@ def test_a_reminder_campaign_is_readable_and_retryable_on_its_own(
     assert body["summary"]["kind"] == "reminder"
     assert body["summary"]["recipient_total"] == 2
     rows = body["deliveries"]["items"]
-    assert {row["student_number"] for row in rows} == {"202400000001", "202400000002"}
-    by_number = {row["student_number"]: row for row in rows}
-    assert by_number["202400000002"]["status"] == "skipped_no_contact"
-    assert by_number["202400000002"]["reason_code"] == "no_email"
+    assert len(rows) == 2
+    # 学号由夹具生成, 这里按状态断言: 一个还能发 pending, 一个没有邮箱 skipped_no_contact
+    assert any(row["status"] == "pending" for row in rows)
+    skipped = [row for row in rows if row["status"] == "skipped_no_contact"]
+    assert len(skipped) == 1
+    assert skipped[0]["reason_code"] == "no_email"
 
     # The announcement view is untouched by the reminder: still "never scheduled".
     assert _teacher_view(client, headers, setup["course_id"], assignment_id).status_code == 404
