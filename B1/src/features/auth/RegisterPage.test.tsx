@@ -204,6 +204,12 @@ describe("P03 注册页", () => {
       code: "123456",
       password: "password1",
     });
+
+    // 路由过渡必须在本用例结束前走完：TanStack 的 transitioner 用 React 的
+    // startTransition 异步调度，若测试先结束、jsdom 被拆除，React 会在"没有 window"
+    // 的环境里再调度一次更新，冒出一条未处理拒绝，把整条流水线判红（CI 上复现过）。
+    expect(await screen.findByText("登录页占位")).toBeInTheDocument();
+    await waitFor(() => expect(router.state.status).toBe("idle"));
   });
 
   it("用户名冲突：定位到用户名字段，保留身份字段，清空密码与验证码", async () => {
