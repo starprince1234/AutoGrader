@@ -785,6 +785,10 @@ class AssignmentAudience:
     title: str
     status: AssignmentStatus
     question_version_ids: tuple[UUID, ...]
+    #: 目标课序与指定学生（迁移 0012）。空元组 = 全课程 / 目标课序全体。
+    #: B2 用它和 B4 的在读名单求交后决定"谁能提交"；B3 不持有名单事实，只给目标。
+    section_ids: tuple[UUID, ...] = ()
+    student_ids: tuple[UUID, ...] = ()
 
     def to_wire(self) -> dict[str, Any]:
         return {
@@ -793,6 +797,9 @@ class AssignmentAudience:
             "title": self.title,
             "status": self.status,
             "question_version_ids": [str(item) for item in self.question_version_ids],
+            # 新增键：B2 更新前按名读取、忽略未知键，因此这一步不改变现有行为。
+            "section_ids": [str(item) for item in self.section_ids],
+            "student_ids": [str(item) for item in self.student_ids],
         }
 
 
