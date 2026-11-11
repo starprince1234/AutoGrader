@@ -34,6 +34,7 @@ from ..domain import (
     discard_generation,
     generation_capabilities,
     get_assignment_detail,
+    get_assignment_targets,
     get_question,
     get_version,
     list_assignment_versions,
@@ -1168,12 +1169,18 @@ def get_internal_assignment_endpoint(request: Request, assignment_id: uuid.UUID)
         assignment_id=assignment_id,
         directory=dependencies.b4_authorization,
     )
+    # 目标课序/指定学生：空元组 = 全课程（历史作业）。B2 会用它与 B4 的在读名单求交。
+    section_ids, student_ids = get_assignment_targets(
+        dependencies.database, assignment_id=assignment_id
+    )
     internal = AssignmentAudience(
         assignment_id=view.assignment.assignment_id,
         course_id=view.assignment.course_id,
         title=view.assignment.title,
         status=view.assignment.status,
         question_version_ids=view.question_version_ids,
+        section_ids=section_ids,
+        student_ids=student_ids,
     )
     log_event(
         get_logger("api.internal"),
