@@ -62,6 +62,22 @@
 - **B4**:投递仍按"受众"走,只是受众来源改为 B3 解析后的列表(B4 不解析目标)。
 - **B2**:`_require_assignment()` 已经拿 B3 的 audience;目标变化后**无需改调用点**,
   但要在 `email_verification` 建码时校验 `section_id` 属于目标,否则拒绝(422)。
+
+### 2.4.1 目标必须在 `AssignmentAudience` 这一处穿过(已核对代码)
+
+`B3/api/router.py::get_internal_assignment_endpoint` 是整个目标模型的**唯一瓶颈**:
+
+- 它把 `AssignmentAudience(assignment_id, course_id, title, status, question_version_ids)`
+  交给 B2(`B2/integration/assignments.py`),响应里**没有**任何名单事实——B3 不持有在读名单,
+  B2 拿 B4 的 enrollment 自己组合;
+- 因此目标**不能**在 B3 内部过滤掉:必须把 `section_ids` / `student_ids` 放进这个内部 DTO,
+  由 **B2 在组合名单时求交**(课序 ⊆ 目标课序,学生 ⊆ 指定学生;两者都空 = 全课程);
+- B2 的落点:`_require_assignment()` 已经拿到该 DTO,过滤放在它与 B4 名单合并的那一步,
+  这样网页提交、邮件建码、邮件入库三条路径共用同一个判定,不会出现"网页被拒、邮件被收"。
+
+这条是下一批改 `b3.yaml`(`AssignmentAudience` 加目标字段,内部 schema)与 B2 组合逻辑的
+**唯一入口**;B4 的投递受众也要用同一份交集,避免"通知发给全班、提交只允许目标学生"。
+
 - **B1**:`AssignmentComposer` 增加"课序多选 + 指定学生"两块(学生搜索限定在所选课序);
   `AssignmentDetailPage` 展示目标;学生工作区不改(它按 assignment 读,受众由服务端收窄)。
 
