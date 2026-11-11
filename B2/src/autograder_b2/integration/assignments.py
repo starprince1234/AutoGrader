@@ -55,9 +55,11 @@ class AssignmentUnavailable(RuntimeError):
 class AssignmentAudience:
     """One assignment as B2 needs it for admission decisions.
 
-    ``question_version_ids`` is ordered by the assignment's item ordinal. There is no target
-    section/student list any more: a course-level assignment covers every student who is
-    **currently enrolled in the course**, and that fact is owned by B4 (queried separately).
+    ``question_version_ids`` is ordered by the assignment's item ordinal. ``section_ids``
+    and ``student_ids`` are the assignment's **target** (CHG-0032 follow-up): empty tuples
+    mean "the whole course" / "everyone in the target sections", so a course-level
+    assignment -- and every assignment created before targets existed -- is represented
+    without a backfill. Membership is still owned by B4; the target only narrows it.
     """
 
     assignment_id: str
@@ -65,6 +67,8 @@ class AssignmentAudience:
     title: str
     status: str
     question_version_ids: tuple[str, ...]
+    section_ids: tuple[str, ...] = ()
+    student_ids: tuple[str, ...] = ()
 
     @property
     def open(self) -> bool:
@@ -160,11 +164,13 @@ def _parse_audience(body: bytes) -> AssignmentAudience:
         title = _required_text(document, "title")
         status = _required_text(document, "status")
         question_version_ids = _uuid_tuple(document, "question_version_ids")
+        # 目标由 B3 下发；旧版 B3 不带这两个键时按"全课程"解释，而不是把作业判成不可用。
+        section_ids = _uuid_tuple(document, "section_ids") if "section_ids" in document else ()
+        student_ids = _uuid_tuple(document, "student_ids") if "student_ids" in document else ()
     except (ValueError, TypeError) as error:
         raise AssignmentUnavailable("assignment directory returned an invalid audience") from error
     if not question_version_ids:
         # 作业没有题目就不可能被实现；把它当受众会让"不可提交的作业"被静默接受。
-        # 课程级受众下**没有** section/student 列表，因此这里只校验题目非空。
         raise AssignmentUnavailable("assignment directory returned an empty question list")
     return AssignmentAudience(
         assignment_id=assignment_id,
@@ -172,6 +178,8 @@ def _parse_audience(body: bytes) -> AssignmentAudience:
         title=title,
         status=status,
         question_version_ids=question_version_ids,
+        section_ids=section_ids,
+        student_ids=student_ids,
     )
 
 
