@@ -559,12 +559,14 @@ export function MailReviewTab({
               },
               {
                 key: "reason",
-                header: t("review.mail.failureReason"),
+                header: t("review.mail.resultColumn"),
+                // 老师的要求：这里只回答"提交成功还是失败"。19 个原因码是数据里的
+                // 事实（详情里用一句话解释），但不该占列表的主列——那会让复核页
+                // 变成一张错误码表。
                 render: (row) => (
-                  <div>
-                    <div>{reasonLabel(row.reason_code)}</div>
-                    <div className="muted">{reasonHint(row.reason_code)}</div>
-                  </div>
+                  <StatusPill tone={row.resolved ? "ok" : "bad"}>
+                    {t("review.mail.submitFailed")}
+                  </StatusPill>
                 ),
               },
               {

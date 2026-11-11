@@ -1,4 +1,4 @@
-﻿import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
 import { screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -210,8 +210,11 @@ describe("P13-A 邮件提交标签", () => {
     expect(request?.url.searchParams.get("course_id")).toBe(UUID_A);
     expect(request?.url.searchParams.get("section_id")).toBe(UUID_B);
     expect(request?.url.searchParams.get("limit")).toBe("50");
-    // 页面只渲染契约字段：scope 来自记录本身，而不是 URL 推断。
-    expect(within(screen.getByTestId("review-mail-table")).getByText(/未唯一匹配/)).toBeInTheDocument();
+    // 列表主列只说"提交失败"，不把 19 个原因码铺成一张表（原因在详情里用一句话解释）。
+    expect(
+      within(screen.getByTestId("review-mail-table")).getAllByText("提交失败").length,
+    ).toBeGreaterThan(0);
+    expect(within(screen.getByTestId("review-mail-table")).queryByText(/未唯一匹配/)).toBeNull();
   });
 
   it("403 显示权限说明而不是空列表", async () => {
@@ -277,7 +280,8 @@ describe("P13-A 邮件提交标签", () => {
     expect(screen.queryByTestId(`review-mail-resolve-${UUID_C}`)).toBeNull();
     expect(screen.getByTestId(`review-mail-dismiss-${UUID_C}`)).toBeInTheDocument();
     expect(screen.getByTestId(`review-mail-hold-${UUID_C}`)).toBeInTheDocument();
-    expect(screen.getByText("压缩包解压后体积异常，安全策略拒绝。")).toBeInTheDocument();
+    // 列表只写"提交失败"；为什么失败留到详情里用一句话解释。
+    expect(screen.getByTestId(`review-mail-detail-${UUID_C}`)).toBeInTheDocument();
   });
 
   it("匹配用户：确认前不 POST，确认后提交课程/作业/版本/学生", async () => {
