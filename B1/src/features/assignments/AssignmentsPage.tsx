@@ -607,7 +607,6 @@ export function AssignmentsPage() {
             <Link
               to="/review"
               search={{
-                tab: "mail",
                 course_id: listFilter.courseId ?? undefined,
                 section_id: sectionScope === "" ? undefined : sectionScope,
               }}

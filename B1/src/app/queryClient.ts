@@ -97,8 +97,8 @@ export const queryKeys = {
   commentary: (runId: string) => ["evaluation-commentary", runId] as const,
   /**
    * 复核工作区（P13）。身份 + 筛选一起进键：
-   * - 同一浏览器切换账号后不得读到上一个账号的隔离记录/质量聚合缓存；
-   * - `resolved`/课程/课序/原因/时间范围不同即为**不同的列表或聚合**，不能共用缓存。
+   * - 同一浏览器切换账号后不得读到上一个账号的隔离记录缓存；
+   * - `resolved`/课程/课序/原因不同即为**不同的列表**，不能共用缓存。
    */
   reviewQuarantines: (
     identity: string,
@@ -110,15 +110,6 @@ export const queryKeys = {
       cursor: string | null;
     },
   ) => ["review-quarantines", identity, filter] as const,
-  /** 题目质量聚合：身份 + 版本 + 时间范围。 */
-  reviewQualitySummary: (
-    identity: string,
-    filter: {
-      questionVersionId: string | null;
-      from: string | null;
-      to: string | null;
-    },
-  ) => ["review-quality-summary", identity, filter] as const,
   /** 申诉证据包。`view` 进键：学生视图与教师视图是两份不同的内容。 */
   appealPack: (runId: string, view: string) => ["appeal-pack", runId, view] as const,
   /**

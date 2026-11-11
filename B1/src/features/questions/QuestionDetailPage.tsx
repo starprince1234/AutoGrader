@@ -3,7 +3,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { t } from "../../i18n";
 import { isApiError } from "../../api/problem";
 import { useSession } from "../../auth/sessionContext";
-import { canAuthorQuestions, canSubmitAnswer, canViewQuestionQuality } from "../../auth/visibility";
+import { canAuthorQuestions, canSubmitAnswer } from "../../auth/visibility";
 import {
   Banner,
   EmptyState,
@@ -143,25 +143,7 @@ export function QuestionDetailPage({
             {t("questions.deleteDraft")}
           </button>
         ) : null}
-        {/* 题目质量入口（P13）：打开复核工作区的 quality 标签，并带上**当前选中的版本**。
-            P13 是唯一入口（旧 `/quality` 已合并），版本 id 由这里带过去，教师不必手填 UUID。 */}
-        {effectiveId && canViewQuestionQuality(session) ? (
-          <Link
-            className="button button--ghost"
-            to="/review"
-            search={{
-              tab: "quality",
-              origin: "question",
-              // 复核页的「返回该题」要靠它回到这一道题，而不是让老师回题库自己再找一遍。
-              question_id: questionId,
-              course_id: shown.course_id,
-              question_version_id: effectiveId,
-            }}
-            data-testid="question-quality-link"
-          >
-            {t("questions.qualityLink")}
-          </Link>
-        ) : null}
+        {/* 老师要求删掉「查看题目质量」入口：复核页只保留邮件隔离，题库不再把人引过去。 */}
       </div>
 
       <Panel title={t("questions.stemTitle")} testId="question-stem">

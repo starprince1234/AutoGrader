@@ -309,11 +309,11 @@ const usersRoute = createRoute({
   component: UsersRoute,
 });
 
-/**
- * P13 复核工作区的唯一入口（`/review?tab=mail|quality`）。
+/*
+ * P13 复核工作区的唯一入口（`/review`）。
  *
- * 旧 `/intake/quarantines` 与 `/quality` 已合并到这里：不注册别名、不留兼容路由。
- * 未知 `tab` 由 `parseReviewSearch` 归一到 `mail`；查询串只承载筛选与对象 ID。
+ * 旧 `/intake/quarantines` 与 `/quality` 已删除：不注册别名、不留兼容路由。
+ * 「题目质量」视图与「示例预览」已按老师要求移除；查询串只承载邮件列表的筛选与对象 ID。
  */
 const reviewRoute = createRoute({
   getParentRoute: () => rootRoute,

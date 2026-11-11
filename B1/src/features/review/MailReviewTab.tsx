@@ -25,7 +25,6 @@ import {
   Table,
 } from "../../ui/components";
 import { formatDateTime, shortenId } from "../../ui/format";
-import { DemoHint } from "./DemoHint";
 import {
   loadedQuarantines,
   useCompleteQuarantine,
@@ -34,16 +33,6 @@ import {
   useSetQuarantineHold,
 } from "./useReviewMail";
 import { isAttributableReason, REASON_CODES, reasonHint, reasonLabel } from "./reasonCodes";
-import {
-  DEMO_COURSE,
-  DEMO_SECTION_ID,
-  DEMO_SECTION_OPTION,
-  DEMO_STUDENTS,
-  DEMO_SUBMISSION_ID,
-  DEMO_TEACHER_ID,
-  demoAssignment,
-  demoQuarantines,
-} from "./demoData";
 import {
   readMailFilter,
   withMailFilter,
@@ -97,25 +86,20 @@ export function MailReviewTab({
   onChange: (next: ReviewSearch) => void;
 }) {
   const session = useSession();
-  const demo = search.demo === "1";
   const filter = readMailFilter(search);
   const identity = session.subject ?? session.username ?? "anonymous";
   const isAdmin = session.rolesKnown && session.roles.includes("admin");
 
-  const courses = useCourses({ enabled: !demo });
+  const courses = useCourses();
   // 令牌作用域是浏览器端能拿到的**唯一**授权事实：下拉只展示它覆盖的课程/课序，
   // 越权 URL 不会把别的课程"带进来"（服务端仍会 403，这里是不给它出现在界面里的机会）。
-  // 示例模式完全不读课程/课序目录：样例自己是完整的，没登录、没后端也能看。
   const courseOptions = useMemo(
     () =>
-      demo
-        ? [DEMO_COURSE]
-        : loadedCourses(courses.data?.pages).filter(
-            (course) =>
-              isAdmin ||
-              session.scope.some((entry) => entry.course_id === course.course_id),
-          ),
-    [courses.data, demo, isAdmin, session.scope],
+      loadedCourses(courses.data?.pages).filter(
+        (course) =>
+          isAdmin || session.scope.some((entry) => entry.course_id === course.course_id),
+      ),
+    [courses.data, isAdmin, session.scope],
   );
   const scopeCourseIds = new Set(session.scope.map((entry) => entry.course_id));
   const courseMap = useMemo(
@@ -127,23 +111,20 @@ export function MailReviewTab({
   const requestedCourseId = filter.courseId;
   const requestedAllowed =
     requestedCourseId !== null && (isAdmin || scopeCourseIds.has(requestedCourseId));
-  const effectiveCourseId = demo
-    ? DEMO_COURSE.course_id
-    : isAdmin
+  const effectiveCourseId = isAdmin
+    ? requestedCourseId
+    : requestedAllowed
       ? requestedCourseId
-      : requestedAllowed
-        ? requestedCourseId
-        : (courseOptions[0]?.course_id ?? null);
-  const sections = useSections(demo ? null : effectiveCourseId);
+      : (courseOptions[0]?.course_id ?? null);
+  const sections = useSections(effectiveCourseId);
   const sectionOptions = useMemo<SectionOption[]>(() => {
-    if (demo) return [DEMO_SECTION_OPTION];
     const fetched = sections.data ?? [];
     if (isAdmin || effectiveCourseId === null) return fetched;
     const entries = session.scope.filter((entry) => entry.course_id === effectiveCourseId);
     if (entries.some((entry) => entry.section_id === null)) return fetched;
     const allowed = new Set(entries.map((entry) => entry.section_id));
     return fetched.filter((section) => allowed.has(section.sectionId));
-  }, [demo, effectiveCourseId, isAdmin, sections.data, session.scope]);
+  }, [effectiveCourseId, isAdmin, sections.data, session.scope]);
   const sectionMap = useMemo(
     () => new Map(sectionOptions.map((item) => [item.sectionId, item.label] as const)),
     [sectionOptions],
@@ -153,7 +134,7 @@ export function MailReviewTab({
   const listEnabled = isAdmin || session.scope.length > 0;
   const query = useQuarantineMail({
     identity,
-    enabled: listEnabled && !demo,
+    enabled: listEnabled,
     filter: {
       courseId: effectiveCourseId,
       sectionId: filter.sectionId,
@@ -163,30 +144,7 @@ export function MailReviewTab({
       cursor: filter.cursor,
     },
   });
-  const apiRows = useMemo(() => loadedQuarantines(query.data?.pages), [query.data]);
-  const [demoRows, setDemoRows] = useState<IntakeQuarantineView[]>(() => demoQuarantines());
-  // 示例只有一门课一个课序：URL 里带过来的是**真实**课程/课序 id，用它筛示例只会筛出 0 条
-  // （"从有筛选的页面点查看示例，结果还是空的"）。示例模式只认示例自己的课序。
-  const demoSectionId = filter.sectionId === DEMO_SECTION_ID ? filter.sectionId : null;
-  const rows = demo
-    ? demoRows.filter(
-        (row) =>
-          (demoSectionId === null || row.scope_section_id === demoSectionId) &&
-          (filter.resolved === null || row.resolved === filter.resolved) &&
-          (filter.held === null || row.held === filter.held) &&
-          (filter.reasonCode === null || row.reason_code === filter.reasonCode),
-      )
-    : apiRows;
-  const updateDemoRow = (
-    quarantineId: string,
-    patch: Partial<IntakeQuarantineView>,
-  ) => {
-    setDemoRows((current) =>
-      current.map((row) =>
-        row.intake_quarantine_id === quarantineId ? { ...row, ...patch } : row,
-      ),
-    );
-  };
+  const rows = useMemo(() => loadedQuarantines(query.data?.pages), [query.data]);
 
   const [detailTarget, setDetailTarget] = useState<IntakeQuarantineView | null>(null);
   const [resolveTarget, setResolveTarget] = useState<IntakeQuarantineView | null>(null);
@@ -216,25 +174,21 @@ export function MailReviewTab({
   // section（服务端还会用 B4 授权再校验/补全一次）。
   const assignments = useAllAssignments(
     { courseId: matchCourseId },
-    { enabled: !demo && matchCourseId !== null },
+    { enabled: matchCourseId !== null },
   );
-  const assignmentOptions = demo
-    ? [demoAssignment(matchCourseId)]
-    : assignments.assignments.filter(
-        (assignment) => matchCourseId === null || assignment.course_id === matchCourseId,
-      );
+  const assignmentOptions = assignments.assignments.filter(
+    (assignment) => matchCourseId === null || assignment.course_id === matchCourseId,
+  );
   const selectedAssignment =
     assignmentOptions.find((assignment) => assignment.assignment_id === matchAssignmentId) ?? null;
   // 人工归属不再选"题目版本"：complete 请求按 assignment_id 定位，服务端按附件题号逐题建提交。
-  const roster = useCourseRoster(demo ? null : matchCourseId);
-  // 示例模式不发起任何业务请求：`useCourseRoster(null)` 是禁用查询，不能拿它的
-  // `isPending`（禁用查询在 react-query 里也是 pending）去禁用示例里的学生下拉。
-  const rosterLoading = !demo && roster.isPending;
+  const roster = useCourseRoster(matchCourseId);
+  const rosterLoading = roster.isPending;
   const candidates = useMemo(() => {
-    const rows = demo ? DEMO_STUDENTS : roster.students;
+    const rows = roster.students;
     if (matchSectionId === null) return rows;
     return rows.filter((row) => row.section_id === matchSectionId);
-  }, [demo, roster.students, matchSectionId]);
+  }, [roster.students, matchSectionId]);
   const selectableStudents = candidates.filter((row) => row.student_id !== null);
   const selectedStudent =
     selectableStudents.find((row) => row.student_id === studentId) ?? null;
@@ -282,23 +236,6 @@ export function MailReviewTab({
 
   const confirm = () => {
     if (!resolveTarget || !selectedAssignment || studentId === "" || candidateSectionId === null) return;
-    if (demo) {
-      updateDemoRow(resolveTarget.intake_quarantine_id, {
-        resolved: true,
-        resolution: "completed",
-        resolved_student_id: studentId,
-        resolved_submission_id: DEMO_SUBMISSION_ID,
-        resolved_at: new Date().toISOString(),
-        resolved_by: DEMO_TEACHER_ID,
-        resolution_note: note.trim() === "" ? null : note.trim(),
-        held: false,
-        held_at: null,
-        held_by: null,
-      });
-      setSuccess(t("review.mail.completedOk"));
-      closeResolve();
-      return;
-    }
     complete.mutate(
       {
         quarantineId: resolveTarget.intake_quarantine_id,
@@ -323,16 +260,6 @@ export function MailReviewTab({
   };
 
   const toggleHold = (row: IntakeQuarantineView) => {
-    if (demo) {
-      const held = !row.held;
-      updateDemoRow(row.intake_quarantine_id, {
-        held,
-        held_at: held ? new Date().toISOString() : null,
-        held_by: held ? DEMO_TEACHER_ID : null,
-      });
-      setSuccess(held ? t("review.mail.heldOk") : t("review.mail.resumedOk"));
-      return;
-    }
     hold.mutate(
       { quarantineId: row.intake_quarantine_id, body: { held: !row.held } },
       {
@@ -373,23 +300,6 @@ export function MailReviewTab({
 
   const confirmDismiss = () => {
     if (!dismissTarget) return;
-    if (demo) {
-      updateDemoRow(dismissTarget.intake_quarantine_id, {
-        resolved: true,
-        resolution: "dismissed",
-        resolved_student_id: null,
-        resolved_submission_id: null,
-        resolved_at: new Date().toISOString(),
-        resolved_by: DEMO_TEACHER_ID,
-        resolution_note: dismissNote.trim() === "" ? null : dismissNote.trim(),
-        held: false,
-        held_at: null,
-        held_by: null,
-      });
-      setSuccess(t("review.mail.dismissedOk"));
-      closeDismiss();
-      return;
-    }
     dismiss.mutate(
       {
         quarantineId: dismissTarget.intake_quarantine_id,
@@ -471,13 +381,6 @@ export function MailReviewTab({
   return (
     <div className="stack">
       <h2>{t("review.mail.title")}</h2>
-
-      {demo ? (
-        <Banner tone="info" testId="review-demo-banner">
-          <p>{t("review.demoBanner")}</p>
-          <p className="muted">{t("review.demoMailNote")}</p>
-        </Banner>
-      ) : null}
 
       <Panel title={t("review.mail.filter")}>
         <div className="stack">
@@ -599,15 +502,15 @@ export function MailReviewTab({
           />
         }
       >
-        {!listEnabled && !demo ? (
+        {!listEnabled ? (
           <EmptyState>{t("review.mail.needCourse")}</EmptyState>
-        ) : !demo && query.isPending ? (
+        ) : query.isPending ? (
           <Spinner />
-        ) : !demo && forbidden ? (
+        ) : forbidden ? (
           <Banner tone="error" testId="review-mail-forbidden">
             {t("review.mail.forbidden")}
           </Banner>
-        ) : !demo && query.isError ? (
+        ) : query.isError ? (
           <ErrorState error={query.error} testId="review-mail-error" />
         ) : rows.length === 0 ? (
           <div data-testid="review-mail-empty">
@@ -617,12 +520,6 @@ export function MailReviewTab({
                 : t("review.mail.emptyFiltered")}
             </p>
             {!isAdmin ? <p className="muted">{t("review.mail.emptyStaffHint")}</p> : null}
-            {!demo ? (
-              <DemoHint
-                testId="review-mail-empty-demo"
-                onShow={() => onChange({ ...search, demo: "1" })}
-              />
-            ) : null}
           </div>
         ) : (
           <Table<IntakeQuarantineView>
@@ -862,7 +759,7 @@ export function MailReviewTab({
               </Select>
             </Field>
 
-            {!demo && roster.isError ? (
+            {roster.isError ? (
               <ErrorState error={roster.error} testId="review-resolve-candidates-error" />
             ) : null}
             {matchCourseId !== null && !rosterLoading && selectableStudents.length === 0 ? (
