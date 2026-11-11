@@ -135,3 +135,45 @@
 - 不回填历史作业的目标(空 = 全课程),不把历史提交猜给某个作业;
 - 不重建数据库、不向真实学生发信、不创建真实提交、不发布题目;
 - 不保留"课程级/目标级"两套并行语义(避免双写);老师确认的就是目标模型。
+
+## 5. 交接:已完成 / 未完成(会话预算用尽)
+
+**已完成并推送**(提交见 git log):
+
+| 层 | 内容 | 提交 |
+|---|---|---|
+| 设计 | 现状审计 + 目标语义 + 迁移计划 | `ac7e815` `94a3201` `6f06b5d` |
+| 迁移 | `20261108_0012` 重建 `assignment_sections/students`,0 行 = 全课程 | `f115ffa` |
+| 模型 | `AssignmentSection` / `AssignmentStudent` | `f115ffa` |
+| 仓储 | `replace_assignment_targets` / `assignment_targets` | `482a00b` |
+| 领域 | `get_assignment_targets()` | `8c0a896` |
+| B3 内部接口 | `AssignmentAudience` 输出 `section_ids/student_ids` | `8a8e3d6` `8c0a896` |
+| B2 解析 | `AssignmentAudience` 读入目标(缺键 = 全课程) | `8a23d4c` |
+| B1 复核 | 列表列改为「提交结果 / 提交失败」 | `d52cf2c` |
+
+**未完成**(下一会话从这里继续,顺序即依赖):
+
+1. **B2 求交**:网页提交、邮件建码、邮件入库三条路径共用同一个
+   `audience ∩ B4 enrollment` 判定(课序 ⊆ `section_ids`,学生 ⊆ `student_ids`,
+   两者皆空 = 全课程);落点在 `_require_assignment()` 之后的准入分支与
+   `email_verification` 建码处。**未做**。
+2. **B4 投递**:发布/提醒的受众改用同一份交集,避免"通知发全班、提交只允许目标"。
+   **未做**。
+3. **契约 0.35.0**:`b3.yaml` 加 `AssignmentTarget`、`AssignmentPublic.target`(required)、
+   `CreateAssignmentRequest.target`(optional)、内部 `AssignmentAudience` 目标字段;
+   版本与 CHANGELOG 同步;五份 `contracts.lock` 用复刻的 `contract_digest()`
+   (排序相对路径 + `\0` + 字节的 SHA-256)重算。**未做**——因此 B2/B3 现在输出的是
+   契约里还不存在的字段,`api:check` / 契约校验会在下一次集成时报出来,**必须先补契约**。
+4. **B3 写路径**:创建作业时写目标(校验"目标 ⊆ 课程",越权 422),`AssignmentView` 带
+   `target`,列表/详情输出;`AssignmentDetailPage` 展示。**未做**。
+5. **B1 composer**:课序多选 + 指定学生(学生限定在所选课序);生成类型重新生成。
+   **未做**。
+6. **打回 + 通知**:`b2.yaml` 新 `POST /api/v1/intake/quarantines/{id}/reject`;
+   B2 处置 + SMTP 发信给原发件地址,响应 `queued|unavailable`;B1 按钮与提示。
+   **未做**(界面文案已先折叠为「提交失败」)。
+7. **验收矩阵**(见 §3.5):全部**未执行**——本机无 `uv`/PostgreSQL/nsjail,
+   只能在远端 CI 与隔离 Linux 上跑。
+
+**已知风险**:第 3 条(契约)未补之前,内部受众响应多出两个键虽然对 B2 兼容,
+但契约校验会判为"契约外字段";补契约是下一会话的**第一步**。
+
