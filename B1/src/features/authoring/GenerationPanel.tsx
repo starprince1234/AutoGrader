@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { t } from "../../i18n";
 import { isApiError } from "../../api/problem";
-import type { QuestionDraftGeneration, QuestionDraftProposal } from "../../api/types";
+import type { Language, QuestionDraftGeneration, QuestionDraftProposal } from "../../api/types";
 import { formatDateTime } from "../../ui/format";
 import {
   Banner,
@@ -39,6 +39,22 @@ const STATUS_TONE = { ready: "ok", needs_review: "warn", failed: "bad", unavaila
 
 /** 难度四档：简单 / 中等 / 较难 / 困难。顺序即下拉顺序，默认取「中等」。 */
 const DIFFICULTY_LEVELS = ["easy", "medium", "advanced", "hard"] as const;
+const LANGUAGES: readonly Language[] = ["python", "bash"];
+const REFERENCE_TIER_COUNTS = [1, 2, 3] as const;
+const OBJECTIVE_PRESETS = [
+  {
+    labelKey: "authoring.generation.examplePreset1Label",
+    textKey: "authoring.generation.examplePreset1Text",
+  },
+  {
+    labelKey: "authoring.generation.examplePreset2Label",
+    textKey: "authoring.generation.examplePreset2Text",
+  },
+  {
+    labelKey: "authoring.generation.examplePreset3Label",
+    textKey: "authoring.generation.examplePreset3Text",
+  },
+] as const;
 
 function statusText(generation: QuestionDraftGeneration): string {
   return t(`authoring.generation.status.${generation.status}`);
@@ -53,8 +69,6 @@ function ProposalPreview({
   onApply: () => void;
   applied: boolean;
 }) {
-  const cases = proposal.cases ?? [];
-  const fixtures = proposal.fixtures ?? [];
   const referenceTiers =
     (proposal.reference_answers ?? []).length > 0
       ? (proposal.reference_answers ?? [])
@@ -65,39 +79,37 @@ function ProposalPreview({
     <div className="stack" data-testid="generation-proposal">
       <div className="generation-preview__head">
         <h3>{t("authoring.generation.previewTitle")}</h3>
-        {/* 浅灰小字：说清"谁能看到"，替代原来与它重复的「学生看不到」胶囊。 */}
         <span className="muted generation-preview__note" data-testid="generation-preview-note">
           {t("authoring.generation.previewNote")}
         </span>
       </div>
 
-      {proposal.stem_markdown.trim() === "" ? (
-        <p className="muted">{t("authoring.generation.emptyStem")}</p>
-      ) : (
-        <SafeMarkdown source={proposal.stem_markdown} testId="generation-preview-stem" />
-      )}
+      <section className="case-card stack" data-testid="generation-card-stem">
+        <h4>{t("authoring.generation.cardStemTitle")}</h4>
+        <div className="generation-facts" data-testid="generation-proposal-facts">
+          <span>
+            {t("authoring.title")}：{proposal.title.trim() === "" ? "—" : proposal.title}
+          </span>
+          <span>
+            {t("authoring.language")}：{t(`questions.language.${proposal.language}`)}
+          </span>
+          <span>
+            {t("authoring.tags")}：
+            {(proposal.tags ?? []).length === 0 ? "—" : (proposal.tags ?? []).join("、")}
+          </span>
+          <span data-testid="generation-proposal-tier-count">
+            {t("authoring.referenceTiersTitle")}：{referenceTiers.length}
+          </span>
+        </div>
+        {proposal.stem_markdown.trim() === "" ? (
+          <p className="muted">{t("authoring.generation.emptyStem")}</p>
+        ) : (
+          <SafeMarkdown source={proposal.stem_markdown} testId="generation-preview-stem" />
+        )}
+      </section>
 
-      {/* 元信息：去掉项目符号，一行里按 · 分隔，降低视觉噪音。 */}
-      <div className="generation-facts" data-testid="generation-proposal-facts">
-        <span>
-          {t("authoring.title")}：{proposal.title.trim() === "" ? "—" : proposal.title}
-        </span>
-        <span>
-          {t("authoring.language")}：{t(`questions.language.${proposal.language}`)}
-        </span>
-        <span>
-          {t("authoring.tags")}：
-          {(proposal.tags ?? []).length === 0 ? "—" : (proposal.tags ?? []).join("、")}
-        </span>
-        <span data-testid="generation-proposal-tier-count">
-          {t("authoring.referenceTiersTitle")}：{referenceTiers.length}
-        </span>
-      </div>
-
-      <details data-testid="generation-protected">
-        <summary>{t("authoring.generation.protectedSummary")}</summary>
-
-        <h3>{t("authoring.referenceAnswer")}</h3>
+      <section className="case-card stack" data-testid="generation-card-references">
+        <h4>{t("authoring.generation.cardReferencesTitle", { count: referenceTiers.length })}</h4>
         {referenceTiers.length > 0 ? (
           <div className="stack" data-testid="generation-reference">
             {referenceTiers.map((tier, index) => (
@@ -110,63 +122,16 @@ function ProposalPreview({
         ) : (
           <p className="muted">{t("authoring.generation.noReference")}</p>
         )}
+      </section>
 
+      <section className="case-card stack" data-testid="generation-card-rubric">
+        <h4>{t("authoring.generation.cardRubricTitle")}</h4>
         {proposal.grading_prompt ? (
-          <div className="stack" data-testid="generation-grading-prompt">
-            <h3>{t("authoring.generation.gradingPrompt")}</h3>
-            <pre>{proposal.grading_prompt}</pre>
-          </div>
-        ) : null}
-
-        {cases.length > 0 ? (
-          <>
-            <h3>{t("authoring.generation.cases", { count: cases.length })}</h3>
-            <ol data-testid="generation-cases">
-              {cases.map((item) => (
-                <li key={item.ordinal}>
-                  <strong>{item.name.trim() === "" ? "—" : item.name}</strong>
-                  {" · "}
-                  {t("authoring.caseWeight")}{" "}
-                  {item.weight === null || item.weight === undefined
-                    ? t("authoring.generation.noWeight")
-                    : item.weight}
-                  <div className="muted">
-                    {item.stdin ? (
-                      <span>
-                        {t("authoring.generation.caseStdin")}: <code>{item.stdin}</code>
-                      </span>
-                    ) : null}
-                    {item.expected_stdout ? (
-                      <span>
-                        {t("authoring.generation.caseStdout")}: <code>{item.expected_stdout}</code>
-                      </span>
-                    ) : null}
-                  </div>
-                </li>
-              ))}
-            </ol>
-          </>
-        ) : null}
-
-        {fixtures.length > 0 ? (
-          <>
-            <h3>{t("authoring.generation.fixtures")}</h3>
-            <ul data-testid="generation-fixtures">
-              {fixtures.map((item) => (
-                <li key={`${item.path}-${item.mount}`}>
-                  <code>{item.path}</code> ·{" "}
-                  {item.mount === "input"
-                    ? t("authoring.fixture.mountInput")
-                    : t("authoring.fixture.mountExpected")}
-                  <div className="muted">
-                    {t("authoring.generation.fixtureTextHint", { chars: item.content_text.length })}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </>
-        ) : null}
-      </details>
+          <pre data-testid="generation-grading-prompt">{proposal.grading_prompt}</pre>
+        ) : (
+          <p className="muted">{t("authoring.generation.noGradingPrompt")}</p>
+        )}
+      </section>
 
       {proposal.notes ? <p className="muted">{proposal.notes}</p> : null}
 
@@ -174,7 +139,6 @@ function ProposalPreview({
         <button type="button" className="button" data-testid="generation-apply" onClick={onApply}>
           {applied ? t("authoring.generation.reapply") : t("authoring.generation.apply")}
         </button>
-        {/* 常驻说明改成悬浮提示：不点不看，页面上不多一行字。 */}
         <HintTooltip
           label={t("authoring.generation.hintLabel")}
           testId="generation-hint-apply"
@@ -213,9 +177,10 @@ export function GenerationPanel({
   const discard = useDiscardGeneration();
 
   const [objective, setObjective] = useState("");
+  const [language, setLanguage] = useState<Language>(form.language);
   // 难度是四档下拉，默认「中等」；选中的中文等级原样作为 `difficulty` 传给 AI，用来控制出题复杂度。
   const [difficulty, setDifficulty] = useState(() => t("authoring.generation.difficulty.medium"));
-  const [caseCount, setCaseCount] = useState("");
+  const [referenceTiersCount, setReferenceTiersCount] = useState<number>(2);
   const [constraints, setConstraints] = useState("");
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [appliedId, setAppliedId] = useState<string | null>(null);
@@ -224,7 +189,6 @@ export function GenerationPanel({
 
   const objectiveLimit = capabilities.data?.learning_objective_max_chars ?? 0;
   const constraintsLimit = capabilities.data?.constraints_max_chars ?? 0;
-  const caseLimit = capabilities.data?.desired_case_count_max ?? 0;
   const providerAvailable = capabilities.data?.provider_status === "enabled";
   const forbidden =
     capabilities.isError && isApiError(capabilities.error) && capabilities.error.isForbidden;
@@ -281,23 +245,16 @@ export function GenerationPanel({
 
   const submit = () => {
     if (!courseId || !canGenerate) return;
-    // 老师没填用例数时给一个明确的默认值：不传的话模型常常一条用例都不给，
-    // 生成出来的草稿在「测试用例」这步就是空的（3.0 第 2 条）。
-    const desiredCases = caseCount.trim() === ""
-      ? 2
-      : /^\d+$/.test(caseCount.trim())
-        ? Math.max(1, Number.parseInt(caseCount.trim(), 10))
-        : null;
     create.mutate(
       {
         courseId,
         request: {
           learning_objective: objective,
-          language: form.language,
+          language,
           adapter_kind: form.adapterKind,
           difficulty,
           tags: parseTags(form.tags).tags,
-          desired_case_count: desiredCases,
+          desired_reference_tiers: referenceTiersCount,
           constraints: constraints.trim() === "" ? null : constraints,
         },
       },
@@ -386,7 +343,34 @@ export function GenerationPanel({
           </p>
         ) : null}
 
+        <div className="inline" data-testid="generation-presets">
+          <span className="muted">{t("authoring.generation.examplePresetsLabel")}</span>
+          {OBJECTIVE_PRESETS.map((preset) => (
+            <button
+              key={preset.labelKey}
+              type="button"
+              className="button button--ghost"
+              onClick={() => setObjective(t(preset.textKey))}
+            >
+              {t(preset.labelKey)}
+            </button>
+          ))}
+        </div>
+
         <div className="form-grid">
+          <Field label={t("authoring.generation.language")} htmlFor="generation-language">
+            <Select
+              id="generation-language"
+              value={language}
+              onChange={(event) => setLanguage(event.target.value as Language)}
+            >
+              {LANGUAGES.map((lang) => (
+                <option key={lang} value={lang}>
+                  {t(`questions.language.${lang}`)}
+                </option>
+              ))}
+            </Select>
+          </Field>
           <Field label={t("authoring.generation.difficulty")} htmlFor="generation-difficulty">
             <Select
               id="generation-difficulty"
@@ -403,14 +387,21 @@ export function GenerationPanel({
               })}
             </Select>
           </Field>
-          <Field label={t("authoring.generation.caseCount")} htmlFor="generation-case-count">
-            <input
-              id="generation-case-count"
-              inputMode="numeric"
-              placeholder={caseLimit > 0 ? `1–${caseLimit}` : "2"}
-              value={caseCount}
-              onChange={(event) => setCaseCount(event.target.value)}
-            />
+          <Field
+            label={t("authoring.generation.referenceTiers")}
+            htmlFor="generation-reference-tiers"
+          >
+            <Select
+              id="generation-reference-tiers"
+              value={String(referenceTiersCount)}
+              onChange={(event) => setReferenceTiersCount(Number.parseInt(event.target.value, 10))}
+            >
+              {REFERENCE_TIER_COUNTS.map((count) => (
+                <option key={count} value={String(count)}>
+                  {t("authoring.generation.referenceTiersOption", { count })}
+                </option>
+              ))}
+            </Select>
           </Field>
         </div>
 
@@ -438,7 +429,11 @@ export function GenerationPanel({
           disabled={!canGenerate}
           onClick={submit}
         >
-          {create.isPending ? t("authoring.generation.generating") : t("authoring.generation.generate")}
+          {create.isPending
+            ? t("authoring.generation.generating")
+            : generation?.proposal
+              ? t("authoring.generation.regenerate")
+              : t("authoring.generation.generate")}
         </button>
         <HintTooltip
           label={t("authoring.generation.hintLabel")}

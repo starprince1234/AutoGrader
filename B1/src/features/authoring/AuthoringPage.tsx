@@ -202,7 +202,10 @@ export function AuthoringPage({
   // 同一帧内连续应用两次的情况）。
   const applyProposalToForm = useCallback(
     (proposal: QuestionDraftProposal) => {
-      const next = applyProposal(form, proposal);
+      const next: DraftForm = {
+        ...applyProposal(form, proposal),
+        language: proposal.language ?? form.language,
+      };
       setForm(next);
       // 候选是服务端给出的内容，不是教师的未保存编辑：应用后它就是新的基线。
       setBaseline(next);

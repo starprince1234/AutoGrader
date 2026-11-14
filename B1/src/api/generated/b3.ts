@@ -1130,6 +1130,7 @@ export interface components {
             /** @description Course tags the candidate should align with. Guidance, not a closed vocabulary. */
             tags?: string[];
             desired_case_count?: number | null;
+            desired_reference_tiers?: number | null;
             constraints?: string | null;
         };
         /**

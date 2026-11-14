@@ -189,6 +189,7 @@ def request_generation(
         difficulty=payload.difficulty,
         tags=tags,
         desired_case_count=payload.desired_case_count,
+        desired_reference_tiers=payload.desired_reference_tiers,
         constraints=constraints,
         max_objective_chars=settings.draft_generation_max_objective_chars,
     )

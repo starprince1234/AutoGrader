@@ -406,6 +406,7 @@ class QuestionDraftGenerationRequestModel(BaseModel):
     difficulty: str | None = Field(default=None, max_length=200)
     tags: tuple[str, ...] = Field(default=(), max_length=20)
     desired_case_count: int | None = Field(default=None, ge=1, le=100)
+    desired_reference_tiers: int | None = Field(default=None, ge=1, le=5)
     constraints: str | None = None
 
 

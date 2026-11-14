@@ -112,8 +112,8 @@ class Settings:
     #: Cost guard. Counted per actor over a sliding window from the usage ledger, so it
     #: is enforced by persisted facts rather than by a client-side counter, and it is
     #: configurable because the honest number depends on the provider quota a deployment
-    #: actually pays for. ``0`` means "no request budget is enforced here".
-    draft_generation_budget_requests: int = 20
+    #: ``0`` means "no request budget is enforced here" (AI authoring is unlimited by default).
+    draft_generation_budget_requests: int = 0
     draft_generation_budget_window_seconds: int = 3_600
 
     extra: Mapping[str, str] = field(default_factory=dict)

@@ -1582,8 +1582,10 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
       "内容仅教师可见，学生无法查看草稿、参考解法与评分细则。",
     );
 
-    // 候选被填进同一张表单：标题、题干、参考答案都到位。
-    expect(screen.getByTestId("generation-protected")).toHaveTextContent("参考答案");
+    // 候选被填进同一张表单：标题、题干、多档参考解法、AI 评分细则都直接展开可见。
+    expect(screen.getByTestId("generation-card-stem")).toBeInTheDocument();
+    expect(screen.getByTestId("generation-card-references")).toHaveTextContent("sys.stdin");
+    expect(screen.getByTestId("generation-card-rubric")).toBeInTheDocument();
     await user.click(screen.getByTestId("ai-back"));
     await screen.findByTestId("wizard-nav");
     await goToStep(user, "basic");
@@ -1755,7 +1757,7 @@ describe("AI 草稿页的信息密度（文案、唯一提示、悬浮提示）"
     const generateHint = await screen.findByTestId("generation-hint-generate");
     const applyHint = await screen.findByTestId("generation-hint-apply");
     const expected =
-      "AI 草稿仅为初稿，请核对题干、多档参考解法与评分细则；点击「保存草稿」或「保存并直接发布」写入题库。";
+      "AI 草稿仅为初稿，请核对题干、多档参考解法与评分细则；点击「填入编辑器继续微调」后再保存或发布。";
     expect(generateHint).toHaveTextContent(expected);
     expect(applyHint).toHaveTextContent(expected);
     // 提示是悬浮气泡（role=tooltip），不是新的弹窗。
@@ -1795,7 +1797,7 @@ describe("AI 草稿页的信息密度（文案、唯一提示、悬浮提示）"
     await user.click(screen.getByTestId("generation-generate"));
 
     const apply = await screen.findByTestId("generation-apply");
-    expect(apply).toHaveTextContent("确认载入草稿");
+    expect(apply).toHaveTextContent("再次填入编辑器");
     expect(apply).not.toHaveTextContent("重新载入");
   });
 });
@@ -1916,9 +1918,10 @@ describe("AI 出题表单：三处文案与折叠改造", () => {
     expect(screen.getByLabelText("教学目标")).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/统计每个单词出现的次数/)).toBeInTheDocument();
 
-    // 2) 用例数目。
-    expect(screen.getByText("用例数目")).toBeInTheDocument();
-    expect(screen.queryByText("希望几个测试用例（可选）")).toBeNull();
+    // 2) 用例数目已移除，改为题目语言与参考解法档数。
+    expect(screen.queryByText("用例数目")).toBeNull();
+    expect(screen.getByLabelText("题目语言")).toBeInTheDocument();
+    expect(screen.getByLabelText("参考解法档数")).toBeInTheDocument();
 
     // 3) 高级补充要求：默认收起，点开才出现输入框；占位提示保留。
     const details = screen.getByTestId("generation-advanced");
