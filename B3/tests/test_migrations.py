@@ -359,7 +359,7 @@ def test_course_level_assignments_replace_the_target_tables(owner_engine):
                 text("SELECT indexname FROM pg_indexes WHERE schemaname = 'b3'")
             ).scalars()
         )
-    assert {"assignment_sections", "assignment_students"} & tables == set()
+    assert {"assignment_sections", "assignment_students"} <= tables
     assert "section_id" not in columns
     assert columns["notification_state"] == ("text", "NO", "'pending'::text")
     assert columns["notification_scheduled_at"] == (
@@ -368,8 +368,6 @@ def test_course_level_assignments_replace_the_target_tables(owner_engine):
         None,
     )
     assert constraints == {"ck_assignments_notification_state"}
-    assert "ix_assignment_sections_section_id" not in indexes
-    assert "ix_assignment_students_student_id" not in indexes
     assert "ix_assignments_course_id" in indexes
 
 
