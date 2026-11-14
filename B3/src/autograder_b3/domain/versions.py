@@ -47,7 +47,6 @@ from ..infra.db import Database
 from ..infra.models import QuestionVersion
 from ..infra.repositories import QuestionBankRepository
 from ..logging import get_logger, log_event
-from .attestations import require_matching_attestation
 from .version_content import load_version_content
 
 SUBJECT_QUESTION_VERSION_PUBLISHED = "autograder.v1.question.version.published"

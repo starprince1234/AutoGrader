@@ -23,7 +23,6 @@ import {
   questionPublic,
   questionTagCoverage,
   questionVersionPublic,
-  referenceVerification,
   sessionCreated,
 } from "../../testing/contractFixtures";
 import { signIn } from "../../auth/sessionStore";

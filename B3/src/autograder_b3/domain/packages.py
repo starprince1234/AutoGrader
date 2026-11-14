@@ -28,7 +28,6 @@ from ..errors import (
     B3Error,
     Conflict,
     NotFound,
-    PackageContentMissing,
     ReferenceAnswerMissing,
 )
 from ..infra.db import Database

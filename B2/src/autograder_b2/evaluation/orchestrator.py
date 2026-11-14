@@ -79,6 +79,7 @@ from pathlib import Path
 from sqlalchemy import Connection, Engine
 from sqlalchemy.exc import IntegrityError
 
+from autograder_b2.commentary import store as commentary_store
 from autograder_b2.domain.clock import sha256_hex, utc_now
 from autograder_b2.domain.envelope import EnvelopeFile, SubmissionEnvelope
 from autograder_b2.domain.evidence import (
@@ -92,6 +93,7 @@ from autograder_b2.domain.evidence import (
 from autograder_b2.domain.security import SecurityDecision
 from autograder_b2.domain.static_result import StaticAnalysisResult
 from autograder_b2.evaluation import progress, store
+from autograder_b2.evaluation.ai_grader import AiGradeResult, AiGradingError, AiLogicGrader
 from autograder_b2.evaluation.ports import (
     CaseDescriptor,
     CaseRunner,
@@ -117,8 +119,6 @@ from autograder_b2.evaluation.report import (
     ReportInputs,
     build_report,
 )
-from autograder_b2.commentary import store as commentary_store
-from autograder_b2.evaluation.ai_grader import AiGradeResult, AiGradingError, AiLogicGrader
 from autograder_b2.evaluation.scoring import ScoreBreakdown, score_ai_run, score_run
 from autograder_b2.events.outbox import (
     EVALUATION_COMPLETED,
@@ -982,9 +982,7 @@ class EvaluationOrchestrator:
             for done, case in enumerate(ordered_cases, start=1):
                 award = awards_by_ordinal[case.ordinal]
                 evidence_digest = sha256_hex(
-                    f"{run_id}:{case.case_id}:{case.ordinal}:{award.awarded}:{feedback_digest}".encode(
-                        "utf-8"
-                    )
+                    f"{run_id}:{case.case_id}:{case.ordinal}:{award.awarded}:{feedback_digest}".encode()
                 )
                 evidence = CaseEvidence(
                     case_id=case.case_id,
@@ -1062,7 +1060,7 @@ class EvaluationOrchestrator:
                     ),
                     occurred_at=moment,
                 )
-        except Exception:  # noqa: BLE001 - 不因评语缓存写失败影响已落库的报告与分数
+        except Exception:
             logger.warning("Failed to persist automatic AI commentary for run %s", run_id, exc_info=True)
 
     def _run_delivery(

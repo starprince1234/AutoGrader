@@ -657,15 +657,16 @@ def test_internal_assignment_serves_the_audience_to_a_service(
         "title",
         "status",
         "question_version_ids",
+        "section_ids",
+        "student_ids",
     }
     assert body["assignment_id"] == assignment_id
     assert body["course_id"] == str(COURSE_A)
     assert body["status"] == "open"
     assert body["question_version_ids"] == [published_version]
-    # Course membership is not asserted here (B4 is the only authority for it), and
-    # timestamps are not needed for admission.
-    assert "section_ids" not in body
-    assert "student_ids" not in body
+    assert body["section_ids"] == []
+    assert body["student_ids"] == []
+    # Timestamps are not needed for admission.
     assert "created_at" not in body
     assert "updated_at" not in body
 

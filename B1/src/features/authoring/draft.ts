@@ -27,7 +27,6 @@ import {
   attachExecution,
   isEmailCheck,
   isSshCheck,
-  readCaseInput,
   readDraftExecution,
   readExecutionMode,
   type EmailCheck,

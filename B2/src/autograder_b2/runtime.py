@@ -87,7 +87,6 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from autograder_b2.commentary import CommentaryService, build_provider
 from autograder_b2.commentary.provider import CommentaryProviderConfig
-from autograder_b2.evaluation.ai_grader import AiLogicGrader
 from autograder_b2.config import (
     ConfigurationError,
     EvaluationChainNotConfigured,
@@ -98,6 +97,7 @@ from autograder_b2.config import (
 )
 from autograder_b2.db.schema import EXPECTED_SCHEMA_REVISION, outbox_events
 from autograder_b2.evaluation import EvaluationOrchestrator, EvaluationOutcome
+from autograder_b2.evaluation.ai_grader import AiLogicGrader
 from autograder_b2.evaluation.orchestrator import DynamicExecutionGate
 from autograder_b2.evaluation.quality import EvaluationQualityService
 from autograder_b2.events.dispatcher import NatsOutboxDispatcher

@@ -15,7 +15,6 @@ import {
   installFetchStub,
   jsonResponse,
   problemResponse,
-  type RecordedRequest,
   type StubbedRoute,
   type FetchStub,
 } from "../../testing/httpBoundary";
@@ -28,7 +27,6 @@ import {
   questionDraftGeneration,
   questionPublic,
   questionVersionPublic,
-  referenceVerification,
   sessionCreated,
   SHA_A,
   UUID_A,

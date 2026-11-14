@@ -413,11 +413,10 @@ describe("AI 候选应用到表单（AI-FLOW-01A）", () => {
     expect(applied.language).toBe("bash");
   });
 
-  it("应用 AI 候选不再生成测试用例，而是清空用例列表并保留合法状态", () => {
+  it("统一 AI 逻辑评分后不再从 AI 候选写入测试用例", () => {
     const applied = applyProposal(validForm(), proposal);
-    expect(applied.cases).toEqual([]);
-    const result = buildDraftInput(applied, { newVersion: false, editing: false });
-    expect(result.ok).toBe(true);
+    expect(applied.cases).toHaveLength(0);
+    expect(applied.referenceAnswers.length).toBeGreaterThan(0);
   });
 
   it("候选没给比较策略时用「忽略行尾空白」，而不是精确匹配", () => {
@@ -482,18 +481,16 @@ describe("从公开 DTO 预填", () => {
     expect(form.referenceAnswer).toBe("");
     expect(form.adapterArgs).toBe("");
     expect(form.comparisonStdout).toBe("ignore_trailing_whitespace");
-    // 编辑路径**不**凭空渲染一行空用例：那会让"我不知道有几个"看起来像"它没有用例"，
-    // 而提交那一行还会把整个集合替换掉。零个用例 = 这次不声明该字段。
+    // 编辑路径**不**凭空渲染一行空用例：统一 AI 逻辑评分不再使用测试用例。
     expect(form.cases).toHaveLength(0);
     expect(form.confirmCaseReplacement).toBe(false);
   });
 
-  it("新建路径不再预置空用例，而从一档空参考解法和空评分提示开始", () => {
+  it("新建路径以零个用例开场，并预置一档参考解法", () => {
     const form = emptyDraftForm();
-    expect(form.cases).toEqual([]);
+    expect(form.cases).toHaveLength(0);
+    expect(form.referenceAnswers).toHaveLength(1);
     expect(form.referenceAnswer).toBe("");
-    expect(form.referenceAnswers).toEqual([{ label: "标准参考答案", body: "" }]);
-    expect(form.gradingPrompt).toBe("");
   });
 });
 
@@ -884,11 +881,6 @@ describe("评分方式 / 执行声明（Unix 作业扩展）", () => {
     ];
     const content = {
       reference_answer: "print(1)",
-      reference_answers: [
-        { label: "暴力解法（60 分）", body: "print(1)" },
-        { label: "高阶解法（95 分）", body: "print(sum(range(1)))" },
-      ],
-      grading_prompt: "暴力给 50-60 分，高阶解法给 85-100 分。",
       execution: { mode: "single_run", segment_delimiter: "===== SEGMENT =====" },
       cases,
     } as QuestionDraftContent;
@@ -897,12 +889,7 @@ describe("评分方式 / 执行声明（Unix 作业扩展）", () => {
     expect(form.executionMode).toBe("single_run");
     expect(form.segmentDelimiter).toBe("===== SEGMENT =====");
     expect(form.referenceAnswer).toBe("print(1)");
-    expect(form.referenceAnswers).toEqual([
-      { label: "暴力解法（60 分）", body: "print(1)" },
-      { label: "高阶解法（95 分）", body: "print(sum(range(1)))" },
-    ]);
-    expect(form.gradingPrompt).toBe("暴力给 50-60 分，高阶解法给 85-100 分。");
-    expect(form.cases).toEqual([]);
+    expect(form.cases).toHaveLength(0);
   });
 
   it("读回 ssh_session 的练习配置；缺失执行声明时回落 per_case", () => {
@@ -938,63 +925,6 @@ describe("评分方式 / 执行声明（Unix 作业扩展）", () => {
         ssh_check: "auth_succeeded",
       }),
     ).toMatchObject({ sshCheck: "auth_succeeded" });
-  });
-});
-
-describe("多档参考答案与 AI 评分细则", () => {
-  it("buildDraftInput 在多档参考答案与评分提示填写时按契约字段序列化，留空时省略", () => {
-    const withTiers = built(
-      validForm({
-        referenceAnswer: "def f(): pass",
-        referenceAnswers: [
-          { label: "暴力写法（50 分）", body: "def f(): return 1" },
-          { label: "线性优化（90 分）", body: "def f(): return 2" },
-        ],
-        gradingPrompt: "暴力 50 分，线性 90 分，按可读性上下浮动 5 分。",
-        cases: [],
-      }),
-    );
-    expect(withTiers.reference_answers).toEqual([
-      { label: "暴力写法（50 分）", body: "def f(): return 1" },
-      { label: "线性优化（90 分）", body: "def f(): return 2" },
-    ]);
-    expect(withTiers.reference_answer).toBe("def f(): return 1");
-    expect(withTiers.grading_prompt).toBe("暴力 50 分，线性 90 分，按可读性上下浮动 5 分。");
-    expect(withTiers.cases).toBeUndefined();
-
-    const clearedPrompt = built(
-      validForm({
-        referenceAnswer: "pass",
-        referenceAnswers: [{ label: "标准参考答案", body: "pass" }],
-        gradingPrompt: "   ",
-        cases: [],
-      }),
-    );
-    expect(clearedPrompt.grading_prompt).toBeUndefined();
-  });
-
-  it("applyProposal 回填候选的多档参考答案与评分提示，并清空旧测试用例", () => {
-    const applied = applyProposal(validForm(), {
-      title: "排序",
-      language: "python",
-      adapter_kind: "stdin",
-      tags: ["python"],
-      stem_markdown: "# 排序",
-      reference_answer: "def sort_fast(): pass",
-      reference_answers: [
-        { label: "冒泡（50 分）", body: "def sort_slow(): pass" },
-        { label: "快排（90 分）", body: "def sort_fast(): pass" },
-      ],
-      grading_prompt: "冒泡 50 分，快排 90 分。",
-      cases: [],
-    });
-    expect(applied.referenceAnswers).toEqual([
-      { label: "冒泡（50 分）", body: "def sort_slow(): pass" },
-      { label: "快排（90 分）", body: "def sort_fast(): pass" },
-    ]);
-    expect(applied.referenceAnswer).toBe("def sort_slow(): pass");
-    expect(applied.gradingPrompt).toBe("冒泡 50 分，快排 90 分。");
-    expect(applied.cases).toEqual([]);
   });
 });
 

@@ -259,7 +259,7 @@ def score_run(
 def score_ai_run(
     *,
     cases: Sequence[CaseDescriptor],
-    raw_score: Decimal | float | str | int,
+    raw_score: Decimal | float | str,
     static: StaticAnalysisResult,
     security: SecurityDecision,
     summary_note: str | None = None,
