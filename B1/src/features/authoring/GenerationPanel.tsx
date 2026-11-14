@@ -2,11 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { t } from "../../i18n";
 import { isApiError } from "../../api/problem";
 import type { Language, QuestionDraftGeneration, QuestionDraftProposal } from "../../api/types";
-import { formatDateTime } from "../../ui/format";
 import {
   Banner,
   Field,
-  HintTooltip,
   Modal,
   Panel,
   StatusPill,
@@ -79,9 +77,6 @@ function ProposalPreview({
     <div className="stack" data-testid="generation-proposal">
       <div className="generation-preview__head">
         <h3>{t("authoring.generation.previewTitle")}</h3>
-        <span className="muted generation-preview__note" data-testid="generation-preview-note">
-          {t("authoring.generation.previewNote")}
-        </span>
       </div>
 
       <section className="case-card stack" data-testid="generation-card-stem">
@@ -139,12 +134,6 @@ function ProposalPreview({
         <button type="button" className="button" data-testid="generation-apply" onClick={onApply}>
           {applied ? t("authoring.generation.reapply") : t("authoring.generation.apply")}
         </button>
-        <HintTooltip
-          label={t("authoring.generation.hintLabel")}
-          testId="generation-hint-apply"
-        >
-          {t("authoring.generation.hintBody")}
-        </HintTooltip>
       </div>
     </div>
   );
@@ -185,7 +174,20 @@ export function GenerationPanel({
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [appliedId, setAppliedId] = useState<string | null>(null);
   const [discardedId, setDiscardedId] = useState<string | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const appliedOnce = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!create.isPending) {
+      setElapsedSeconds(0);
+      return;
+    }
+    setElapsedSeconds(0);
+    const timer = window.setInterval(() => {
+      setElapsedSeconds((prev) => prev + 1);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [create.isPending]);
 
   const objectiveLimit = capabilities.data?.learning_objective_max_chars ?? 0;
   const constraintsLimit = capabilities.data?.constraints_max_chars ?? 0;
@@ -267,6 +269,7 @@ export function GenerationPanel({
               appliedOnce.current = result.generation_id;
               setAppliedId(result.generation_id);
               onApply(result.proposal);
+              onApplied?.();
             }
           }
         },
@@ -278,18 +281,21 @@ export function GenerationPanel({
 
   return (
     <Panel title={t("authoring.generation.title")} testId="generation-panel">
-      {/* 一句话状态：不可用只影响按钮，不影响你继续手动填写。 */}
-      <div className="inline" data-testid="generation-status-line">
-        <StatusPill tone={pill.tone} testId="generation-pill">
-          {pill.label}
-        </StatusPill>
-        {capabilities.data?.requests_remaining === null ||
-        capabilities.data?.requests_remaining === undefined ? null : (
-          <span className="muted" data-testid="generation-budget">
-            {t("authoring.generation.budget", { remaining: capabilities.data.requests_remaining })}
-          </span>
-        )}
-      </div>
+      {!ready || (capabilities.data?.requests_remaining !== null && capabilities.data?.requests_remaining !== undefined) ? (
+        <div className="inline" data-testid="generation-status-line">
+          {!ready ? (
+            <StatusPill tone={pill.tone} testId="generation-pill">
+              {pill.label}
+            </StatusPill>
+          ) : null}
+          {capabilities.data?.requests_remaining === null ||
+          capabilities.data?.requests_remaining === undefined ? null : (
+            <span className="muted" data-testid="generation-budget">
+              {t("authoring.generation.budget", { remaining: capabilities.data.requests_remaining })}
+            </span>
+          )}
+        </div>
+      ) : null}
 
       {!courseId ? (
         <div data-testid="generation-no-course">
@@ -435,18 +441,41 @@ export function GenerationPanel({
               ? t("authoring.generation.regenerate")
               : t("authoring.generation.generate")}
         </button>
-        <HintTooltip
-          label={t("authoring.generation.hintLabel")}
-          testId="generation-hint-generate"
-        >
-          {t("authoring.generation.hintBody")}
-        </HintTooltip>
         {missing === null ? null : (
           <span className="muted" data-testid="generation-reason">
             {missing}
           </span>
         )}
       </div>
+
+      {create.isPending ? (
+        <div className="case-card stack" data-testid="generation-progress" aria-live="polite">
+          <div className="inline page-head">
+            <strong>{t("authoring.generation.generating")}</strong>
+            <span className="muted page-head__end">
+              {t("authoring.generation.progressElapsed", { seconds: elapsedSeconds })}
+            </span>
+          </div>
+          <ol className="stack">
+            {[
+              { min: 0, key: "authoring.generation.progressStep1" as const },
+              { min: 1, key: "authoring.generation.progressStep2" as const },
+              { min: 4, key: "authoring.generation.progressStep3" as const },
+              { min: 10, key: "authoring.generation.progressStep4" as const },
+            ].map((stage, idx, all) => {
+              const nextMin = all[idx + 1]?.min ?? Number.POSITIVE_INFINITY;
+              const isDone = elapsedSeconds >= nextMin;
+              const isActive = elapsedSeconds >= stage.min && elapsedSeconds < nextMin;
+              return (
+                <li key={stage.key} className={isActive ? "" : "muted"}>
+                  {isDone ? "✓ " : isActive ? "● " : "○ "}
+                  {t(stage.key)}
+                </li>
+              );
+            })}
+          </ol>
+        </div>
+      ) : null}
 
       {generationError !== null && generationError !== undefined ? (
         isApiError(generationError) && generationError.status === 429 ? (
@@ -474,33 +503,13 @@ export function GenerationPanel({
 
       {generation ? (
         <div className="stack" data-testid="generation-result">
-          {/* 页面唯一的常驻全局提示；其余长提示要么变成 ⓘ，要么直接删掉。 */}
-          <Banner tone="success" testId="generation-global-notice">
-            {t("authoring.generation.globalNotice")}
-          </Banner>
-
-          <div className="inline">
-            {/* ready 的说明已经由上面那条横幅承担，这里只在"需要你补"或"没生成出来"时再给状态。 */}
-            {generation.status === "ready" ? null : (
+          {generation.status === "ready" ? null : (
+            <div className="inline">
               <StatusPill tone={STATUS_TONE[generation.status]} testId="generation-status">
                 {statusText(generation)}
               </StatusPill>
-            )}
-            {generation.created_at ? (
-              <span className="muted">
-                {t("authoring.generation.createdAt", {
-                  time: formatDateTime(generation.created_at, "—"),
-                })}
-              </span>
-            ) : null}
-            {generation.expires_at ? (
-              <span className="muted" data-testid="generation-expiry">
-                {t("authoring.generation.expiresAt", {
-                  time: formatDateTime(generation.expires_at, "—"),
-                })}
-              </span>
-            ) : null}
-          </div>
+            </div>
+          )}
 
           {generation.status !== "ready" ? (
             <Banner

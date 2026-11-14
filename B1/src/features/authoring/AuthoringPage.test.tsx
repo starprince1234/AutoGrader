@@ -166,7 +166,7 @@ async function selectCourse(user: ReturnType<typeof userEvent.setup>) {
 /** 向导一次只渲染一步：每次交互前先切到对应步骤。 */
 async function goToStep(
   user: ReturnType<typeof userEvent.setup>,
-  id: "basic" | "stem" | "reference",
+  id: "basic" | "stem" | "reference" | "preview",
 ) {
   await user.click(await screen.findByTestId(`wizard-step-${id}`));
   await screen.findByTestId(`step-${id}`);
@@ -198,6 +198,7 @@ async function fillCreateForm(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByLabelText("题干"), "# 统计行数");
   await goToStep(user, "reference");
   await user.type(screen.getByLabelText("参考答案"), "print(2)");
+  await goToStep(user, "preview");
 }
 
 
@@ -319,9 +320,15 @@ describe("分步向导", () => {
     expect(screen.getByTestId("step-next")).toBeInTheDocument();
     expect(screen.queryByTestId("authoring-save")).toBeNull();
 
-    // 第 3 步（最后一步）：保存草稿与直接发布都在，下一步不在；没填题干时保存是灰的。
+    // 第 3 步（参考答案）：仍只有"下一步"，没有保存草稿。
     await user.click(screen.getByTestId("step-next"));
     expect(await screen.findByTestId("step-reference")).toBeInTheDocument();
+    expect(screen.getByTestId("step-next")).toBeInTheDocument();
+    expect(screen.queryByTestId("authoring-save")).toBeNull();
+
+    // 第 4 步（预览与发布）：保存草稿与直接发布都在，下一步不在；没填题干时保存是灰的。
+    await user.click(screen.getByTestId("step-next"));
+    expect(await screen.findByTestId("step-preview")).toBeInTheDocument();
     expect(screen.queryByTestId("step-next")).toBeNull();
     expect(screen.getByTestId("authoring-save")).toBeDisabled();
     expect(screen.getByTestId("authoring-save-publish")).toBeDisabled();
@@ -332,10 +339,12 @@ describe("分步向导", () => {
     await user.type(screen.getByLabelText("题目标题"), "统计行数");
     await goToStep(user, "stem");
     await user.type(screen.getByLabelText("题干"), "# 统计");
-    await goToStep(user, "reference");
+    await goToStep(user, "preview");
     expect(screen.getByTestId("authoring-save")).toBeEnabled();
     expect(screen.getByTestId("authoring-save-publish")).toBeDisabled();
+    await goToStep(user, "reference");
     await user.type(screen.getByLabelText("参考答案"), "print(1)");
+    await goToStep(user, "preview");
     expect(screen.getByTestId("authoring-save-publish")).toBeEnabled();
   });
 
@@ -392,10 +401,11 @@ describe("分步向导", () => {
     expect(screen.getByTestId("wizard-dot-reference")).toHaveAttribute("data-done", "true");
     expect(screen.getByTestId("wizard-dot-reference")).toHaveTextContent("✓");
 
-    // 连接线：上一步完成了就是实线，最后一步之后不再有连接线。
+    // 连接线：上一步完成了就是实线，最后一步（预览与发布）之后不再有连接线。
     expect(screen.getByTestId("wizard-line-basic")).toHaveAttribute("data-done", "true");
     expect(screen.getByTestId("wizard-line-stem")).toHaveAttribute("data-done", "true");
-    expect(screen.queryByTestId("wizard-line-reference")).toBeNull();
+    expect(screen.getByTestId("wizard-line-reference")).toHaveAttribute("data-done", "true");
+    expect(screen.queryByTestId("wizard-line-preview")).toBeNull();
   });
 
   it("课程到末页时不再显示「已到末页」", async () => {
@@ -613,6 +623,7 @@ describe("新建题目（POST /api/v1/questions）", () => {
     await user.type(maxFiles, "0");
     await user.clear(maxBytes);
     await user.type(maxBytes, "0");
+    await goToStep(user, "preview");
     await user.click(screen.getByTestId("authoring-save"));
 
     const toast = await screen.findByTestId("toast");
@@ -643,6 +654,7 @@ describe("新建题目（POST /api/v1/questions）", () => {
     await user.type(screen.getByLabelText("题干"), "# 统计");
     await goToStep(user, "reference");
     await user.type(screen.getByLabelText("参考答案"), "print(1)");
+    await goToStep(user, "preview");
     await user.click(screen.getByTestId("authoring-save"));
 
     const request = await waitFor(() => {
@@ -704,6 +716,7 @@ describe("新建题目（POST /api/v1/questions）", () => {
     await user.type(screen.getByLabelText("题干"), "题干");
     // 参考答案与评分细则均留空；用例默认为空。
     await goToStep(user, "reference");
+    await goToStep(user, "preview");
     await user.click(screen.getByTestId("authoring-save"));
 
     const request = await waitFor(() => {
@@ -837,6 +850,7 @@ describe("新建题目（POST /api/v1/questions）", () => {
       screen.getByTestId("authoring-grading-prompt"),
       "使用循环暴力解法基准 50 分；使用等差数列公式基准 90 分，按代码风格上下浮动。",
     );
+    await goToStep(user, "preview");
     await user.click(screen.getByTestId("authoring-save-publish"));
 
     const createReq = await waitFor(() => {
@@ -919,6 +933,7 @@ describe("修改草稿（PATCH /api/v1/questions/{question_id}）", () => {
     expect(screen.queryByLabelText("版本说明")).toBeNull();
 
     await user.type(screen.getByLabelText("参考答案"), "print(2)");
+    await goToStep(user, "preview");
     await user.click(screen.getByTestId("authoring-save"));
 
     const request = await waitFor(() => {
@@ -989,6 +1004,7 @@ describe("修改草稿（PATCH /api/v1/questions/{question_id}）", () => {
     );
     await goToStep(user, "reference");
     await user.type(await screen.findByLabelText("参考答案"), "print(2)");
+    await goToStep(user, "preview");
     await user.type(screen.getByLabelText("版本说明"), "例题的截止时间写错了");
     await user.click(screen.getByTestId("authoring-save"));
 
@@ -1061,6 +1077,7 @@ describe("修改草稿（PATCH /api/v1/questions/{question_id}）", () => {
 
       await goToStep(user, "reference");
       await user.type(await screen.findByLabelText("参考答案"), "print(2)");
+      await goToStep(user, "preview");
       await user.click(screen.getByTestId("authoring-save"));
       await waitFor(() => {
         expect(
@@ -1138,6 +1155,7 @@ describe("编辑页读回草稿的多档参考解法与评分细则", () => {
     );
 
     await user.type(screen.getByLabelText("参考答案"), "\n# updated");
+    await goToStep(user, "preview");
     await user.click(screen.getByTestId("authoring-save"));
 
     const request = await waitFor(() => {
@@ -1182,7 +1200,7 @@ describe("直接发布入口（简化出题流程）", () => {
     await signIn("teacher1", "pw");
     renderAuthoring(QUESTION_ID);
 
-    await goToStep(user, "reference");
+    await goToStep(user, "preview");
     expect(await screen.findByTestId("authoring-save")).toBeInTheDocument();
     expect(screen.getByTestId("authoring-save-publish")).toBeInTheDocument();
     expect(screen.queryByTestId("reference-verification")).toBeNull();
@@ -1410,9 +1428,9 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
     // 面板内的下拉有自己的标签，避免和「基本信息」里的同名控件互相遮盖。
     await selectCourseInAiPanel(user);
 
-    // 选中后能力查询才会发出，标签随之变成可用；此时只差教学目标。
-    expect(await screen.findByTestId("generation-pill")).toHaveTextContent("AI 出题可用");
-    expect(screen.getByTestId("generation-reason")).toHaveTextContent("请先填写教学目标");
+    // 选中后能力查询才会发出；可用时不显示多余绿灯胶囊，只提示还差教学目标。
+    await waitFor(() => expect(screen.getByTestId("generation-reason")).toHaveTextContent("请先填写教学目标"));
+    expect(screen.queryByTestId("generation-pill")).toBeNull();
     await user.type(screen.getByLabelText("教学目标"), "统计每个单词出现的次数");
     expect(screen.getByTestId("generation-generate")).toBeEnabled();
     // 选完课程后，面板里的"选课"下拉换成了生成表单（同一份状态，不是两份）。
@@ -1521,8 +1539,8 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
 
     await user.type(screen.getByLabelText("教学目标"), "让学生学会读标准输入");
     await user.click(screen.getByTestId("generation-generate"));
-    // 预览里直接显示多档参考解法数。
-    expect(await screen.findByTestId("generation-proposal-tier-count")).toHaveTextContent("1");
+    // 生成完成后自动进入第 4 步「预览与发布」。
+    expect(await screen.findByTestId("step-preview")).toBeInTheDocument();
 
 
     const request = await waitFor(() => {
@@ -1552,7 +1570,7 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
     }
   });
 
-  it("候选会填入编辑器，字段问题与唯一全局提示同时显示（候选不是成品）", async () => {
+  it("生成后直接进入第 4 步最终预览界面，同时填好学生视角与教师配置", async () => {
     stub = installFetchStub(baseRoutes(aiDraftRoutes()));
     const user = userEvent.setup();
     await signIn("teacher1", "pw");
@@ -1563,38 +1581,19 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
     await user.type(screen.getByLabelText("教学目标"), "统计行数");
     await user.click(screen.getByTestId("generation-generate"));
 
-    // 状态是 needs_review：可编辑，但有字段要补。
-    expect(await screen.findByTestId("generation-status")).toHaveTextContent("需要你");
-    // 字段问题指出具体控件（不是一句泛泛的说明）。
-    const warnings = screen.getByTestId("generation-warnings");
-    expect(warnings).toHaveTextContent("第 2 个用例的分值");
-    expect(screen.getByTestId("generation-expiry")).toBeInTheDocument();
+    // 自动进入第 4 步「预览与发布」，无需再点一次填入编辑器。
+    expect(await screen.findByTestId("step-preview")).toBeInTheDocument();
+    expect(screen.getByTestId("preview-student-view")).toHaveTextContent("统计标准输入的行数");
+    expect(screen.getByTestId("preview-teacher-config")).toHaveTextContent("sys.stdin");
 
-    // 页面只有一个常驻全局提示；"生成信息"面板与免责清单都已移除，改为悬浮提示。
-    expect(screen.getByTestId("generation-global-notice")).toHaveTextContent(
-      "草稿仅供参考，请核对所有字段后再保存。",
-    );
-    expect(screen.queryByTestId("generation-provenance")).toBeNull();
-    expect(screen.queryByTestId("generation-disclaimers")).toBeNull();
-
-    // 标题旁的浅灰备注说明"谁能看到"。
-    expect(screen.getByTestId("generation-preview-note")).toHaveTextContent(
-      "内容仅教师可见，学生无法查看草稿、参考解法与评分细则。",
-    );
-
-    // 候选被填进同一张表单：标题、题干、多档参考解法、AI 评分细则都直接展开可见。
-    expect(screen.getByTestId("generation-card-stem")).toBeInTheDocument();
-    expect(screen.getByTestId("generation-card-references")).toHaveTextContent("sys.stdin");
-    expect(screen.getByTestId("generation-card-rubric")).toBeInTheDocument();
-    await user.click(screen.getByTestId("ai-back"));
-    await screen.findByTestId("wizard-nav");
-    await goToStep(user, "basic");
+    // 也可跳回步骤微调（如基本信息、参考答案）。
+    await user.click(screen.getByTestId("preview-edit-basic"));
+    expect(await screen.findByTestId("step-basic")).toBeInTheDocument();
     expect(screen.getByLabelText("题目标题")).toHaveValue("统计标准输入的行数");
     await goToStep(user, "reference");
     expect(screen.getByLabelText("参考答案")).toHaveValue(
       "import sys\nprint(len(sys.stdin.read().splitlines()))\n",
     );
-    // 受保护内容只在教师侧展开区里出现，并明确标注学生看不到。
   });
 
   it("刷新后用 generation_id 恢复服务端原始候选", async () => {
@@ -1742,8 +1741,8 @@ function aiDraftRoutes(): StubbedRoute[] {
   ];
 }
 
-describe("AI 草稿页的信息密度（文案、唯一提示、悬浮提示）", () => {
-  it("两个按钮旁都有 ⓘ 悬浮提示，内容一致，且不新增弹窗", async () => {
+describe("AI 出题精简文案：清理内部说明，直接进入预览", () => {
+  it("不再显示冗余的可用绿灯、保留时间、全局横幅与悬浮说明", async () => {
     stub = installFetchStub(baseRoutes(aiDraftRoutes()));
     const user = userEvent.setup();
     await signIn("teacher1", "pw");
@@ -1751,54 +1750,16 @@ describe("AI 草稿页的信息密度（文案、唯一提示、悬浮提示）"
     await openAi(user);
     await selectCourseInAiPanel(user);
 
-    await user.type(screen.getByLabelText("教学目标"), "统计行数");
-    await user.click(screen.getByTestId("generation-generate"));
-
-    const generateHint = await screen.findByTestId("generation-hint-generate");
-    const applyHint = await screen.findByTestId("generation-hint-apply");
-    const expected =
-      "AI 草稿仅为初稿，请核对题干、多档参考解法与评分细则；点击「填入编辑器继续微调」后再保存或发布。";
-    expect(generateHint).toHaveTextContent(expected);
-    expect(applyHint).toHaveTextContent(expected);
-    // 提示是悬浮气泡（role=tooltip），不是新的弹窗。
-    expect(within(generateHint).getByRole("tooltip")).toHaveTextContent(expected);
-    expect(screen.queryByRole("dialog")).toBeNull();
-  });
-
-  it("元信息去掉项目符号（不再是列表），仍逐项可读", async () => {
-    stub = installFetchStub(baseRoutes(aiDraftRoutes()));
-    const user = userEvent.setup();
-    await signIn("teacher1", "pw");
-    renderAuthoring(null);
-    await openAi(user);
-    await selectCourseInAiPanel(user);
+    expect(screen.queryByTestId("generation-pill")).toBeNull();
+    expect(screen.queryByTestId("generation-hint-generate")).toBeNull();
 
     await user.type(screen.getByLabelText("教学目标"), "统计行数");
     await user.click(screen.getByTestId("generation-generate"));
 
-    const facts = await screen.findByTestId("generation-proposal-facts");
-    expect(facts.tagName).toBe("DIV");
-    expect(facts.querySelector("ul")).toBeNull();
-    expect(facts).toHaveTextContent("题目标题");
-    expect(facts).toHaveTextContent("语言");
-    expect(facts).toHaveTextContent("标签");
-    expect(screen.getByTestId("generation-proposal-tier-count")).toHaveTextContent("1");
-  });
-
-  it("「确认载入草稿」是原「重新载入 AI 草稿」的文案", async () => {
-    stub = installFetchStub(baseRoutes(aiDraftRoutes()));
-    const user = userEvent.setup();
-    await signIn("teacher1", "pw");
-    renderAuthoring(null);
-    await openAi(user);
-    await selectCourseInAiPanel(user);
-
-    await user.type(screen.getByLabelText("教学目标"), "统计行数");
-    await user.click(screen.getByTestId("generation-generate"));
-
-    const apply = await screen.findByTestId("generation-apply");
-    expect(apply).toHaveTextContent("再次填入编辑器");
-    expect(apply).not.toHaveTextContent("重新载入");
+    expect(await screen.findByTestId("step-preview")).toBeInTheDocument();
+    expect(screen.queryByTestId("generation-global-notice")).toBeNull();
+    expect(screen.queryByTestId("generation-expiry")).toBeNull();
+    expect(screen.getByTestId("preview-back-to-ai")).toBeInTheDocument();
   });
 });
 
@@ -1860,6 +1821,7 @@ describe("另存为新版本：从原题完整内容开始（不是一张空白�
       "暴力给 60 分，数学化简给 95 分。",
     );
 
+    await goToStep(user, "preview");
     const note = screen.getByLabelText("版本说明");
     expect(note).toHaveValue("");
     await user.type(note, "补充更高阶解法的评分细则");
@@ -2005,6 +1967,7 @@ describe("统一 AI 逻辑评分流程（Python 与 Unix 题目共用）", () =>
       screen.getByTestId("authoring-grading-prompt"),
       "使用 grep | wc -l 得 70 分；直接使用 grep -c 或 awk 单遍扫描得 90 分。",
     );
+    await goToStep(user, "preview");
     await user.click(screen.getByTestId("authoring-save"));
 
     const request = await waitFor(() => {

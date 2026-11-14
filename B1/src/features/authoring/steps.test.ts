@@ -12,12 +12,17 @@ function form(overrides: Partial<DraftForm> = {}): DraftForm {
 }
 
 describe("出题向导的步骤定义", () => {
-  it("顺序固定：基本信息 → 题干 → 参考答案", () => {
-    expect(STEPS.map((step) => step.id)).toEqual(["basic", "stem", "reference"]);
+  it("顺序固定：基本信息 → 题干 → 参考答案 → 预览与发布", () => {
+    expect(STEPS.map((step) => step.id)).toEqual(["basic", "stem", "reference", "preview"]);
   });
 
   it("每一步都有面向教师的中文标题", () => {
-    expect(STEPS.map((step) => step.label())).toEqual(["基本信息", "题干", "参考答案"]);
+    expect(STEPS.map((step) => step.label())).toEqual([
+      "基本信息",
+      "题干",
+      "参考答案",
+      "预览与发布",
+    ]);
   });
 });
 

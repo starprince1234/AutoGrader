@@ -7,7 +7,7 @@ import type { CaseForm, DraftForm } from "./draft";
  * 页面用 `STEPS` 渲染左侧导航，测试也用同一份数据断言"哪一步算完成"，因此导航里的小圆点
  * 与页面里的校验提示不会各说一套。
  */
-export type StepId = "basic" | "stem" | "reference";
+export type StepId = "basic" | "stem" | "reference" | "preview";
 
 export type StepDefinition = {
   id: StepId;
@@ -19,6 +19,7 @@ export const STEPS: readonly StepDefinition[] = [
   { id: "basic", label: () => t("authoring.steps.basic") },
   { id: "stem", label: () => t("authoring.steps.stem") },
   { id: "reference", label: () => t("authoring.steps.reference") },
+  { id: "preview", label: () => t("authoring.steps.preview") },
 ] as const;
 
 export function hasReferenceContent(form: DraftForm): boolean {
@@ -44,7 +45,13 @@ export function isStepComplete(
 ): boolean {
   if (id === "basic") return courseId !== "" && form.title.trim() !== "";
   if (id === "stem") return form.stemMarkdown.trim() !== "";
-  return hasReferenceContent(form) || options.editing;
+  if (id === "reference") return hasReferenceContent(form) || options.editing;
+  return (
+    courseId !== "" &&
+    form.title.trim() !== "" &&
+    form.stemMarkdown.trim() !== "" &&
+    (hasReferenceContent(form) || options.editing)
+  );
 }
 
 /**

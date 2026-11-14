@@ -220,7 +220,7 @@ describe("教师界面只说人话", () => {
     await screen.findByTestId("generation-panel");
     await user.type(screen.getByLabelText("教学目标"), "统计每个单词出现的次数");
     await user.click(screen.getByTestId("generation-generate"));
-    await screen.findByTestId("generation-result");
+    await screen.findByTestId("step-preview");
 
     assertPlainLanguage(document.body.textContent ?? "");
   });
@@ -268,10 +268,12 @@ describe("教师界面只说人话", () => {
 
     await user.click(await screen.findByTestId("request-assistance"));
     await screen.findByTestId("assistance-result");
-    // 简化后的 3 步出题向导：切到第 3 步检查多档参考解法与 AI 评分细则及直接发布按钮。
+    // 简化后的 4 步出题向导：第 3 步检查多档参考解法与 AI 评分细则，第 4 步进入预览与发布。
     await user.click(await screen.findByTestId("wizard-step-reference"));
     await screen.findByTestId("step-reference");
     await screen.findByTestId("reference-tier-add");
+    await user.click(await screen.findByTestId("wizard-step-preview"));
+    await screen.findByTestId("step-preview");
     await screen.findByTestId("authoring-save-publish");
 
     assertPlainLanguage(document.body.textContent ?? "");

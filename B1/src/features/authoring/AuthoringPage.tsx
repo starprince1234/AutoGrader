@@ -369,8 +369,8 @@ export function AuthoringPage({
         onGenerationId={onGenerationId}
         onApply={applyProposalToForm}
         onApplied={() => {
-          // 教师点了「填进编辑器」：回到题干那一步，看到的是"内容已经填进去"，而不是空白页。
-          setStep("stem");
+          // 生成/应用草稿后直接进入第 4 步「预览与发布」，所见即所得检查学生视角与参考答案。
+          setStep("preview");
           onAiViewChange(false);
         }}
         onBack={() => onAiViewChange(false)}
@@ -743,6 +743,89 @@ export function AuthoringPage({
                 </div>
               </details>
 
+              {nextRow}
+            </Panel>
+          ) : null}
+
+          {step === "preview" ? (
+            <Panel title={stepDefinition.label()} testId="step-preview">
+              <section className="case-card stack" data-testid="preview-student-view">
+                <div className="inline page-head">
+                  <h3>{t("authoring.preview.studentTitle")}</h3>
+                  <div className="inline page-head__end">
+                    <button
+                      type="button"
+                      className="button button--ghost"
+                      data-testid="preview-edit-basic"
+                      onClick={() => setStep("basic")}
+                    >
+                      {t("authoring.steps.basic")} · {t("authoring.preview.editSection")}
+                    </button>
+                    <button
+                      type="button"
+                      className="button button--ghost"
+                      data-testid="preview-edit-stem"
+                      onClick={() => setStep("stem")}
+                    >
+                      {t("authoring.steps.stem")} · {t("authoring.preview.editSection")}
+                    </button>
+                  </div>
+                </div>
+                <h4>{form.title.trim() || t("authoring.preview.emptyTitle")}</h4>
+                <div className="generation-facts">
+                  <span>
+                    {t("authoring.language")}：{t(`questions.language.${form.language}`)}
+                  </span>
+                  <span>
+                    {t("authoring.tags")}：
+                    {parseTags(form.tags).tags.length === 0
+                      ? "—"
+                      : parseTags(form.tags).tags.join("、")}
+                  </span>
+                </div>
+                {form.stemMarkdown.trim() === "" ? (
+                  <p className="muted">{t("authoring.preview.emptyStem")}</p>
+                ) : (
+                  <SafeMarkdown source={form.stemMarkdown} testId="preview-stem" />
+                )}
+              </section>
+
+              <section className="case-card stack" data-testid="preview-teacher-config">
+                <div className="inline page-head">
+                  <h3>{t("authoring.preview.teacherTitle")}</h3>
+                  <button
+                    type="button"
+                    className="button button--ghost page-head__end"
+                    data-testid="preview-edit-reference"
+                    onClick={() => setStep("reference")}
+                  >
+                    {t("authoring.preview.editSection")}
+                  </button>
+                </div>
+                <div className="stack">
+                  {form.referenceAnswers.map((tier, index) => (
+                    <div className="stack" key={`${index}-${tier.label}`}>
+                      <strong>
+                        {tier.label.trim() || `${t("authoring.referenceTierLabel")} ${index + 1}`}
+                      </strong>
+                      {tier.body.trim() === "" ? (
+                        <p className="muted">—</p>
+                      ) : (
+                        <pre>{tier.body}</pre>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <div className="stack">
+                  <strong>{t("authoring.gradingPrompt")}</strong>
+                  {form.gradingPrompt.trim() === "" ? (
+                    <p className="muted">{t("authoring.preview.emptyGradingPrompt")}</p>
+                  ) : (
+                    <pre>{form.gradingPrompt}</pre>
+                  )}
+                </div>
+              </section>
+
               {asNewVersion ? (
                 <div className="stack" data-testid="authoring-revision-note">
                   <Field label={t("authoring.revisionNote")} htmlFor="authoring-revision-note">
@@ -761,7 +844,19 @@ export function AuthoringPage({
                 </div>
               ) : null}
 
-              {saveRow}
+              <div className="inline">
+                {saveRow}
+                {questionId === null ? (
+                  <button
+                    type="button"
+                    className="button button--ghost"
+                    data-testid="preview-back-to-ai"
+                    onClick={() => onAiViewChange(true)}
+                  >
+                    {t("authoring.preview.backToAi")}
+                  </button>
+                ) : null}
+              </div>
             </Panel>
           ) : null}
 
