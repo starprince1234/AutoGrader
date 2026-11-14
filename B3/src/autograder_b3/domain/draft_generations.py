@@ -385,11 +385,26 @@ def _warning_from_storage(item: dict):
 
 def _proposal_from_storage(row):
     """Re-read a stored candidate. Present only while the record still carries content."""
-    from ..draft_generation import DraftProposal
+    from ..draft_generation import DraftProposal, DraftReferenceTierProposal
 
     stored = row.proposal
     if not isinstance(stored, dict):
         return None
+    raw_tiers = stored.get("reference_answers")
+    tiers: list[DraftReferenceTierProposal] = []
+    if isinstance(raw_tiers, list):
+        for index, item in enumerate(raw_tiers):
+            if not isinstance(item, dict):
+                continue
+            body = item.get("body")
+            if not isinstance(body, str) or not body.strip():
+                continue
+            raw_label = item.get("label")
+            label = raw_label.strip() if isinstance(raw_label, str) and raw_label.strip() else f"解法 {index + 1}"
+            tiers.append(DraftReferenceTierProposal(label=label, body=body))
+    grading_prompt = stored.get("grading_prompt")
+    if not isinstance(grading_prompt, str) or not grading_prompt.strip():
+        grading_prompt = None
     return DraftProposal(
         title=str(stored.get("title") or ""),
         stem_markdown=str(stored.get("stem_markdown") or ""),
@@ -401,6 +416,8 @@ def _proposal_from_storage(row):
             if isinstance(stored.get("reference_answer"), str)
             else None
         ),
+        reference_answers=tuple(tiers),
+        grading_prompt=grading_prompt,
         cases=tuple(_case_from_storage(case) for case in stored.get("cases") or ()),
         fixtures=tuple(
             _fixture_from_storage(fixture) for fixture in stored.get("fixtures") or ()

@@ -153,3 +153,36 @@ def test_normalize_proposal_supports_tiered_answers_without_cases() -> None:
     assert len(outcome.proposal.reference_answers) == 2
     assert outcome.proposal.reference_answer == "sort | uniq | wc -l\n"
     assert outcome.proposal.grading_prompt == "awk 解法给 90+，管道组合给 70。"
+
+
+def test_proposal_from_storage_preserves_reference_tiers_and_grading_prompt() -> None:
+    from types import SimpleNamespace
+    from autograder_b3.domain.draft_generations import _proposal_from_storage
+
+    outcome = normalize_proposal(
+        {
+            "title": "1 到 100",
+            "stem_markdown": "输出 1 到 100",
+            "reference_answers": [
+                {"label": "解法一：while 循环", "body": "i=1\nwhile i<=100:\n print(i)\n i+=1\n"},
+                {"label": "解法二：for range", "body": "for i in range(1, 101):\n print(i)\n"},
+            ],
+            "grading_prompt": "精妙解法 90-100 分，暴力解法 70-85 分，兼顾代码简洁度。",
+        },
+        language="python",
+        adapter_kind="stdin",
+        limits=Settings(),
+        desired_reference_tiers=2,
+    )
+    assert outcome.proposal is not None
+    stored_row = SimpleNamespace(
+        proposal=outcome.proposal.to_storage(),
+        language="python",
+        adapter_kind="stdin",
+    )
+    restored = _proposal_from_storage(stored_row)
+    assert restored is not None
+    assert len(restored.reference_answers) == 2
+    assert restored.reference_answers[0].label == "解法一：while 循环"
+    assert restored.reference_answers[1].label == "解法二：for range"
+    assert restored.grading_prompt == "精妙解法 90-100 分，暴力解法 70-85 分，兼顾代码简洁度。"

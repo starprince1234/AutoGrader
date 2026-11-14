@@ -93,21 +93,27 @@ SYSTEM_PROMPT = (
     "- tags (array of lowercase hyphenated strings): 2-4 relevant topic tags.\n"
     "- difficulty (string): requested difficulty level.\n"
     "- reference_answers (array of {label, body}): MUST contain EXACTLY desired_reference_tiers "
-    "items (default 2 if omitted). Each item must be a distinct, complete, runnable solution in "
-    "the requested language representing different solution approaches or complexity tiers "
-    "(e.g., even for a simple 1..100 printing task, provide Tier 1 such as '解法一：基础/直观实现（如 while 循环或分步写法）' "
-    "and Tier 2 such as '解法二：标准/简洁实现（如 for range 循环或最优算法）').\n"
-    "- reference_answer (string): the primary recommended solution (matching reference_answers[0].body).\n"
-    "- grading_prompt (string): REQUIRED detailed teacher AI grading rubric in Chinese, explaining "
-    "score tiers (e.g., 100% / 70% / 40% / 0%) across logic correctness, approach/complexity, "
-    "edge cases, and output format.\n"
+    "items (default 2 if omitted), ordered from baseline/naive to optimal/creative. No matter how "
+    "simple or complex the exercise is, you MUST devise distinct solution tiers with clear "
+    "pedagogical or algorithmic gradients (e.g., Tier 1: brute-force, naive/verbose, or basic "
+    "loop implementation; Tier 2: optimal complexity, concise idiomatic, or clever/creative "
+    "implementation; Tier 3 if requested: advanced/best-practice engineering implementation). "
+    "Each item needs a descriptive Chinese `label` and a complete runnable `body` in the requested language.\n"
+    "- reference_answer (string): the primary recommended solution (matching the highest-tier solution).\n"
+    "- grading_prompt (string): REQUIRED structured Chinese rubric written directly as instructions "
+    "for the AI grading LLM. It MUST explicitly cover all 5 dimensions:\n"
+    "  1. 【解法梯度与基准分档】明确对照本题的多档参考解法划分分数段：精妙/最优复杂度或更具创造力的正确解法给高分（90-100分）；功能正确但属于暴力枚举、冗余或效率较低的解法给中上分（70-85分，明确不如精妙解法）；部分正确或漏掉边界情况给及格/低分（40-65分）；投机取巧（如硬编码输出）、严重逻辑错误或无法完成核心目标给 0-30 分。\n"
+    "  2. 【逻辑正确性与边界处理】校验核心逻辑、输入输出格式及边界条件（空输入、极值、异常格式等）的完备性。\n"
+    "  3. 【算法巧妙度与创造力】若学生给出比参考答案更优雅、复杂度更低或思路更有创造力的正确实现，应予以肯定并给予高分/满分。\n"
+    "  4. 【代码简洁度与思路清晰度】将代码结构清晰度、命名规范、无冗余重复代码、表达简洁性纳入评分微调范围（±5~10分）。\n"
+    "  5. 【扣分红线】明确违背题意限制（如要求循环却硬编码展开、使用禁用做法等）的扣分规则。\n"
     "Example JSON shape:\n"
     '{"title":"输出 1 到 100","stem_markdown":"...","tags":["python","loop"],'
     '"difficulty":"简单","reference_answers":['
-    '{"label":"解法一：while 循环基础写法","body":"i = 1\\nwhile i <= 100:\\n    print(i)\\n    i += 1"},'
-    '{"label":"解法二：for range 标准写法","body":"for i in range(1, 101):\\n    print(i)"}'
-    '],"reference_answer":"for i in range(1, 101):\\n    print(i)",'
-    '"grading_prompt":"评分细则：\\n1. 100分：正确使用循环按行输出 1..100，格式完全一致。\\n2. 60分：逻辑基本正确但边界差一（如输出 0..99）。\\n3. 30分：未使用循环仅硬编码部分输出或语法错误。\\n4. 0分：未提交有效代码或与题意无关。"}\n'
+    '{"label":"解法一（基础/直观梯度）：使用 while 循环逐步计数","body":"i = 1\\nwhile i <= 100:\\n    print(i)\\n    i += 1"},'
+    '{"label":"解法二（精妙/简洁梯度）：使用 for range 与解包/join 一次输出","body":"print(\\"\\\\n\\".join(map(str, range(1, 101))))"}'
+    '],"reference_answer":"print(\\"\\\\n\\".join(map(str, range(1, 101))))",'
+    '"grading_prompt":"【AI 评分细则】\\n1. 解法梯度与分档：\\n- 90-100分（精妙/最优梯度）：采用简洁高效的循环或内置迭代器/生成器实现，逻辑严密、一次通过且可读性强；若有更有创造力的等价优雅写法同样给高分。\\n- 70-85分（基础/暴力梯度）：能正确输出 1 到 100，但写法相对繁琐（如手动维护多余状态变量、冗余判断等），明显不如精妙解法简洁。\\n- 40-65分（部分正确）：循环边界差一（如输出 0..99 或缺少 100）或格式不符。\\n- 0-30分（投机/错误）：未使用循环而硬编码 100 个 print、死循环或完全偏离题意。\\n2. 代码简洁度与思路清晰度（±5~10分）：变量命名清晰、无多余嵌套与无用代码者取档内高分；结构混乱或冗余较多者酌情扣分。\\n3. 边界与格式要求：严格检查每行一个数字、无多余空格或提示文字。"}\n'
     "Put real newline characters in JSON strings (a single \\n escape)."
 )
 
@@ -545,8 +551,11 @@ class ResponsesDraftGenerationProvider:
         repair_system = (
             "You complete missing fields of an exercise JSON object. "
             "Answer with ONE valid JSON object containing `reference_answers` "
-            f"(array of EXACTLY {desired_reference_tiers} distinct {{label, body}} solutions in {language}) "
-            "and `grading_prompt` (detailed Chinese AI grading rubric with score tiers)."
+            f"(array of EXACTLY {desired_reference_tiers} distinct {{label, body}} solutions in {language}, "
+            "ordered from baseline/brute-force to optimal/creative) "
+            "and `grading_prompt` (structured Chinese AI grading instructions covering solution "
+            "gradient score tiers, creative/optimal bonus, code conciseness & clarity, edge cases, "
+            "and deduction rules)."
         )
         repair_user = (
             "Complete the missing solution tiers and/or grading_prompt for this exercise:\n"
