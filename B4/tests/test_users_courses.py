@@ -533,10 +533,12 @@ def test_create_course_returns_the_stored_course(client, teacher, sign_in_as) ->
         "title",
         "updated_at",
         "section_count",
+        "section_codes",
     }
     assert body["course_code"] == "CS102"
     assert body["title"] == "Data Structures"
     assert body["section_count"] == 0
+    assert body["section_codes"] == []
     assert body["updated_at"]
 
 
