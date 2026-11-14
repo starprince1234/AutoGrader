@@ -17,7 +17,7 @@ import {
 } from "../../ui/components";
 import { formatDateTime } from "../../ui/format";
 import { readExecutionMode } from "../authoring/execution";
-import { ReferenceVerificationPanel } from "../authoring/ReferenceVerificationPanel";
+import { useDraftContent, usePublishQuestionVersion } from "../authoring/useAuthoring";
 import { SafeMarkdown } from "./SafeMarkdown";
 import { useDeleteQuestionVersion, useQuestion, useQuestionVersion } from "./useQuestions";
 import { Select } from "../../ui/Select";
@@ -51,6 +51,7 @@ export function QuestionDetailPage({
   const session = useSession();
   const navigate = useNavigate();
   const removeVersion = useDeleteQuestionVersion();
+  const publishVersion = usePublishQuestionVersion();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const versions = question.data?.versions ?? [];
@@ -64,6 +65,13 @@ export function QuestionDetailPage({
   // 必须用 effectiveId 取数：传原始 prop 会让"未显式选择"时根本不发请求，
   // 面板因此永远空白（集成时踩到过）。
   const version = useQuestionVersion(effectiveId);
+  const draftContent = useDraftContent(
+    canAuthorQuestions(session) &&
+      version.data &&
+      (version.data.status === "draft" || version.data.status === "published")
+      ? effectiveId
+      : null,
+  );
   const versionStemDiffers =
     version.data !== undefined &&
     version.data.stem_markdown.trim() !== (question.data?.stem_markdown ?? "").trim();
@@ -244,11 +252,61 @@ export function QuestionDetailPage({
         ) : null}
       </Panel>
 
-      {/* 未发布版本看到这里时，读者会去找"发布"动作。入口在 `ReferenceVerificationPanel`
-          （请求平台验证 → 全通过且存证已记录才可发布），**只对出题角色渲染**：
-          存证的存在与否不是学生需要的信息。 */}
+      {/* 仅教师可见：多档参考解法与 AI 评分提示词/细则，学生视图不获取也不渲染。 */}
+      {canAuthorQuestions(session) && draftContent.data ? (
+        <Panel title={t("questions.teacherReferenceTitle")} testId="teacher-grading-context">
+          <div className="stack">
+            {(draftContent.data.reference_answers && draftContent.data.reference_answers.length > 0
+              ? draftContent.data.reference_answers
+              : draftContent.data.reference_answer
+                ? [{ label: t("authoring.referenceDefaultTier"), body: draftContent.data.reference_answer }]
+                : []
+            ).map((tier, index) => (
+              <div className="stack" key={`${index}-${tier.label}`} data-testid={`teacher-tier-${index}`}>
+                <strong>{tier.label}</strong>
+                <pre>
+                  <code>{tier.body}</code>
+                </pre>
+              </div>
+            ))}
+            <div className="stack" data-testid="teacher-grading-prompt">
+              <strong>{t("authoring.gradingPrompt")}</strong>
+              {draftContent.data.grading_prompt ? (
+                <pre>{draftContent.data.grading_prompt}</pre>
+              ) : (
+                <p className="muted">{t("questions.teacherGradingPromptEmpty")}</p>
+              )}
+            </div>
+          </div>
+        </Panel>
+      ) : null}
+
+      {/* 草稿版本支持教师确认后直接发布，不再需要先运行测试用例沙箱验证。 */}
       {version.data && version.data.status !== "published" && canAuthorQuestions(session) ? (
-        <ReferenceVerificationPanel version={version.data} questionId={questionId} />
+        <Panel title={t("questions.directPublishTitle")} testId="direct-publish-panel">
+          <div className="stack">
+            <p className="muted">{t("questions.directPublishHint")}</p>
+            {publishVersion.isError ? <ErrorState error={publishVersion.error} /> : null}
+            <div className="inline">
+              <button
+                type="button"
+                className="button"
+                data-testid="reference-publish"
+                disabled={publishVersion.isPending}
+                onClick={() => {
+                  publishVersion.mutate({
+                    questionId,
+                    questionVersionId: version.data.question_version_id,
+                  });
+                }}
+              >
+                {publishVersion.isPending
+                  ? t("questions.publishing")
+                  : t("questions.directPublishAction")}
+              </button>
+            </div>
+          </div>
+        </Panel>
       ) : null}
 
       {deleteError !== null ? (

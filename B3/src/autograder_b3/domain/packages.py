@@ -34,6 +34,7 @@ from ..errors import (
 from ..infra.db import Database
 from ..infra.repositories import ProtectedContentRepository, QuestionBankRepository
 from ..logging import get_logger, log_event
+from .version_content import default_ai_case, load_version_content
 from .versions import load_draft_snapshot, load_published_snapshot
 
 #: The contract's adapter vocabulary, taken from the ``Literal`` rather than retyped so a
@@ -63,12 +64,7 @@ def load_evaluation_package(
         cases = protected.list_cases(question_version_id)
         fixtures = protected.list_fixtures(question_version_id)
         if not cases:
-            # `409` about *content*, not about publication state: a version with nothing to
-            # execute cannot be compiled whether it is a draft or already published.
-            raise PackageContentMissing(
-                "this version has no compilable content: it has no test cases yet, so there "
-                "is nothing to execute"
-            )
+            cases = [default_ai_case(question_version_id)]
 
         if version.status == "draft":
             snapshot, _content_digest = load_draft_snapshot(session, version)
@@ -185,16 +181,24 @@ def load_reference_answer(
                 "this version has no reference answer for its declared language "
                 f"({version.language}); there is nothing to execute"
             )
-        if version.content_digest is None:
-            raise ReferenceAnswerMissing(
-                "this version has no content digest yet, so an answer executed against it "
-                "could not be attested: the digest is what binds the answer to the content it "
-                "was run against, and this version does not have one"
-            )
+        content_digest = version.content_digest
+        if content_digest is None:
+            content_digest = load_version_content(
+                session, version, require_reference_answer=False
+            ).content_digest
+        grading_prompt = next(
+            (answer.grading_prompt for answer in answers if answer.grading_prompt is not None),
+            None,
+        )
         return ReferenceAnswerDelivery(
             question_version_id=version.question_version_id,
-            content_digest=version.content_digest,
+            content_digest=content_digest,
             language=version.language,  # type: ignore[arg-type]
             adapter_kind=declared,  # type: ignore[arg-type]
             body=answers[0].body,
+            stem_markdown=version.stem_markdown,
+            reference_answers=tuple(
+                {"label": answer.label, "body": answer.body} for answer in answers
+            ),
+            grading_prompt=grading_prompt,
         )

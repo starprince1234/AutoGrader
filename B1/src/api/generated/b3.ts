@@ -1195,6 +1195,10 @@ export interface components {
             tags: string[];
             /** @description PROTECTED. A proposed solution the teacher still has to verify through the publish gate. */
             reference_answer?: string | null;
+            /** @description PROTECTED. Multiple reference answer tiers (e.g., brute-force vs optimal algorithm). */
+            reference_answers?: components["schemas"]["ReferenceAnswerTier"][];
+            /** @description PROTECTED. Teacher rubric/prompt used by AI logic grader. */
+            grading_prompt?: string | null;
             cases?: components["schemas"]["QuestionDraftProposalCase"][];
             /** @description Text fixtures only. A digest is never proposed: B3 computes it after the teacher uploads the bytes. */
             fixtures?: components["schemas"]["QuestionDraftProposalFixture"][];
@@ -1535,7 +1539,14 @@ export interface components {
              *     answer unchanged (CHG-0017); omission never removes it.
              */
             reference_answer?: string;
-            adapter: components["schemas"]["AdapterManifest"];
+            /**
+             * @description PROTECTED. Multi-tier reference answers (label + source body). Omitted or empty
+             *     preserves existing stored answers when updating unless reference_answer is sent.
+             */
+            reference_answers?: components["schemas"]["ReferenceAnswerTier"][];
+            /** @description PROTECTED. Custom rubric / prompt for AI logic and code quality grading. */
+            grading_prompt?: string | null;
+            adapter?: components["schemas"]["AdapterManifest"];
             /**
              * @description Explicit scoring declaration. Omitted/null keeps the version's existing declaration
              *     (per_case for a version that never had one). This is the only mechanism that
@@ -1570,16 +1581,18 @@ export interface components {
              */
             revision_note?: string | null;
         };
+        /** @description One reference answer solution tier (e.g., brute-force vs optimal algorithm). */
+        ReferenceAnswerTier: {
+            label: string;
+            /** @description PROTECTED. */
+            body: string;
+        };
         /**
-         * @description A version's own reference answer, delivered to the verification path (CHG-0023).
+         * @description A version's own reference answer, delivered to the verification / AI grading path.
          *
          *     **PROTECTED.** Never returned by any public DTO, never placed in a contract example, never
          *     logged and never published in an event. `b3.reference_answers` sits in the module's
          *     `PROTECTED_TABLES`, and this schema is the only contract surface that names its content.
-         *
-         *     `content_digest` is the *same* digest `CHG-0008`'s attestation binds to, which is what makes
-         *     "the answer that was executed" and "the content that was attested" the same thing rather
-         *     than two values that merely happen to agree.
          */
         ReferenceAnswer: {
             question_version_id: components["schemas"]["Uuid"];
@@ -1591,8 +1604,14 @@ export interface components {
              * @enum {string}
              */
             adapter_kind: "stdin" | "file" | "callable";
-            /** @description PROTECTED. The answer's source. Exactly one answer exists per (version, language); this is the one for the version's declared language. */
+            /** @description PROTECTED. Primary or combined reference answer source. */
             reference_answer: string;
+            /** @description Question stem markdown delivered for AI logic grading. */
+            stem_markdown?: string;
+            /** @description PROTECTED. Ordered list of reference answer tiers. */
+            reference_answers?: components["schemas"]["ReferenceAnswerTier"][];
+            /** @description PROTECTED. Teacher grading prompt / rubric for AI logic grading. */
+            grading_prompt?: string | null;
         };
         /**
          * @description Declarative description of how a question is exercised. One shared structure
@@ -1635,6 +1654,8 @@ export interface components {
          */
         QuestionDraftContent: {
             reference_answer: string | null;
+            reference_answers?: components["schemas"]["ReferenceAnswerTier"][];
+            grading_prompt?: string | null;
             execution: components["schemas"]["ExecutionManifest"];
             cases: components["schemas"]["TestCaseInput"][];
         };

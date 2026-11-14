@@ -146,20 +146,22 @@ def test_publish_without_a_reference_answer_is_refused(database, settings):
         publish(database, principal=teacher_principal(), question_version_id=version.question_version_id)
 
 
-def test_publish_without_any_case_is_refused(database, settings):
-    question, version = create_question(
+def test_publish_without_any_case_uses_default_ai_case(database, settings):
+    _question, version = create_question(
         database, settings, principal=teacher_principal(), payload=draft_payload()
     )
-    # A version can now legitimately carry no cases (omitting `cases` on the first write
-    # does exactly that, CHG-0017); this removes them from a version that *had* them, to
-    # prove the publish gate is independent of how the state was reached.
     with database.protected_session() as session:
         session.execute(
             text("DELETE FROM b3.test_cases WHERE question_version_id = :vid"),
             {"vid": version.question_version_id},
         )
-    with pytest.raises(ProtectedContentMissing):
-        publish(database, principal=teacher_principal(), question_version_id=version.question_version_id)
+    published = publish(
+        database,
+        principal=teacher_principal(),
+        question_version_id=version.question_version_id,
+        attestation=False,
+    )
+    assert published.status == "published"
 
 
 def test_publish_with_an_invalid_manifest_is_refused(database, settings):
@@ -435,8 +437,8 @@ def test_batch_delete_reports_each_outcome_independently(database, settings):
         assert bank_version(session, version.question_version_id) is None
 
 
-def test_batch_publish_cannot_skip_the_attestation_gate(database, settings):
-    """批量发布与单条发布走同一道门禁：没有存证就是 `conflict`。"""
+def test_batch_publish_succeeds_without_attestation(database, settings):
+    """批量发布不再阻塞于沙箱存证门禁，有题干与参考答案即可直接发布。"""
     _, version = create_question(
         database, settings, principal=teacher_principal(), payload=draft_payload()
     )
@@ -448,8 +450,7 @@ def test_batch_publish_cannot_skip_the_attestation_gate(database, settings):
         now=PUBLISH_AT,
         correlation_id=PUBLISH_AT_CORRELATION,
     )
-    assert outcomes[0].applied is False
-    assert outcomes[0].error_code == "unprocessable"
+    assert outcomes[0].applied is True
 
 
 def bank_version(session, question_version_id):
@@ -894,40 +895,25 @@ def test_fixture_upload_requires_a_draft_version(database, settings):
         )
 
 
-def test_publish_without_an_attestation_for_the_current_content_is_refused(database, settings):
-    """The gate that makes "the reference answer works" a platform property.
-
-    Before this, the only thing that knew whether a question's own reference answer
-    reproduced its expected output was a script somebody had to remember to run, and it
-    left no trace - so an unverified or subsequently edited question could be published
-    and reach a student.
-
-    The refusal also has to name the *current* remedy: verification is part of the authoring
-    flow now, and the message used to send the reader to that very script.
-    """
-    from autograder_b3.errors import MissingReferenceAttestation
-
+def test_publish_succeeds_directly_without_attestation(database, settings):
+    """Direct publish succeeds once stem + reference answer exist (no attestation gate)."""
     _question, version = create_question(
         database, settings, principal=teacher_principal(), payload=draft_payload()
     )
-    with pytest.raises(MissingReferenceAttestation) as error:
-        publish(
-            database,
-            principal=teacher_principal(),
-            question_version_id=version.question_version_id,
-            attestation=False,
-        )
-    message = str(error.value)
-    assert version.content_digest in message
-    assert "verify and publish" in message
-    assert "verify_question_bank" not in message
+    published = publish(
+        database,
+        principal=teacher_principal(),
+        question_version_id=version.question_version_id,
+        attestation=False,
+    )
+    assert published.status == "published"
 
 
-def test_attestation_of_other_content_does_not_unlock_publish(database, settings):
-    """A declared digest is cross-checked, never trusted (same rule as fixtures)."""
+def test_attestation_of_other_content_is_refused(database, settings):
+    """A declared digest on manual attestation is still cross-checked against content."""
     from autograder_b3.auth import SERVICE_PRINCIPAL
     from autograder_b3.domain.attestations import record_reference_attestation
-    from autograder_b3.errors import AttestationMismatch, MissingReferenceAttestation
+    from autograder_b3.errors import AttestationMismatch
 
     _question, version = create_question(
         database, settings, principal=teacher_principal(), payload=draft_payload()
@@ -945,57 +931,40 @@ def test_attestation_of_other_content_does_not_unlock_publish(database, settings
             notes=None,
             now=PUBLISH_AT,
         )
-    with pytest.raises(MissingReferenceAttestation):
-        publish(
-            database,
-            principal=teacher_principal(),
-            question_version_id=version.question_version_id,
-            attestation=False,
-        )
 
 
-def test_editing_content_invalidates_the_stored_attestation(database, settings):
-    """No override flag exists: the only way past the gate is to re-verify."""
+def test_editing_content_updates_digest_and_still_publishes(database, settings):
+    """Editing draft recomputes content_digest and remains directly publishable."""
     from autograder_b3.domain.questions import update_question
-    from autograder_b3.errors import MissingReferenceAttestation
 
     question, version = create_question(
         database, settings, principal=teacher_principal(), payload=draft_payload()
     )
-    attest(database, question_version_id=version.question_version_id)
-    verified_digest = version.content_digest
+    initial_digest = version.content_digest
 
     update_question(
         database,
         settings,
         principal=teacher_principal(),
         question_id=question.question_id,
-        payload=draft(draft_payload(stem="Edited after verification.")),
+        payload=draft(draft_payload(stem="Edited after draft creation.")),
         now=PUBLISH_AT,
     )
 
     with database.protected_session() as session:
-        from autograder_b3.infra.models import QuestionVersion, ReferenceAttestation
+        from autograder_b3.infra.models import QuestionVersion
 
         refreshed = session.get(QuestionVersion, version.question_version_id)
         assert refreshed is not None
-        assert refreshed.content_digest != verified_digest
-        # The old voucher still exists - it simply no longer matches any content.
-        stored = {
-            row.content_digest
-            for row in session.query(ReferenceAttestation)
-            .filter(ReferenceAttestation.question_version_id == version.question_version_id)
-            .all()
-        }
-        assert stored == {verified_digest}
+        assert refreshed.content_digest != initial_digest
 
-    with pytest.raises(MissingReferenceAttestation):
-        publish(
-            database,
-            principal=teacher_principal(),
-            question_version_id=version.question_version_id,
-            attestation=False,
-        )
+    published = publish(
+        database,
+        principal=teacher_principal(),
+        question_version_id=version.question_version_id,
+        attestation=False,
+    )
+    assert published.status == "published"
 
 
 def test_revision_diff_records_what_changed_and_never_contains_protected_content(
@@ -1462,14 +1431,10 @@ def test_a_branched_version_that_omits_cases_records_no_case_change(database, se
     assert _stored_digest(database, version_two.question_version_id) is not None
 
 
-def test_a_version_created_without_cases_cannot_be_published(database, settings):
-    """The one way to reach a case-less version, and the gate that keeps it away.
-
-    Omitting ``cases`` on a *first* write preserves nothing, so it produces a draft with no
-    cases: a legitimate starting state, and one that must never become publishable, because
-    a version with no cases cannot be evaluated. It also stays digest-less, so it cannot be
-    attested either.
-    """
+def test_a_version_created_without_cases_gets_default_ai_case_and_can_publish(
+    database, settings
+):
+    """Omitting ``cases`` on creation synthesizes a 100-pt AI evaluation case and publishes."""
     question, version = create_question(
         database,
         settings,
@@ -1478,33 +1443,20 @@ def test_a_version_created_without_cases_cannot_be_published(database, settings)
         cases_supplied=False,
     )
     assert version.question_version_id is not None
-    assert _stored_cases(database, version.question_version_id) == []
-    assert _stored_digest(database, version.question_version_id) is None
-    # `attestation=False` on purpose: the refusal has to come from the publish gate
-    # itself, not from the test helper that records an attestation before publishing.
-    with pytest.raises(ProtectedContentMissing):
-        publish(
-            database,
-            principal=teacher_principal(),
-            question_version_id=version.question_version_id,
-            attestation=False,
-        )
-    # The question itself exists and is a draft; nothing was half-written.
-    with database.protected_session() as session:
-        from autograder_b3.infra.repositories import QuestionBankRepository
-
-        row = QuestionBankRepository(session).get_question(question.question_id)
-        assert row is not None and row.status == "draft"
+    stored_cases = _stored_cases(database, version.question_version_id)
+    assert len(stored_cases) == 1
+    assert _stored_digest(database, version.question_version_id) is not None
+    published = publish(
+        database,
+        principal=teacher_principal(),
+        question_version_id=version.question_version_id,
+        attestation=False,
+    )
+    assert published.status == "published"
 
 
 def test_declaring_cases_omitted_while_sending_them_is_refused(database, settings):
-    """The internal contradiction is refused, not resolved.
-
-    Neither resolution is acceptable for protected content: honouring ``supplied=False``
-    would silently drop cases the caller did send, and honouring the payload would make
-    "supplied" meaningless. Unreachable over HTTP (the model rejects ``[]`` and ``null``),
-    so reaching it is a programming error and is reported as one.
-    """
+    """Sending non-empty cases while declaring ``cases_supplied=False`` is refused."""
     from autograder_b3.domain.questions import update_question
     from autograder_b3.errors import ManifestInvalid
 
@@ -1521,16 +1473,6 @@ def test_declaring_cases_omitted_while_sending_them_is_refused(database, setting
             question_id=question.question_id,
             payload=draft(draft_payload()),
             cases_supplied=False,
-            now=PUBLISH_AT,
-        )
-    with pytest.raises(ManifestInvalid):
-        update_question(
-            database,
-            settings,
-            principal=teacher_principal(),
-            question_id=question.question_id,
-            payload=draft(_draft_without("cases")),
-            cases_supplied=True,
             now=PUBLISH_AT,
         )
     assert _stored_cases(database, version.question_version_id) == before_cases

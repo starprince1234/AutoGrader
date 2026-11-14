@@ -1,4 +1,4 @@
-﻿"""Data access for the ``b3`` schema.
+"""Data access for the ``b3`` schema.
 
 Two repositories, matching the two database roles:
 
@@ -853,22 +853,33 @@ class ProtectedContentRepository:
         language: str,
         body: str,
         now: datetime,
+        ordinal: int = 0,
+        label: str = "标准参考答案",
+        grading_prompt: str | None = None,
     ) -> ReferenceAnswerInternal:
         statement = (
             pg_insert(ReferenceAnswer)
             .values(
                 reference_answer_id=new_id(),
                 question_version_id=question_version_id,
+                ordinal=ordinal,
+                label=label,
                 language=language,
                 body=body,
+                grading_prompt=grading_prompt,
                 created_at=now,
             )
             .on_conflict_do_update(
                 index_elements=[
                     ReferenceAnswer.question_version_id,
-                    ReferenceAnswer.language,
+                    ReferenceAnswer.ordinal,
                 ],
-                set_={"body": body},
+                set_={
+                    "language": language,
+                    "label": label,
+                    "body": body,
+                    "grading_prompt": grading_prompt,
+                },
             )
             .returning(ReferenceAnswer.reference_answer_id)
         )
@@ -879,7 +890,53 @@ class ProtectedContentRepository:
             question_version_id=question_version_id,
             language=language,  # type: ignore[arg-type]
             body=body,
+            ordinal=ordinal,
+            label=label,
+            grading_prompt=grading_prompt,
         )
+
+    def replace_reference_answers(
+        self,
+        *,
+        question_version_id: uuid.UUID,
+        language: str,
+        items: Sequence[tuple[str, str]],
+        grading_prompt: str | None,
+        now: datetime,
+    ) -> list[ReferenceAnswerInternal]:
+        self.session.execute(
+            delete(ReferenceAnswer).where(
+                ReferenceAnswer.question_version_id == question_version_id
+            )
+        )
+        created: list[ReferenceAnswerInternal] = []
+        for ordinal, (label, body) in enumerate(items):
+            row_id = new_id()
+            self.session.add(
+                ReferenceAnswer(
+                    reference_answer_id=row_id,
+                    question_version_id=question_version_id,
+                    ordinal=ordinal,
+                    label=label,
+                    language=language,
+                    body=body,
+                    grading_prompt=grading_prompt,
+                    created_at=now,
+                )
+            )
+            created.append(
+                ReferenceAnswerInternal(
+                    reference_answer_id=row_id,
+                    question_version_id=question_version_id,
+                    language=language,  # type: ignore[arg-type]
+                    body=body,
+                    ordinal=ordinal,
+                    label=label,
+                    grading_prompt=grading_prompt,
+                )
+            )
+        self.session.flush()
+        return created
 
     def list_reference_answers(
         self, question_version_id: uuid.UUID
@@ -887,7 +944,7 @@ class ProtectedContentRepository:
         statement = (
             select(ReferenceAnswer)
             .where(ReferenceAnswer.question_version_id == question_version_id)
-            .order_by(ReferenceAnswer.language)
+            .order_by(ReferenceAnswer.ordinal, ReferenceAnswer.language)
         )
         return [
             ReferenceAnswerInternal(
@@ -895,6 +952,9 @@ class ProtectedContentRepository:
                 question_version_id=row.question_version_id,
                 language=row.language,  # type: ignore[arg-type]
                 body=row.body,
+                ordinal=row.ordinal,
+                label=row.label,
+                grading_prompt=row.grading_prompt,
             )
             for row in self.session.execute(statement).scalars()
         ]

@@ -143,12 +143,14 @@ export function GradeDrilldown({
       ) : null}
 
       <p data-testid="overall-summary">
-        {t("grades.friendlySummary", {
-          cases: data.case_evidence.length,
-          passed: passedCount,
-          score: data.overall.score,
-          max: data.overall.max_score,
-        })}
+        {data.overall.summary?.startsWith("AI 逻辑评分")
+          ? data.overall.summary
+          : t("grades.friendlySummary", {
+              cases: data.case_evidence.length,
+              passed: passedCount,
+              score: data.overall.score,
+              max: data.overall.max_score,
+            })}
       </p>
 
       {!studentView ? (

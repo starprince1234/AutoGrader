@@ -87,6 +87,7 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from autograder_b2.commentary import CommentaryService, build_provider
 from autograder_b2.commentary.provider import CommentaryProviderConfig
+from autograder_b2.evaluation.ai_grader import AiLogicGrader
 from autograder_b2.config import (
     ConfigurationError,
     EvaluationChainNotConfigured,
@@ -646,6 +647,18 @@ def _wire_evaluation_chain(runtime: B2Runtime) -> None:
     # 受保护 fixture 的字节交付链（设计基线 §5）：参考解答验证与学生评测**共用**同一个 source，
     # 因此"参考答案执行时看到的初始文件"与"学生执行时看到的初始文件"来自同一条通道、同一份摘要校验。
     fixtures = B3FixtureSource(endpoint)
+    verification_client = B3VerificationClient(endpoint)
+    commentary_provider = (
+        runtime.commentary.provider if runtime.commentary is not None else None
+    )
+    ai_grader = (
+        AiLogicGrader(
+            reference_answers=verification_client,
+            provider=commentary_provider,
+        )
+        if commentary_provider is not None
+        else None
+    )
     runtime.evaluator = EvaluationOrchestrator(
         engine=engine,
         package_source=source,
@@ -656,9 +669,10 @@ def _wire_evaluation_chain(runtime: B2Runtime) -> None:
         # fail-closed 为 infrastructure_error，绝不伪造"邮件已验证"。
         delivery=EmailDeliveryVerifier(engine=engine),
         gate=gate,
+        ai_grader=ai_grader,
     )
     runtime.references = ReferenceVerificationService(
-        reference_answers=B3VerificationClient(endpoint),
+        reference_answers=verification_client,
         packages=source,
         runner=RunnerCaseRunner(fixture_provider=fixtures),
         workspaces=ReferenceAnswerWorkspace(root=chain.workspace_root),

@@ -2909,45 +2909,50 @@ def test_a_correction_that_omits_both_protected_fields_is_accepted(client, auth_
     assert diff["reference_answer_digest_before"] == diff["reference_answer_digest_after"]
 
 
-def test_null_and_empty_case_sets_are_refused_without_writing_anything(client, auth_headers):
-    """CHG-0017 §5.4, plus the reverse assertion: no path clears a case set.
-
-    Omission preserves and a supplied set must hold at least one case, so the only way to
-    ask for "no cases" is a shape the contract does not declare: `[]` breaks `minItems: 1`
-    and `null` is not an array. Both are refused **before** anything is written, which is
-    why the stored rows are compared afterwards rather than the status code alone.
-    """
+def test_null_case_set_is_refused_and_empty_array_preserves_or_defaults(client, auth_headers):
+    """`null` is still refused with 422; `[]` preserves on update and creates default case on create."""
     question_id = _published_question_with(client, auth_headers)
     version_before = _latest_version_id(client, auth_headers, question_id)
     before = _protected_content(client, version_before)
 
-    for rejected in ([], None):
-        body = draft_payload(title="Trying to clear the cases", reference_answer=None)
-        body["cases"] = rejected
-        response = client.patch(
-            f"/api/v1/questions/{question_id}",
-            params={"as_new_version": "true"},
-            json=body,
-            headers=auth_headers("teacher-a"),
-        )
-        assert response.status_code == 422, response.text
-        assert response.json()["status"] == 422
-
-    # No version was created and the stored set is untouched.
+    body = draft_payload(title="Trying null cases", reference_answer=None)
+    body["cases"] = None
+    response = client.patch(
+        f"/api/v1/questions/{question_id}",
+        params={"as_new_version": "true"},
+        json=body,
+        headers=auth_headers("teacher-a"),
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["status"] == 422
     assert _latest_version_id(client, auth_headers, question_id) == version_before
     assert _protected_content(client, version_before) == before
 
-    # The same shapes are refused on the first write, so a version cannot be created with
-    # `[]`/`null` either, and an omitted set on creation is a draft that cannot publish -
-    # asserted in `tests/test_versions.py`.
-    for rejected in ([], None):
-        created = client.post(
-            "/api/v1/questions",
-            params={"course_id": str(COURSE_A)},
-            json=draft_payload() | {"cases": rejected},
-            headers=auth_headers("teacher-a"),
-        )
-        assert created.status_code == 422, created.text
+    created_null = client.post(
+        "/api/v1/questions",
+        params={"course_id": str(COURSE_A)},
+        json=draft_payload() | {"cases": None},
+        headers=auth_headers("teacher-a"),
+    )
+    assert created_null.status_code == 422, created_null.text
+
+    created_empty = client.post(
+        "/api/v1/questions",
+        params={"course_id": str(COURSE_A)},
+        json={
+            "title": "AI Logic Question",
+            "stem_markdown": "Write a sorting function.",
+            "language": "python",
+            "reference_answers": [
+                {"label": "暴力解法 (50分)", "body": "def s(a):\n  return sorted(a)\n"},
+                {"label": "最优解法 (100分)", "body": "def s(a):\n  a.sort()\n  return a\n"},
+            ],
+            "grading_prompt": "暴力解法50分，手写快排或最优解法90-100分。",
+            "cases": [],
+        },
+        headers=auth_headers("teacher-a"),
+    )
+    assert created_empty.status_code == 201, created_empty.text
 
 
 def test_a_body_that_omits_the_required_public_fields_is_still_refused(client, auth_headers):

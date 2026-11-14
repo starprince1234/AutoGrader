@@ -7,7 +7,7 @@ import type { CaseForm, DraftForm } from "./draft";
  * 页面用 `STEPS` 渲染左侧导航，测试也用同一份数据断言"哪一步算完成"，因此导航里的小圆点
  * 与页面里的校验提示不会各说一套。
  */
-export type StepId = "basic" | "stem" | "reference" | "cases" | "comparison";
+export type StepId = "basic" | "stem" | "reference";
 
 export type StepDefinition = {
   id: StepId;
@@ -19,20 +19,22 @@ export const STEPS: readonly StepDefinition[] = [
   { id: "basic", label: () => t("authoring.steps.basic") },
   { id: "stem", label: () => t("authoring.steps.stem") },
   { id: "reference", label: () => t("authoring.steps.reference") },
-  { id: "cases", label: () => t("authoring.steps.cases") },
-  { id: "comparison", label: () => t("authoring.steps.comparison") },
 ] as const;
+
+export function hasReferenceContent(form: DraftForm): boolean {
+  return (
+    form.referenceAnswer.trim() !== "" ||
+    form.referenceAnswers.some((tier) => tier.body.trim() !== "")
+  );
+}
 
 /**
  * 一步"已完成"的判据。
  *
- * 判据只看**这一屏能读到的事实**，不猜：
+ * 判据只看**这一屏能读到的事实**：
  * - 基本信息：选好课程并写了标题；
  * - 题干：题干非空；
- * - 参考答案：写了答案；编辑既有题目时页面读不到受保护字段（`CHG-0017`），此时视为已完成——
- *   否则这一格会永远停在"未完成"，把一个看不见的值说成没填；
- * - 测试用例：至少有一个用例**真的填了内容**（见 :func:`caseHasContent`）；
- * - 判分比对规则：已经选了标准输出比对方式（不选就无法编译）。
+ * - 参考答案与评分细则：至少填了一份非空参考解法（编辑既有题目且未改时按已完成处理）。
  */
 export function isStepComplete(
   id: StepId,
@@ -42,9 +44,7 @@ export function isStepComplete(
 ): boolean {
   if (id === "basic") return courseId !== "" && form.title.trim() !== "";
   if (id === "stem") return form.stemMarkdown.trim() !== "";
-  if (id === "reference") return form.referenceAnswer.trim() !== "" || options.editing;
-  if (id === "cases") return form.cases.some(caseHasContent);
-  return form.comparisonStdout !== "";
+  return hasReferenceContent(form) || options.editing;
 }
 
 /**

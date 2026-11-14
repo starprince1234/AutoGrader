@@ -254,3 +254,76 @@ def score_run(
             f"得分 {score}/{max_score}（静态与安全检查均放行，判定依据为 package 声明的比较策略）。"
         ),
     )
+
+
+def score_ai_run(
+    *,
+    cases: Sequence[CaseDescriptor],
+    raw_score: Decimal | float | str | int,
+    static: StaticAnalysisResult,
+    security: SecurityDecision,
+    summary_note: str | None = None,
+) -> ScoreBreakdown:
+    """AI 逻辑评分的确定性总分核算：只拦截安全违规，静态语法检查作为 AI 参考而不阻断评分。"""
+    if security.blocking:
+        raise ScoringPreconditionError("安全阻断的运行不产生分数（应为 rejected/security_blocked）")
+    if security.unchecked:
+        raise ScoringPreconditionError("存在未完成的安全检查，不得评分（未检查 ≠ 安全）")
+    if not cases:
+        raise ScoringDefect("没有用例就没有分数：package 必须至少声明一个用例")
+
+    ordered_cases = sorted(cases, key=lambda item: item.ordinal)
+    max_score = sum((decimal_of(case.weight) for case in ordered_cases), ZERO)
+    if max_score <= ZERO:
+        raise ScoringDefect("满分必须为正")
+
+    clamped = min(
+        max_score,
+        max(ZERO, decimal_of(raw_score).quantize(Decimal("0.01"))),
+    )
+    awards: list[CaseAward] = []
+    allocated = ZERO
+    for index, case in enumerate(ordered_cases):
+        weight = decimal_of(case.weight)
+        if index == len(ordered_cases) - 1:
+            awarded = clamped - allocated
+        else:
+            awarded = (clamped * weight / max_score).quantize(Decimal("0.01"))
+            awarded = min(weight, max(ZERO, awarded))
+            allocated += awarded
+        passed = awarded >= (weight * Decimal("0.60"))
+        awards.append(
+            CaseAward(
+                case_id=case.case_id,
+                ordinal=case.ordinal,
+                weight=weight,
+                awarded=awarded,
+                passed=passed,
+                failure_category=None,
+            )
+        )
+    ordered = tuple(awards)
+    sum_of_awards, matches_total = build_total_check(ordered, clamped)
+    if not matches_total:  # pragma: no cover
+        raise ScoreTotalMismatch("逐项得分之和与总分不等")
+    is_pass = clamped >= (max_score * Decimal("0.60"))
+    static_note = (
+        f"静态检查提示 {static.error_count} 个语法/规则错误、{static.warning_count} 个警告"
+        if (static.error_count or static.warning_count)
+        else "静态语法检查通过"
+    )
+    note = (summary_note or "").strip()
+    summary = (
+        f"AI 逻辑评分 {clamped}/{max_score}（{static_note}）：{note}"
+        if note
+        else f"AI 逻辑评分完成：得分 {clamped}/{max_score}（{static_note}）。"
+    )
+    return ScoreBreakdown(
+        awards=ordered,
+        score=clamped,
+        max_score=max_score,
+        sum_of_awards=sum_of_awards,
+        matches_total=matches_total,
+        is_pass=is_pass,
+        summary=summary,
+    )

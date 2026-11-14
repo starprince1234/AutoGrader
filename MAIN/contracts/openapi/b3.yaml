@@ -1459,6 +1459,13 @@ components:
         reference_answer:
           type: [string, "null"]
           description: "PROTECTED. A proposed solution the teacher still has to verify through the publish gate."
+        reference_answers:
+          type: array
+          description: "PROTECTED. Multiple reference answer tiers (e.g., brute-force vs optimal algorithm)."
+          items: {$ref: '#/components/schemas/ReferenceAnswerTier'}
+        grading_prompt:
+          type: [string, "null"]
+          description: "PROTECTED. Teacher rubric/prompt used by AI logic grader."
         cases:
           type: array
           items: {$ref: '#/components/schemas/QuestionDraftProposalCase'}
@@ -1874,7 +1881,7 @@ components:
         accepted shape required `cases` on every write, so every edit -- including a
         title-only one -- had to carry the protected content out to the client and back.
         That is precisely the round-trip the executor/recorder split exists to avoid.
-      required: [title, stem_markdown, language, adapter]
+      required: [title, stem_markdown, language]
       properties:
         title: {type: string, minLength: 1, maxLength: 300}
         stem_markdown: {type: string, minLength: 1}
@@ -1884,6 +1891,17 @@ components:
           description: |
             PROTECTED. Never leaves the question bank. Omitted or blank keeps the stored
             answer unchanged (CHG-0017); omission never removes it.
+        reference_answers:
+          type: array
+          description: |
+            PROTECTED. Multi-tier reference answers (label + source body). Omitted or empty
+            preserves existing stored answers when updating unless reference_answer is sent.
+          items: {$ref: '#/components/schemas/ReferenceAnswerTier'}
+        grading_prompt:
+          type: [string, "null"]
+          maxLength: 10000
+          description: |
+            PROTECTED. Custom rubric / prompt for AI logic and code quality grading.
         adapter: {$ref: '#/components/schemas/AdapterManifest'}
         execution:
           anyOf: [{$ref: '#/components/schemas/ExecutionManifest'}, {type: "null"}]
@@ -1893,7 +1911,6 @@ components:
             selects how cases are produced; title, tags and paths never do.
         cases:
           type: array
-          minItems: 1
           description: |
             PROTECTED. Omitted keeps the version's existing cases unchanged; supplied
             replaces the whole set (CHG-0017). Never echoed back through a public DTO.
@@ -1924,18 +1941,24 @@ components:
             delta cannot express "the deadline example was wrong".
       additionalProperties: false
 
+    ReferenceAnswerTier:
+      type: object
+      description: |
+        One reference answer solution tier (e.g., brute-force vs optimal algorithm).
+      required: [label, body]
+      properties:
+        label: {type: string, minLength: 1, maxLength: 200}
+        body: {type: string, minLength: 1, description: "PROTECTED."}
+      additionalProperties: false
+
     ReferenceAnswer:
       type: object
       description: |
-        A version's own reference answer, delivered to the verification path (CHG-0023).
+        A version's own reference answer, delivered to the verification / AI grading path.
 
         **PROTECTED.** Never returned by any public DTO, never placed in a contract example, never
         logged and never published in an event. `b3.reference_answers` sits in the module's
         `PROTECTED_TABLES`, and this schema is the only contract surface that names its content.
-
-        `content_digest` is the *same* digest `CHG-0008`'s attestation binds to, which is what makes
-        "the answer that was executed" and "the content that was attested" the same thing rather
-        than two values that merely happen to agree.
       required: [question_version_id, content_digest, language, adapter_kind, reference_answer]
       properties:
         question_version_id: {$ref: './common.yaml#/components/schemas/Uuid'}
@@ -1950,7 +1973,17 @@ components:
         reference_answer:
           type: string
           minLength: 1
-          description: "PROTECTED. The answer's source. Exactly one answer exists per (version, language); this is the one for the version's declared language."
+          description: "PROTECTED. Primary or combined reference answer source."
+        stem_markdown:
+          type: string
+          description: "Question stem markdown delivered for AI logic grading."
+        reference_answers:
+          type: array
+          description: "PROTECTED. Ordered list of reference answer tiers."
+          items: {$ref: '#/components/schemas/ReferenceAnswerTier'}
+        grading_prompt:
+          type: [string, "null"]
+          description: "PROTECTED. Teacher grading prompt / rubric for AI logic grading."
       additionalProperties: false
 
     AdapterManifest:
@@ -2009,6 +2042,10 @@ components:
       additionalProperties: false
       properties:
         reference_answer: {type: [string, "null"]}
+        reference_answers:
+          type: array
+          items: {$ref: '#/components/schemas/ReferenceAnswerTier'}
+        grading_prompt: {type: [string, "null"]}
         execution: {$ref: '#/components/schemas/ExecutionManifest'}
         cases:
           type: array

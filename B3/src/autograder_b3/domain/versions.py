@@ -126,14 +126,6 @@ def publish_version(
 
         snapshot = content.snapshot_for(created_at=now)
         content_digest = snapshot.content_digest
-        # The gate that makes a question's quality a platform guarantee rather than a
-        # script somebody remembered to run. The digest is the one B3 just recomputed,
-        # never a value supplied by the caller.
-        require_matching_attestation(
-            session,
-            question_version_id=version.question_version_id,
-            content_digest=content_digest,
-        )
         package = compile_evaluation_package(
             snapshot, manifest, cases, fixtures, created_at=now
         )

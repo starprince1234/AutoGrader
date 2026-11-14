@@ -25,6 +25,7 @@ import {
   parseTags,
   type DraftForm,
   deriveTags,
+  emptyCase,
 } from "./draft";
 import {
   readDraftExecution,
@@ -55,7 +56,7 @@ function validForm(overrides: Partial<DraftForm> = {}): DraftForm {
     confirmCaseReplacement: true,
     cases: [
       {
-        ...emptyDraftForm().cases[0],
+        ...emptyCase(),
         name: "基本用例",
         // 分值不再有默认值：一份合法表单必须由教师填一个合法分值。
         weight: "1",
@@ -114,8 +115,8 @@ describe("表单 → QuestionDraftInput", () => {
     expect(input.title).toBe("统计文件行数");
     expect(input.language).toBe("python");
     expect(input.tags).toEqual(["unix", "text-processing"]);
-    expect(input.adapter.kind).toBe("stdin");
-    expect(input.adapter.comparison).toEqual({ stdout: "exact" });
+    expect(input.adapter?.kind).toBe("stdin");
+    expect(input.adapter?.comparison).toEqual({ stdout: "exact" });
     expect(input.cases).toHaveLength(1);
     expect(input.cases?.[0].ordinal).toBe(0);
     expect(input.cases?.[0].visible_to_student).toBe(false);
@@ -156,9 +157,9 @@ describe("表单 → QuestionDraftInput", () => {
         adapterArgs: "--verbose out.txt",
       }),
     );
-    expect(input.adapter.kind).toBe("callable");
-    expect(input.adapter.args).toEqual(["--verbose", "out.txt"]);
-    expect(input.adapter.callable).toEqual({
+    expect(input.adapter?.kind).toBe("callable");
+    expect(input.adapter?.args).toEqual(["--verbose", "out.txt"]);
+    expect(input.adapter?.callable).toEqual({
       module: "solution",
       attribute: "run",
       arguments_json: '{"n": 3}',
@@ -169,12 +170,12 @@ describe("表单 → QuestionDraftInput", () => {
     const withTolerance = built(
       validForm({ comparisonStdout: "numeric_tolerance", numericTolerance: "0.01" }),
     );
-    expect(withTolerance.adapter.comparison).toEqual({
+    expect(withTolerance.adapter?.comparison).toEqual({
       stdout: "numeric_tolerance",
       numeric_tolerance: 0.01,
     });
     const exact = built(validForm({ comparisonStdout: "exact", numericTolerance: "" }));
-    expect(exact.adapter.comparison).toEqual({ stdout: "exact" });
+    expect(exact.adapter?.comparison).toEqual({ stdout: "exact" });
   });
 });
 
@@ -188,7 +189,7 @@ describe("受保护字段的省略语义（CHG-0017）", () => {
     expect(input.title).toBe("统计文件行数");
     expect(input.stem_markdown).not.toBe("");
     expect(input.language).toBe("python");
-    expect(input.adapter.kind).toBe("stdin");
+    expect(input.adapter?.kind).toBe("stdin");
   });
 
   it("只有空白的参考答案同样视为「不声明」，不发该键", () => {
@@ -269,8 +270,8 @@ describe("校验（不通过就不发请求）", () => {
         ],
       }),
     );
-    expect(uploaded.adapter.kind).toBe("file");
-    expect(uploaded.adapter.files).toEqual([
+    expect(uploaded.adapter?.kind).toBe("file");
+    expect(uploaded.adapter?.files).toEqual([
       { path: "data/input.txt", content_sha256: "a".repeat(64), mount: "input" },
       { path: "data/expected.txt", content_sha256: "b".repeat(64), mount: "expected_output" },
     ]);
@@ -310,7 +311,7 @@ describe("校验（不通过就不发请求）", () => {
 
   it("用例名可以留空：按序号自动命名；权重仍必须大于 0", () => {
     const form = validForm();
-    form.cases.push({ ...emptyDraftForm().cases[0], name: "", weight: "0" });
+    form.cases.push({ ...emptyCase(), name: "", weight: "0" });
     const keys = issueKeys(form);
     // 用例名是选填项：缺名字不再是一个"问题"。
     expect(keys).not.toContain("authoring.issue.caseName");
@@ -318,21 +319,22 @@ describe("校验（不通过就不发请求）", () => {
 
     // 留空的名字在提交时变成「用例N」，序号从 1 开始。
     const input = built(
-      validForm({ cases: [{ ...emptyDraftForm().cases[0], name: "", weight: "1" }] }),
+      validForm({ cases: [{ ...emptyCase(), name: "", weight: "1" }] }),
     );
     expect(input.cases?.[0].name).toBe("用例1");
   });
 
-  it("期望退出码预置为 0，但分值留空等教师自己填", () => {
-    expect(emptyDraftForm().cases[0].expectedExitCode).toBe("0");
+  it("默认空用例期望退出码预置为 0，但分值留空；新建表单默认无用例", () => {
+    expect(emptyCase().expectedExitCode).toBe("0");
     expect(emptyDraftForm().adapterExpectExitCode).toBe("0");
-    expect(emptyDraftForm().cases[0].weight).toBe("");
+    expect(emptyCase().weight).toBe("");
+    expect(emptyDraftForm().cases).toEqual([]);
   });
 
   it("数值容差只在「数值容差」模式下校验：其他模式里禁用的输入不该挡住保存", () => {
     // 残留的旧值 + 非数值模式：不发容差字段，也不报错。
     const input = built(validForm({ comparisonStdout: "exact", numericTolerance: "not-a-number" }));
-    expect(input.adapter.comparison).toEqual({ stdout: "exact" });
+    expect(input.adapter?.comparison).toEqual({ stdout: "exact" });
   });
 
   it("命令行题型的三个全局项可以全部留空：用例自带输入即可评测", () => {
@@ -340,7 +342,7 @@ describe("校验（不通过就不发请求）", () => {
       validForm({ adapterExpectExitCode: "", adapterArgs: "", adapterStdin: "" }),
     );
     // 不发这三个字段的任何"占位值"，适配器里只剩类型与比对规则。
-    expect(input.adapter.kind).toBe("stdin");
+    expect(input.adapter?.kind).toBe("stdin");
     expect(input.adapter).not.toHaveProperty("args");
     expect(input.adapter).not.toHaveProperty("stdin");
     expect(input.adapter).not.toHaveProperty("expect_exit_code");
@@ -411,12 +413,11 @@ describe("AI 候选应用到表单（AI-FLOW-01A）", () => {
     expect(applied.language).toBe("bash");
   });
 
-  it("权重为 null 的候选用例留空，由逐字段校验提示教师填写", () => {
+  it("应用 AI 候选不再生成测试用例，而是清空用例列表并保留合法状态", () => {
     const applied = applyProposal(validForm(), proposal);
-    expect(applied.cases).toHaveLength(2);
-    expect(applied.cases[1].weight).toBe("");
-    const keys = issueKeys(applied, { newVersion: false, editing: false });
-    expect(keys).toContain("authoring.issue.caseWeight");
+    expect(applied.cases).toEqual([]);
+    const result = buildDraftInput(applied, { newVersion: false, editing: false });
+    expect(result.ok).toBe(true);
   });
 
   it("候选没给比较策略时用「忽略行尾空白」，而不是精确匹配", () => {
@@ -480,17 +481,19 @@ describe("从公开 DTO 预填", () => {
     // 公开 DTO 里没有的字段：空表示"本页读不到服务端的现值"，不是"服务端没有"。
     expect(form.referenceAnswer).toBe("");
     expect(form.adapterArgs).toBe("");
-    expect(form.comparisonStdout).toBe("");
+    expect(form.comparisonStdout).toBe("ignore_trailing_whitespace");
     // 编辑路径**不**凭空渲染一行空用例：那会让"我不知道有几个"看起来像"它没有用例"，
     // 而提交那一行还会把整个集合替换掉。零个用例 = 这次不声明该字段。
     expect(form.cases).toHaveLength(0);
     expect(form.confirmCaseReplacement).toBe(false);
   });
 
-  it("新建路径给一行空用例作为邀请（与编辑路径不同）", () => {
+  it("新建路径不再预置空用例，而从一档空参考解法和空评分提示开始", () => {
     const form = emptyDraftForm();
-    expect(form.cases).toHaveLength(1);
+    expect(form.cases).toEqual([]);
     expect(form.referenceAnswer).toBe("");
+    expect(form.referenceAnswers).toEqual([{ label: "标准参考答案", body: "" }]);
+    expect(form.gradingPrompt).toBe("");
   });
 });
 
@@ -543,7 +546,7 @@ describe("评分方式 / 执行声明（Unix 作业扩展）", () => {
         segmentDelimiter: "===== SEGMENT =====",
         cases: [
           {
-            ...emptyDraftForm().cases[0],
+            ...emptyCase(),
             name: "第一段",
             weight: "1",
             segmentScored: true,
@@ -551,7 +554,7 @@ describe("评分方式 / 执行声明（Unix 作业扩展）", () => {
             expectedStdout: "a\n",
           },
           {
-            ...emptyDraftForm().cases[0],
+            ...emptyCase(),
             name: "第二段",
             weight: "1",
             segmentScored: true,
@@ -577,7 +580,7 @@ describe("评分方式 / 执行声明（Unix 作业扩展）", () => {
         segmentDelimiter: "",
         cases: [
           {
-            ...emptyDraftForm().cases[0],
+            ...emptyCase(),
             name: "改权限",
             weight: "1",
             fileChecks: [uploadedFileCheck("week6_1.txt", "0744")],
@@ -602,7 +605,7 @@ describe("评分方式 / 执行声明（Unix 作业扩展）", () => {
       sshSessionTimeout: "7",
       cases: [
         {
-          ...emptyDraftForm().cases[0],
+          ...emptyCase(),
           name: "登录并退出",
           weight: "1",
           sshCheck: "auth_succeeded",
@@ -643,7 +646,7 @@ describe("评分方式 / 执行声明（Unix 作业扩展）", () => {
         emailSubjectTemplate: "{student_number}_{attempt}",
         cases: [
           {
-            ...emptyDraftForm().cases[0],
+            ...emptyCase(),
             name: "收件",
             weight: "1",
             emailCheck: "email_received",
@@ -666,7 +669,7 @@ describe("评分方式 / 执行声明（Unix 作业扩展）", () => {
 
   it("版本级校验与写规则一致：分隔行、尝试次数、SSH 字段、适配器与语言", () => {
     const segmentedBase = {
-      ...emptyDraftForm().cases[0],
+      ...emptyCase(),
       weight: "1",
       segmentScored: true,
       segment: "0",
@@ -710,7 +713,7 @@ describe("评分方式 / 执行声明（Unix 作业扩展）", () => {
       segmentDelimiter: "===== SEGMENT =====",
       cases: [
         {
-          ...emptyDraftForm().cases[0],
+          ...emptyCase(),
           weight: "1",
           fileChecks: [uploadedFileCheck("a.txt", "0744")],
         },
@@ -739,7 +742,7 @@ describe("评分方式 / 执行声明（Unix 作业扩展）", () => {
       sshPassword: "",
       sshLoginTimeout: "31",
       sshSessionTimeout: "0",
-      cases: [{ ...emptyDraftForm().cases[0], weight: "1", sshCheck: "service_ready" }],
+      cases: [{ ...emptyCase(), weight: "1", sshCheck: "service_ready" }],
     });
     expect(executionDeclarationIssues(badSsh).map((issue) => issue.key)).toEqual(
       expect.arrayContaining([
@@ -757,7 +760,7 @@ describe("评分方式 / 执行声明（Unix 作业扩展）", () => {
       sshPort: "22",
       sshUsername: "user01",
       sshPassword: "pw",
-      cases: [{ ...emptyDraftForm().cases[0], weight: "1", sshCheck: "service_ready" }],
+      cases: [{ ...emptyCase(), weight: "1", sshCheck: "service_ready" }],
     });
     expect(executionDeclarationIssues(pythonSsh).map((issue) => issue.key)).toContain(
       "authoring.execution.issue.requiresBashStdin",
@@ -767,7 +770,7 @@ describe("评分方式 / 执行声明（Unix 作业扩展）", () => {
       language: "bash",
       executionMode: "email_delivery",
       emailAttempt: "0",
-      cases: [{ ...emptyDraftForm().cases[0], weight: "1", emailCheck: "subject" }],
+      cases: [{ ...emptyCase(), weight: "1", emailCheck: "subject" }],
     });
     expect(executionDeclarationIssues(badAttempt).map((issue) => issue.key)).toContain(
       "authoring.execution.issue.emailAttempt",
@@ -881,6 +884,11 @@ describe("评分方式 / 执行声明（Unix 作业扩展）", () => {
     ];
     const content = {
       reference_answer: "print(1)",
+      reference_answers: [
+        { label: "暴力解法（60 分）", body: "print(1)" },
+        { label: "高阶解法（95 分）", body: "print(sum(range(1)))" },
+      ],
+      grading_prompt: "暴力给 50-60 分，高阶解法给 85-100 分。",
       execution: { mode: "single_run", segment_delimiter: "===== SEGMENT =====" },
       cases,
     } as QuestionDraftContent;
@@ -889,17 +897,12 @@ describe("评分方式 / 执行声明（Unix 作业扩展）", () => {
     expect(form.executionMode).toBe("single_run");
     expect(form.segmentDelimiter).toBe("===== SEGMENT =====");
     expect(form.referenceAnswer).toBe("print(1)");
-    expect(form.confirmCaseReplacement).toBe(true);
-    expect(form.cases[0]).toMatchObject({ segmentScored: true, segment: "0" });
-    // 期望内容原文不可读回：只带回摘要；留空内容表示沿用已保存摘要。
-    expect(form.cases[1].fileChecks).toEqual([
-      {
-        path: "week6_1.txt",
-        mode: "0744",
-        content: "",
-        contentSha256: "a".repeat(64),
-      },
+    expect(form.referenceAnswers).toEqual([
+      { label: "暴力解法（60 分）", body: "print(1)" },
+      { label: "高阶解法（95 分）", body: "print(sum(range(1)))" },
     ]);
+    expect(form.gradingPrompt).toBe("暴力给 50-60 分，高阶解法给 85-100 分。");
+    expect(form.cases).toEqual([]);
   });
 
   it("读回 ssh_session 的练习配置；缺失执行声明时回落 per_case", () => {
@@ -938,7 +941,64 @@ describe("评分方式 / 执行声明（Unix 作业扩展）", () => {
   });
 });
 
+describe("多档参考答案与 AI 评分细则", () => {
+  it("buildDraftInput 在多档参考答案与评分提示填写时按契约字段序列化，留空时省略", () => {
+    const withTiers = built(
+      validForm({
+        referenceAnswer: "def f(): pass",
+        referenceAnswers: [
+          { label: "暴力写法（50 分）", body: "def f(): return 1" },
+          { label: "线性优化（90 分）", body: "def f(): return 2" },
+        ],
+        gradingPrompt: "暴力 50 分，线性 90 分，按可读性上下浮动 5 分。",
+        cases: [],
+      }),
+    );
+    expect(withTiers.reference_answers).toEqual([
+      { label: "暴力写法（50 分）", body: "def f(): return 1" },
+      { label: "线性优化（90 分）", body: "def f(): return 2" },
+    ]);
+    expect(withTiers.reference_answer).toBe("def f(): return 1");
+    expect(withTiers.grading_prompt).toBe("暴力 50 分，线性 90 分，按可读性上下浮动 5 分。");
+    expect(withTiers.cases).toBeUndefined();
+
+    const clearedPrompt = built(
+      validForm({
+        referenceAnswer: "pass",
+        referenceAnswers: [{ label: "标准参考答案", body: "pass" }],
+        gradingPrompt: "   ",
+        cases: [],
+      }),
+    );
+    expect(clearedPrompt.grading_prompt).toBeUndefined();
+  });
+
+  it("applyProposal 回填候选的多档参考答案与评分提示，并清空旧测试用例", () => {
+    const applied = applyProposal(validForm(), {
+      title: "排序",
+      language: "python",
+      adapter_kind: "stdin",
+      tags: ["python"],
+      stem_markdown: "# 排序",
+      reference_answer: "def sort_fast(): pass",
+      reference_answers: [
+        { label: "冒泡（50 分）", body: "def sort_slow(): pass" },
+        { label: "快排（90 分）", body: "def sort_fast(): pass" },
+      ],
+      grading_prompt: "冒泡 50 分，快排 90 分。",
+      cases: [],
+    });
+    expect(applied.referenceAnswers).toEqual([
+      { label: "冒泡（50 分）", body: "def sort_slow(): pass" },
+      { label: "快排（90 分）", body: "def sort_fast(): pass" },
+    ]);
+    expect(applied.referenceAnswer).toBe("def sort_slow(): pass");
+    expect(applied.gradingPrompt).toBe("冒泡 50 分，快排 90 分。");
+    expect(applied.cases).toEqual([]);
+  });
+});
+
 /** 用例执行字段的空白副本（`emptyCase` 的另一个引用，避免测试间共享对象）。 */
 function emptyCaseLike(): ReturnType<typeof emptyDraftForm>["cases"][number] {
-  return emptyDraftForm().cases[0];
+  return emptyCase();
 }

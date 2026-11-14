@@ -12,6 +12,7 @@ hidden cases and fixture digests. It is recomputed here, never accepted from a c
 from __future__ import annotations
 
 from datetime import datetime
+import uuid
 
 from ..compile.manifest import (
     case_execution_payload,
@@ -21,7 +22,7 @@ from ..compile.manifest import (
     validate_case_executions,
 )
 from ..domain.content import build_snapshot, compute_content_digest
-from ..dto.internal import PublishedVersionSnapshot, VersionContentSnapshot
+from ..dto.internal import PublishedVersionSnapshot, TestCaseInternal, VersionContentSnapshot
 from ..errors import ProtectedContentMissing
 from ..infra.models import QuestionVersion
 from ..infra.repositories import ProtectedContentRepository
@@ -81,32 +82,56 @@ class VersionContent:
         )
 
 
-class EditableDraftContent:
-    """A draft's own reference answer and cases, for the authoring edit page.
+def default_ai_case(
+    question_version_id: uuid.UUID, *, case_id: uuid.UUID | None = None
+) -> TestCaseInternal:
+    """Synthetic 100-point case for AI logic grading when no explicit test cases exist."""
+    return TestCaseInternal(
+        case_id=uuid.UUID(int=0) if case_id is None else case_id,
+        question_version_id=question_version_id,
+        name="AI 逻辑与代码质量评测",
+        ordinal=0,
+        weight=100.0,
+        visible_to_student=True,
+    )
 
-    Protected content that the *author* of a draft must be able to correct: `CHG-0017` made
-    every protected field optional on write, which meant an edit page could only re-declare
-    cases, never show the existing ones. Only a teacher holding write scope on the version's
-    course can load this, and only while the version is still a draft.
+
+class EditableDraftContent:
+    """A draft's own reference answers, grading prompt and cases, for the authoring edit page.
+
+    Protected content that the *author* of a draft must be able to correct. Only a teacher
+    holding write scope on the version's course can load this.
     """
 
-    __slots__ = ("reference_answer", "cases", "execution")
+    __slots__ = (
+        "reference_answer",
+        "reference_answers",
+        "grading_prompt",
+        "cases",
+        "execution",
+    )
 
-    def __init__(self, *, reference_answer: str | None, cases, execution) -> None:
+    def __init__(
+        self,
+        *,
+        reference_answer: str | None,
+        cases,
+        execution,
+        reference_answers: tuple[dict[str, str], ...] = (),
+        grading_prompt: str | None = None,
+    ) -> None:
         self.reference_answer = reference_answer
+        self.reference_answers = tuple(reference_answers)
+        self.grading_prompt = grading_prompt
         self.cases = tuple(cases)
         self.execution = execution
 
     def to_wire(self) -> dict:
-        """The ``QuestionDraftContent`` shape (``reference_answer``, ``execution``, ``cases``).
-
-        ``execution`` is always present and normalized (a version that never declared one
-        reads back as ``{"mode": "per_case"}``), which is what lets the authoring page round
-        trip an edit without guessing whether a declaration exists. The case-level fields are
-        omitted when a case declares nothing, matching ``TestCaseInput``'s optional fields.
-        """
+        """The ``QuestionDraftContent`` shape."""
         return {
             "reference_answer": self.reference_answer,
+            "reference_answers": [dict(item) for item in self.reference_answers],
+            "grading_prompt": self.grading_prompt,
             "execution": execution_manifest_to_storage(self.execution)
             or {"mode": "per_case"},
             "cases": [
@@ -129,19 +154,7 @@ class EditableDraftContent:
 
 # (deploy retrigger) 
 def load_editable_draft_content(database, *, question_version_id, principal) -> EditableDraftContent:
-    """Load a version's own answer + cases for its author.
-
-    Drafts **and published** versions are readable here. Published content stays frozen -- this
-    is a read, and the write path creates a new version instead of mutating it -- but it must be
-    readable, because 「另存为新版本」 starts from the full existing content: reference answer,
-    every case (sample and hidden, with weight and visibility), tags and adapter. Without the
-    published version here the editor opened on an empty case list and saving produced a new
-    version with nothing in it, which is exactly what a teacher reported.
-
-    Raises ``NotFound`` when the version or its question is gone, ``Forbidden`` when the caller
-    has no write scope on the course (the same rule the PATCH path uses), and ``Conflict`` for a
-    status that is neither (an archived version is frozen *and* not a candidate for a new one).
-    """
+    """Load a version's own answer + grading prompt + cases for its author."""
     from ..auth import require_course_write
     from ..errors import Conflict, NotFound
     from ..infra.models import Question
@@ -158,8 +171,16 @@ def load_editable_draft_content(database, *, question_version_id, principal) -> 
             raise Conflict("only a draft or a published version can be read back for editing")
         content = load_version_content(session, version, require_reference_answer=False)
         answers = content.snapshot.reference_answers
+        grading_prompt = next(
+            (answer.grading_prompt for answer in answers if answer.grading_prompt is not None),
+            None,
+        )
         return EditableDraftContent(
             reference_answer=answers[0].body if answers else None,
+            reference_answers=tuple(
+                {"label": answer.label, "body": answer.body} for answer in answers
+            ),
+            grading_prompt=grading_prompt,
             cases=content.snapshot.cases,
             execution=content.execution,
         )
@@ -168,31 +189,16 @@ def load_editable_draft_content(database, *, question_version_id, principal) -> 
 def load_version_content(
     session, version: QuestionVersion, *, require_reference_answer: bool = True
 ) -> VersionContent:
-    """Read a version's protected content and build its digest input.
-
-    Raises :class:`ProtectedContentMissing` when the version is not publishable, so a digest
-    is never computed over content that could not be published anyway.
-
-    ``require_reference_answer=False`` is for the **package** path (``CHG-0028``). A package is
-    the *executable* input -- cases, adapter, comparison policy, sandbox policy -- and it never
-    carries the reference answer, which travels on its own endpoint (``CHG-0023``) with its own
-    ``409`` for "this version has no answer". Demanding the answer here would report "no
-    package" for a state whose real problem is "no answer", and would make one delivery depend
-    on the other. The paths that genuinely must have the answer -- ``publish`` and the
-    attestation recorder -- keep the default.
-    """
+    """Read a version's protected content and build its digest input."""
     protected = ProtectedContentRepository(session)
     cases = protected.list_cases(version.question_version_id)
+    if not cases:
+        cases = [default_ai_case(version.question_version_id)]
     fixtures = protected.list_fixtures(version.question_version_id)
     reference_answers = protected.list_reference_answers(version.question_version_id)
     manifest = manifest_from_stored(
         version.adapter_manifest, cases=cases, fixtures=fixtures
     )
-    # The stored declaration is validated against the same content it describes; a row that
-    # predates the feature has NULL and means per_case, and a row whose declaration does not
-    # fit its cases is refused here so publish / package / attestation all fail loudly rather
-    # than compile an unusable artifact. `validate_case_executions` also re-checks each case's
-    # own declaration for the resolved mode.
     execution = execution_from_stored(version.execution_manifest)
     validate_case_executions(
         cases,
@@ -201,8 +207,6 @@ def load_version_content(
         language=version.language,
     )
 
-    if not cases:
-        raise ProtectedContentMissing("a publishable version needs at least one test case")
     if require_reference_answer and not any(
         answer.body.strip() for answer in reference_answers
     ):

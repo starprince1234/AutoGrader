@@ -244,9 +244,8 @@ def create_question_endpoint(
         # from a present one, so that fact is read here and passed down, rather than
         # guessed from the parsed value inside the domain.
         cases_supplied="cases" in payload.model_fields_set,
-        # Same fact about `execution`: an omitted key keeps the stored declaration, while an
-        # explicit `null` resets it to per_case. Only the transport can tell them apart.
         execution_supplied="execution" in payload.model_fields_set,
+        grading_prompt_supplied="grading_prompt" in payload.model_fields_set,
         generation_id=generation_id,
         now=dependencies.now,
     )
@@ -332,8 +331,8 @@ def update_question_endpoint(
         # Same fact about `cases` (CHG-0017): absent means "keep the stored cases", so a
         # caller that only renames a question never has to send hidden cases back.
         cases_supplied="cases" in payload.model_fields_set,
-        # Absent means "keep the stored execution declaration"; explicit `null` resets it.
         execution_supplied="execution" in payload.model_fields_set,
+        grading_prompt_supplied="grading_prompt" in payload.model_fields_set,
         now=dependencies.now,
     )
     log_event(

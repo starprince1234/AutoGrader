@@ -94,6 +94,10 @@ class CommentaryService:
         return self._provider is not None
 
     @property
+    def provider(self) -> CommentaryProvider | None:
+        return self._provider
+
+    @property
     def not_configured_reason(self) -> str:
         return self._not_configured_reason or "未配置模型服务"
 

@@ -254,9 +254,14 @@ describe("教师界面只说人话", () => {
         respond: () => jsonResponse(authoringAssistance()),
       },
       {
-        method: "POST",
-        path: "/api/v1/reference-verifications",
-        respond: () => jsonResponse(referenceVerification()),
+        path: `/api/v1/question-versions/${UUID_A}/draft-content`,
+        respond: () =>
+          jsonResponse({
+            reference_answer: "wc -l",
+            reference_answers: [{ label: "标准参考答案", body: "wc -l" }],
+            grading_prompt: "按逻辑完整性给分。",
+            cases: [],
+          }),
       },
     ]);
     await signIn("teacher1", "pw");
@@ -264,11 +269,11 @@ describe("教师界面只说人话", () => {
 
     await user.click(await screen.findByTestId("request-assistance"));
     await screen.findByTestId("assistance-result");
-    // 「检验并发布」现在在最后一步里：先切到那一步。
-    await user.click(await screen.findByTestId("wizard-step-comparison"));
-    await screen.findByTestId("step-comparison");
-    await user.click(screen.getByTestId("reference-verify"));
-    await screen.findByTestId("reference-verification-result");
+    // 简化后的 3 步出题向导：切到第 3 步检查多档参考解法与 AI 评分细则及直接发布按钮。
+    await user.click(await screen.findByTestId("wizard-step-reference"));
+    await screen.findByTestId("step-reference");
+    await screen.findByTestId("reference-tier-add");
+    await screen.findByTestId("authoring-save-publish");
 
     assertPlainLanguage(document.body.textContent ?? "");
   });

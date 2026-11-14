@@ -18,7 +18,7 @@ import {
   questionVersionPublic,
   sessionCreated,
 } from "../../testing/contractFixtures";
-import { signIn } from "../../auth/sessionStore";
+import { resetSessionForTests, signIn } from "../../auth/sessionStore";
 import { QuestionDetailPage } from "./QuestionDetailPage";
 
 const QUESTION_ID = questionPublic().question_id;
@@ -376,12 +376,10 @@ describe("题目详情与版本机制（RQ-B-1-40）", () => {
     await signIn("teacher1", "pw");
     renderQuestionDetail();
 
-    const panel = await screen.findByTestId("reference-verification");
-    expect(within(panel).getByTestId("reference-verify")).toBeInTheDocument();
-    // 2.0：门禁的说明文字已删，语义仍在服务端与按钮行为里（见 ReferenceVerificationPanel 测试）。
+    const panel = await screen.findByTestId("direct-publish-panel");
+    expect(within(panel).getByTestId("reference-publish")).toBeInTheDocument();
+    // 简化出题流程后直接提供发布动作。
     expect(within(panel).queryByTestId("reference-gate")).toBeNull();
-    // 未验证 → 没有发布动作。
-    expect(within(panel).queryByTestId("reference-publish")).toBeNull();
     // 编辑入口在位：写路径不再是"看得到改不了"。
     expect(screen.getByTestId("edit-question")).toBeInTheDocument();
     // 3.0：「这个版本尚未发布……」那条说明已删。
@@ -433,5 +431,77 @@ describe("评分方式（Unix 作业扩展）", () => {
     expect(await screen.findByTestId("version-execution-mode")).toHaveTextContent(
       "每个用例单独运行",
     );
+  });
+
+  it("教师可见多档参考答案与 AI 评分细则", async () => {
+    stub = installFetchStub([
+      {
+        method: "POST",
+        path: "/api/v1/auth/session",
+        respond: () => jsonResponse(sessionCreated({ roles: ["teacher"] })),
+      },
+      {
+        path: `/api/v1/questions/${QUESTION_ID}`,
+        respond: () => jsonResponse(questionPublic({ status: "draft" })),
+      },
+      {
+        path: `/api/v1/question-versions/${VERSION_A}`,
+        respond: () =>
+          jsonResponse(
+            questionVersionPublic({ question_version_id: VERSION_A, status: "draft" }),
+          ),
+      },
+      {
+        path: `/api/v1/question-versions/${VERSION_A}/draft-content`,
+        respond: () =>
+          jsonResponse({
+            reference_answer: "def solve(): pass",
+            reference_answers: [
+              { label: "暴力写法（50 分）", body: "for i in range(n): pass" },
+              { label: "最优写法（95 分）", body: "return n * (n + 1) // 2" },
+            ],
+            grading_prompt: "暴力给 50 分，数学公式最优写法给 95 分。",
+            cases: [],
+          }),
+      },
+    ]);
+
+    await signIn("teacher1", "pw");
+    renderQuestionDetail();
+
+    const ctx = await screen.findByTestId("teacher-grading-context");
+    expect(within(ctx).getByTestId("teacher-tier-0")).toHaveTextContent("暴力写法（50 分）");
+    expect(within(ctx).getByTestId("teacher-tier-1")).toHaveTextContent("最优写法（95 分）");
+    expect(within(ctx).getByTestId("teacher-grading-prompt")).toHaveTextContent(
+      "暴力给 50 分，数学公式最优写法给 95 分。",
+    );
+  });
+
+  it("学生不可见多档参考答案、AI 评分细则及直接发布面板", async () => {
+    resetSessionForTests();
+    stub = installFetchStub([
+      {
+        method: "POST",
+        path: "/api/v1/auth/session",
+        respond: () => jsonResponse(sessionCreated({ roles: ["student"] })),
+      },
+      {
+        path: `/api/v1/questions/${QUESTION_ID}`,
+        respond: () => jsonResponse(questionPublic({ status: "published" })),
+      },
+      {
+        path: `/api/v1/question-versions/${VERSION_A}`,
+        respond: () =>
+          jsonResponse(
+            questionVersionPublic({ question_version_id: VERSION_A, status: "published" }),
+          ),
+      },
+    ]);
+
+    await signIn("student1", "pw");
+    renderQuestionDetail();
+    await screen.findByTestId("question-stem-body");
+    expect(screen.queryByTestId("teacher-grading-context")).toBeNull();
+    expect(screen.queryByTestId("direct-publish-panel")).toBeNull();
   });
 });

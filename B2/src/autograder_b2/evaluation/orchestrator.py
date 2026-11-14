@@ -117,7 +117,9 @@ from autograder_b2.evaluation.report import (
     ReportInputs,
     build_report,
 )
-from autograder_b2.evaluation.scoring import ScoreBreakdown, score_run
+from autograder_b2.commentary import store as commentary_store
+from autograder_b2.evaluation.ai_grader import AiGradeResult, AiGradingError, AiLogicGrader
+from autograder_b2.evaluation.scoring import ScoreBreakdown, score_ai_run, score_run
 from autograder_b2.events.outbox import (
     EVALUATION_COMPLETED,
     EVALUATION_FAILED,
@@ -380,6 +382,7 @@ class EvaluationOrchestrator:
         runner: CaseRunner,
         delivery: DeliveryVerifier | None = None,
         gate: DynamicExecutionGate | None = None,
+        ai_grader: AiLogicGrader | None = None,
         now: Callable[[], datetime] = utc_now,
     ) -> None:
         self._engine = engine
@@ -389,6 +392,7 @@ class EvaluationOrchestrator:
         self._runner = runner
         self._delivery = delivery
         self._gate = DynamicExecutionGate() if gate is None else gate
+        self._ai_grader = ai_grader
         self._now = now
 
     # --- 只读入口（SSE/报告路由由集成方注册，这里只提供服务函数） ----------------------
@@ -462,12 +466,32 @@ class EvaluationOrchestrator:
                 with self._stage("package_fetch"):
                     view = self._fetch_package(submission, run_id)
                 mode = view.execution.mode
+                ai_result: AiGradeResult | None = None
                 if mode == "email_delivery":
                     # 该模式不执行代码：静态/安全不适用（报告里显式写 not_applicable，不是 not_checked）。
                     static = _not_applicable_static(view.language)
                     security = _not_applicable_security()
                     with self._stage("dynamic_execution"):
                         evidences, invocations = self._run_delivery(submission, run_id, view)
+                    evidence_written = len(evidences)
+                    with self._stage("scoring", count=invocations):
+                        breakdown = self._run_scoring(
+                            submission, run_id, view, evidences, static, security, mode=mode
+                        )
+                elif self._ai_grader is not None:
+                    with self._stage("workspace_prepare"):
+                        workspace = self._prepare_workspace(submission, run_id)
+                    with self._stage("static_analysis"):
+                        static = self._run_static(
+                            submission, run_id, view, workspace, block_on_static=False
+                        )
+                    with self._stage("security_decision"):
+                        security = self._run_security(submission, run_id, view, workspace)
+                    sources = self._read_sources(workspace, submission.files)
+                    evidences, invocations, breakdown, ai_result = self._run_ai_grading(
+                        submission, run_id, view, static, security, sources
+                    )
+                    evidence_written = len(evidences)
                 else:
                     with self._stage("workspace_prepare"):
                         workspace = self._prepare_workspace(submission, run_id)
@@ -477,11 +501,11 @@ class EvaluationOrchestrator:
                         security = self._run_security(submission, run_id, view, workspace)
                     with self._stage("dynamic_execution"):
                         evidences, invocations = self._run_dynamic(submission, run_id, view)
-                evidence_written = len(evidences)
-                with self._stage("scoring", count=invocations):
-                    breakdown = self._run_scoring(
-                        submission, run_id, view, evidences, static, security, mode=mode
-                    )
+                    evidence_written = len(evidences)
+                    with self._stage("scoring", count=invocations):
+                        breakdown = self._run_scoring(
+                            submission, run_id, view, evidences, static, security, mode=mode
+                        )
                 with self._stage("reporting", count=invocations):
                     outcome = self._run_reporting(
                         submission,
@@ -499,6 +523,8 @@ class EvaluationOrchestrator:
                         ),
                         security_not_applicable=mode == "email_delivery",
                     )
+                if ai_result is not None:
+                    self._persist_ai_commentary(run_id, ai_result, breakdown)
                 log_event(
                     logger,
                     "evaluation.run_completed",
@@ -711,6 +737,8 @@ class EvaluationOrchestrator:
         run_id: str,
         view: PackageView,
         workspace: Path,
+        *,
+        block_on_static: bool = True,
     ) -> StaticAnalysisResult:
         """阶段 `static_analysis`：调用**已交付的** `analyze_static`（不重写静态规则）。"""
         try:
@@ -723,15 +751,12 @@ class EvaluationOrchestrator:
             raise InternalDefectError(MESSAGE_INTERNAL_DEFECT) from error
         moment = self._now()
         blocked = result.blocking
-        # 「未检查」与「未发现」必须分开：**任何一项必需检查没跑**都不算通过（I14），
-        # 而不只是"全部没跑"。此前只在 `all(not_checked)` 时才终止，于是"部分未检查"
-        # （例如 worker 上没有 bash ⇒ `bash_syntax = not_checked`、`structural_rules = ran`）
-        # 会一路走到计分与 `completed`——**未检查被静默当成了通过**，而层内结论与端到端结论
-        # 因此互相矛盾（组级复核 L1-3 不一致 #1，本机 100% 可达）。
         unchecked = tuple(check.checker for check in result.checks if check.status == "not_checked")
-        stage = "static_analysis" if (blocked or unchecked) else "security_check"
-        if blocked:
+        stage = "static_analysis" if ((blocked and block_on_static) or unchecked) else "security_check"
+        if blocked and block_on_static:
             message = "静态检查发现阻断级问题。"
+        elif blocked:
+            message = f"静态检查提示 {result.error_count} 个语法或规则问题，将交由 AI 逻辑评分综合判定。"
         elif unchecked:
             message = (
                 "静态检查未完成：以下必需检查未执行（" + "、".join(unchecked) + "），"
@@ -760,7 +785,7 @@ class EvaluationOrchestrator:
             self._enqueue_progress(
                 connection, submission=submission, run_id=run_id, frame=frame, occurred_at=moment
             )
-        if blocked:
+        if blocked and block_on_static:
             raise _Blocked(reason="static_blocked", message=MESSAGE_STATIC_BLOCKED)
         if unchecked:
             # 与安全层同样的语义：未检查 ⇒ 技术失败（`failed` + `infrastructure_error`），
@@ -894,6 +919,151 @@ class EvaluationOrchestrator:
             self._record_evidence(submission, run_id, view, evidence, done)
             evidences.append(evidence)
         return tuple(evidences)
+
+    def _run_ai_grading(
+        self,
+        submission: SubmissionEnvelope,
+        run_id: str,
+        view: PackageView,
+        static: StaticAnalysisResult,
+        security: SecurityDecision,
+        sources: Mapping[str, str],
+    ) -> tuple[tuple[CaseEvidence, ...], int, ScoreBreakdown, AiGradeResult]:
+        """阶段 `dynamic_execution` + `scoring`（统一 AI 逻辑评分模式）。"""
+        assert self._ai_grader is not None
+        with self._stage("dynamic_execution"):
+            self._enter_dynamic_stage(
+                submission,
+                run_id,
+                view,
+                mode=view.execution.mode,
+                message="正在进行 AI 逻辑评分...",
+            )
+            try:
+                ai_result = self._ai_grader.grade(
+                    question_version_id=submission.question_version_id,
+                    language=view.language,
+                    static=static,
+                    sources=sources,
+                )
+            except AiGradingError as error:
+                raise InfrastructureError(str(error)) from error
+        with self._stage("scoring", count=1):
+            self._enter_stage(
+                submission,
+                run_id,
+                stage="scoring",
+                state="running",
+                moment=self._now(),
+                message="核算 AI 逻辑分值。",
+                cases_total=view.cases_total,
+                cases_done=view.cases_total,
+            )
+            try:
+                breakdown = score_ai_run(
+                    cases=view.ordered_cases(),
+                    raw_score=ai_result.score,
+                    static=static,
+                    security=security,
+                    summary_note=ai_result.summary,
+                )
+            except Exception as error:
+                raise InternalDefectError(MESSAGE_INTERNAL_DEFECT) from error
+
+        ordered_cases = view.ordered_cases()
+        awards_by_ordinal = {award.ordinal: award for award in breakdown.awards}
+        feedback_digest = sha256_hex(ai_result.formatted_feedback.encode("utf-8"))
+        empty_digest = sha256_hex(b"")
+        summary_msg = f"AI 逻辑评分：{ai_result.summary}"[:1000]
+        feedback_excerpt = ai_result.formatted_feedback[:2000]
+        evidences: list[CaseEvidence] = []
+        moment = self._now()
+        with self._engine.begin() as connection:
+            for done, case in enumerate(ordered_cases, start=1):
+                award = awards_by_ordinal[case.ordinal]
+                evidence_digest = sha256_hex(
+                    f"{run_id}:{case.case_id}:{case.ordinal}:{award.awarded}:{feedback_digest}".encode(
+                        "utf-8"
+                    )
+                )
+                evidence = CaseEvidence(
+                    case_id=case.case_id,
+                    ordinal=case.ordinal,
+                    weight=case.weight,
+                    passed=award.passed,
+                    failure_category=None,
+                    input_digest=submission.submission_digest,
+                    stdout_digest=feedback_digest,
+                    stderr_digest=empty_digest,
+                    actual_output_excerpt=feedback_excerpt,
+                    expected_output_excerpt=None,
+                    exit_code=0,
+                    duration_ms=ai_result.duration_ms,
+                    resource_limit_hit=None,
+                    sandbox_violations=(),
+                    message=summary_msg,
+                    evidence_digest=evidence_digest,
+                )
+                store.record_case_evidence(
+                    connection,
+                    evaluation_run_id=run_id,
+                    evidence=evidence,
+                    awarded=award.awarded,
+                    occurred_at=moment,
+                )
+                frame = progress.append_frame(
+                    connection,
+                    evaluation_run_id=run_id,
+                    event=EVENT_PROGRESS,
+                    state="running",
+                    stage="scoring",
+                    occurred_at=moment,
+                    cases_total=view.cases_total,
+                    cases_done=done,
+                    message=f"AI 逻辑评测完成：综合得分 {breakdown.score}/{breakdown.max_score}。",
+                )
+                self._enqueue_progress(
+                    connection, submission=submission, run_id=run_id, frame=frame, occurred_at=moment
+                )
+                evidences.append(evidence)
+        return tuple(evidences), 1, breakdown, ai_result
+
+    def _persist_ai_commentary(
+        self, run_id: str, ai_result: AiGradeResult, breakdown: ScoreBreakdown
+    ) -> None:
+        """将 AI 逻辑评分的详细反馈自动落入 ``evaluation_commentaries`` 供师生直接查看。"""
+        moment = self._now()
+        try:
+            with self._engine.begin() as connection:
+                commentary_store.begin_generation(
+                    connection,
+                    evaluation_run_id=run_id,
+                    provider=ai_result.provider,
+                    model=ai_result.model,
+                    prompt_version=ai_result.prompt_version,
+                    input_scope=(
+                        "stem_markdown",
+                        "reference_answers",
+                        "grading_prompt",
+                        "static_findings",
+                        "student_sources",
+                    ),
+                    occurred_at=moment,
+                )
+                commentary_store.finish_generation(
+                    connection,
+                    evaluation_run_id=run_id,
+                    text=ai_result.formatted_feedback,
+                    advisory=commentary_store.AdvisoryScore(
+                        score=breakdown.score,
+                        max_score=breakdown.max_score,
+                        rationale=(ai_result.summary or "AI 逻辑评分完成。")[:2000],
+                        confidence="high",
+                    ),
+                    occurred_at=moment,
+                )
+        except Exception:  # noqa: BLE001 - 不因评语缓存写失败影响已落库的报告与分数
+            logger.warning("Failed to persist automatic AI commentary for run %s", run_id, exc_info=True)
 
     def _run_delivery(
         self,

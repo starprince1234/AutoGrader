@@ -246,11 +246,13 @@ class ReferenceAnswer(Base):
     __table_args__ = (
         UniqueConstraint(
             "question_version_id",
-            "language",
-            name="uq_reference_answers_question_version_id_language",
+            "ordinal",
+            name="uq_reference_answers_question_version_id_ordinal",
         ),
         CheckConstraint("language IN ('python', 'bash')", name="ck_reference_answers_language"),
         CheckConstraint("length(body) >= 1", name="ck_reference_answers_body_not_empty"),
+        CheckConstraint("ordinal >= 0", name="ck_reference_answers_ordinal_non_negative"),
+        CheckConstraint("length(label) >= 1", name="ck_reference_answers_label_not_empty"),
         {"schema": SCHEMA},
     )
 
@@ -264,8 +266,11 @@ class ReferenceAnswer(Base):
         ),
         nullable=False,
     )
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    label: Mapped[str] = mapped_column(String(200), nullable=False, default="标准参考答案")
     language: Mapped[str] = mapped_column(String(16), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
+    grading_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 

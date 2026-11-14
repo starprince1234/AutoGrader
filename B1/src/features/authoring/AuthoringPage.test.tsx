@@ -168,28 +168,19 @@ async function selectCourse(user: ReturnType<typeof userEvent.setup>) {
 /** 向导一次只渲染一步：每次交互前先切到对应步骤。 */
 async function goToStep(
   user: ReturnType<typeof userEvent.setup>,
-  id: "basic" | "stem" | "reference" | "cases" | "comparison",
+  id: "basic" | "stem" | "reference",
 ) {
   await user.click(await screen.findByTestId(`wizard-step-${id}`));
   await screen.findByTestId(`step-${id}`);
 }
 
-/** 「运行配置」默认收起：改运行方式 / 退出码 / 文件上限之前先展开它。 */
+/** 「高级设置」默认收起：改单次上传文件数 / 总大小上限之前先展开它。 */
 async function openRuntimeConfig(user: ReturnType<typeof userEvent.setup>) {
   const details = screen.getByTestId("runtime-config") as HTMLDetailsElement;
   if (!details.open) {
-    await user.click(within(details).getByText("运行配置"));
+    await user.click(details.querySelector("summary") as HTMLElement);
   }
-  await within(details).findByLabelText("运行方式");
-}
-
-/** 命令期望退出码现在预置 0：要验证自定义值必须先清空。 */
-async function setAdapterExitCode(user: ReturnType<typeof userEvent.setup>, value: string) {
-  await goToStep(user, "comparison");
-  await openRuntimeConfig(user);
-  const input = screen.getByLabelText("命令期望退出码");
-  await user.clear(input);
-  await user.type(input, value);
+  await within(details).findByLabelText("文件数上限");
 }
 
 async function selectCourseInAiPanel(user: ReturnType<typeof userEvent.setup>) {
@@ -200,7 +191,7 @@ async function selectCourseInAiPanel(user: ReturnType<typeof userEvent.setup>) {
   await user.selectOptions(panelSelect, UUID_A);
 }
 
-/** 填满一次合法的新建表单（POST 与 PATCH 都要求这四个必需字段，因此测试里都要填）。 */
+/** 填满一次合法的新建表单（3 步出题：基本信息 → 题干 → 参考答案与评分细则）。 */
 async function fillCreateForm(user: ReturnType<typeof userEvent.setup>) {
   await selectCourse(user);
   await user.type(screen.getByLabelText("题目标题"), "统计文件行数");
@@ -209,32 +200,8 @@ async function fillCreateForm(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByLabelText("题干"), "# 统计行数");
   await goToStep(user, "reference");
   await user.type(screen.getByLabelText("参考答案"), "print(2)");
-  await goToStep(user, "cases");
-  await user.type(screen.getByLabelText(/用例名/), "基本用例");
-  // 分值不再预置 1：要保存就必须由教师填一个合法分值。
-  await user.type(screen.getByLabelText("分值"), "1");
-  await user.type(screen.getByLabelText("标准输入"), "a\nb\n");
-  // 三个全局项现在都可以留空（用例自带输入即可评测）；这里仍填退出码，验证它确实随请求发出。
-  await setAdapterExitCode(user, "0");
-  await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
 }
 
-/**
- * 编辑路径**不**凭空渲染用例行（读不到服务端那份集合就不假装知道有几个），因此要显式加一行；
- * 而提交用例会整体替换那份读不到的集合（CHG-0017），所以还必须勾选那次确认。
- */
-async function addCaseAndConfirm(user: ReturnType<typeof userEvent.setup>) {
-  await goToStep(user, "cases");
-  await user.click(screen.getByTestId("case-add"));
-  await user.type(screen.getAllByLabelText(/用例名/).at(-1) as HTMLElement, "用例一");
-  await user.type(screen.getAllByLabelText("分值").at(-1) as HTMLElement, "1");
-  await user.click(screen.getByLabelText(/我确认/));
-}
-
-/** 编辑路径也显式改一次「命令期望退出码」，验证它进了 manifest。 */
-async function fillAdapterExitCode(user: ReturnType<typeof userEvent.setup>) {
-  await setAdapterExitCode(user, "0");
-}
 
 describe("分步向导", () => {
   it("一次只显示一步；完成基本信息后左导航的圆点变成实心对勾", async () => {
@@ -338,7 +305,7 @@ describe("分步向导", () => {
     expect(screen.getByLabelText("题干")).toHaveValue("# 统计");
   });
 
-  it("前四步底部只有「下一步」，保存草稿只在最后一步", async () => {
+  it("前两步底部只有「下一步」，保存草稿与保存并发布只在最后一步", async () => {
     stub = installFetchStub(baseRoutes());
     const user = userEvent.setup();
     await signIn("teacher1", "pw");
@@ -348,18 +315,18 @@ describe("分步向导", () => {
     expect(await screen.findByTestId("step-next")).toBeInTheDocument();
     expect(screen.queryByTestId("authoring-save")).toBeNull();
 
-    // 一路点「下一步」：每一步都不出现保存草稿，进到最后一步才出现。
-    for (const expected of ["stem", "reference", "cases"] as const) {
-      await user.click(screen.getByTestId("step-next"));
-      expect(await screen.findByTestId(`step-${expected}`)).toBeInTheDocument();
-      expect(screen.getByTestId("step-next")).toBeInTheDocument();
-      expect(screen.queryByTestId("authoring-save")).toBeNull();
-    }
+    // 第 2 步：仍只有"下一步"，没有保存草稿。
     await user.click(screen.getByTestId("step-next"));
-    expect(await screen.findByTestId("step-comparison")).toBeInTheDocument();
-    // 最后一步：保存草稿在，下一步不在；没填题干时保存是灰的。
+    expect(await screen.findByTestId("step-stem")).toBeInTheDocument();
+    expect(screen.getByTestId("step-next")).toBeInTheDocument();
+    expect(screen.queryByTestId("authoring-save")).toBeNull();
+
+    // 第 3 步（最后一步）：保存草稿与直接发布都在，下一步不在；没填题干时保存是灰的。
+    await user.click(screen.getByTestId("step-next"));
+    expect(await screen.findByTestId("step-reference")).toBeInTheDocument();
     expect(screen.queryByTestId("step-next")).toBeNull();
     expect(screen.getByTestId("authoring-save")).toBeDisabled();
+    expect(screen.getByTestId("authoring-save-publish")).toBeDisabled();
 
     // 补齐必填项（课程 + 标题 + 题干）后可以保存。
     await goToStep(user, "basic");
@@ -367,8 +334,11 @@ describe("分步向导", () => {
     await user.type(screen.getByLabelText("题目标题"), "统计行数");
     await goToStep(user, "stem");
     await user.type(screen.getByLabelText("题干"), "# 统计");
-    await goToStep(user, "comparison");
+    await goToStep(user, "reference");
     expect(screen.getByTestId("authoring-save")).toBeEnabled();
+    expect(screen.getByTestId("authoring-save-publish")).toBeDisabled();
+    await user.type(screen.getByLabelText("参考答案"), "print(1)");
+    expect(screen.getByTestId("authoring-save-publish")).toBeEnabled();
   });
 
   it("顶部不再有常驻白框：未保存提示改成屏幕中间一闪而过的红色提示", async () => {
@@ -406,14 +376,13 @@ describe("分步向导", () => {
     expect(screen.queryByTestId("authoring-course-required")).toBeNull();
   });
 
-  it("测试用例没填内容时第 4 步仍是空心圆，填了才算完成；步骤之间有连接线", async () => {
+  it("参考答案没填内容时第 3 步仍是空心圆，填了才算完成；步骤之间有连接线", async () => {
     stub = installFetchStub(baseRoutes());
     const user = userEvent.setup();
     await signIn("teacher1", "pw");
     renderAuthoring(null);
 
-    // 新建时默认有一个空用例，那不算"填过"。
-    expect(await screen.findByTestId("wizard-dot-cases")).toHaveAttribute("data-done", "false");
+    expect(await screen.findByTestId("wizard-dot-reference")).toHaveAttribute("data-done", "false");
 
     await selectCourse(user);
     await user.type(screen.getByLabelText("题目标题"), "统计行数");
@@ -421,16 +390,14 @@ describe("分步向导", () => {
     await user.type(screen.getByLabelText("题干"), "# 统计");
     await goToStep(user, "reference");
     await user.type(screen.getByLabelText("参考答案"), "print(1)");
-    await goToStep(user, "cases");
-    await user.type(screen.getByLabelText("标准输入"), "a\n");
 
-    expect(screen.getByTestId("wizard-dot-cases")).toHaveAttribute("data-done", "true");
-    expect(screen.getByTestId("wizard-dot-cases")).toHaveTextContent("✓");
+    expect(screen.getByTestId("wizard-dot-reference")).toHaveAttribute("data-done", "true");
+    expect(screen.getByTestId("wizard-dot-reference")).toHaveTextContent("✓");
 
-    // 连接线：上一步完成了就是实线，没完成是虚线（data-done 同时给出可断言的钩子）。
+    // 连接线：上一步完成了就是实线，最后一步之后不再有连接线。
     expect(screen.getByTestId("wizard-line-basic")).toHaveAttribute("data-done", "true");
-    expect(screen.getByTestId("wizard-line-cases")).toHaveAttribute("data-done", "true");
-    expect(screen.queryByTestId("wizard-line-comparison")).toBeNull();
+    expect(screen.getByTestId("wizard-line-stem")).toHaveAttribute("data-done", "true");
+    expect(screen.queryByTestId("wizard-line-reference")).toBeNull();
   });
 
   it("课程到末页时不再显示「已到末页」", async () => {
@@ -462,38 +429,20 @@ describe("分步向导", () => {
     expect(screen.getAllByTestId("authoring-ai")).toHaveLength(1);
   });
 
-  it("运行配置默认收起，展开后才是运行方式与文件上限", async () => {
+  it("高级设置默认收起，展开后才是单次提交文件数与大小上限", async () => {
     stub = installFetchStub(baseRoutes());
     const user = userEvent.setup();
     await signIn("teacher1", "pw");
     renderAuthoring(null);
 
-    await goToStep(user, "comparison");
+    await goToStep(user, "reference");
     const details = screen.getByTestId("runtime-config") as HTMLDetailsElement;
     expect(details.open).toBe(false);
-    expect(screen.getByLabelText("数值容差")).toBeDisabled();
 
     await openRuntimeConfig(user);
     expect(details.open).toBe(true);
-    expect(screen.getByLabelText("运行方式")).toBeInTheDocument();
+    expect(screen.getByLabelText("文件数上限")).toBeInTheDocument();
     expect(screen.getByLabelText("文件总大小上限")).toBeInTheDocument();
-  });
-
-  it("数值容差只在选中「数值容差」时可填", async () => {
-    stub = installFetchStub(baseRoutes());
-    const user = userEvent.setup();
-    await signIn("teacher1", "pw");
-    renderAuthoring(null);
-
-    await goToStep(user, "comparison");
-    const tolerance = screen.getByLabelText("数值容差");
-    expect(tolerance).toBeDisabled();
-
-    await user.selectOptions(screen.getByLabelText("标准输出比较"), "numeric_tolerance");
-    expect(tolerance).toBeEnabled();
-
-    await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
-    expect(tolerance).toBeDisabled();
   });
 });
 
@@ -554,16 +503,14 @@ describe("新建题目（POST /api/v1/questions）", () => {
     const body = request.body as Record<string, unknown>;
     expect(body.title).toBe("统计文件行数");
     expect(body.reference_answer).toBe("print(2)");
+    expect(body.reference_answers).toEqual([{ label: "标准参考答案", body: "print(2)" }]);
     expect(body.tags).toEqual(["process-scheduling", "unix"]);
     // 新建不携带 revision_note（契约说它只与 as_new_version 一起有意义）。
     expect(body.revision_note).toBeUndefined();
-    const cases = body.cases as Record<string, unknown>[];
-    expect(cases).toHaveLength(1);
-    expect(cases[0].name).toBe("基本用例");
-    expect(cases[0].ordinal).toBe(0);
-    expect(cases[0].stdin).toBe("a\nb\n");
-    expect(cases[0].visible_to_student).toBe(false);
-    expect((body.adapter as Record<string, unknown>).comparison).toEqual({ stdout: "exact" });
+    expect(body.cases).toBeUndefined();
+    expect((body.adapter as Record<string, unknown>).comparison).toEqual({
+      stdout: "ignore_trailing_whitespace",
+    });
 
     // 3.0：保存成功后直接去"查看题目"，不再停在编辑页。
     expect(await screen.findByText("detail target")).toBeInTheDocument();
@@ -657,11 +604,17 @@ describe("新建题目（POST /api/v1/questions）", () => {
     renderAuthoring(null);
 
     await selectCourse(user);
-    await user.type(screen.getByLabelText("题目标题"), "统计行数");
+    await user.type(screen.getByLabelText("题目标题"), "校验拼句");
     await goToStep(user, "stem");
-    await user.type(screen.getByLabelText("题干"), "# 统计");
-    await goToStep(user, "comparison");
-    // 比对方式没选、用例分值为空 → 两条原因同时出现。
+    await user.type(screen.getByLabelText("题干"), "# 校验");
+    await goToStep(user, "reference");
+    await openRuntimeConfig(user);
+    const maxFiles = screen.getByLabelText("文件数上限");
+    const maxBytes = screen.getByLabelText("文件总大小上限");
+    await user.clear(maxFiles);
+    await user.type(maxFiles, "0");
+    await user.clear(maxBytes);
+    await user.type(maxBytes, "0");
     await user.click(screen.getByTestId("authoring-save"));
 
     const toast = await screen.findByTestId("toast");
@@ -690,10 +643,8 @@ describe("新建题目（POST /api/v1/questions）", () => {
     // 标签一个字都不填。
     await goToStep(user, "stem");
     await user.type(screen.getByLabelText("题干"), "# 统计");
-    await goToStep(user, "cases");
-    await user.type(screen.getByLabelText("分值"), "1");
-    await goToStep(user, "comparison");
-    await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
+    await goToStep(user, "reference");
+    await user.type(screen.getByLabelText("参考答案"), "print(1)");
     await user.click(screen.getByTestId("authoring-save"));
 
     const request = await waitFor(() => {
@@ -753,15 +704,8 @@ describe("新建题目（POST /api/v1/questions）", () => {
     await user.type(screen.getByLabelText("题目标题"), "只有标题");
     await goToStep(user, "stem");
     await user.type(screen.getByLabelText("题干"), "题干");
-    await setAdapterExitCode(user, "0");
-    await goToStep(user, "comparison");
-    await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
-    // 参考答案留空、用例留空（把新建时那一行邀请删掉）。
-    await goToStep(user, "cases");
-    await user.click(screen.getByTestId("case-remove-0"));
-    await user.click(await screen.findByTestId("case-delete-confirm-action"));
-    // 保存按钮在最后一步（2.0：前四步只有"下一步"）。
-    await goToStep(user, "comparison");
+    // 参考答案与评分细则均留空；用例默认为空。
+    await goToStep(user, "reference");
     await user.click(screen.getByTestId("authoring-save"));
 
     const request = await waitFor(() => {
@@ -772,9 +716,10 @@ describe("新建题目（POST /api/v1/questions）", () => {
       return found;
     });
     const body = request.body as Record<string, unknown>;
-    // 关键（CHG-0017）：这两个键**根本不出现**，而不是发一个空值。
-    // 服务端因此保留该版本已有的参考答案与用例集合；新建时"没有可保留的"由服务端表达。
+    // 关键（CHG-0017）：留空时这些受保护键不发送。
     expect(body).not.toHaveProperty("reference_answer");
+    expect(body).not.toHaveProperty("reference_answers");
+    expect(body).not.toHaveProperty("grading_prompt");
     expect(body).not.toHaveProperty("cases");
     // required 里的四个字段照发（省略语义不适用于它们）。
     expect(body.title).toBe("只有标题");
@@ -834,39 +779,94 @@ describe("新建题目（POST /api/v1/questions）", () => {
     expect(posts).toHaveLength(1);
   });
 
-  it("file 题型可选：夹具区出现，且没有上传输入夹具时拒绝保存", async () => {
-    stub = installFetchStub(baseRoutes());
+  it("填写多档参考解法与 AI 评分细则后可「保存并直接发布」", async () => {
+    stub = installFetchStub(
+      baseRoutes([
+        {
+          method: "POST",
+          path: "/api/v1/questions",
+          respond: () =>
+            jsonResponse(
+              questionPublic({
+                status: "draft",
+                versions: [
+                  {
+                    question_version_id: NEW_VERSION,
+                    version: 1,
+                    status: "draft",
+                    published_at: "2026-09-15T07:20:00.000Z",
+                  },
+                ],
+              }),
+            ),
+        },
+        {
+          method: "POST",
+          path: `/api/v1/question-versions/${NEW_VERSION}/publish`,
+          respond: () =>
+            jsonResponse(
+              questionVersionPublic({
+                question_version_id: NEW_VERSION,
+                version: 1,
+                status: "published",
+              }),
+            ),
+        },
+      ]),
+    );
     const user = userEvent.setup();
     await signIn("teacher1", "pw");
     renderAuthoring(null);
 
-    // file 不再是"不可选"的题型：夹具端点改用教师自己的令牌后，浏览器可以完整创建它。
-    await goToStep(user, "comparison");
-    await openRuntimeConfig(user);
-    await user.selectOptions(screen.getByLabelText("运行方式"), "file");
-    expect(await screen.findByTestId("fixture-editor")).toBeInTheDocument();
-    // 未保存草稿前没有版本 id，因此上传控件是禁用的并说明原因（不假装上传成功）。
-    expect(await screen.findByTestId("fixture-disabled")).toHaveTextContent("先保存草稿");
-
     await selectCourse(user);
-    await user.type(screen.getByLabelText("题目标题"), "文件题");
+    await user.type(screen.getByLabelText("题目标题"), "求和算法");
     await goToStep(user, "stem");
-    await user.type(screen.getByLabelText("题干"), "题干");
+    await user.type(screen.getByLabelText("题干"), "# 求 1..n 的和");
     await goToStep(user, "reference");
-    await goToStep(user, "reference");
-    await user.type(screen.getByLabelText("参考答案"), "print(2)");
-    await goToStep(user, "cases");
-    await user.type(screen.getByLabelText(/用例名/), "用例一");
-    await user.type(screen.getByLabelText("分值"), "1");
-    await goToStep(user, "comparison");
-    await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
-    await user.click(screen.getByTestId("authoring-save"));
 
-    // 没有输入夹具的 file 题编译不出 package，所以在本地就先拒绝，不发请求（原因用红色提示说）。
-    expect(await screen.findByTestId("toast")).toHaveTextContent("请至少上传一个输入文件");
-    expect(stub.requests.filter((item) => item.url.pathname === "/api/v1/questions")).toHaveLength(
-      0,
+    const label0 = screen.getByTestId("reference-tier-label-0");
+    await user.clear(label0);
+    await user.type(label0, "暴力循环（50 分）");
+    await user.type(screen.getByLabelText("参考答案"), "s = 0\nfor i in range(n): s += i");
+
+    await user.click(screen.getByTestId("reference-tier-add"));
+    const label1 = screen.getByTestId("reference-tier-label-1");
+    await user.clear(label1);
+    await user.type(label1, "高阶公式（90 分）");
+    await user.type(screen.getByTestId("reference-tier-body-1"), "print(n * (n + 1) // 2)");
+
+    await user.type(
+      screen.getByTestId("authoring-grading-prompt"),
+      "使用循环暴力解法基准 50 分；使用等差数列公式基准 90 分，按代码风格上下浮动。",
     );
+    await user.click(screen.getByTestId("authoring-save-publish"));
+
+    const createReq = await waitFor(() => {
+      const found = stub?.requests.find(
+        (item) => item.method === "POST" && item.url.pathname === "/api/v1/questions",
+      );
+      if (!found) throw new Error("尚未发出创建请求");
+      return found;
+    });
+    const body = createReq.body as Record<string, unknown>;
+    expect(body.reference_answers).toEqual([
+      { label: "暴力循环（50 分）", body: "s = 0\nfor i in range(n): s += i" },
+      { label: "高阶公式（90 分）", body: "print(n * (n + 1) // 2)" },
+    ]);
+    expect(body.grading_prompt).toBe(
+      "使用循环暴力解法基准 50 分；使用等差数列公式基准 90 分，按代码风格上下浮动。",
+    );
+    expect(body.cases).toBeUndefined();
+
+    await waitFor(() => {
+      const publishReq = stub?.requests.find(
+        (item) =>
+          item.method === "POST" &&
+          item.url.pathname === `/api/v1/question-versions/${NEW_VERSION}/publish`,
+      );
+      expect(publishReq).toBeDefined();
+    });
+    expect(await screen.findByText("detail target")).toBeInTheDocument();
   });
 });
 
@@ -916,15 +916,11 @@ describe("修改草稿（PATCH /api/v1/questions/{question_id}）", () => {
     await waitFor(() => expect(screen.getByLabelText("题目标题")).toHaveValue(questionPublic().title));
     expect(screen.getByLabelText("标签")).toHaveValue("unix");
     await goToStep(user, "reference");
-    await goToStep(user, "reference");
     expect(screen.getByLabelText("参考答案")).toHaveValue("");
     // 草稿就地修改时不显示「版本说明」：它只属于"另存为新版本"那一次写入。
     expect(screen.queryByLabelText("版本说明")).toBeNull();
 
     await user.type(screen.getByLabelText("参考答案"), "print(2)");
-    await addCaseAndConfirm(user);
-    await fillAdapterExitCode(user);
-    await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
     await user.click(screen.getByTestId("authoring-save"));
 
     const request = await waitFor(() => {
@@ -995,10 +991,6 @@ describe("修改草稿（PATCH /api/v1/questions/{question_id}）", () => {
     );
     await goToStep(user, "reference");
     await user.type(await screen.findByLabelText("参考答案"), "print(2)");
-    await addCaseAndConfirm(user);
-    await fillAdapterExitCode(user);
-    await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
-    await goToStep(user, "comparison");
     await user.type(screen.getByLabelText("版本说明"), "例题的截止时间写错了");
     await user.click(screen.getByTestId("authoring-save"));
 
@@ -1071,9 +1063,6 @@ describe("修改草稿（PATCH /api/v1/questions/{question_id}）", () => {
 
       await goToStep(user, "reference");
       await user.type(await screen.findByLabelText("参考答案"), "print(2)");
-      await addCaseAndConfirm(user);
-      await fillAdapterExitCode(user);
-      await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
       await user.click(screen.getByTestId("authoring-save"));
       await waitFor(() => {
         expect(
@@ -1094,8 +1083,8 @@ describe("修改草稿（PATCH /api/v1/questions/{question_id}）", () => {
   });
 });
 
-describe("编辑页读回草稿的用例（3.0 之后的修改诉求）", () => {
-  it("已存的参考答案与用例会被读回来，可以就地修改并保存", async () => {
+describe("编辑页读回草稿的多档参考解法与评分细则", () => {
+  it("已存的多档参考解法与评分细则会被读回来，可以就地修改并保存", async () => {
     stub = installFetchStub(
       baseRoutes([
         {
@@ -1120,19 +1109,12 @@ describe("编辑页读回草稿的用例（3.0 之后的修改诉求）", () => 
           respond: () =>
             jsonResponse({
               reference_answer: "print(2)",
-              cases: [
-                {
-                  name: "基本用例",
-                  ordinal: 0,
-                  weight: 1,
-                  visible_to_student: false,
-                  stdin: "a\n",
-                  args: [],
-                  expected_stdout: "2\n",
-                  expected_stderr: null,
-                  expected_exit_code: 0,
-                },
+              reference_answers: [
+                { label: "基础解法（60 分）", body: "print(2)" },
+                { label: "优化解法（95 分）", body: "print(1 + 1)" },
               ],
+              grading_prompt: "基础给 60 分，优化给 95 分。",
+              cases: [],
             }),
         },
         {
@@ -1146,21 +1128,18 @@ describe("编辑页读回草稿的用例（3.0 之后的修改诉求）", () => 
     await signIn("teacher1", "pw");
     renderAuthoring(QUESTION_ID);
 
-    // 参考答案被读回来。
+    // 多档参考解法与评分细则都会被读回来。
     await goToStep(user, "reference");
-    await waitFor(() => expect(screen.getByLabelText("参考答案")).toHaveValue("print(2)"));
+    await waitFor(() =>
+      expect(screen.getByLabelText("参考答案")).toHaveValue("print(2)"),
+    );
+    expect(screen.getByTestId("reference-tier-label-0")).toHaveValue("基础解法（60 分）");
+    expect(screen.getByTestId("reference-tier-label-1")).toHaveValue("优化解法（95 分）");
+    expect(screen.getByTestId("authoring-grading-prompt")).toHaveValue(
+      "基础给 60 分，优化给 95 分。",
+    );
 
-    // 用例也被读回来：原来那条能看见、能改，不需要"重新声明一遍"。
-    await goToStep(user, "cases");
-    expect(await screen.findByTestId("case-0")).toBeInTheDocument();
-    expect(screen.getByTestId("case-0")).toHaveTextContent("基本用例");
-    expect(screen.getByLabelText(/用例名/)).toHaveValue("基本用例");
-    // 现在拿到的是真实集合，替换确认框不再出现。
-    expect(screen.queryByTestId("authoring-cases-replace")).toBeNull();
-
-    await user.type(screen.getByLabelText("标准输入"), "改过的输入");
-    await goToStep(user, "comparison");
-    await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
+    await user.type(screen.getByLabelText("参考答案"), "\n# updated");
     await user.click(screen.getByTestId("authoring-save"));
 
     const request = await waitFor(() => {
@@ -1168,14 +1147,18 @@ describe("编辑页读回草稿的用例（3.0 之后的修改诉求）", () => 
       if (!found) throw new Error("尚未发出修改请求");
       return found;
     });
-    const cases = (request.body as Record<string, unknown>).cases as Record<string, unknown>[];
-    expect(cases[0].stdin).toBe("a\n改过的输入");
-    expect(cases[0].name).toBe("基本用例");
+    const body = request.body as Record<string, unknown>;
+    expect(body.reference_answers).toEqual([
+      { label: "基础解法（60 分）", body: "print(2)\n# updated" },
+      { label: "优化解法（95 分）", body: "print(1 + 1)" },
+    ]);
+    expect(body.grading_prompt).toBe("基础给 60 分，优化给 95 分。");
+    expect(body.cases).toBeUndefined();
   });
 });
 
-describe("验证并发布入口（CHG-0019 / ADR-0015）", () => {
-  it("草稿版本显示验证入口与门禁说明，未验证前没有发布动作", async () => {
+describe("直接发布入口（简化出题流程）", () => {
+  it("草稿版本在第 3 步同时提供「保存草稿」和「保存并直接发布」，无需沙箱测试用例核验", async () => {
     stub = installFetchStub(
       baseRoutes([
         {
@@ -1201,17 +1184,11 @@ describe("验证并发布入口（CHG-0019 / ADR-0015）", () => {
     await signIn("teacher1", "pw");
     renderAuthoring(QUESTION_ID);
 
-    // 检验并发布在第 5 步里（2.0：保存草稿与它同屏）。
-    await goToStep(user, "comparison");
-    const panel = await screen.findByTestId("reference-verification");
-    // 入口在：这是 ADR-0015 解掉的死结（此前这一版只能找运维跑脚本）。
-    expect(within(panel).getByTestId("reference-verify")).toBeInTheDocument();
-    // 2.0：常驻的灰色说明文字已删，只留标题与按钮。
-    expect(within(panel).queryByTestId("reference-gate")).toBeNull();
-
-    // 未验证 → 没有可点的发布动作，且没有任何验证结论。
-    expect(within(panel).queryByTestId("reference-publish")).toBeNull();
-    expect(within(panel).queryByTestId("reference-verification-result")).toBeNull();
+    await goToStep(user, "reference");
+    expect(await screen.findByTestId("authoring-save")).toBeInTheDocument();
+    expect(screen.getByTestId("authoring-save-publish")).toBeInTheDocument();
+    expect(screen.queryByTestId("reference-verification")).toBeNull();
+    expect(screen.queryByTestId("reference-verify")).toBeNull();
   });
 });
 
@@ -1546,12 +1523,8 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
 
     await user.type(screen.getByLabelText("教学目标"), "让学生学会读标准输入");
     await user.click(screen.getByTestId("generation-generate"));
-    // 3.0：生成时就要求模型带上测试用例，并在预览里直接显示条数。
-    expect(await screen.findByTestId("generation-proposal-case-count")).toHaveTextContent("2");
-    const generationRequest = stub?.requests.find(
-      (item) => item.method === "POST" && item.url.pathname === "/api/v1/question-draft-generations",
-    );
-    expect((generationRequest?.body as Record<string, unknown>).desired_case_count).toBe(2);
+    // 预览里直接显示多档参考解法数。
+    expect(await screen.findByTestId("generation-proposal-tier-count")).toHaveTextContent("1");
 
 
     const request = await waitFor(() => {
@@ -1608,10 +1581,10 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
 
     // 标题旁的浅灰备注说明"谁能看到"。
     expect(screen.getByTestId("generation-preview-note")).toHaveTextContent(
-      "内容仅教师可见，学生无法查看草稿和测试用例。",
+      "内容仅教师可见，学生无法查看草稿、参考解法与评分细则。",
     );
 
-    // 候选被填进同一张表单：标题、题干、参考答案、用例都到位，权重为 null 的那个留空。
+    // 候选被填进同一张表单：标题、题干、参考答案都到位。
     expect(screen.getByTestId("generation-protected")).toHaveTextContent("参考答案");
     await user.click(screen.getByTestId("ai-back"));
     await screen.findByTestId("wizard-nav");
@@ -1621,8 +1594,6 @@ describe("AI 结构化草稿生成（AI-FLOW-01A）", () => {
     expect(screen.getByLabelText("参考答案")).toHaveValue(
       "import sys\nprint(len(sys.stdin.read().splitlines()))\n",
     );
-    await goToStep(user, "cases");
-    expect(screen.getByTestId("case-1")).toBeInTheDocument();
     // 受保护内容只在教师侧展开区里出现，并明确标注学生看不到。
   });
 
@@ -1728,13 +1699,15 @@ describe("出题页的可见性前提", () => {  it("编辑页会取最新版本
         },
       ]),
     );
+    const user = userEvent.setup();
     await signIn("teacher1", "pw");
     renderAuthoring(QUESTION_ID);
 
     await waitFor(() =>
       expect(screen.getByLabelText("题目标题")).toHaveValue(questionPublic().title),
     );
-    await goToStep(userEvent.setup(), "comparison");
+    await goToStep(user, "reference");
+    await openRuntimeConfig(user);
     expect(screen.getByLabelText("文件总大小上限")).toHaveValue("4096");
     const versionRequest = stub.requests.find((item) =>
       item.url.pathname.startsWith("/api/v1/question-versions/"),
@@ -1784,7 +1757,7 @@ describe("AI 草稿页的信息密度（文案、唯一提示、悬浮提示）"
     const generateHint = await screen.findByTestId("generation-hint-generate");
     const applyHint = await screen.findByTestId("generation-hint-apply");
     const expected =
-      "AI 草稿仅为初稿，非标准内容，请逐项核对；草稿不会自动入库，需要手动保存；发布前请用参考答案验证测试用例。";
+      "AI 草稿仅为初稿，请核对题干、多档参考解法与评分细则；点击「保存草稿」或「保存并直接发布」写入题库。";
     expect(generateHint).toHaveTextContent(expected);
     expect(applyHint).toHaveTextContent(expected);
     // 提示是悬浮气泡（role=tooltip），不是新的弹窗。
@@ -1808,10 +1781,8 @@ describe("AI 草稿页的信息密度（文案、唯一提示、悬浮提示）"
     expect(facts.querySelector("ul")).toBeNull();
     expect(facts).toHaveTextContent("题目标题");
     expect(facts).toHaveTextContent("语言");
-    expect(facts).toHaveTextContent("运行方式");
     expect(facts).toHaveTextContent("标签");
-    // 用例条数仍在明面上。
-    expect(screen.getByTestId("generation-proposal-case-count")).toHaveTextContent("测试用例");
+    expect(screen.getByTestId("generation-proposal-tier-count")).toHaveTextContent("1");
   });
 
   it("「确认载入草稿」是原「重新载入 AI 草稿」的文案", async () => {
@@ -1832,7 +1803,7 @@ describe("AI 草稿页的信息密度（文案、唯一提示、悬浮提示）"
 });
 
 describe("另存为新版本：从原题完整内容开始（不是一张空白表单）", () => {
-  it("打开编辑页就带出已发布版本的参考代码与全部用例，保存时原样提交并新建版本", async () => {
+  it("打开编辑页就带出已发布版本的多档参考解法与评分细则，保存时提交并新建版本", async () => {
     stub = installFetchStub(
       baseRoutes([
         {
@@ -1859,30 +1830,12 @@ describe("另存为新版本：从原题完整内容开始（不是一张空白�
           respond: () =>
             jsonResponse({
               reference_answer: "print(42)",
-              cases: [
-                {
-                  name: "可见样例",
-                  ordinal: 0,
-                  weight: 1,
-                  visible_to_student: true,
-                  stdin: "1\n",
-                  args: [],
-                  expected_stdout: "42\n",
-                  expected_stderr: null,
-                  expected_exit_code: 0,
-                },
-                {
-                  name: "隐藏强测",
-                  ordinal: 1,
-                  weight: 3,
-                  visible_to_student: false,
-                  stdin: "7\n",
-                  args: [],
-                  expected_stdout: "14\n",
-                  expected_stderr: null,
-                  expected_exit_code: 0,
-                },
+              reference_answers: [
+                { label: "暴力写法（60 分）", body: "print(42)" },
+                { label: "高阶写法（95 分）", body: "print(6 * 7)" },
               ],
+              grading_prompt: "暴力给 60 分，数学化简给 95 分。",
+              cases: [],
             }),
         },
         {
@@ -1896,26 +1849,20 @@ describe("另存为新版本：从原题完整内容开始（不是一张空白�
     await signIn("teacher1", "pw");
     renderAuthoring(QUESTION_ID);
 
-    // 参考代码从原题带出来，不是空的。
+    // 多档参考解法与评分细则从原题带出来，不是空的。
     await goToStep(user, "reference");
-    await waitFor(() => expect(screen.getByLabelText("参考答案")).toHaveValue("print(42)"));
+    await waitFor(() =>
+      expect(screen.getByLabelText("参考答案")).toHaveValue("print(42)"),
+    );
+    expect(screen.getByTestId("reference-tier-label-0")).toHaveValue("暴力写法（60 分）");
+    expect(screen.getByTestId("reference-tier-body-1")).toHaveValue("print(6 * 7)");
+    expect(screen.getByTestId("authoring-grading-prompt")).toHaveValue(
+      "暴力给 60 分，数学化简给 95 分。",
+    );
 
-    // 两个用例都在：可见样例 + 隐藏强测。
-    await goToStep(user, "cases");
-    expect(await screen.findByTestId("case-0")).toHaveTextContent("可见样例");
-    expect(screen.getByTestId("case-1")).toHaveTextContent("隐藏强测");
-    // 内容是从服务端载入的"既有集合"，不需要再点一次"替换用例"确认。
-    expect(screen.queryByTestId("authoring-cases-replace")).toBeNull();
-
-    // 对比方式与退出码不在公开版本 DTO 里（既有行为）：这是老师每次都要选的两项。
-    await fillAdapterExitCode(user);
-    await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
-
-    // 保存按钮在最后一步（对比设置）；另存为新版本必须写清"这一版改了什么"。
-    await goToStep(user, "comparison");
     const note = screen.getByLabelText("版本说明");
     expect(note).toHaveValue("");
-    await user.type(note, "改写输出示例，用例保持不变");
+    await user.type(note, "补充更高阶解法的评分细则");
     await user.click(screen.getByTestId("authoring-save"));
 
     const request = await waitFor(() => {
@@ -1926,100 +1873,34 @@ describe("另存为新版本：从原题完整内容开始（不是一张空白�
     // 保存走 as_new_version：新版本号由服务端 +1，旧版本不动。
     expect(request.url.searchParams.get("as_new_version")).toBe("true");
     const body = request.body as Record<string, unknown>;
-    const cases = body.cases as Record<string, unknown>[];
-    expect(cases.map((item) => item.name)).toEqual(["可见样例", "隐藏强测"]);
-    expect(cases[0].visible_to_student).toBe(true);
-    expect(cases[1].visible_to_student).toBe(false);
-    expect(cases[0].weight).toBe(1);
-    expect(cases[1].weight).toBe(3);
-    expect(cases[0].stdin).toBe("1\n");
-    expect(cases[0].expected_stdout).toBe("42\n");
-    expect(cases[1].stdin).toBe("7\n");
-    expect(cases[1].expected_stdout).toBe("14\n");
-    expect(cases[1].expected_exit_code).toBe(0);
+    expect(body.reference_answers).toEqual([
+      { label: "暴力写法（60 分）", body: "print(42)" },
+      { label: "高阶写法（95 分）", body: "print(6 * 7)" },
+    ]);
+    expect(body.grading_prompt).toBe("暴力给 60 分，数学化简给 95 分。");
+    expect(body.cases).toBeUndefined();
   });
 });
 
-describe("检验结果里点未通过的用例：直接跳到用例编辑区并定位", () => {
-  it("点红色序号后切到用例步骤，该用例被选中且光标落在它的输入框", async () => {
-    stub = installFetchStub(
-      baseRoutes([
-        {
-          path: `/api/v1/questions/${QUESTION_ID}`,
-          method: "GET",
-          respond: () => jsonResponse(draftQuestion()),
-        },
-        {
-          path: `/api/v1/question-versions/${DRAFT_VERSION}`,
-          method: "GET",
-          respond: () =>
-            jsonResponse(
-              questionVersionPublic({
-                question_version_id: DRAFT_VERSION,
-                version: 1,
-                status: "draft",
-                content_digest: SHA_A,
-              }),
-            ),
-        },
-        {
-          path: `/api/v1/question-versions/${DRAFT_VERSION}/draft-content`,
-          method: "GET",
-          respond: () =>
-            jsonResponse({
-              reference_answer: "print(1)",
-              cases: [0, 1, 2].map((ordinal) => ({
-                name: `用例${ordinal + 1}`,
-                ordinal,
-                weight: 1,
-                visible_to_student: ordinal === 0,
-                stdin: `${ordinal}\n`,
-                args: [],
-                expected_stdout: `${ordinal}\n`,
-                expected_stderr: null,
-                expected_exit_code: 0,
-              })),
-            }),
-        },
-        {
-          method: "POST",
-          path: "/api/v1/reference-verifications",
-          respond: () =>
-            jsonResponse(
-              referenceVerification({
-                cases_total: 3,
-                cases_passed: 2,
-                cases: [
-                  { ordinal: 0, passed: true, failure_category: null },
-                  { ordinal: 1, passed: false, failure_category: "output_mismatch" },
-                  { ordinal: 2, passed: true, failure_category: null },
-                ],
-                attestation_id: null,
-              }),
-            ),
-        },
-      ]),
-    );
+describe("多档参考解法编辑", () => {
+  it("支持新增与删除档位，只剩最后一档时不展示删除按钮", async () => {
+    stub = installFetchStub(baseRoutes());
     const user = userEvent.setup();
     await signIn("teacher1", "pw");
-    renderAuthoring(QUESTION_ID);
+    renderAuthoring(null);
 
-    // 检验在最后一步（对比设置）下面。
-    await goToStep(user, "comparison");
-    await user.click(await screen.findByTestId("reference-verify"));
+    await goToStep(user, "reference");
+    expect(screen.getByTestId("reference-tier-0")).toBeInTheDocument();
+    expect(screen.queryByTestId("reference-tier-remove-0")).toBeNull();
 
-    // 第 2 条（ordinal 1）未通过：序号是红色按钮。
-    const failed = await screen.findByTestId("reference-case-open-1");
-    expect(failed).toHaveClass("verify-case-open");
-    await user.click(failed);
+    await user.click(screen.getByTestId("reference-tier-add"));
+    expect(screen.getByTestId("reference-tier-1")).toBeInTheDocument();
+    expect(screen.getByTestId("reference-tier-remove-0")).toBeInTheDocument();
+    expect(screen.getByTestId("reference-tier-remove-1")).toBeInTheDocument();
 
-    // 切到用例步骤，并定位到那一条。
-    const casesPanel = await screen.findByTestId("step-cases");
-    const card = within(casesPanel).getByTestId("case-1");
-    expect(card).toHaveAttribute("data-selected", "true");
-    expect(card).toHaveClass("case-card--selected");
-    // 光标在它的标准输入里，可以直接改。
-    expect(document.activeElement).toBe(within(card).getByLabelText("标准输入"));
+    await user.click(screen.getByTestId("reference-tier-remove-1"));
+    expect(screen.queryByTestId("reference-tier-1")).toBeNull();
+    expect(screen.queryByTestId("reference-tier-remove-0")).toBeNull();
   });
 });
 
@@ -2070,8 +1951,7 @@ describe("AI 出题页课程选择区域", () => {
   });
 });
 
-describe("评分方式 / 执行声明（Unix 作业扩展）", () => {
-  /** 新建成功后页面会用服务端返回的版本标识取回版本 DTO（渲染发布门禁）。 */
+describe("统一 AI 逻辑评分流程（Python 与 Unix 题目共用）", () => {
   function createRoutes(): StubbedRoute[] {
     return [
       {
@@ -2107,268 +1987,40 @@ describe("评分方式 / 执行声明（Unix 作业扩展）", () => {
     ];
   }
 
-  /** 切到「判分比对规则与运行配置」并选择一个评分方式。 */
-  async function selectExecutionMode(
-    user: ReturnType<typeof userEvent.setup>,
-    mode: "per_case" | "single_run" | "ssh_session" | "email_delivery",
-  ) {
-    await goToStep(user, "comparison");
-    await user.selectOptions(screen.getByTestId("execution-mode"), mode);
-  }
+  it("Unix（Bash）题目无需配置测试用例或比对策略，直接保存多档参考解法与 AI 评分细则", async () => {
+    stub = installFetchStub(baseRoutes(createRoutes()));
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
 
-  /** 新建题的必填项。SSH / 邮件模式要求 Bash：语言也要一起选。 */
-  async function fillNewQuestionBasics(
-    user: ReturnType<typeof userEvent.setup>,
-    options: { bash?: boolean } = {},
-  ) {
     await selectCourse(user);
-    await user.type(screen.getByLabelText("题目标题"), "练习环境题");
-    if (options.bash) {
-      await user.selectOptions(screen.getByLabelText("语言"), "bash");
-    }
+    await user.type(screen.getByLabelText("题目标题"), "日志统计脚本");
+    await user.selectOptions(screen.getByLabelText("语言"), "bash");
     await goToStep(user, "stem");
-    await user.type(screen.getByLabelText("题干"), "# 练习环境题");
+    await user.type(screen.getByLabelText("题干"), "统计 access.log 中状态码 500 的请求数。");
     await goToStep(user, "reference");
-    await user.type(screen.getByLabelText("参考答案"), "print(1)");
-  }
-
-  function saveRequest(): RecordedRequest {
-    const found = stub?.requests.find(
-      (item) =>
-        (item.method === "POST" && item.url.pathname === "/api/v1/questions") ||
-        (item.method === "PATCH" && item.url.pathname === `/api/v1/questions/${QUESTION_ID}`),
+    await user.type(screen.getByLabelText("参考答案"), "grep -c ' 500 ' access.log");
+    await user.type(
+      screen.getByTestId("authoring-grading-prompt"),
+      "使用 grep | wc -l 得 70 分；直接使用 grep -c 或 awk 单遍扫描得 90 分。",
     );
-    if (!found) throw new Error("尚未发出保存请求");
-    return found;
-  }
-
-  it("默认每个用例单独运行：保存请求体显式声明 per_case", async () => {
-    stub = installFetchStub(baseRoutes(createRoutes()));
-    const user = userEvent.setup();
-    await signIn("teacher1", "pw");
-    renderAuthoring(null);
-
-    await fillCreateForm(user);
-    await user.click(screen.getByTestId("authoring-save"));
-
-    const request = await waitFor(() => saveRequest());
-    const body = request.body as Record<string, unknown>;
-    expect(body.execution).toEqual({ mode: "per_case" });
-    // 没有模式专属配置被顺手带上。
-    expect(JSON.stringify(body)).not.toContain("segment_delimiter");
-    expect(JSON.stringify(body)).not.toContain("ssh");
-  });
-
-  it("ssh_session：练习配置随保存发送，口令只出现在请求体里", async () => {
-    const lines: Record<string, unknown>[] = [];
-    setLogSink((records) => {
-      lines.push(...(records as unknown as Record<string, unknown>[]));
-    });
-    try {
-      stub = installFetchStub(baseRoutes(createRoutes()));
-      const user = userEvent.setup();
-      await signIn("teacher1", "pw");
-      renderAuthoring(null);
-
-      await fillNewQuestionBasics(user, { bash: true });
-      await selectExecutionMode(user, "ssh_session");
-
-      // host 是固定值且只读；口令框是 password，不被当作可保存的登录凭据。
-      expect(screen.getByTestId("execution-ssh-host")).toHaveValue("127.0.0.1");
-      expect(screen.getByTestId("execution-ssh-host")).toHaveAttribute("readonly");
-      const password = screen.getByTestId("execution-ssh-password");
-      expect(password).toHaveAttribute("type", "password");
-
-      const port = screen.getByTestId("execution-ssh-port");
-      await user.clear(port);
-      await user.type(port, "2222");
-      await user.type(screen.getByTestId("execution-ssh-username"), "user01");
-      await user.type(password, "practice-secret");
-      const loginTimeout = screen.getByTestId("execution-ssh-login-timeout");
-      await user.clear(loginTimeout);
-      await user.type(loginTimeout, "5");
-
-      // 用例要选一个真实的服务端事实才能保存。
-      await goToStep(user, "cases");
-      await user.type(screen.getByLabelText("分值"), "1");
-      await user.selectOptions(screen.getByLabelText("SSH 判定项"), "auth_succeeded");
-      await goToStep(user, "comparison");
-      await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
-      await user.click(screen.getByTestId("authoring-save"));
-
-      const request = await waitFor(() => saveRequest());
-      const body = request.body as Record<string, unknown>;
-      expect(body.execution).toEqual({
-        mode: "ssh_session",
-        ssh: {
-          host: "127.0.0.1",
-          port: 2222,
-          username: "user01",
-          password: "practice-secret",
-          login_timeout_seconds: 5,
-          session_timeout_seconds: 10,
-        },
-      });
-      expect((body.cases as Record<string, unknown>[])[0].ssh_check).toBe("auth_succeeded");
-      // 口令只在请求体里：地址栏、日志与浏览器持久化存储都不出现。
-      expect(request.url.href).not.toContain("practice-secret");
-      expect(JSON.stringify(lines)).not.toContain("practice-secret");
-      const persisted = Object.keys(localStorage)
-        .map((key) => localStorage.getItem(key) ?? "")
-        .join("\n");
-      expect(persisted).not.toContain("practice-secret");
-    } finally {
-      setLogSink(null);
-    }
-  });
-
-  it("从 ssh_session 切回 per_case：口令从表单消失，保存请求里没有任何练习配置", async () => {
-    stub = installFetchStub(baseRoutes(createRoutes()));
-    const user = userEvent.setup();
-    await signIn("teacher1", "pw");
-    renderAuthoring(null);
-
-    await fillCreateForm(user);
-    await user.selectOptions(screen.getByTestId("execution-mode"), "ssh_session");
-    await user.type(screen.getByTestId("execution-ssh-username"), "user01");
-    await user.type(screen.getByTestId("execution-ssh-password"), "practice-secret");
-
-    // 切回默认模式：口令框整个消失，表单里也不再有值。
-    await user.selectOptions(screen.getByTestId("execution-mode"), "per_case");
-    expect(screen.queryByTestId("execution-ssh-password")).toBeNull();
-
-    await user.click(screen.getByTestId("authoring-save"));
-    const request = await waitFor(() => saveRequest());
-    const body = request.body as Record<string, unknown>;
-    expect(body.execution).toEqual({ mode: "per_case" });
-    expect(JSON.stringify(body)).not.toContain("practice-secret");
-    expect(request.url.href).not.toContain("practice-secret");
-  });
-
-  it("编辑草稿会读回执行声明：模式、分隔行与用例分段/文件校验都可继续编辑", async () => {
-    stub = installFetchStub(
-      baseRoutes([
-        {
-          path: `/api/v1/questions/${QUESTION_ID}`,
-          method: "GET",
-          respond: () => jsonResponse(draftQuestion()),
-        },
-        {
-          path: `/api/v1/question-versions/${DRAFT_VERSION}`,
-          respond: () =>
-            jsonResponse({
-              ...questionVersionPublic({
-                question_version_id: DRAFT_VERSION,
-                version: 1,
-                status: "draft",
-                content_digest: SHA_A,
-              }),
-              execution_mode: "single_run",
-            }),
-        },
-        {
-          path: `/api/v1/question-versions/${DRAFT_VERSION}/draft-content`,
-          respond: () =>
-            jsonResponse({
-              reference_answer: "print(1)",
-              execution: { mode: "single_run", segment_delimiter: "===== SEGMENT =====" },
-              cases: [
-                {
-                  name: "第一段",
-                  ordinal: 0,
-                  weight: 1,
-                  visible_to_student: false,
-                  expected_stdout: "a\n",
-                  segment: 0,
-                },
-                {
-                  name: "改权限",
-                  ordinal: 1,
-                  weight: 1,
-                  visible_to_student: false,
-                  file_checks: [
-                    { path: "week6_1.txt", content_sha256: "a".repeat(64), mode: "0744" },
-                  ],
-                },
-              ],
-            }),
-        },
-        {
-          method: "PATCH",
-          path: `/api/v1/questions/${QUESTION_ID}`,
-          respond: () => jsonResponse(draftQuestion()),
-        },
-      ]),
-    );
-    const user = userEvent.setup();
-    await signIn("teacher1", "pw");
-    renderAuthoring(QUESTION_ID);
-
-    await waitFor(() =>
-      expect(screen.getByLabelText("题目标题")).toHaveValue(questionPublic().title),
-    );
-    await goToStep(user, "comparison");
-    // 模式来自公开版本 DTO，完整配置（分隔行）来自受保护草稿内容：等两者都到齐再断言。
-    await waitFor(() =>
-      expect(screen.getByTestId("execution-segment-delimiter")).toHaveValue(
-        "===== SEGMENT =====",
-      ),
-    );
-    expect(screen.getByTestId("execution-mode")).toHaveValue("single_run");
-
-    await goToStep(user, "cases");
-    expect(await screen.findByTestId("case-segment-0")).toHaveValue("0");
-    // 已保存的文件校验只读回摘要；内容原文留空表示沿用这份摘要。
-    expect(screen.getByTestId("case-file-check-digest-1-0")).toHaveTextContent(
-      "a".repeat(64),
-    );
-
-    await goToStep(user, "comparison");
-    await user.selectOptions(screen.getByLabelText("标准输出比较"), "exact");
     await user.click(screen.getByTestId("authoring-save"));
 
     const request = await waitFor(() => {
-      const found = stub?.requests.find((item) => item.method === "PATCH");
-      if (!found) throw new Error("尚未发出修改请求");
+      const found = stub?.requests.find(
+        (item) => item.method === "POST" && item.url.pathname === "/api/v1/questions",
+      );
+      if (!found) throw new Error("尚未发出保存请求");
       return found;
     });
     const body = request.body as Record<string, unknown>;
-    expect(body.execution).toEqual({
-      mode: "single_run",
-      segment_delimiter: "===== SEGMENT =====",
-    });
-    const cases = body.cases as Record<string, unknown>[];
-    expect(cases[0].segment).toBe(0);
-    expect(cases[0]).not.toHaveProperty("file_checks");
-    expect(cases[1].file_checks).toEqual([
-      { path: "week6_1.txt", content_sha256: "a".repeat(64), mode: "0744" },
+    expect(body.language).toBe("bash");
+    expect(body.reference_answers).toEqual([
+      { label: "标准参考答案", body: "grep -c ' 500 ' access.log" },
     ]);
-  });
-
-  it("single_run 有用例按分段但分隔行为空：即时提示并阻止保存请求", async () => {
-    stub = installFetchStub(baseRoutes());
-    const user = userEvent.setup();
-    await signIn("teacher1", "pw");
-    renderAuthoring(null);
-
-    await fillCreateForm(user);
-    await user.selectOptions(screen.getByTestId("execution-mode"), "single_run");
-
-    await goToStep(user, "cases");
-    await user.click(screen.getByTestId("case-segment-scored-0"));
-    await user.type(screen.getByTestId("case-segment-0"), "0");
-
-    await goToStep(user, "comparison");
-    expect(await screen.findByTestId("execution-issues")).toHaveTextContent(
-      "请填写分段分隔行",
+    expect(body.grading_prompt).toBe(
+      "使用 grep | wc -l 得 70 分；直接使用 grep -c 或 awk 单遍扫描得 90 分。",
     );
-    await user.click(screen.getByTestId("authoring-save"));
-
-    expect(await screen.findByTestId("toast")).toHaveTextContent("请填写分段分隔行");
-    expect(
-      stub.requests.filter(
-        (item) => item.method === "POST" && item.url.pathname === "/api/v1/questions",
-      ),
-    ).toHaveLength(0);
+    expect(body.cases).toBeUndefined();
   });
 });

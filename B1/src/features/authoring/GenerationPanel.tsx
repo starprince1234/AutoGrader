@@ -12,7 +12,7 @@ import {
   StatusPill,
 } from "../../ui/components";
 import { SafeMarkdown } from "../questions/SafeMarkdown";
-import { fieldLabel, parseArgv, parseTags, type DraftForm } from "./draft";
+import { fieldLabel, parseTags, type DraftForm } from "./draft";
 import { courseLabel as formatCourseLabel } from "../../api/directory";
 import {
   useCreateGeneration,
@@ -55,6 +55,12 @@ function ProposalPreview({
 }) {
   const cases = proposal.cases ?? [];
   const fixtures = proposal.fixtures ?? [];
+  const referenceTiers =
+    (proposal.reference_answers ?? []).length > 0
+      ? (proposal.reference_answers ?? [])
+      : proposal.reference_answer
+        ? [{ label: t("authoring.referenceDefaultTier"), body: proposal.reference_answer }]
+        : [];
   return (
     <div className="stack" data-testid="generation-proposal">
       <div className="generation-preview__head">
@@ -80,63 +86,67 @@ function ProposalPreview({
           {t("authoring.language")}：{t(`questions.language.${proposal.language}`)}
         </span>
         <span>
-          {t("authoring.adapterKind")}：{t(`questions.adapter.${proposal.adapter_kind}`)}
-        </span>
-        <span>
           {t("authoring.tags")}：
           {(proposal.tags ?? []).length === 0 ? "—" : (proposal.tags ?? []).join("、")}
         </span>
-        {/* 用例条数直接露在明面上：生成时就带上了测试用例，不用展开受保护内容才知道。 */}
-        <span data-testid="generation-proposal-case-count">
-          {t("authoring.generation.cases", { count: cases.length })}
+        <span data-testid="generation-proposal-tier-count">
+          {t("authoring.referenceTiersTitle")}：{referenceTiers.length}
         </span>
-        {proposal.adapter?.args?.length ? (
-          <span>
-            {t("authoring.adapterArgs")}：
-            <span className="mono-id">{parseArgv(proposal.adapter.args.join(" ")).join(" ")}</span>
-          </span>
-        ) : null}
       </div>
 
       <details data-testid="generation-protected">
         <summary>{t("authoring.generation.protectedSummary")}</summary>
 
         <h3>{t("authoring.referenceAnswer")}</h3>
-        {proposal.reference_answer ? (
-          <pre data-testid="generation-reference">{proposal.reference_answer}</pre>
+        {referenceTiers.length > 0 ? (
+          <div className="stack" data-testid="generation-reference">
+            {referenceTiers.map((tier, index) => (
+              <div className="stack" key={`${index}-${tier.label}`}>
+                <strong>{tier.label}</strong>
+                <pre>{tier.body}</pre>
+              </div>
+            ))}
+          </div>
         ) : (
           <p className="muted">{t("authoring.generation.noReference")}</p>
         )}
 
-        <h3>{t("authoring.generation.cases", { count: cases.length })}</h3>
-        {cases.length === 0 ? (
-          <p className="muted">{t("authoring.generation.noCases")}</p>
-        ) : (
-          <ol data-testid="generation-cases">
-            {cases.map((item) => (
-              <li key={item.ordinal}>
-                <strong>{item.name.trim() === "" ? "—" : item.name}</strong>
-                {" · "}
-                {t("authoring.caseWeight")}{" "}
-                {item.weight === null || item.weight === undefined
-                  ? t("authoring.generation.noWeight")
-                  : item.weight}
-                <div className="muted">
-                  {item.stdin ? (
-                    <span>
-                      {t("authoring.generation.caseStdin")}: <code>{item.stdin}</code>
-                    </span>
-                  ) : null}
-                  {item.expected_stdout ? (
-                    <span>
-                      {t("authoring.generation.caseStdout")}: <code>{item.expected_stdout}</code>
-                    </span>
-                  ) : null}
-                </div>
-              </li>
-            ))}
-          </ol>
-        )}
+        {proposal.grading_prompt ? (
+          <div className="stack" data-testid="generation-grading-prompt">
+            <h3>{t("authoring.generation.gradingPrompt")}</h3>
+            <pre>{proposal.grading_prompt}</pre>
+          </div>
+        ) : null}
+
+        {cases.length > 0 ? (
+          <>
+            <h3>{t("authoring.generation.cases", { count: cases.length })}</h3>
+            <ol data-testid="generation-cases">
+              {cases.map((item) => (
+                <li key={item.ordinal}>
+                  <strong>{item.name.trim() === "" ? "—" : item.name}</strong>
+                  {" · "}
+                  {t("authoring.caseWeight")}{" "}
+                  {item.weight === null || item.weight === undefined
+                    ? t("authoring.generation.noWeight")
+                    : item.weight}
+                  <div className="muted">
+                    {item.stdin ? (
+                      <span>
+                        {t("authoring.generation.caseStdin")}: <code>{item.stdin}</code>
+                      </span>
+                    ) : null}
+                    {item.expected_stdout ? (
+                      <span>
+                        {t("authoring.generation.caseStdout")}: <code>{item.expected_stdout}</code>
+                      </span>
+                    ) : null}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </>
+        ) : null}
 
         {fixtures.length > 0 ? (
           <>

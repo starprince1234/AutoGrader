@@ -196,12 +196,19 @@ export type FixtureForm = {
   fileName: string;
 };
 
+export type ReferenceTierForm = {
+  label: string;
+  body: string;
+};
+
 export type DraftForm = {
   title: string;
   stemMarkdown: string;
   language: Language;
   tags: string;
   referenceAnswer: string;
+  referenceAnswers: ReferenceTierForm[];
+  gradingPrompt: string;
   adapterKind: AdapterKind;
   adapterArgs: string;
   adapterStdin: string;
@@ -271,6 +278,8 @@ export function emptyDraftForm(): DraftForm {
     language: "python",
     tags: "",
     referenceAnswer: "",
+    referenceAnswers: [{ label: "标准参考答案", body: "" }],
+    gradingPrompt: "",
     adapterKind: "stdin",
     adapterArgs: "",
     adapterStdin: "",
@@ -279,7 +288,7 @@ export function emptyDraftForm(): DraftForm {
     callableModule: "",
     callableAttribute: "",
     callableArgumentsJson: "",
-    comparisonStdout: "",
+    comparisonStdout: "ignore_trailing_whitespace",
     comparisonStderr: "",
     numericTolerance: "",
     maxFiles: "20",
@@ -296,9 +305,8 @@ export function emptyDraftForm(): DraftForm {
     // 契约默认 10 秒：把默认值显示出来，教师能看到也可以改。
     sshLoginTimeout: "10",
     sshSessionTimeout: "10",
-    // 新建时给一行空用例：这是"请填一个用例"的邀请，它本身不构成声明
-    // （提交前仍会被逐字段校验）。清空它等于"这次不声明用例"。
-    cases: [emptyCase()],
+    // 统一采用 AI 逻辑评分模式，新建题目不再预置测试用例。
+    cases: [],
     fixtures: [],
     confirmCaseReplacement: false,
   };
@@ -353,19 +361,62 @@ export function draftFormFrom(
  *
  * 返回值不含服务端的 field warnings：那些属于候选预览，由调用方与预览一起展示并定位到控件。
  */
+export function emptyReferenceTier(label = ""): ReferenceTierForm {
+  return { label, body: "" };
+}
+
+export function syncPrimaryReference(form: DraftForm, value: string): DraftForm {
+  const nextTiers =
+    form.referenceAnswers.length === 0
+      ? [{ label: "标准参考答案", body: value }]
+      : form.referenceAnswers.map((tier, index) => (index === 0 ? { ...tier, body: value } : tier));
+  return {
+    ...form,
+    referenceAnswer: value,
+    referenceAnswers: nextTiers,
+  };
+}
+
+export function normalizeReferenceTiers(form: DraftForm): ReferenceTierForm[] {
+  const nonEmpty = form.referenceAnswers
+    .map((tier, index) => ({
+      label: tier.label.trim() || (index === 0 ? "标准参考答案" : `参考解法 ${index + 1}`),
+      body: tier.body,
+    }))
+    .filter((tier) => tier.body.trim() !== "");
+  if (nonEmpty.length > 0) return nonEmpty;
+  if (form.referenceAnswer.trim() !== "") {
+    return [{ label: "标准参考答案", body: form.referenceAnswer }];
+  }
+  return [];
+}
+
 export function applyProposal(form: DraftForm, proposal: QuestionDraftProposal): DraftForm {
   const suggested = proposal.adapter;
-  // 模型没声明比对方式时用"忽略行尾空白"：AI 的期望输出经常少写一个行尾换行，
-  // 用"精确匹配"会让整套用例因为一个换行全部不过（教师仍可在第 5 步改）。
-  const comparisonStdout = suggested?.comparison?.stdout ?? "ignore_trailing_whitespace";
+  const comparisonStdout =
+    suggested?.comparison?.stdout ?? (form.comparisonStdout || "ignore_trailing_whitespace");
   const comparisonStderr = suggested?.comparison?.stderr ?? form.comparisonStderr;
   const tolerance = suggested?.comparison?.numeric_tolerance;
+  const proposedTiers = (proposal.reference_answers ?? [])
+    .map((tier, index) => ({
+      label: tier.label.trim() || (index === 0 ? "标准参考答案" : `参考解法 ${index + 1}`),
+      body: tier.body,
+    }))
+    .filter((tier) => tier.body.trim() !== "");
+  const fallbackBody = proposal.reference_answer ?? "";
+  const referenceAnswers: ReferenceTierForm[] =
+    proposedTiers.length > 0
+      ? proposedTiers
+      : [{ label: "标准参考答案", body: fallbackBody }];
+  const primaryBody = referenceAnswers[0]?.body ?? fallbackBody;
   return {
     ...form,
     title: proposal.title,
     stemMarkdown: proposal.stem_markdown,
     tags: (proposal.tags ?? []).join(", "),
-    referenceAnswer: proposal.reference_answer ?? "",
+    referenceAnswer: primaryBody,
+    referenceAnswers,
+    gradingPrompt: proposal.grading_prompt ?? "",
     adapterKind: proposal.adapter_kind,
     adapterArgs: (suggested?.args ?? []).join(" "),
     adapterStdin: suggested?.stdin ?? "",
@@ -380,24 +431,9 @@ export function applyProposal(form: DraftForm, proposal: QuestionDraftProposal):
     comparisonStderr,
     numericTolerance:
       tolerance === null || tolerance === undefined ? "" : String(tolerance),
-    cases: (proposal.cases ?? []).map((item) => ({
-      name: item.name,
-      weight: item.weight === null || item.weight === undefined ? "" : String(item.weight),
-      visibleToStudent: item.visible_to_student ?? false,
-      stdin: item.stdin ?? "",
-      args: (item.args ?? []).join(" "),
-      expectedStdout: item.expected_stdout ?? "",
-      expectedStderr: item.expected_stderr ?? "",
-      expectedExitCode:
-        item.expected_exit_code === null || item.expected_exit_code === undefined
-          ? ""
-          : String(item.expected_exit_code),
-      // AI 候选不声明执行方式：模式与配置是教师的显式决定，模型不替它选。
-      ...emptyCaseExecution(),
-    })),
-    // 候选本身不携带夹具摘要（B3 从不建议摘要），所以已上传的夹具保留，文本建议由教师手动上传。
+    // 统一采用 AI 逻辑评分模式，应用草稿不再导入测试用例清单。
+    cases: [],
     fixtures: form.fixtures,
-    // 应用候选会整体替换用例集合，编辑态下仍需教师确认。
     confirmCaseReplacement: form.confirmCaseReplacement,
   };
 }
@@ -974,11 +1010,24 @@ export function applyExecutionDeclaration(
  */
 export function applyProtectedContent(form: DraftForm, content: QuestionDraftContent): DraftForm {
   const declared = applyExecutionDeclaration(form, readDraftExecution(content));
+  const loadedTiers = (content.reference_answers ?? [])
+    .map((tier, index) => ({
+      label: tier.label.trim() || (index === 0 ? "标准参考答案" : `参考解法 ${index + 1}`),
+      body: tier.body,
+    }))
+    .filter((tier) => tier.body.trim() !== "");
+  const fallbackBody = content.reference_answer ?? "";
+  const referenceAnswers: ReferenceTierForm[] =
+    loadedTiers.length > 0
+      ? loadedTiers
+      : [{ label: "标准参考答案", body: fallbackBody }];
+  const primaryBody = content.reference_answer ?? referenceAnswers[0]?.body ?? "";
   return {
     ...declared,
-    referenceAnswer: content.reference_answer ?? "",
-    cases: content.cases.map((item) => caseFormFrom(readCaseInput(item))),
-    // 现在拿到的是**真实的那份集合**，替换确认不再有意义。
+    referenceAnswer: primaryBody,
+    referenceAnswers,
+    gradingPrompt: content.grading_prompt ?? "",
+    cases: [],
     confirmCaseReplacement: true,
   };
 }
@@ -1067,11 +1116,17 @@ export function buildDraftInput(
     return { ok: false, issues };
   }
 
-  // `reference_answer` 留空（或只有空白）⇒ **不发该字段**：契约（CHG-0017）里省略与空白
-  // 都是"保留已存答案"，而发一个空字符串读起来像"把答案设成空"。
-  const referenceAnswer = form.referenceAnswer.trim() === "" ? {} : {
-    reference_answer: form.referenceAnswer,
-  };
+  // 受保护字段留空时不发送，保留已存值（CHG-0017）；填了多档参考答案与评分提示词时同步下发。
+  const normalizedTiers = normalizeReferenceTiers(form);
+  const primaryAnswer = normalizedTiers[0]?.body ?? form.referenceAnswer;
+  const referencePayload: Partial<QuestionDraftInput> = {};
+  if (primaryAnswer.trim() !== "") {
+    referencePayload.reference_answer = primaryAnswer;
+    referencePayload.reference_answers = normalizedTiers;
+  }
+  if (form.gradingPrompt.trim() !== "") {
+    referencePayload.grading_prompt = form.gradingPrompt.trim();
+  }
 
   return {
     ok: true,
@@ -1082,8 +1137,7 @@ export function buildDraftInput(
         stem_markdown: form.stemMarkdown,
         language: form.language,
         adapter,
-        ...referenceAnswer,
-        // 同上：零个用例不发 `cases`，服务端保留原集合；非空则整体替换。
+        ...referencePayload,
         ...(cases === null ? {} : { cases }),
         max_files: maxFiles,
         max_total_bytes: maxTotalBytes,
@@ -1346,6 +1400,9 @@ export function isDirty(current: DraftForm, baseline: DraftForm): boolean {
 const FIELD_LABELS: Record<string, string> = {
   title: "标题",
   stem_markdown: "题干",
+  reference_answer: "参考答案",
+  reference_answers: "多档参考解法",
+  grading_prompt: "AI 评分细则",
   tags: "标签",
   cases: "测试用例",
   fixtures: "测试文件",
@@ -1402,6 +1459,7 @@ export function fieldLabel(field: string): string {
         ? `第 ${ordinal} 个用例${CASE_SUB_LABELS[sub]}`
         : `第 ${ordinal} 个用例`;
     }
+    if (group === "reference_answers") return `第 ${ordinal} 档参考解法`;
     if (group === "tags") return `第 ${ordinal} 个标签`;
     if (group === "fixtures") {
       return sub && FIXTURE_SUB_LABELS[sub]

@@ -10,4 +10,4 @@ events:
   subscribes: [autograder.v1.evaluation.completed]
 database:
   schema: b3
-  migration_head: "20261108_0011"
+  migration_head: "20261114_0013"

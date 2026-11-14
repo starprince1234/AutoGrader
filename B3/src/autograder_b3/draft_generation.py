@@ -81,26 +81,19 @@ _MAX_CASE_NAME_CHARS = 200
 #: the teacher's input: the objective travels as data in the user message, so an objective
 #: that contains "ignore your rules" is data and not an instruction (AI-FLOW-01A, TC-AI-076).
 SYSTEM_PROMPT = (
-    "You design programming exercises for a university course. "
+    "You design programming and Unix exercises for a university course. "
     "You answer with one JSON object and nothing else. "
-    "You never claim an exercise is correct and you never invent test results. "
+    "You never claim an exercise is correct and you never invent grading results. "
     "The JSON object may contain: title (string), stem_markdown (string, Markdown), "
     "tags (array of lowercase hyphenated strings), difficulty (string), "
     "knowledge_points (array of strings), examples (array of {input, output, explanation}), "
-    "reference_answer (string, the source of a correct solution in the requested language), "
-    "adapter (object with optional args, stdin, expect_exit_code, comparison, callable), "
-    "cases (array of {name, weight, visible_to_student, stdin, args, expected_stdout, "
-    "expected_stderr, expected_exit_code, file_input}), and fixtures (array of "
-    "{path, mount, content_text}). "
+    "reference_answer (string, the recommended solution in the requested language), "
+    "reference_answers (array of {label, body} giving graded solution tiers such as "
+    "brute-force vs optimal algorithm), and "
+    "grading_prompt (string, teacher AI grading rubric explaining score tiers by algorithm "
+    "complexity, logic correctness, edge cases, and code cleanliness). "
     "Every field is optional; provide what the objective supports and omit the rest. "
-    "Do not emit base64 or binary content: a teacher uploads binary fixtures separately. "
-    "Write test cases that a reference solution in the requested language can actually pass. "
-        "The reference answer must be a complete program that reads its input the way the "
-        "adapter describes (stdin when kind is stdin) and prints only the expected output; "
-        "every case's expected_stdout must be exactly what that program prints for the "
-        "case's stdin, including the trailing newline. Put real newline characters in the "
-        "JSON strings (a single \\n escape); never emit the two characters backslash-n as the "
-        "value of stdin or expected_stdout."
+    "Put real newline characters in JSON strings (a single \\n escape)."
 )
 
 
@@ -217,8 +210,14 @@ class DraftExampleProposal:
 
 
 @dataclass(frozen=True)
+class DraftReferenceTierProposal:
+    label: str
+    body: str
+
+
+@dataclass(frozen=True)
 class DraftProposal:
-    """An editable candidate. Teacher-only: it carries an answer and proposed hidden cases.
+    """An editable candidate. Teacher-only: it carries answers and grading rubric.
 
     This is **not** ``QuestionPublic``/``QuestionVersionPublic`` and must never be shaped
     like them: the whole point of the separation is that a student-facing response has no
@@ -231,6 +230,8 @@ class DraftProposal:
     adapter_kind: str
     tags: tuple[str, ...] = ()
     reference_answer: str | None = None
+    reference_answers: tuple[DraftReferenceTierProposal, ...] = ()
+    grading_prompt: str | None = None
     cases: tuple[DraftCaseProposal, ...] = ()
     fixtures: tuple[DraftFixtureProposal, ...] = ()
     adapter: DraftAdapterProposal = field(default_factory=DraftAdapterProposal)
@@ -253,6 +254,11 @@ class DraftProposal:
             "adapter_kind": self.adapter_kind,
             "tags": list(self.tags),
             "reference_answer": self.reference_answer,
+            "reference_answers": [
+                {"label": tier.label, "body": tier.body}
+                for tier in self.reference_answers
+            ],
+            "grading_prompt": self.grading_prompt,
             "cases": [
                 {
                     "name": case.name,
@@ -612,10 +618,18 @@ def normalize_proposal(
     reference_answer = _text(raw.get("reference_answer"), limit=limits.draft_generation_max_text_chars)
     if reference_answer is not None and not reference_answer.strip():
         reference_answer = None
+    reference_answers = _normalise_reference_answers(
+        raw.get("reference_answers"),
+        fallback_answer=reference_answer,
+        limits=limits,
+    )
+    if reference_answer is None and reference_answers:
+        reference_answer = reference_answers[0].body
+    grading_prompt = _text(raw.get("grading_prompt"), limit=10000)
+    if grading_prompt is not None and not grading_prompt.strip():
+        grading_prompt = None
 
     cases = _normalise_cases(raw.get("cases"), warnings=warnings, limits=limits)
-    if not cases:
-        warnings.add("cases", "模型没有给出测试用例，请在编辑器里添加至少一个。")
 
     fixtures = _normalise_fixtures(raw.get("fixtures"), warnings=warnings, limits=limits)
     adapter = _normalise_adapter(raw.get("adapter"), warnings=warnings)
@@ -635,6 +649,8 @@ def normalize_proposal(
         adapter_kind=adapter_kind,
         tags=tags,
         reference_answer=reference_answer,
+        reference_answers=reference_answers,
+        grading_prompt=grading_prompt,
         cases=cases,
         fixtures=fixtures,
         adapter=adapter,
@@ -645,6 +661,27 @@ def normalize_proposal(
     )
     status: DraftStatus = "needs_review" if warnings.blocking() else "ready"
     return ProposalOutcome(status=status, proposal=proposal, warnings=tuple(warnings.items))
+
+
+def _normalise_reference_answers(
+    value: Any,
+    *,
+    fallback_answer: str | None,
+    limits: Settings,
+) -> tuple[DraftReferenceTierProposal, ...]:
+    tiers: list[DraftReferenceTierProposal] = []
+    if isinstance(value, list):
+        for index, item in enumerate(value[:10]):
+            if not isinstance(item, Mapping):
+                continue
+            body = _text(item.get("body"), limit=limits.draft_generation_max_text_chars)
+            if body is None or not body.strip():
+                continue
+            label = _text(item.get("label"), limit=200) or f"解法 {index + 1}"
+            tiers.append(DraftReferenceTierProposal(label=label.strip(), body=body))
+    if not tiers and fallback_answer is not None:
+        tiers.append(DraftReferenceTierProposal(label="标准参考答案", body=fallback_answer))
+    return tuple(tiers)
 
 
 def _normalise_tags(value: Any, warnings: _Warnings) -> tuple[str, ...]:
