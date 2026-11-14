@@ -490,13 +490,9 @@ export function AssignmentsPage() {
     <div className="stack">
       {cohortView ? null : <MyMembershipsPanel />}
       <Panel title={cohortView ? t("assignments.tabs.list") : t("assignments.myTitle")}>
-        {cohortView ? (
-          <Banner tone="info" testId="assignment-course-wide">
-            {t("assignments.courseWideAudience")}
-          </Banner>
-        ) : (
+        {!cohortView ? (
           <p className="muted">{t("assignments.studentHint")}</p>
-        )}
+        ) : null}
         {!cohortView && currentUser.isPending ? (
           <Spinner label={t("assignments.membershipLoading")} />
         ) : !cohortView && currentUser.isError ? (

@@ -25,6 +25,7 @@ from ..audit import (
     changed_fields,
 )
 from ..authorization import ROLES
+from ..classes import bind_account_to_enrollments
 from ..db.tables import credentials, users
 from ..db.tables import roles as roles_table
 from ..errors import bad_request, conflict, not_found, unprocessable
@@ -209,6 +210,14 @@ def build_users_router(state: B4State, dependencies: Dependencies) -> APIRouter:
                         granted_by=caller.user_id,
                         created_at=now,
                     )
+                )
+            if student_number:
+                bind_account_to_enrollments(
+                    connection,
+                    user_id=user_id,
+                    student_number=student_number,
+                    display_name=payload.display_name.strip(),
+                    now=now,
                 )
             AuditLog(connection).record(
                 action=ACTION_USER_CREATED,

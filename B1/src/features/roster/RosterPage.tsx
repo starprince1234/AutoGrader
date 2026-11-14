@@ -211,7 +211,10 @@ export function RosterPage() {
               {
                 key: "code",
                 header: t("roster.column.code"),
-                render: (row) => row.course_code ?? t("roster.column.noCode"),
+                render: (row) =>
+                  row.section_codes?.length
+                    ? row.section_codes.join("、")
+                    : (row.course_code ?? t("roster.column.noCode")),
               },
               {
                 key: "sections",
@@ -498,9 +501,12 @@ export function RosterPage() {
             className="stack"
             onSubmit={(event) => {
               event.preventDefault();
-              if (createTitle.trim() === "" || createCode.trim() === "") return;
+              if (createTitle.trim() === "") return;
               createCourse.mutate(
-                { title: createTitle.trim(), course_code: createCode.trim() },
+                {
+                  title: createTitle.trim(),
+                  ...(createCode.trim() === "" ? {} : { course_code: createCode.trim() }),
+                },
                 {
                   onSuccess: (created) => {
                     setCreateOpen(false);
@@ -544,9 +550,7 @@ export function RosterPage() {
                 type="submit"
                 className="button button--primary"
                 data-testid="create-course-save"
-                disabled={
-                  createTitle.trim() === "" || createCode.trim() === "" || createCourse.isPending
-                }
+                disabled={createTitle.trim() === "" || createCourse.isPending}
               >
                 {t("roster.create.submit")}
               </button>
@@ -601,7 +605,6 @@ export function RosterPage() {
                 onChange={(event) => setRenameCode(event.target.value)}
               />
             </Field>
-            <p className="muted">{t("roster.rename.hint")}</p>
             {renameCourse.isError ? (
               <Banner tone="error" testId="rename-course-error">
                 {describeApiError(renameCourse.error)}
@@ -789,7 +792,6 @@ export function RosterPage() {
               );
             }}
           >
-            <Banner tone="info">{t("roster.class.attach.hint")}</Banner>
             <Field label={t("roster.class.attach.batch")} htmlFor="attach-batch">
               <Select
                 id="attach-batch"
@@ -1052,11 +1054,11 @@ function SectionClasses({
     return <EmptyState>{t("roster.classes.empty")}</EmptyState>;
   }
   return (
-    <ul className="allowlist-entries" data-testid={`section-classes-${sectionId}`}>
+    <ul className="allowlist-batches" data-testid={`section-classes-${sectionId}`}>
       {rows.map((row) => {
         const isOpen = expandedClassId === row.class_id;
         return (
-          <li key={row.class_id} className="allowlist-entry" data-testid={`class-card-${row.class_id}`}>
+          <li key={row.class_id} className="roster-class-card" data-testid={`class-card-${row.class_id}`}>
             <div className="allowlist-batch__head">
               <button
                 type="button"
@@ -1141,33 +1143,52 @@ function ClassStudents({
     return <p className="muted">{t("roster.classes.noStudents")}</p>;
   }
   return (
-    <ul className="allowlist-entries" data-testid={`class-students-${classId}`}>
-      {rows.map((row) => (
-        <li
-          key={row.enrollment_id}
-          className="allowlist-entry"
-          data-testid={`class-student-${row.enrollment_id}`}
-        >
-          <span className="allowlist-entry__name">{row.display_name}</span>
-          <span className="mono-id allowlist-entry__number">{row.student_number}</span>
-          {row.student_id === null ? (
-            <span className="muted" data-testid={`class-student-unbound-${row.enrollment_id}`}>
-              {t("roster.studentUnbound")}
-            </span>
-          ) : null}
-          <button
-            type="button"
-            className="button button--ghost allowlist-entry__delete"
-            aria-label={t("roster.classes.remove", { name: row.display_name })}
-            title={t("roster.classes.remove", { name: row.display_name })}
-            data-testid={`class-student-delete-${row.enrollment_id}`}
-            onClick={() => removeEnrollment.mutate(row.enrollment_id)}
-          >
-            <TrashIcon />
-          </button>
-        </li>
-      ))}
-    </ul>
+    <div className="roster-students-wrap" data-testid={`class-students-${classId}`}>
+      <table className="table roster-students-table">
+        <thead>
+          <tr>
+            <th>{t("roster.classes.colName")}</th>
+            <th>{t("roster.classes.colNumber")}</th>
+            <th>{t("roster.classes.colStatus")}</th>
+            <th>{t("roster.column.actions")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.enrollment_id} data-testid={`class-student-${row.enrollment_id}`}>
+              <td>{row.display_name}</td>
+              <td className="mono-id">{row.student_number}</td>
+              <td>
+                {row.student_id === null ? (
+                  <span
+                    className="badge badge--warn roster-status-badge"
+                    data-testid={`class-student-unbound-${row.enrollment_id}`}
+                  >
+                    {t("roster.studentUnbound")}
+                  </span>
+                ) : (
+                  <span className="badge badge--ok roster-status-badge">
+                    {t("roster.studentBound")}
+                  </span>
+                )}
+              </td>
+              <td>
+                <button
+                  type="button"
+                  className="button button--ghost allowlist-entry__delete"
+                  aria-label={t("roster.classes.remove", { name: row.display_name })}
+                  title={t("roster.classes.remove", { name: row.display_name })}
+                  data-testid={`class-student-delete-${row.enrollment_id}`}
+                  onClick={() => removeEnrollment.mutate(row.enrollment_id)}
+                >
+                  <TrashIcon />
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

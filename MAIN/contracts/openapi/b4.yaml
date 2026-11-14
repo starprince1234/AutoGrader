@@ -1899,6 +1899,10 @@ components:
         #: 该课程下已创建的课序（班级）数量。课程列表直接用它显示"已注册班级数"，
         #: 否则前端要为每一门课再发一次 `listSections`（N+1）。
         section_count: {type: integer, minimum: 0}
+        section_codes:
+          type: array
+          items: {type: string}
+          description: "Ordered section codes under this course."
         title: {type: string}
         # `updateCourse.expected_updated_at` is compared against this value: without it a
         # client can only overwrite unconditionally, which makes the lock decorative.

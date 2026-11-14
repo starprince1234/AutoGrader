@@ -1326,6 +1326,8 @@ export interface components {
             /** @description Optional label; null means the course was created without one. */
             course_code: string | null;
             section_count: number;
+            /** @description Ordered section codes under this course. */
+            section_codes?: string[];
             title: string;
             updated_at: components["schemas"]["Timestamp"];
         };

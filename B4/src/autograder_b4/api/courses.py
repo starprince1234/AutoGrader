@@ -257,6 +257,16 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
         if cursor_filter is not None:
             statement = statement.where(cursor_filter)
         rows = connection.execute(statement.limit(size)).fetchall()
+        course_ids = [row.course_id for row in rows]
+        codes_by_course: dict[uuid.UUID, list[str]] = {}
+        if course_ids:
+            section_rows = connection.execute(
+                select(sections.c.course_id, sections.c.section_code)
+                .where(sections.c.course_id.in_(course_ids))
+                .order_by(sections.c.section_code)
+            ).fetchall()
+            for sec_course_id, sec_code in section_rows:
+                codes_by_course.setdefault(sec_course_id, []).append(str(sec_code))
         items = [
             {
                 "course_id": str(row.course_id),
@@ -264,6 +274,7 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
                 "title": row.title,
                 "updated_at": _rfc3339(row.updated_at),
                 "section_count": row.section_count,
+                "section_codes": codes_by_course.get(row.course_id, []),
             }
             for row in rows
         ]
@@ -337,6 +348,7 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
             "title": title,
             "updated_at": _rfc3339(now),
             "section_count": 0,
+            "section_codes": [],
         }
 
     @router.patch("/api/v1/courses/{course_id}")
@@ -397,15 +409,21 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
                 detail=f"renamed course title: {row.title!r} -> {title!r}",
                 digest=change_digest({"title": title}),
             )
-        section_total = connection.execute(
-            select(func.count()).select_from(sections).where(sections.c.course_id == course_id)
-        ).scalar_one()
+        section_codes = [
+            str(r[0])
+            for r in connection.execute(
+                select(sections.c.section_code)
+                .where(sections.c.course_id == course_id)
+                .order_by(sections.c.section_code)
+            ).fetchall()
+        ]
         return {
             "course_id": str(course_id),
             "course_code": values.get("course_code", row.course_code),
             "title": title,
             "updated_at": _rfc3339(now),
-            "section_count": int(section_total),
+            "section_count": len(section_codes),
+            "section_codes": section_codes,
         }
 
     @router.get("/api/v1/courses/{course_id}/sections")
@@ -434,7 +452,7 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
             .group_by(enrollments.c.section_id)
             .subquery()
         )
-        rows = connection.execute(
+        section_stmt = (
             select(
                 sections,
                 func.coalesce(class_count.c.class_count, 0).label("class_count"),
@@ -449,8 +467,17 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
                 )
             )
             .where(sections.c.course_id == course_id)
-            .order_by(sections.c.section_code)
-        ).fetchall()
+        )
+        if not caller.is_admin and course_id not in caller.course_roles:
+            enrolled_section_ids = [
+                sec_id
+                for sec_id, sec_course_id in caller.student_sections.items()
+                if sec_course_id == course_id
+            ]
+            if not enrolled_section_ids:
+                return {"items": []}
+            section_stmt = section_stmt.where(sections.c.section_id.in_(enrolled_section_ids))
+        rows = connection.execute(section_stmt.order_by(sections.c.section_code)).fetchall()
         return {
             "items": [
                 {

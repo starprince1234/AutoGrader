@@ -189,7 +189,7 @@ describe("新建作业（v0.32.0 课程级）", () => {
     expect(postRequests(stub)).toHaveLength(0);
     // 课程级说明在表单上可见：没有课序勾选、也没有指定学生。
     expect(screen.getByTestId("compose-course-wide-notice")).toHaveTextContent(
-      "发布后对本课程全部课序与班级",
+      "发布后对本课程全部课序的学生生效",
     );
     expect(screen.queryByTestId("compose-section-list")).toBeNull();
     expect(screen.queryByTestId("compose-student-fieldset")).toBeNull();
@@ -326,7 +326,7 @@ describe("新建作业（v0.32.0 课程级）", () => {
     await fillBase(user);
     await user.click(screen.getByTestId("assignment-compose-preview"));
     expect(await screen.findByTestId("compose-audience-error")).toHaveTextContent(
-      "受众统计暂时读取不到",
+      "暂无法获取班级人数统计",
     );
     await user.click(screen.getByTestId("assignment-compose-confirm-button"));
     await waitFor(() => expect(postRequests(stub)).toHaveLength(1));
@@ -383,7 +383,7 @@ describe("新建作业（v0.32.0 课程级）", () => {
     await user.click(await screen.findByTestId("assignment-compose-confirm-button"));
 
     expect(await screen.findByTestId("assignment-compose-error")).toHaveTextContent(
-      "服务端拒绝了这个作业（422）",
+      "请确认所选题目均属于本课程且已发布",
     );
   });
 });
