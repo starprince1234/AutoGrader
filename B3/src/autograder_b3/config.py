@@ -203,7 +203,7 @@ class Settings:
                 "B3_DRAFT_GENERATION_RETENTION_SECONDS", 86_400
             ),
             draft_generation_budget_requests=count(
-                "B3_DRAFT_GENERATION_BUDGET_REQUESTS", 20
+                "B3_DRAFT_GENERATION_BUDGET_REQUESTS", 0
             ),
             draft_generation_budget_window_seconds=count(
                 "B3_DRAFT_GENERATION_BUDGET_WINDOW_SECONDS", 3_600
