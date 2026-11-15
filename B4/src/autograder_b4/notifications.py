@@ -186,13 +186,15 @@ def _campaign(
     announcement would make two different messages look like one.
     """
     return connection.execute(
-        select(campaigns).where(
+        select(campaigns)
+        .where(
             and_(
                 campaigns.c.assignment_id == assignment_id,
                 campaigns.c.course_id == course_id,
                 campaigns.c.kind == kind,
             )
         )
+        .order_by(campaigns.c.created_at.desc(), campaigns.c.notification_id.desc())
     ).fetchone()
 
 
