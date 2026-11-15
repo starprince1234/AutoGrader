@@ -407,7 +407,13 @@ def build_courses_router(state: B4State, dependencies: Dependencies) -> APIRoute
                 target_id=course_id,
                 course_id=course_id,
                 detail=f"renamed course title: {row.title!r} -> {title!r}",
-                digest=change_digest({"title": title}),
+                digest=change_digest(
+                    {"title": row.title, "course_code": row.course_code},
+                    {
+                        "title": title,
+                        "course_code": values.get("course_code", row.course_code),
+                    },
+                ),
             )
         section_codes = [
             str(r[0])
