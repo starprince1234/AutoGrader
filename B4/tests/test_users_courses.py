@@ -351,6 +351,8 @@ def test_user_listing_exposes_the_account_state_and_concurrency_stamp(
         "is_active",
         "updated_at",
         "created_at",
+        "registered_classes",
+        "course_bindings",
     }
 
     headers = sign_in_as("root").headers
