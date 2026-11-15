@@ -44,6 +44,7 @@ const COURSE = courseSummary({
   title: "软件工程",
   course_code: "91",
   section_count: 2,
+  section_codes: ["01", "02"],
 });
 
 const SECTIONS = {
@@ -217,7 +218,7 @@ describe("课程表", () => {
     const { stub, user } = await openPage();
     const table = await screen.findByTestId("courses-table");
     expect(within(table).getByText("软件工程")).toBeInTheDocument();
-    expect(within(table).getByText("91")).toBeInTheDocument();
+    expect(within(table).getByText("01、02")).toBeInTheDocument();
     expect(screen.getByTestId(`course-sections-${UUID_A}`)).toHaveTextContent("2");
 
     await user.click(screen.getByTestId(`course-open-${UUID_A}`));
