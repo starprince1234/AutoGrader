@@ -7,6 +7,9 @@ on:
     paths:
       - "B1/contracts.lock"
       - "B1/module.yaml"
+      - "B1/package.json"
+      - "B1/pnpm-lock.yaml"
+      - "B1/src/**"
       - "B2/alembic/**"
       - "B2/alembic.ini"
       - "B2/contracts.lock"
