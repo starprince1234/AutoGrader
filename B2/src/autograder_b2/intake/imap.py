@@ -103,6 +103,7 @@ from autograder_b2.intake.email_verification import (
     redact_challenge_codes,
 )
 from autograder_b2.intake.matching import MatchingUnavailable, ScopeContext
+from autograder_b2.intake.receipt_mailer import send_submission_receipt_email
 from autograder_b2.intake.service import (
     IntakeLimits,
     SubmissionIntakeService,
@@ -1002,6 +1003,7 @@ class EmailIntakeService:
             section_id=authoritative_section,
             uidvalidity=uidvalidity,
             uid=uid,
+            assignment_title=audience.title,
         )
 
     def _consume(
@@ -1105,6 +1107,7 @@ class EmailIntakeService:
         section_id: str,
         uidvalidity: int,
         uid: int,
+        assignment_title: str | None = None,
     ) -> MessageOutcome:
         """逐题走同一个 `persist`；全部成功后才写 `processed_at` 与 processed checkpoint。
 
@@ -1171,6 +1174,17 @@ class EmailIntakeService:
             message_id=message_id,
         )
         status: MessageStatus = "replayed" if replayed and all(replayed) else "processed"
+        if status == "processed":
+            parsed_body = parse_email_body(message.body_excerpt)
+            send_submission_receipt_email(
+                recipient_email=message.sender,
+                student_name=parsed_body.name or "",
+                student_number=parsed_body.student_number or consumed.student_number or "",
+                assignment_id=consumed.assignment_id,
+                assignment_title=assignment_title,
+                attachment_names=[item.attachment_name for item in mapped],
+                submission_ids=submission_ids,
+            )
         logger.info(
             "email_intake verification_processed mailbox=%s uidvalidity=%d uid=%d"
             " message_id=%s submissions=%d",

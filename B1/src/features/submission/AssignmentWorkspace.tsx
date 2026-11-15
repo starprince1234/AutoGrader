@@ -1,10 +1,20 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import { Link } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { t } from "../../i18n";
 import { describeApiError, isApiError } from "../../api/problem";
 import { newIdempotencyKey } from "../../api/client";
-import type { AssignmentPublic } from "../../api/types";
+import type {
+  AssignmentPublic,
+  DraftAiAssistantResponse,
+} from "../../api/types";
 import { useCurrentUser } from "../../api/currentUser";
 import { log, newRequestId } from "../../logging/logger";
 import {
@@ -23,6 +33,7 @@ import {
   questionStateTone,
 } from "../assignments/progressDisplay";
 import { useStudentAssignmentProgress } from "../assignments/useAssignmentProgress";
+import { CommentarySection } from "../commentary/CommentarySection";
 import { SafeMarkdown } from "../questions/SafeMarkdown";
 import { useQuestionAsset } from "../questions/useQuestionAsset";
 import { useQuestionVersionRows } from "../questions/useQuestions";
@@ -30,7 +41,12 @@ import { EmailSubmissionPanel } from "./EmailSubmissionPanel";
 import { clearDraft, loadDraft, saveDraft } from "./draft";
 import { ProgressPanel } from "./ProgressPanel";
 import { useEvaluationStream } from "./useEvaluationStream";
-import { useCreateSubmission, useEvaluationRunId } from "./useSubmission";
+import {
+  useCreateSubmission,
+  useDraftAiAssistant,
+  useEvaluationRunId,
+} from "./useSubmission";
+import { useSubmissionFileText } from "./useSubmissionFile";
 import {
   answerFileName,
   buildSubmissionEnvelope,
@@ -40,21 +56,13 @@ import {
 import "./workspaceLayout.css";
 
 /**
- * 学生作业工作区（CHG-0032 §7.2，替换旧的单题作答页 `/submit/{question_version_id}`）。
- *
- * 结构：
- * - 左侧：题目列表（1 基序号、标题、每题状态：待提交/处理中/已完成/失败）；
- * - 右侧当前题：冻结题干（受控图片）→ 答案区（textarea 粘贴或选择 `.txt`）→ 提交本题；
- * - 顶部：作业标题、截止时间、总体进度、邮件提交入口。
- *
- * 三条边界：
- * - **一次提交 = 一道题、一个 `N.txt`**（N 是作业里的 1 基题号）；
- * - **草稿只在本机**，键含 owner + assignment + question version；恢复前先询问；
- * - **状态只来自服务端成绩行**：成绩没取全时每题状态显示"加载中"，绝不显示"待提交"；
- *   系统故障（5xx/网络）显示"系统未完成"，不显示 0 分或未交。
+ * LeetCode 风格学生作业工作台：
+ * - 顶部：作业信息、整体进度、邮件提交入口、所有题目横向切换标签；
+ * - 左侧：当前题目题干说明（独立滚动）+ 题目语言与受控图片；
+ * - 右上：带行号的等宽代码编辑器（支持自动回填邮件/历史提交代码、`.txt` 导入与本地草稿）+「AI 助教」/「提交本题」；
+ * - 右下：双标签反馈区（「AI 评价与评测结果」实时 SSE + AI 评语，「AI 助教」实时启发式提示）。
  */
 
-/** 版本里的受控图片：与题干内嵌图片走同一个受控读取，不用裸 `<img>` 外链。 */
 function StemAsset({
   questionId,
   asset,
@@ -124,9 +132,8 @@ export function AssignmentWorkspace({
   const currentUser = useCurrentUser();
   const rows = useQuestionVersionRows(assignment.question_version_ids);
   const submit = useCreateSubmission();
+  const assistant = useDraftAiAssistant();
 
-  // 提交信封的 course_id/section_id 来自**本人当前有效选课**（`GET /me` 的 memberships）：
-  // 服务端会用自己的权威 section 覆盖请求值，但前端也不该拿令牌里的旧 scope 或作业目标去猜。
   const membership = useMemo(
     () =>
       currentUser.data?.memberships.find(
@@ -162,26 +169,46 @@ export function AssignmentWorkspace({
   }, [versions, selectedVersionId, initialQuestionVersionId]);
 
   const currentRow = rows.find((row) => row.questionVersionId === selectedVersionId) ?? null;
+  const currentOrdinal = currentRow?.ordinal ?? 1;
   const currentProgress = currentRow
     ? (progressByQuestion.get(currentRow.questionVersionId) ?? null)
     : null;
   const currentSubmission = currentProgress?.submission ?? null;
 
-  // ---- 本地草稿 v2 -------------------------------------------------------
+  // 拉取当前题最近一次提交的 `{ordinal}.txt` 内容（邮件提交与网页提交均会自动回填至编辑器）。
+  const submittedFile = useSubmissionFileText(
+    currentSubmission?.submission_id ?? null,
+    answerFileName(currentOrdinal),
+  );
+
+  // ---- 编辑器与草稿状态 -------------------------------------------------
   const [content, setContent] = useState("");
   const [uploadedFileName, setUploadedFileName] = useState<string | null>(null);
   const [issues, setIssues] = useState<string[]>([]);
   const [draftSavedAt, setDraftSavedAt] = useState<string | null>(null);
   const [restoredAt, setRestoredAt] = useState<string | null>(null);
+  const [syncedSubmissionId, setSyncedSubmissionId] = useState<string | null>(null);
+  const [hasUserEdited, setHasUserEdited] = useState(false);
   const [draftCandidate, setDraftCandidate] = useState<{
     content: string;
     updatedAt: string;
   } | null>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const loadedDraftKey = useRef<string | null>(null);
+  const syncedSubmissionRef = useRef<{ versionId: string; submissionId: string } | null>(
+    null,
+  );
   const idempotencyKeys = useRef<Map<string, string>>(new Map());
+  const gutterRef = useRef<HTMLDivElement | null>(null);
 
-  // 切题时读取该题的草稿：先问再恢复，绝不覆盖学生已经敲进去的内容。
+  // ---- 右下角双标签（AI 评价 vs AI 助教） ----------------------------------
+  const [bottomTab, setBottomTab] = useState<"evaluation" | "assistant">("evaluation");
+  const [assistantQuestion, setAssistantQuestion] = useState("");
+  const [assistantReplies, setAssistantReplies] = useState<
+    Record<string, DraftAiAssistantResponse>
+  >({});
+
+  // 切题时读取该题的本地草稿：先问再恢复，绝不静默覆盖尚未决策的内容。
   useEffect(() => {
     if (ownerId === null || selectedVersionId === null) return;
     const key = `${ownerId}:${assignment.assignment_id}:${selectedVersionId}`;
@@ -193,16 +220,52 @@ export function AssignmentWorkspace({
     setIssues([]);
     setDraftSavedAt(null);
     setRestoredAt(null);
+    setHasUserEdited(false);
+    setSyncedSubmissionId(null);
+    syncedSubmissionRef.current = null;
+    setAssistantQuestion("");
+    assistant.reset();
     setDraftCandidate(
       draft !== null && draft.content.trim() !== ""
         ? { content: draft.content, updatedAt: draft.updatedAt }
         : null,
     );
-  }, [ownerId, assignment.assignment_id, selectedVersionId]);
+  }, [ownerId, assignment.assignment_id, selectedVersionId, assistant]);
+
+  // 自动回填：当存在服务端最新提交且未与用户当前编辑冲突时，将提交代码/邮件附件填入编辑器。
+  useEffect(() => {
+    if (
+      selectedVersionId === null ||
+      currentSubmission === null ||
+      draftCandidate !== null ||
+      hasUserEdited ||
+      typeof submittedFile.data !== "string"
+    ) {
+      return;
+    }
+    const alreadySynced =
+      syncedSubmissionRef.current?.versionId === selectedVersionId &&
+      syncedSubmissionRef.current?.submissionId === currentSubmission.submission_id;
+    if (alreadySynced) return;
+    setContent(submittedFile.data);
+    setUploadedFileName(answerFileName(currentOrdinal));
+    setSyncedSubmissionId(currentSubmission.submission_id);
+    syncedSubmissionRef.current = {
+      versionId: selectedVersionId,
+      submissionId: currentSubmission.submission_id,
+    };
+  }, [
+    selectedVersionId,
+    currentSubmission,
+    draftCandidate,
+    hasUserEdited,
+    submittedFile.data,
+    currentOrdinal,
+  ]);
 
   const flushDraft = useCallback(() => {
     if (ownerId === null || selectedVersionId === null) return;
-    if (content.trim() === "") return;
+    if (!hasUserEdited || content.trim() === "") return;
     saveDraft({
       ownerId,
       assignmentId: assignment.assignment_id,
@@ -211,11 +274,18 @@ export function AssignmentWorkspace({
       updatedAt: new Date().toISOString(),
     });
     setDraftSavedAt(new Date().toISOString());
-  }, [ownerId, selectedVersionId, content, assignment.assignment_id]);
+  }, [ownerId, selectedVersionId, hasUserEdited, content, assignment.assignment_id]);
 
-  // 自动保存（800ms 防抖）。恢复询问未决时不写：否则会覆盖待恢复的那份草稿。
+  // 自动保存（800ms 防抖）：只有学生手动编辑过的内容才落本地草稿，避免把服务端回填代码当成未交草稿。
   useEffect(() => {
-    if (ownerId === null || selectedVersionId === null || draftCandidate !== null) return;
+    if (
+      ownerId === null ||
+      selectedVersionId === null ||
+      draftCandidate !== null ||
+      !hasUserEdited
+    ) {
+      return;
+    }
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
       saveDraft({
@@ -230,17 +300,16 @@ export function AssignmentWorkspace({
     return () => {
       if (saveTimer.current) clearTimeout(saveTimer.current);
     };
-  }, [content, ownerId, assignment.assignment_id, selectedVersionId, draftCandidate]);
+  }, [content, ownerId, assignment.assignment_id, selectedVersionId, draftCandidate, hasUserEdited]);
 
   function selectQuestion(nextVersionId: string) {
     flushDraft();
     if (saveTimer.current) clearTimeout(saveTimer.current);
-    // 换题时清掉上一题的提交结果横幅（mutation 状态是跨渲染保留的）。
     submit.reset();
     setSelectedVersionId(nextVersionId);
   }
 
-  // ---- 提交与进度 -------------------------------------------------------
+  // ---- 提交与实时评测流 --------------------------------------------------
   const [runInfo, setRunInfo] = useState<{ versionId: string; runId: string } | null>(null);
   const [pendingSubmission, setPendingSubmission] = useState<{
     versionId: string;
@@ -254,30 +323,37 @@ export function AssignmentWorkspace({
   );
   const stream = useEvaluationStream(runInfo?.runId ?? null);
   const terminal = stream.progress.terminal;
-  const refreshGrades = useCallback(() => {
+
+  const refreshGradesAndFiles = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ["grades"] });
+    void queryClient.invalidateQueries({ queryKey: ["submission-file"] });
+    void queryClient.invalidateQueries({ queryKey: ["evaluation-commentary"] });
   }, [queryClient]);
 
   useEffect(() => {
-    if (terminal !== null) refreshGrades();
-  }, [terminal, refreshGrades]);
+    if (terminal !== null) {
+      refreshGradesAndFiles();
+    }
+  }, [terminal, refreshGradesAndFiles]);
+
   useEffect(() => {
     if (pendingSubmission === null) return;
     const data = runLookup.data;
     if (data?.evaluation_run_id) {
       setRunInfo({ versionId: pendingSubmission.versionId, runId: data.evaluation_run_id });
       setPendingSubmission(null);
-      refreshGrades();
+      refreshGradesAndFiles();
       return;
     }
     if (data && ["completed", "rejected", "failed"].includes(data.state)) {
       setPendingSubmission(null);
-      refreshGrades();
+      refreshGradesAndFiles();
     }
-  }, [pendingSubmission, runLookup.data, refreshGrades]);
+  }, [pendingSubmission, runLookup.data, refreshGradesAndFiles]);
 
   const currentRunId = runInfo?.versionId === selectedVersionId ? runInfo.runId : null;
   const knownRunId = currentSubmission?.evaluation_run_id ?? null;
+  const displayRunId = knownRunId ?? (terminal === "completed" ? currentRunId : null);
 
   const [emailOpen, setEmailOpen] = useState(false);
 
@@ -296,13 +372,30 @@ export function AssignmentWorkspace({
         return;
       }
       setContent(text);
+      setHasUserEdited(true);
+      setSyncedSubmissionId(null);
       setUploadedFileName(file.name);
     } catch {
       setIssues([t("workspace.validate.readFailed")]);
     }
   };
 
-  const currentOrdinal = currentRow?.ordinal ?? 1;
+  const handleEditorKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key !== "Tab") return;
+    event.preventDefault();
+    const el = event.currentTarget;
+    const start = el.selectionStart;
+    const end = el.selectionEnd;
+    const next = `${content.slice(0, start)}    ${content.slice(end)}`;
+    setContent(next);
+    setHasUserEdited(true);
+    setUploadedFileName(null);
+    setSyncedSubmissionId(null);
+    requestAnimationFrame(() => {
+      el.selectionStart = el.selectionEnd = start + 4;
+    });
+  };
+
   const submitCurrent = async () => {
     if (currentRow === null || ownerId === null || mySectionId === null) return;
     const found = validateAnswer({ fileName: uploadedFileName, content }).map(issueMessage);
@@ -311,6 +404,7 @@ export function AssignmentWorkspace({
       return;
     }
     setIssues([]);
+    setBottomTab("evaluation");
     const questionVersionId = currentRow.questionVersionId;
     const idempotencyKey =
       idempotencyKeys.current.get(questionVersionId) ?? newIdempotencyKey();
@@ -336,11 +430,15 @@ export function AssignmentWorkspace({
     });
     submit.mutate(envelope, {
       onSuccess: (accepted) => {
-        // 先停掉尚未触发的自动保存：否则提交成功后 800ms 的定时器会把刚清掉的草稿写回来。
         if (saveTimer.current) clearTimeout(saveTimer.current);
         clearDraft(ownerId, assignment.assignment_id, questionVersionId);
         setDraftSavedAt(null);
         setRestoredAt(null);
+        setHasUserEdited(false);
+        syncedSubmissionRef.current = {
+          versionId: questionVersionId,
+          submissionId: accepted.submission_id,
+        };
         idempotencyKeys.current.set(questionVersionId, newIdempotencyKey());
         if (accepted.evaluation_run_id) {
           setRunInfo({ versionId: questionVersionId, runId: accepted.evaluation_run_id });
@@ -351,9 +449,30 @@ export function AssignmentWorkspace({
             acceptedRunId: null,
           });
         }
-        refreshGrades();
+        refreshGradesAndFiles();
       },
     });
+  };
+
+  const askAiAssistant = () => {
+    if (selectedVersionId === null || ownerId === null) return;
+    setBottomTab("assistant");
+    assistant.mutate(
+      {
+        assignment_id: assignment.assignment_id,
+        question_version_id: selectedVersionId,
+        draft_code: content,
+        student_question: assistantQuestion.trim() ? assistantQuestion.trim() : null,
+      },
+      {
+        onSuccess: (reply) => {
+          setAssistantReplies((prev) => ({
+            ...prev,
+            [selectedVersionId]: reply,
+          }));
+        },
+      },
+    );
   };
 
   const version = currentRow?.version ?? null;
@@ -362,24 +481,14 @@ export function AssignmentWorkspace({
   const completedCount = progress.questions.filter(
     (question) => question.state === "completed",
   ).length;
+  const lineCount = Math.max(14, content.split("\n").length);
+  const currentReply = selectedVersionId ? (assistantReplies[selectedVersionId] ?? null) : null;
 
   return (
-    <div className="stack">
-      <Panel
-        title={t("assignments.detailOverview")}
-        testId="workspace-overview"
-        actions={
-          <button
-            type="button"
-            className="button button--ghost"
-            data-testid="workspace-email-entry"
-            onClick={() => setEmailOpen(true)}
-          >
-            {t("submit.email.entry")}
-          </button>
-        }
-      >
-        <div className="inline">
+    <div className="lc-workspace">
+      {/* 顶部概览栏 */}
+      <div className="lc-topbar" data-testid="workspace-overview">
+        <div className="lc-topbar__meta">
           <StatusPill tone={assignment.status === "open" ? "ok" : "idle"}>
             {t(`assignments.status.${assignment.status}`)}
           </StatusPill>
@@ -414,116 +523,154 @@ export function AssignmentWorkspace({
             </span>
           )}
         </div>
-        {progress.truncated ? (
-          <Banner tone="warn" testId="workspace-progress-truncated">
-            {t("assignments.gradesTruncated")}
-          </Banner>
-        ) : null}
-        {progress.isError ? <ErrorState error={progress.error} testId="workspace-grades-error" /> : null}
-        {mySectionId === null ? (
-          <Banner tone="error" testId="workspace-scope-missing">
-            {t("workspace.scopeMissing")}
-          </Banner>
-        ) : null}
-      </Panel>
 
-      <div className="assignment-workspace">
-        <Panel
-          title={t("workspace.questionsTitle")}
-          testId="workspace-question-list"
-          className="assignment-workspace__questions"
-        >
-          <ul className="workspace-question-list">
-            {rows.map((row) => {
-              const questionProgress = progressByQuestion.get(row.questionVersionId) ?? null;
-              const active = row.questionVersionId === selectedVersionId;
-              const title =
-                row.question?.title ??
-                (row.isPending ? "—" : t("questions.titleUnavailable"));
-              return (
-                <li key={row.questionVersionId}>
-                  <button
-                    type="button"
-                    className={
-                      active
-                        ? "workspace-question workspace-question--active"
-                        : "workspace-question"
-                    }
-                    aria-current={active ? "true" : undefined}
-                    data-testid={`workspace-question-${row.ordinal}`}
-                    onClick={() => selectQuestion(row.questionVersionId)}
-                  >
-                    <span className="workspace-question__ordinal">{row.ordinal}.</span>
-                    <span className="workspace-question__title">{title}</span>
-                    <span className="workspace-question__status">
-                      {progress.complete ? (
-                        <StatusPill
-                          tone={questionStateTone(questionProgress?.state ?? "not_submitted")}
-                          testId={`workspace-question-state-${row.ordinal}`}
-                        >
-                          {questionStateLabel(questionProgress?.state ?? "not_submitted")}
-                        </StatusPill>
-                      ) : (
-                        // 成绩未取全：不显示"待提交"，那是没有依据的结论。
-                        <span className="muted" data-testid={`workspace-question-state-${row.ordinal}`}>
-                          <InlineLoader />
-                        </span>
-                      )}
-                    </span>
-                  </button>
-                </li>
-              );
-            })}
-          </ul>
-        </Panel>
+        <div className="lc-topbar__actions">
+          <button
+            type="button"
+            className="button button--ghost"
+            data-testid="workspace-email-entry"
+            title="支持按邮件模板与 N.txt 附件提交；成功解析后会发送确认邮件并自动同步填充至网页编辑器"
+            onClick={() => setEmailOpen(true)}
+          >
+            {t("submit.email.entry")}
+          </button>
+        </div>
+      </div>
 
-        <div className="stack">
+      {progress.truncated ? (
+        <Banner tone="warn" testId="workspace-progress-truncated">
+          {t("assignments.gradesTruncated")}
+        </Banner>
+      ) : null}
+      {progress.isError ? (
+        <ErrorState error={progress.error} testId="workspace-grades-error" />
+      ) : null}
+      {mySectionId === null ? (
+        <Banner tone="error" testId="workspace-scope-missing">
+          {t("workspace.scopeMissing")}
+        </Banner>
+      ) : null}
+
+      {/* 横向排列的作业题目切换栏 */}
+      <nav
+        className="lc-question-tabs-wrap"
+        aria-label={t("workspace.questionsTitle")}
+        data-testid="workspace-question-list"
+      >
+        <ul className="lc-question-tabs">
+          {rows.map((row) => {
+            const questionProgress = progressByQuestion.get(row.questionVersionId) ?? null;
+            const active = row.questionVersionId === selectedVersionId;
+            const title =
+              row.question?.title ??
+              (row.isPending ? "—" : t("questions.titleUnavailable"));
+            return (
+              <li key={row.questionVersionId}>
+                <button
+                  type="button"
+                  className={
+                    active
+                      ? "lc-question-tab lc-question-tab--active"
+                      : "lc-question-tab"
+                  }
+                  aria-current={active ? "true" : undefined}
+                  data-testid={`workspace-question-${row.ordinal}`}
+                  onClick={() => selectQuestion(row.questionVersionId)}
+                >
+                  <span className="lc-question-tab__ordinal">{row.ordinal}.</span>
+                  <span className="lc-question-tab__title">{title}</span>
+                  <span className="lc-question-tab__status">
+                    {progress.complete ? (
+                      <StatusPill
+                        tone={questionStateTone(questionProgress?.state ?? "not_submitted")}
+                        testId={`workspace-question-state-${row.ordinal}`}
+                      >
+                        {questionStateLabel(questionProgress?.state ?? "not_submitted")}
+                      </StatusPill>
+                    ) : (
+                      <span
+                        className="muted"
+                        data-testid={`workspace-question-state-${row.ordinal}`}
+                      >
+                        <InlineLoader />
+                      </span>
+                    )}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      </nav>
+
+      {/* LeetCode 风格分屏区：左侧题干 + 右侧代码编辑与评价/AI助教 */}
+      <div className="lc-split-pane">
+        <div className="lc-left-pane">
           <Panel title={t("submit.stemTitle")} testId="workspace-stem">
-            {currentRow === null ? (
-              <p className="muted">{t("assignments.noVersions")}</p>
-            ) : currentRow.error ? (
-              <ErrorState error={currentRow.error} testId={`workspace-version-error-${currentOrdinal}`} />
-            ) : currentRow.isPending || version === null ? (
-              <InlineLoader />
-            ) : (
-              <div className="stack">
-                <h2 className="panel__title" data-testid="workspace-question-title">
-                  {currentOrdinal}. {currentRow.question?.title ?? t("questions.titleUnavailable")}
-                </h2>
-                {version.status !== "published" ? (
-                  <Banner tone="warn" testId="workspace-version-not-published">
-                    {t("submit.versionNotPublished")}
-                  </Banner>
-                ) : null}
-                <SafeMarkdown source={version.stem_markdown} testId="stem-markdown" />
-                {(version.stem_assets ?? []).map((asset) => (
-                  <div key={asset.asset_id} className="stack">
-                    <StemAsset questionId={version.question_id} asset={asset} />
+            <div className="lc-left-pane__scroll stack">
+              {currentRow === null ? (
+                <p className="muted">{t("assignments.noVersions")}</p>
+              ) : currentRow.error ? (
+                <ErrorState
+                  error={currentRow.error}
+                  testId={`workspace-version-error-${currentOrdinal}`}
+                />
+              ) : currentRow.isPending || version === null ? (
+                <InlineLoader />
+              ) : (
+                <div className="stack">
+                  <div className="lc-stem-header">
+                    <h2 className="panel__title" data-testid="workspace-question-title">
+                      {currentOrdinal}.{" "}
+                      {currentRow.question?.title ?? t("questions.titleUnavailable")}
+                    </h2>
+                    <span className="lc-lang-badge">{version.language}</span>
                   </div>
-                ))}
-              </div>
-            )}
+                  {version.status !== "published" ? (
+                    <Banner tone="warn" testId="workspace-version-not-published">
+                      {t("submit.versionNotPublished")}
+                    </Banner>
+                  ) : null}
+                  <SafeMarkdown source={version.stem_markdown} testId="stem-markdown" />
+                  {(version.stem_assets ?? []).map((asset) => (
+                    <div key={asset.asset_id} className="stack">
+                      <StemAsset questionId={version.question_id} asset={asset} />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </Panel>
+        </div>
 
-          <Panel title={t("workspace.answerTitle")} testId="workspace-answer">
+        <div className="lc-right-pane">
+          {/* 右上：代码编辑器 */}
+          <Panel title={t("workspace.editorTitle")} testId="workspace-answer">
             <div className="stack">
-              <p className="muted workspace-answer__mapping" data-testid="workspace-file-mapping">
-                {t("workspace.fileMapping", {
-                  ordinal: currentOrdinal,
-                  fileName: answerFileName(currentOrdinal),
-                })}
-              </p>
+              <div className="lc-editor-toolbar">
+                <div className="lc-editor-toolbar__file">
+                  <span className="lc-editor-file-pill">
+                    {answerFileName(currentOrdinal)}
+                  </span>
+                  <span
+                    className="muted workspace-answer__mapping"
+                    data-testid="workspace-file-mapping"
+                  >
+                    {t("workspace.fileMapping", {
+                      ordinal: currentOrdinal,
+                      fileName: answerFileName(currentOrdinal),
+                    })}
+                  </span>
+                </div>
 
-              <div className="workspace-answer__file-row">
-                <label className="field">
-                  <span>{t("workspace.chooseFile")}</span>
+                <label className="lc-editor-upload-btn">
+                  <span className="muted">{t("workspace.chooseFile")}</span>
                   <input
                     type="file"
                     accept=".txt,text/plain"
                     data-testid="answer-file-input"
                     disabled={submit.isPending}
                     onClick={(event) => {
-                      // 允许重复选择同一个文件；文件名仍由原生控件显示在框内。
                       event.currentTarget.value = "";
                     }}
                     onChange={(event) => {
@@ -533,37 +680,69 @@ export function AssignmentWorkspace({
                 </label>
               </div>
 
-              <label className="field" htmlFor="workspace-answer-text">
-                <span>{t("workspace.answerLabel")}</span>
-                <textarea
-                  id="workspace-answer-text"
-                  className="input workspace-answer__textarea"
-                  data-testid="workspace-answer-text"
-                  value={content}
-                  disabled={submit.isPending}
-                  placeholder={t("workspace.answerPlaceholder")}
-                  onChange={(event) => {
-                    setContent(event.target.value);
-                    setUploadedFileName(null);
-                  }}
-                />
-              </label>
-
-              {draftSavedAt !== null ? (
-                <p className="muted" data-testid="workspace-draft-saved">
-                  {t("submit.draftSaved", {
-                    time: formatDateTime(draftSavedAt, t("common.none")),
-                  })}
-                </p>
-              ) : null}
-
-              {restoredAt !== null ? (
-                <Banner tone="info" testId="workspace-draft-restored">
-                  {t("submit.draftRestored", {
-                    time: formatDateTime(restoredAt, t("common.none")),
-                  })}
+              {syncedSubmissionId !== null ? (
+                <Banner tone="info" testId="workspace-synced-submission">
+                  {t("workspace.syncedFromSubmission")}（{answerFileName(currentOrdinal)}）
                 </Banner>
               ) : null}
+
+              {typeof submittedFile.data === "string" &&
+              content !== submittedFile.data &&
+              currentSubmission !== null ? (
+                <div className="inline">
+                  <button
+                    type="button"
+                    className="button button--ghost"
+                    data-testid="workspace-restore-submitted"
+                    onClick={() => {
+                      setContent(submittedFile.data ?? "");
+                      setHasUserEdited(false);
+                      setSyncedSubmissionId(currentSubmission.submission_id);
+                      if (selectedVersionId) {
+                        syncedSubmissionRef.current = {
+                          versionId: selectedVersionId,
+                          submissionId: currentSubmission.submission_id,
+                        };
+                      }
+                    }}
+                  >
+                    {t("workspace.restoreSubmittedCode")}
+                  </button>
+                </div>
+              ) : null}
+
+              <label className="field" htmlFor="workspace-answer-text">
+                <span className="sr-only">{t("workspace.answerLabel")}</span>
+                <div className="lc-code-shell">
+                  <div className="lc-code-gutter" ref={gutterRef} aria-hidden="true">
+                    {Array.from({ length: lineCount }, (_, i) => (
+                      <span key={i} className="lc-code-gutter__line">
+                        {i + 1}
+                      </span>
+                    ))}
+                  </div>
+                  <textarea
+                    id="workspace-answer-text"
+                    className="workspace-answer__textarea"
+                    data-testid="workspace-answer-text"
+                    disabled={submit.isPending}
+                    value={content}
+                    placeholder={t("workspace.answerPlaceholder")}
+                    onKeyDown={handleEditorKeyDown}
+                    onScroll={(event) => {
+                      if (gutterRef.current) {
+                        gutterRef.current.scrollTop = event.currentTarget.scrollTop;
+                      }
+                    }}
+                    onChange={(event) => {
+                      setContent(event.target.value);
+                      setHasUserEdited(true);
+                      setUploadedFileName(null);
+                      setSyncedSubmissionId(null);
+                    }}
+                  />
+                </div>
+              </label>
 
               {issues.length > 0 ? (
                 <Banner tone="error" testId="workspace-validation-issues">
@@ -581,106 +760,281 @@ export function AssignmentWorkspace({
                 </Banner>
               ) : null}
 
-              <div className="inline">
-                <button
-                  type="button"
-                  className="button"
-                  data-testid="workspace-submit"
-                  disabled={
-                    submit.isPending ||
-                    ownerId === null ||
-                    mySectionId === null ||
-                    version === null ||
-                    version.status !== "published" ||
-                    content.trim() === ""
-                  }
-                  onClick={() => void submitCurrent()}
-                >
-                  {submit.isPending
-                    ? t("submit.submitting")
-                    : t("workspace.submitButton")}
-                </button>
-              </div>
-
               {submit.isError ? (
                 <ApiErrorBanner error={submit.error} testId="workspace-submit-error" />
               ) : null}
-              {submit.isSuccess && currentSubmission === null && terminal === null ? (
-                <Banner tone="success" testId="workspace-submit-accepted">
-                  {t("workspace.submitted")}
-                  {submit.data.idempotent_replay ? ` · ${t("submit.idempotentReplay")}` : ""}
-                </Banner>
-              ) : null}
-              {pendingSubmission !== null &&
-              pendingSubmission.versionId === selectedVersionId ? (
-                <Banner tone="info" testId="workspace-run-pending">
-                  {t("workspace.preparingSubmission")}
-                </Banner>
-              ) : null}
 
-              {progress.complete && currentSubmission !== null ? (
-                <div className="stack" data-testid="workspace-current-result">
-                  <p>
-                    {t("workspace.currentResult")}：
-                    {currentSubmission.state === "completed" ? (
-                      typeof currentSubmission.score === "number" ? (
-                        <span className="muted">
-                          {t("grades.score")}：{currentSubmission.score} /{" "}
-                          {currentSubmission.max_score ?? "—"}
-                        </span>
-                      ) : (
-                        <span className="muted">{t("grades.notScored")}</span>
-                      )
-                    ) : null}
-                    {" "}
-                    <StatusPill
-                      tone={questionStateTone(currentProgress?.state ?? "not_submitted")}
-                    >
-                      {questionStateLabel(currentProgress?.state ?? "not_submitted")}
-                    </StatusPill>
-                  </p>
-                  <div className="inline">
-                    <span className="muted">
-                      {t("grades.submittedAt")}：
-                      {formatDateTime(currentSubmission.submitted_at, t("common.none"))}
+              <div className="lc-editor-footer">
+                <div className="inline">
+                  {draftSavedAt !== null ? (
+                    <span className="muted" data-testid="workspace-draft-saved">
+                      {t("submit.draftSaved", {
+                        time: formatDateTime(draftSavedAt, t("common.none")),
+                      })}
                     </span>
-                    {knownRunId !== null ? (
-                      <Link
-                        className="button button--ghost"
-                        to="/grades"
-                        search={{ evaluation_run_id: knownRunId }}
-                        data-testid="workspace-open-result"
-                      >
-                        {t("workspace.viewDetail")}
-                      </Link>
-                    ) : null}
-                  </div>
+                  ) : null}
+                  {restoredAt !== null ? (
+                    <Banner tone="info" testId="workspace-draft-restored">
+                      {t("submit.draftRestored", {
+                        time: formatDateTime(restoredAt, t("common.none")),
+                      })}
+                    </Banner>
+                  ) : null}
                 </div>
-              ) : null}
+
+                <div className="lc-editor-footer__actions">
+                  <button
+                    type="button"
+                    className="button button--ghost lc-ai-button"
+                    data-testid="workspace-ai-assistant"
+                    disabled={
+                      assistant.isPending ||
+                      ownerId === null ||
+                      version === null ||
+                      selectedVersionId === null
+                    }
+                    onClick={askAiAssistant}
+                  >
+                    {assistant.isPending
+                      ? t("workspace.aiAssistantGenerating")
+                      : `✨ ${t("workspace.aiAssistantButton")}`}
+                  </button>
+
+                  <button
+                    type="button"
+                    className="button"
+                    data-testid="workspace-submit"
+                    disabled={
+                      submit.isPending ||
+                      ownerId === null ||
+                      mySectionId === null ||
+                      version === null ||
+                      version.status !== "published" ||
+                      content.trim() === ""
+                    }
+                    onClick={() => void submitCurrent()}
+                  >
+                    {submit.isPending ? t("submit.submitting") : t("workspace.submitButton")}
+                  </button>
+                </div>
+              </div>
             </div>
           </Panel>
 
-          {currentRunId !== null ? (
-            <Panel title={t("submit.progressTitle")} testId="progress-section">
-              <ProgressPanel
-                progress={stream.progress}
-                status={stream.status}
-                error={stream.error}
-              />
-              {terminal === "completed" ? (
-                <div className="inline">
-                  <Link
+          {/* 右下：AI 评价与评测结果 / AI 助教双标签面板 */}
+          <Panel testId="workspace-bottom-panel">
+            <div className="lc-bottom-tabs" role="tablist">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={bottomTab === "evaluation"}
+                className={
+                  bottomTab === "evaluation"
+                    ? "lc-bottom-tab lc-bottom-tab--active"
+                    : "lc-bottom-tab"
+                }
+                data-testid="workspace-tab-evaluation"
+                onClick={() => setBottomTab("evaluation")}
+              >
+                {t("workspace.tabEvaluation")}
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={bottomTab === "assistant"}
+                className={
+                  bottomTab === "assistant"
+                    ? "lc-bottom-tab lc-bottom-tab--active"
+                    : "lc-bottom-tab"
+                }
+                data-testid="workspace-tab-assistant"
+                onClick={() => setBottomTab("assistant")}
+              >
+                {t("workspace.tabAssistant")}
+              </button>
+            </div>
+
+            {bottomTab === "evaluation" ? (
+              <div className="stack">
+                {submit.isSuccess && currentSubmission === null && terminal === null ? (
+                  <Banner tone="success" testId="workspace-submit-accepted">
+                    {t("workspace.submitted")}
+                    {submit.data.idempotent_replay
+                      ? ` · ${t("submit.idempotentReplay")}`
+                      : ""}
+                  </Banner>
+                ) : null}
+
+                {pendingSubmission !== null &&
+                pendingSubmission.versionId === selectedVersionId ? (
+                  <Banner tone="info" testId="workspace-run-pending">
+                    {t("workspace.preparingSubmission")}
+                  </Banner>
+                ) : null}
+
+                {currentRunId !== null ? (
+                  <div className="stack" data-testid="progress-section">
+                    <ProgressPanel
+                      progress={stream.progress}
+                      status={stream.status}
+                      error={stream.error}
+                    />
+                    {terminal === "completed" ? (
+                      <div className="inline">
+                        <Link
+                          className="button"
+                          to="/grades"
+                          search={{ evaluation_run_id: currentRunId }}
+                          data-testid="open-result"
+                        >
+                          {t("submit.openResult")}
+                        </Link>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {progress.complete && currentSubmission !== null ? (
+                  <div className="stack" data-testid="workspace-current-result">
+                    <p>
+                      {t("workspace.currentResult")}：
+                      {currentSubmission.state === "completed" ? (
+                        typeof currentSubmission.score === "number" ? (
+                          <span className="muted">
+                            {t("grades.score")}：{currentSubmission.score} /{" "}
+                            {currentSubmission.max_score ?? "—"}
+                          </span>
+                        ) : (
+                          <span className="muted">{t("grades.notScored")}</span>
+                        )
+                      ) : null}{" "}
+                      <StatusPill
+                        tone={questionStateTone(
+                          currentProgress?.state ?? "not_submitted",
+                        )}
+                      >
+                        {questionStateLabel(currentProgress?.state ?? "not_submitted")}
+                      </StatusPill>
+                    </p>
+                    <div className="inline">
+                      <span className="muted">
+                        {t("grades.submittedAt")}：
+                        {formatDateTime(currentSubmission.submitted_at, t("common.none"))}
+                      </span>
+                      {knownRunId !== null ? (
+                        <Link
+                          className="button button--ghost"
+                          to="/grades"
+                          search={{ evaluation_run_id: knownRunId }}
+                          data-testid="workspace-open-result"
+                        >
+                          {t("workspace.viewDetail")}
+                        </Link>
+                      ) : null}
+                    </div>
+                  </div>
+                ) : null}
+
+                {displayRunId !== null ? (
+                  <CommentarySection runId={displayRunId} showAdvisory={false} />
+                ) : null}
+
+                {currentRunId === null &&
+                currentSubmission === null &&
+                !submit.isSuccess &&
+                pendingSubmission === null ? (
+                  <p className="muted" data-testid="workspace-no-evaluation">
+                    {t("workspace.noEvaluationYet")}
+                  </p>
+                ) : null}
+              </div>
+            ) : (
+              <div className="lc-assistant-card" data-testid="workspace-ai-assistant-panel">
+                <div className="lc-assistant-ask">
+                  <input
+                    type="text"
+                    className="input"
+                    data-testid="workspace-ai-question-input"
+                    placeholder={t("workspace.aiAssistantPlaceholder")}
+                    value={assistantQuestion}
+                    disabled={assistant.isPending}
+                    onChange={(event) => setAssistantQuestion(event.target.value)}
+                  />
+                  <button
+                    type="button"
                     className="button"
-                    to="/grades"
-                    search={{ evaluation_run_id: currentRunId }}
-                    data-testid="open-result"
+                    data-testid="workspace-ai-assistant-refresh"
+                    disabled={
+                      assistant.isPending ||
+                      ownerId === null ||
+                      version === null ||
+                      selectedVersionId === null
+                    }
+                    onClick={askAiAssistant}
                   >
-                    {t("submit.openResult")}
-                  </Link>
+                    {assistant.isPending
+                      ? t("workspace.aiAssistantGenerating")
+                      : t("workspace.aiAssistantRefresh")}
+                  </button>
                 </div>
-              ) : null}
-            </Panel>
-          ) : null}
+
+                {assistant.isPending ? <InlineLoader /> : null}
+                {assistant.isError ? (
+                  <ApiErrorBanner error={assistant.error} testId="workspace-ai-error" />
+                ) : null}
+
+                {currentReply ? (
+                  <div className="stack" data-testid="workspace-ai-reply">
+                    <div className="lc-assistant-section">
+                      <h4>{t("workspace.aiAssistantDiagnosis")}</h4>
+                      <p>{currentReply.stage_diagnosis}</p>
+                    </div>
+
+                    <div className="lc-assistant-section">
+                      <h4>{t("workspace.aiAssistantNextSteps")}</h4>
+                      <ol>
+                        {currentReply.next_steps.map((step, idx) => (
+                          <li key={idx}>{step}</li>
+                        ))}
+                      </ol>
+                    </div>
+
+                    {currentReply.key_concepts.length > 0 ? (
+                      <div className="lc-assistant-section">
+                        <h4>{t("workspace.aiAssistantConcepts")}</h4>
+                        <div className="lc-assistant-chips">
+                          {currentReply.key_concepts.map((concept, idx) => (
+                            <span key={idx} className="lc-assistant-chip">
+                              {concept}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {currentReply.check_points.length > 0 ? (
+                      <div className="lc-assistant-section">
+                        <h4>{t("workspace.aiAssistantCheckpoints")}</h4>
+                        <ul>
+                          {currentReply.check_points.map((cp, idx) => (
+                            <li key={idx}>{cp}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : null}
+
+                    {currentReply.disclaimers.length > 0 ? (
+                      <p className="muted">
+                        {currentReply.disclaimers.join(" · ")}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : !assistant.isPending ? (
+                  <p className="muted">{t("workspace.aiAssistantEmpty")}</p>
+                ) : null}
+              </div>
+            )}
+          </Panel>
         </div>
       </div>
 
@@ -708,7 +1062,9 @@ export function AssignmentWorkspace({
               onClick={() => {
                 setContent(draftCandidate.content);
                 setRestoredAt(draftCandidate.updatedAt);
+                setHasUserEdited(true);
                 setUploadedFileName(null);
+                setSyncedSubmissionId(null);
                 setDraftCandidate(null);
               }}
             >
@@ -735,7 +1091,10 @@ export function AssignmentWorkspace({
         <Modal
           title={t("submit.email.title")}
           testId="email-modal"
-          onClose={() => setEmailOpen(false)}
+          onClose={() => {
+            setEmailOpen(false);
+            refreshGradesAndFiles();
+          }}
         >
           <EmailSubmissionPanel
             assignment={assignment}
@@ -744,7 +1103,7 @@ export function AssignmentWorkspace({
             sectionLabel={sectionLabel}
             currentUser={currentUser.data}
             questionRows={rows}
-            onReceived={refreshGrades}
+            onReceived={refreshGradesAndFiles}
           />
         </Modal>
       ) : null}

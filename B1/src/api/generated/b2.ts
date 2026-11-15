@@ -44,6 +44,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/submissions/ai-assistant": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Provide real-time AI tutor guidance for a student's current draft code
+         * @description Reads the student's current draft code from the editor alongside the question stem
+         *     and protected reference answer on the server side, and returns heuristic next-step
+         *     guidance without revealing the full reference solution.
+         */
+        post: operations["generateDraftAiAssistance"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/submissions/{submission_id}": {
         parameters: {
             query?: never;
@@ -1501,6 +1523,25 @@ export interface components {
             /** @description The assignment this challenge belongs to; null only for historical challenges issued before CHG-0032. */
             assignment_id?: components["schemas"]["Uuid"] | null;
         };
+        DraftAiAssistantRequest: {
+            assignment_id: components["schemas"]["Uuid"];
+            question_version_id: components["schemas"]["Uuid"];
+            /** @description Current draft source code in the student's editor (may be empty). */
+            draft_code: string;
+            /** @description Optional specific question or blocker entered by the student. */
+            student_question?: string | null;
+        };
+        DraftAiAssistantResponse: {
+            question_version_id: components["schemas"]["Uuid"];
+            provider_name: string;
+            model_name: string;
+            generated_at: components["schemas"]["Timestamp"];
+            stage_diagnosis: string;
+            next_steps: string[];
+            key_concepts: string[];
+            check_points: string[];
+            disclaimers: string[];
+        };
         file: {
             /** @description Single-segment .txt answer file. In an assignment, the file name is the 1-based question ordinal: 1.txt, 2.txt, ... */
             path: string;
@@ -1891,6 +1932,35 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             413: components["responses"]["PayloadTooLarge"];
+            422: components["responses"]["UnprocessableEntity"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    generateDraftAiAssistance: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DraftAiAssistantRequest"];
+            };
+        };
+        responses: {
+            /** @description AI tutor guidance generated. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DraftAiAssistantResponse"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
             422: components["responses"]["UnprocessableEntity"];
             503: components["responses"]["ServiceUnavailable"];
         };

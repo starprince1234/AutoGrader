@@ -1,89 +1,369 @@
-/* 作业工作区（学生）的页面私有布局：左侧题目列表 + 右侧题干/答题区。 */
+/* LeetCode 风格学生作业工作台布局（顶部横向题号栏 + 左题干/右编辑器与底栏评价/AI 助教）。 */
 
-.assignment-workspace {
-  display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
-  gap: 16px;
-  align-items: start;
-}
-
-.assignment-workspace__questions {
-  position: sticky;
-  top: 16px;
-}
-
-.workspace-question-list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+.lc-workspace {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 12px;
 }
 
-.workspace-question {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  gap: 2px 8px;
-  width: 100%;
-  padding: 10px 12px;
-  text-align: left;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  color: inherit;
-  cursor: pointer;
+/* 顶部概览与操作栏 */
+.lc-topbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
 }
 
-.workspace-question:hover {
-  background: var(--color-surface-2);
+.lc-topbar__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
 }
 
-.workspace-question--active {
-  background: var(--color-surface-2);
-  border-color: var(--color-border-strong);
-}
-
-.workspace-question__ordinal {
-  font-variant-numeric: tabular-nums;
-  color: var(--color-text-faint);
-}
-
-.workspace-question__title {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.workspace-question__status {
-  grid-column: 2;
-}
-
-.workspace-answer__textarea {
-  width: 100%;
-  min-height: 480px;
-  resize: vertical;
-  font-family: var(--font-mono);
-  line-height: 1.5;
-}
-
-.workspace-answer__file-row {
+.lc-topbar__actions {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
 }
 
-.workspace-answer__mapping {
+/* 横向题目导航标签栏 */
+.lc-question-tabs-wrap {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 8px 12px;
+}
+
+.lc-question-tabs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 8px;
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+
+.lc-question-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-2);
+  color: var(--color-text);
+  cursor: pointer;
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-size: 13px;
+  transition: background-color 140ms ease, border-color 140ms ease;
+}
+
+.lc-question-tab:hover {
+  background: var(--color-surface-hover);
+  border-color: var(--color-border-strong);
+}
+
+.lc-question-tab--active {
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent);
+  font-weight: 600;
+}
+
+.lc-question-tab__ordinal {
+  font-variant-numeric: tabular-nums;
+  color: var(--color-text-faint);
+}
+
+.lc-question-tab__title {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lc-question-tab__status {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* 主分屏区：左侧题干 + 右侧（编辑器 + 评价/助教） */
+.lc-split-pane {
+  display: grid;
+  grid-template-columns: minmax(340px, 44%) minmax(420px, 56%);
+  gap: 14px;
+  align-items: stretch;
+}
+
+.lc-left-pane {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.lc-left-pane .panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 220px);
+  min-height: 560px;
+}
+
+.lc-left-pane__scroll {
+  overflow-y: auto;
+  padding-right: 4px;
+  flex: 1;
+}
+
+.lc-stem-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.lc-lang-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-family: var(--font-mono);
+  background: var(--color-surface-3);
+  color: var(--color-text-muted);
+}
+
+/* 右侧上下分栏 */
+.lc-right-pane {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* 代码编辑器区 */
+.lc-editor-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+}
+
+.lc-editor-toolbar__file {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.lc-editor-file-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border-strong);
+}
+
+.lc-editor-upload-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.lc-editor-upload-btn input[type="file"] {
+  max-width: 190px;
+  font-size: 12px;
+}
+
+.lc-code-shell {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--color-surface-2);
+}
+
+.lc-code-gutter {
+  margin: 0;
+  padding: 12px 6px;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--color-text-faint);
+  background: var(--color-surface-3);
+  border-right: 1px solid var(--color-border);
+  user-select: none;
+  overflow: hidden;
+  max-height: 360px;
   font-variant-numeric: tabular-nums;
 }
 
-@media (max-width: 860px) {
-  .assignment-workspace {
+.lc-code-gutter__line {
+  display: block;
+}
+
+.workspace-answer__textarea {
+  width: 100%;
+  min-height: 320px;
+  max-height: 460px;
+  padding: 12px;
+  border: none;
+  border-radius: 0;
+  resize: vertical;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.55;
+  tab-size: 4;
+  background: transparent;
+  color: inherit;
+  outline: none;
+}
+
+.lc-editor-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.lc-editor-footer__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.lc-ai-button {
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent);
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.lc-ai-button:hover:not(:disabled) {
+  background: var(--color-accent);
+  color: #ffffff;
+}
+
+/* 右下 Tab 面板（AI 评价 / AI 助教） */
+.lc-bottom-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-bottom: 1px solid var(--color-border);
+  padding-bottom: 8px;
+  margin-bottom: 10px;
+}
+
+.lc-bottom-tab {
+  padding: 6px 12px;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.lc-bottom-tab:hover {
+  background: var(--color-surface-2);
+  color: var(--color-text);
+}
+
+.lc-bottom-tab--active {
+  background: var(--color-accent-soft);
+  border-color: var(--color-accent);
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.lc-assistant-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.lc-assistant-ask {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.lc-assistant-ask .input {
+  flex: 1;
+}
+
+.lc-assistant-section {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border);
+}
+
+.lc-assistant-section h4 {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+.lc-assistant-section ul,
+.lc-assistant-section ol {
+  margin: 0;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.lc-assistant-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.lc-assistant-chip {
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: var(--color-accent-soft);
+  border: 1px solid var(--color-border-strong);
+}
+
+@media (max-width: 980px) {
+  .lc-split-pane {
     grid-template-columns: 1fr;
   }
 
-  .assignment-workspace__questions {
-    position: static;
+  .lc-left-pane .panel {
+    max-height: none;
+    min-height: 280px;
   }
 }

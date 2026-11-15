@@ -73,6 +73,32 @@ paths:
         '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
         '503': {$ref: './common.yaml#/components/responses/ServiceUnavailable'}
 
+  /api/v1/submissions/ai-assistant:
+    post:
+      operationId: generateDraftAiAssistance
+      summary: Provide real-time AI tutor guidance for a student's current draft code
+      description: |
+        Reads the student's current draft code from the editor alongside the question stem
+        and protected reference answer on the server side, and returns heuristic next-step
+        guidance without revealing the full reference solution.
+      tags: [submissions]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DraftAiAssistantRequest'}
+      responses:
+        '200':
+          description: AI tutor guidance generated.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/DraftAiAssistantResponse'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+        '503': {$ref: './common.yaml#/components/responses/ServiceUnavailable'}
+
   /api/v1/submissions/{submission_id}:
     parameters:
       - {name: submission_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
@@ -1920,4 +1946,52 @@ components:
         assignment_id:
           anyOf: [{$ref: './common.yaml#/components/schemas/Uuid'}, {type: "null"}]
           description: "The assignment this challenge belongs to; null only for historical challenges issued before CHG-0032."
+      additionalProperties: false
+
+    DraftAiAssistantRequest:
+      type: object
+      required: [assignment_id, question_version_id, draft_code]
+      properties:
+        assignment_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        question_version_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        draft_code:
+          type: string
+          maxLength: 65536
+          description: Current draft source code in the student's editor (may be empty).
+        student_question:
+          type: [string, "null"]
+          maxLength: 1000
+          description: Optional specific question or blocker entered by the student.
+      additionalProperties: false
+
+    DraftAiAssistantResponse:
+      type: object
+      required:
+        - question_version_id
+        - provider_name
+        - model_name
+        - generated_at
+        - stage_diagnosis
+        - next_steps
+        - key_concepts
+        - check_points
+        - disclaimers
+      properties:
+        question_version_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        provider_name: {type: string}
+        model_name: {type: string}
+        generated_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+        stage_diagnosis: {type: string}
+        next_steps:
+          type: array
+          items: {type: string}
+        key_concepts:
+          type: array
+          items: {type: string}
+        check_points:
+          type: array
+          items: {type: string}
+        disclaimers:
+          type: array
+          items: {type: string}
       additionalProperties: false

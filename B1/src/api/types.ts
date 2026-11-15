@@ -268,6 +268,8 @@ export type GradeRow = B2Schemas["GradeRow"] & {
 export type GradePage = JsonBody<B2Operations["listGrades"], 200>;
 export type EvaluationReport = B2Schemas["evaluation-report.schema"];
 export type SubmissionEnvelope = B2Schemas["submission-envelope.schema"];
+export type DraftAiAssistantRequest = B2Schemas["DraftAiAssistantRequest"];
+export type DraftAiAssistantResponse = B2Schemas["DraftAiAssistantResponse"];
 
 /**
  * 逐用例证据（RQ-B-2-50 + CHG-0012）。
