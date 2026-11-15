@@ -110,7 +110,7 @@ function ProposalPreview({
             {referenceTiers.map((tier, index) => (
               <div className="stack" key={`${index}-${tier.label}`}>
                 <strong>{tier.label}</strong>
-                <pre>{tier.body}</pre>
+                <pre className="preview-code">{tier.body}</pre>
               </div>
             ))}
           </div>
@@ -122,7 +122,7 @@ function ProposalPreview({
       <section className="case-card stack" data-testid="generation-card-rubric">
         <h4>{t("authoring.generation.cardRubricTitle")}</h4>
         {proposal.grading_prompt ? (
-          <pre data-testid="generation-grading-prompt">{proposal.grading_prompt}</pre>
+          <pre className="preview-prose" data-testid="generation-grading-prompt">{proposal.grading_prompt}</pre>
         ) : (
           <p className="muted">{t("authoring.generation.noGradingPrompt")}</p>
         )}

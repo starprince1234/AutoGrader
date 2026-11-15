@@ -811,7 +811,7 @@ export function AuthoringPage({
                       {tier.body.trim() === "" ? (
                         <p className="muted">—</p>
                       ) : (
-                        <pre>{tier.body}</pre>
+                        <pre className="preview-code">{tier.body}</pre>
                       )}
                     </div>
                   ))}
@@ -821,7 +821,7 @@ export function AuthoringPage({
                   {form.gradingPrompt.trim() === "" ? (
                     <p className="muted">{t("authoring.preview.emptyGradingPrompt")}</p>
                   ) : (
-                    <pre>{form.gradingPrompt}</pre>
+                    <pre className="preview-prose">{form.gradingPrompt}</pre>
                   )}
                 </div>
               </section>
