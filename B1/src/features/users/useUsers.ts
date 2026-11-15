@@ -25,13 +25,34 @@ export type UserListPage = { items: UserSummary[]; nextCursor: string | null };
  * 在管理页上**静默消失**（管理员据此判断"这个账号不存在"）。因此跟随 `next_cursor`，
  * 由页面提供"已加载 N 位 / 加载更多 / 已到末页"。
  */
-export function useUsers(role: Role | null) {
+export type UserListFilters = {
+  role: Role | null;
+  isActive: boolean | null;
+  className: string;
+  q: string;
+};
+
+export function useUsers(filters: UserListFilters) {
+  const normalizedClass = filters.className.trim();
+  const normalizedQ = filters.q.trim();
   return useInfiniteQuery({
-    queryKey: queryKeys.users(role),
+    queryKey: queryKeys.users({
+      role: filters.role,
+      isActive: filters.isActive,
+      className: normalizedClass,
+      q: normalizedQ,
+    }),
     initialPageParam: null as string | null,
     queryFn: async ({ pageParam }): Promise<UserListPage> => {
       const page = await apiRequest<UserPage>("/api/v1/users", {
-        query: { limit: USER_PAGE_SIZE, role: role ?? undefined, cursor: pageParam ?? undefined },
+        query: {
+          limit: USER_PAGE_SIZE,
+          role: filters.role ?? undefined,
+          is_active: filters.isActive ?? undefined,
+          class_name: normalizedClass || undefined,
+          q: normalizedQ || undefined,
+          cursor: pageParam ?? undefined,
+        },
       });
       return { items: page.items, nextCursor: page.next_cursor ?? null };
     },
@@ -103,6 +124,37 @@ export function useUpdateUserRoles() {
         request_id: requestId,
         user_id: input.userId,
         roles: input.roles,
+      });
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["users"] });
+    },
+  });
+}
+
+/** 补录/修改学号（`PATCH /api/v1/users/{user_id}`），服务端同步按学号+姓名自动绑定课程选课。 */
+export function useUpdateUserStudentNumber() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      userId: string;
+      studentNumber: string | null;
+      expectedUpdatedAt: string;
+    }): Promise<void> => {
+      const requestId = newRequestId();
+      const body: UpdateUserRequest = {
+        student_number: input.studentNumber,
+        expected_updated_at: input.expectedUpdatedAt,
+      };
+      await apiRequest<void>(`/api/v1/users/${encodeURIComponent(input.userId)}`, {
+        method: "PATCH",
+        body,
+        requestId,
+      });
+      log({
+        event: "user_student_number_updated",
+        request_id: requestId,
+        user_id: input.userId,
       });
     },
     onSuccess: async () => {

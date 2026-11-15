@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AutoGrader B4 Platform API
-  version: 0.34.0
+  version: 0.35.0
   description: |
     Identity, courses, sections, enrollments, roster import, audit and the runtime
     module registry. Owned by B4 (RQ-B-4-10/20/30/40/50/99).
@@ -269,6 +269,10 @@ paths:
                   username: {type: string}
                   bound_course_count: {type: integer, minimum: 0}
                   identity_mismatch_count: {type: integer, minimum: 0}
+                  registered_classes:
+                    type: array
+                    items: {type: string}
+                    description: "Allowlist class names matched by the registered student_number + display_name."
                 additionalProperties: false
         '409': {$ref: './common.yaml#/components/responses/Conflict'}
         '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
@@ -792,9 +796,21 @@ paths:
           description: |
             Restrict the page to holders of that **platform** role (a course-scoped grant is
             not a platform role). The filter selects rows; it never widens what a row shows.
-            There is no name/username search: the contract declares none, and a client that
-            pulled the whole table to filter locally would spread identity data for a feature
-            the server does not offer.
+        - name: is_active
+          in: query
+          required: false
+          schema: {type: boolean}
+          description: "Filter by account activation status (true = active only, false = deactivated only)."
+        - name: class_name
+          in: query
+          required: false
+          schema: {type: string, minLength: 1, maxLength: 64}
+          description: "Restrict to users belonging to the given allowlist or enrolled class name."
+        - name: q
+          in: query
+          required: false
+          schema: {type: string, minLength: 1, maxLength: 100}
+          description: "Case-insensitive substring match against username, display_name, or student_number."
       responses:
         '200':
           description: Page of users.
@@ -867,6 +883,7 @@ paths:
               type: object
               properties:
                 display_name: {type: string, minLength: 1, maxLength: 200}
+                student_number: {type: [string, "null"], maxLength: 64}
                 email: {type: [string, "null"], format: email, maxLength: 320}
                 roles:
                   type: array
@@ -1811,6 +1828,10 @@ components:
             class. Empty for staff-only accounts. This is how a student can see -- and switch
             between -- every course they belong to without reading a staff-only roster.
           items: {$ref: '#/components/schemas/MyMembership'}
+        registered_classes:
+          type: array
+          items: {type: string}
+          description: "Allowlist class names the caller belongs to (by student_number + display_name)."
       additionalProperties: false
 
     UserSummary:
@@ -1841,6 +1862,14 @@ components:
             against, so it is required here: without it a client can only send a timestamp it
             guessed, and concurrent administrator edits either always conflict or never do.
         created_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+        registered_classes:
+          type: array
+          items: {type: string}
+          description: "Allowlist class names matched by this user's student_number and display_name."
+        course_bindings:
+          type: array
+          items: {$ref: '#/components/schemas/MyMembership'}
+          description: "Active course/section/class enrollments bound to this user."
       additionalProperties: false
 
     AllowlistBatch:

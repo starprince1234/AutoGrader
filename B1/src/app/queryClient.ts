@@ -42,7 +42,12 @@ export const queryKeys = {
   /** 服务端聚合的课程受众计数（`roster-summary`）。 */
   rosterSummary: (courseId: string) => ["roster-summary", courseId] as const,
   rosterImport: (id: string) => ["roster-import", id] as const,
-  users: (role: string | null) => ["users", role] as const,
+  users: (filter: {
+    role: string | null;
+    isActive: boolean | null;
+    className: string;
+    q: string;
+  }) => ["users", filter] as const,
   /** 当前生效的注册名单批次（P14）。只有一个对象，没有筛选维度可进键。 */
   registrationAllowlist: ["registration-allowlist"] as const,
   allowlistBatches: ["allowlist-batches"] as const,

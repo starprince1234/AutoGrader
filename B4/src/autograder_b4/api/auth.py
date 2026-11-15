@@ -488,6 +488,7 @@ def build_auth_router(state: B4State, dependencies: Dependencies) -> APIRouter:
         if row is None:  # pragma: no cover - a valid session implies an existing user
             raise unauthenticated()
         from ..classes import my_memberships
+        from ..registration import allowlist_class_names
 
         return {
             "user_id": str(row.user_id),
@@ -496,6 +497,11 @@ def build_auth_router(state: B4State, dependencies: Dependencies) -> APIRouter:
             "student_number": row.student_number,
             "roles": sorted(caller.all_roles),
             "memberships": my_memberships(connection, caller.user_id),
+            "registered_classes": allowlist_class_names(
+                connection,
+                student_number=row.student_number,
+                display_name=row.display_name,
+            ),
         }
 
     return router

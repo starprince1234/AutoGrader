@@ -1537,6 +1537,22 @@ export const messages = {
 "users.signInAgain": "重新登录",
 "users.filterRole": "按角色筛选",
 "users.allRoles": "全部角色",
+"users.filterStatus": "账号状态",
+"users.statusAll": "全部状态",
+"users.statusActiveOnly": "仅看启用",
+"users.statusInactiveOnly": "仅看已停用",
+"users.filterClass": "按班级筛选",
+"users.filterClassPlaceholder": "输入班级名（如 计金班）",
+"users.filterQuery": "关键词",
+"users.filterQueryPlaceholder": "姓名 / 用户名 / 学号",
+"users.classesAndCourses": "所属班级与课程",
+"users.registeredClasses": "注册班级",
+"users.courseBindings": "已绑定课程",
+"users.noCourseBindings": "暂未绑定课程",
+"users.editStudentNumber": "补录 / 修改学号",
+"users.studentNumberPlaceholder": "输入 13 位学号（留空则清空）",
+"users.saveStudentNumber": "保存学号并绑定",
+"users.studentNumberUpdated": "学号已更新并同步绑定课程（{username}）。",
 
     // ---------------------------------------------------------------- 教学评语与 AI 参考分（RQ-T-20/T-30）
     // 两轨分离（ADR-0009 / ADR-0014）：权威分是确定性的，本轨是模型输出，**永不进入判分**。
@@ -1836,6 +1852,8 @@ export const messages = {
 
     "assignments.courseWideAudience": "发布后对本课程全部课序的学生生效。",
     "assignments.myMembershipsTitle": "我的课程与班级",
+    "assignments.myRegisteredClasses": "所属注册班级",
+    "assignments.myRegisteredClassesPendingCourse": "您已属于注册班级「{classes}」，等待教师将该班级关联到课程后即可查看作业。",
     "assignments.myName": "姓名",
     "assignments.myStudentNumber": "学号",
     "assignments.myCoursesEmpty": "当前账号还没有有效选课。",

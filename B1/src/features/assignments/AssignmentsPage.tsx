@@ -352,6 +352,7 @@ function TeacherAssignmentList({
 function MyMembershipsPanel() {
   const currentUser = useCurrentUser();
   const memberships = currentUser.data?.memberships ?? [];
+  const registeredClasses = currentUser.data?.registered_classes ?? [];
   return (
     <Panel title={t("assignments.myMembershipsTitle")} testId="my-memberships">
       {currentUser.isPending ? (
@@ -370,9 +371,22 @@ function MyMembershipsPanel() {
               {t("assignments.myStudentNumber")}：
               {currentUser.data?.student_number ?? t("common.none")}
             </span>
+            {registeredClasses.length > 0 ? (
+              <span className="muted" data-testid="my-registered-classes">
+                {t("assignments.myRegisteredClasses")}：{registeredClasses.join("、")}
+              </span>
+            ) : null}
           </div>
           {memberships.length === 0 ? (
-            <EmptyState>{t("assignments.myCoursesEmpty")}</EmptyState>
+            registeredClasses.length > 0 ? (
+              <EmptyState>
+                {t("assignments.myRegisteredClassesPendingCourse", {
+                  classes: registeredClasses.join("、"),
+                })}
+              </EmptyState>
+            ) : (
+              <EmptyState>{t("assignments.myCoursesEmpty")}</EmptyState>
+            )
           ) : (
             <ul className="stack" data-testid="my-membership-list">
               {memberships.map((membership) => (

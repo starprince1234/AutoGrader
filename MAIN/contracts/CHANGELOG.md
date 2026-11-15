@@ -12,6 +12,19 @@
 
 ---
 
+## 0.35.0 — 班级归属、用户筛选与学号补录绑定
+
+- **类型**：最小新增（可选查询参数 + 可选响应字段 + 补录学号自动绑定）
+- **状态**：有效
+- **背景**：用户管理列表混杂大量历史停用账号且缺少所属注册班级、已绑定课程班级与状态/班级/关键词筛选；学生端 `/api/v1/me` 与注册响应在未挂课前缺少所属注册班级展示；管理员在更新用户时需支持补录 `student_number` 并自动绑定对应课程选课。
+- **变更**：
+  - `openapi/b4.yaml`：`GET /api/v1/users` 新增可选查询参数 `is_active`、`class_name`、`q`。
+  - `UserSummary` 新增 `registered_classes` 与 `course_bindings`。
+  - `PATCH /api/v1/users/{user_id}` 请求体新增可选 `student_number`。
+  - `CurrentUser`（`GET /api/v1/me`）与 `POST /api/v1/auth/registrations` 响应新增 `registered_classes`。
+
+---
+
 ## 0.34.0 — 通知按 campaign 读取与重试（`kind`）
 
 - **类型**：P1 最小新增（两个可选查询参数 + 两个响应字段；无删除、无回填）
