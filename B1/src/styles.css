@@ -121,8 +121,59 @@
  * 深色：亮度分层代替阴影（#08090a → #0f1011 → #191a1b → #232426），
  * 边框换成半透明白发丝。渐变只保留一层更亮的 indigo 光晕。
  */
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-bg: #08090a;
+  --color-surface: #0f1011;
+  --color-surface-2: #191a1b;
+  --color-surface-3: #232426;
+  --color-surface-hover: #2a2b2e;
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-strong: rgba(255, 255, 255, 0.16);
+  --color-text: #f7f8f8;
+  --color-text-muted: #a7adb6;
+  --color-text-faint: #8a8f98;
+
+  --color-accent: #8b8ff5;
+  --color-accent-strong: #a0a3ff;
+  --color-accent-soft: rgba(113, 112, 255, 0.12);
+
+  --color-ok: #3dd68c;
+  --color-ok-soft: rgba(61, 214, 140, 0.1);
+  --color-ok-dot: #3dd68c;
+  --color-warn: #f0a04b;
+  --color-warn-soft: rgba(240, 160, 75, 0.11);
+  --color-warn-dot: #f0a04b;
+  --color-bad: #ff6b6b;
+  --color-bad-soft: rgba(255, 107, 107, 0.11);
+  --color-bad-dot: #ff6b6b;
+
+  --color-grid-dot: rgba(255, 255, 255, 0.09);
+
+  --gradient-page: radial-gradient(1100px 460px at 50% -220px, rgba(113, 112, 255, 0.16), transparent 68%),
+    linear-gradient(180deg, #0a0b0c 0%, #08090a 34%, #08090a 100%);
+  --gradient-hero: radial-gradient(760px 300px at 12% -8%, rgba(113, 112, 255, 0.32), transparent 62%),
+    radial-gradient(680px 280px at 88% -14%, rgba(94, 106, 210, 0.26), transparent 60%);
+  --gradient-accent: linear-gradient(180deg, #6f7ae6 0%, #5e6ad2 50%, #5560c6 100%);
+  --gradient-accent-hover: linear-gradient(180deg, #808af0 0%, #6f7ae6 50%, #626dd6 100%);
+  --gradient-surface: linear-gradient(180deg, #111214 0%, #0f1011 100%);
+
+  --shadow-card: 0 0 0 0 transparent;
+  --shadow-raised: 0 28px 64px -24px rgba(0, 0, 0, 0.72), 0 8px 24px -12px rgba(0, 0, 0, 0.5);
+  --shadow-focus: 0 0 0 3px var(--color-accent-soft), 0 0 0 1px var(--color-accent);
+  --shadow-inset-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+
+  --glow-strength: 0.3;
+  --glow-blend: screen;
+  --glow-texture-opacity: 0.05;
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --color-bg: #08090a;
     --color-surface: #0f1011;
     --color-surface-2: #191a1b;
@@ -1624,16 +1675,67 @@ samp {
 
 /* 深色下大面积色块会抢注意力：提示条回到中性面，只保留左侧 3px 色条与标题色。
    浅色下那层 10% 左右的色底仍然保留——它在那里是"纸张被染色"，不是发光。 */
+:root[data-theme="dark"] .banner--info,
+:root[data-theme="dark"] .banner--warn,
+:root[data-theme="dark"] .banner--error,
+:root[data-theme="dark"] .banner--success {
+  background: var(--color-surface-2);
+}
+
 @media (prefers-color-scheme: dark) {
-  .banner--info,
-  .banner--warn,
-  .banner--error,
-  .banner--success {
+  :root:not([data-theme="light"]) .banner--info,
+  :root:not([data-theme="light"]) .banner--warn,
+  :root:not([data-theme="light"]) .banner--error,
+  :root:not([data-theme="light"]) .banner--success {
     background: var(--color-surface-2);
   }
 }
 
 /* ---------------------------------------------------------------- 控件 */
+
+.theme-toggle {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 11px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--dur-fast) var(--ease), border-color var(--dur-fast) var(--ease),
+    color var(--dur-fast) var(--ease), box-shadow var(--dur-fast) var(--ease);
+}
+
+.theme-toggle:hover {
+  background: var(--color-surface-hover);
+  border-color: var(--color-border-strong);
+  color: var(--color-text);
+}
+
+.theme-toggle:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.theme-toggle__icon {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+}
+
+.auth-page__actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
 
 .button {
   appearance: none;

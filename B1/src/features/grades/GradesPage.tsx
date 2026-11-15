@@ -28,6 +28,7 @@ import {
 import { log, newRequestId } from "../../logging/logger";
 import { formatDateTime, shortenId } from "../../ui/format";
 import { scoreDistribution, summarizeLoadedRows } from "./aggregate";
+import { buildCohort } from "./cohort";
 import { GradeDrilldown } from "./GradeDrilldown";
 import { GradesChart } from "./GradesChart";
 import type { EChartsLoader } from "./echartsLoader";
@@ -189,10 +190,18 @@ export function GradesPage({
     pageCount: grades.data?.pages.length ?? 0,
   });
 
-  const sectionIds = useMemo(
-    () => loaded.map((row) => row.section_id).filter((id): id is string => Boolean(id)),
-    [loaded],
-  );
+  const courseSectionIds = useMemo(() => {
+    if (filter.sectionId) return [filter.sectionId];
+    return (sections.data ?? []).map((option) => option.sectionId);
+  }, [filter.sectionId, sections.data]);
+
+  const sectionIds = useMemo(() => {
+    const ids = new Set<string>(courseSectionIds);
+    for (const row of loaded) {
+      if (row.section_id) ids.add(row.section_id);
+    }
+    return Array.from(ids);
+  }, [courseSectionIds, loaded]);
   const identities = useGradeIdentities(sectionIds, cohortView);
 
   const displayRows = useMemo<DisplayRow[]>(() => {
@@ -214,8 +223,38 @@ export function GradesPage({
 
   const rowsForSummary = useMemo(() => loaded, [loaded]);
   const summary = useMemo(() => summarizeLoadedRows(rowsForSummary), [rowsForSummary]);
+  const rosterForSummary = useMemo(() => {
+    if (identities.rosterRows.length === 0) return [];
+    if (filter.sectionId) {
+      return identities.rosterRows.filter((row) => row.section_id === filter.sectionId);
+    }
+    if (courseSectionIds.length > 0) {
+      const allowed = new Set(courseSectionIds);
+      return identities.rosterRows.filter((row) => allowed.has(row.section_id));
+    }
+    return identities.rosterRows;
+  }, [courseSectionIds, filter.sectionId, identities.rosterRows]);
+
+  const { completedCount, unfinishedCount } = useMemo(() => {
+    if (!identities.isError && rosterForSummary.length > 0) {
+      const cohort = buildCohort(rosterForSummary, rowsForSummary);
+      return {
+        completedCount: cohort.counts.graded,
+        unfinishedCount: cohort.rows.length - cohort.counts.graded,
+      };
+    }
+    return {
+      completedCount: Math.max(0, summary.rowCount - summary.unfinishedCount),
+      unfinishedCount: summary.unfinishedCount,
+    };
+  }, [identities.isError, rosterForSummary, rowsForSummary, summary.rowCount, summary.unfinishedCount]);
+
   const buckets = useMemo(() => scoreDistribution(rowsForSummary), [rowsForSummary]);
-  const summaryComplete = complete && !capped && !grades.isError;
+  const summaryComplete =
+    complete &&
+    !capped &&
+    !grades.isError &&
+    (!identities.isLoading || identities.isError || sectionIds.length === 0);
   const filtersActive =
     sectionId !== "" ||
     questionVersionId !== "" ||
@@ -446,8 +485,11 @@ export function GradesPage({
             {scopeSummary}
           </p>
           <ul>
-            <li>
-              {t("grades.summarySubmissions")}：{summary.rowCount}
+            <li data-testid="summary-completed">
+              {t("grades.summaryCompleted")}：{completedCount}
+            </li>
+            <li data-testid="summary-unfinished">
+              {t("grades.unfinished")}：{unfinishedCount}
             </li>
             <li>
               {t("grades.summaryAverage")}：
@@ -457,13 +499,7 @@ export function GradesPage({
               {t("grades.summaryPassRate")}：
               {summary.passRate === null ? t("grades.notScored") : `${Math.round(summary.passRate * 100)}%`}
             </li>
-            <li>
-              {t("grades.unfinished")}：{summary.unfinishedCount}
-            </li>
           </ul>
-          <Banner tone="info" testId="summary-scope-notice">
-            {t("grades.summaryScopeNotice")}
-          </Banner>
           {displayRows.length > 0 ? (
             <>
               <GradesChart buckets={buckets} loader={chartLoader} />
@@ -724,6 +760,7 @@ export function GradesPage({
                   filter={{
                     courseId: filter.courseId,
                     sectionId: filter.sectionId,
+                    sectionIds: courseSectionIds,
                     questionVersionIds:
                       filter.questionVersionId === null ? null : [filter.questionVersionId],
                   }}
@@ -739,7 +776,6 @@ export function GradesPage({
       {exportOpen ? (
         <Modal title={t("grades.exportTitle")} testId="export-drawer" onClose={() => setExportOpen(false)}>
           <div className="stack">
-            <p className="muted">{t("grades.exportIntro")}</p>
             <Field label={t("grades.exportFormat")} htmlFor="export-format">
               <Select
                 id="export-format"
@@ -761,7 +797,6 @@ export function GradesPage({
                       to: toInput === "" ? t("grades.scopeUndecided") : toInput,
                     })}
               </p>
-              <p className="muted">{t("grades.exportRangeHint")}</p>
             </div>
 
             <div>

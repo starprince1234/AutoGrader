@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { t } from "../../i18n";
+import { ThemeToggle } from "../../ui/ThemeToggle";
 import { useSession } from "../../auth/sessionContext";
 import { signOut, type SessionState } from "../../auth/sessionStore";
 import { DEFAULT_AUTHENTICATED_PATH, safeRedirectTarget } from "../../auth/redirect";
@@ -155,6 +156,7 @@ export function LandingPage() {
       <header className="landing__head">
         <h1 className="landing__brand">{t("app.brand")}</h1>
         <div className="landing__account">
+          <ThemeToggle />
           {authenticated ? (
             <>
               <span className="landing__identity" data-testid="landing-identity">

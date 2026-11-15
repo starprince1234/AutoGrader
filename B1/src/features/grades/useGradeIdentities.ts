@@ -26,6 +26,8 @@ const MAX_ROSTER_PAGES = 20;
 export type IdentityMaps = {
   /** `${section_id}:${student_id}` → 身份。 */
   bySectionAndStudent: Map<string, GradeIdentity>;
+  /** 对应课序下完整去重后的名单行。 */
+  rosterRows: EnrollmentPublic[];
   isLoading: boolean;
   isError: boolean;
   error: unknown;
@@ -36,8 +38,14 @@ export function identityKey(sectionId: string, studentId: string): string {
   return `${sectionId}:${studentId}`;
 }
 
-async function fetchRoster(sectionId: string): Promise<Map<string, GradeIdentity>> {
+type RosterFetchResult = {
+  identities: Map<string, GradeIdentity>;
+  rows: EnrollmentPublic[];
+};
+
+async function fetchRoster(sectionId: string): Promise<RosterFetchResult> {
   const identities = new Map<string, GradeIdentity>();
+  const rows: EnrollmentPublic[] = [];
   let cursor: string | null = null;
   for (let page = 0; page < MAX_ROSTER_PAGES; page += 1) {
     const body: EnrollmentPage = await apiRequest<EnrollmentPage>(
@@ -47,13 +55,14 @@ async function fetchRoster(sectionId: string): Promise<Map<string, GradeIdentity
       },
     );
     for (const item of body.items ?? []) {
+      rows.push(item);
       const identity = identityOf(item);
       if (identity) identities.set(item.student_id as string, identity);
     }
     cursor = body.next_cursor ?? null;
     if (!cursor) break;
   }
-  return identities;
+  return { identities, rows };
 }
 
 function identityOf(item: EnrollmentPublic): GradeIdentity | null {
@@ -81,20 +90,30 @@ export function useGradeIdentities(sectionIds: readonly string[], enabled: boole
     })),
   });
 
-  const bySectionAndStudent = useMemo(() => {
+  const { bySectionAndStudent, rosterRows } = useMemo(() => {
     const merged = new Map<string, GradeIdentity>();
+    const dedupedRows = new Map<string, EnrollmentPublic>();
     queries.forEach((query, index) => {
       const sectionId = unique[index];
       if (!sectionId || !query.data) return;
-      for (const [studentId, identity] of query.data) {
+      for (const [studentId, identity] of query.data.identities) {
         merged.set(identityKey(sectionId, studentId), identity);
       }
+      for (const row of query.data.rows) {
+        if (!dedupedRows.has(row.enrollment_id)) {
+          dedupedRows.set(row.enrollment_id, row);
+        }
+      }
     });
-    return merged;
+    return {
+      bySectionAndStudent: merged,
+      rosterRows: Array.from(dedupedRows.values()),
+    };
   }, [queries, unique]);
 
   return {
     bySectionAndStudent,
+    rosterRows,
     isLoading: queries.some((query) => query.isPending),
     isError: queries.some((query) => query.isError),
     error: queries.find((query) => query.isError)?.error ?? null,

@@ -572,9 +572,9 @@ export function AssignmentsPage() {
             {sectionOptions.length === 0 ? (
               <option value="">{t("roster.emptyNoSection")}</option>
             ) : null}
-            {sectionOptions.map((option, index) => (
+            {sectionOptions.map((option) => (
               <option key={option.sectionId} value={option.sectionId}>
-                {index + 1} · {option.label}
+                {option.label}
               </option>
             ))}
           </Select>
@@ -663,7 +663,6 @@ export function AssignmentsPage() {
           {teacherFilterPanel}
           <Panel title={t("assignments.tabs.list")}>
             <div className="stack">
-              <p className="muted">{t("assignments.teacherHint")}</p>
               {assignments.isPending ? (
                 <Spinner label={t("assignments.loadingAll")} />
               ) : assignments.isError ? (

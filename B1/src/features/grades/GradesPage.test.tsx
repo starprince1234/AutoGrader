@@ -247,7 +247,9 @@ describe("成绩查询（RQ-B-1-30）", () => {
       within(unfinishedRow).getByText(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/),
     ).toBeInTheDocument();
 
-    expect(screen.getByTestId("summary-scope-notice")).toHaveTextContent("统计仅基于已完成评测的成绩");
+    expect(await screen.findByTestId("summary-completed")).toHaveTextContent("已完成：1");
+    expect(screen.getByTestId("summary-unfinished")).toHaveTextContent("未完成：2");
+    expect(screen.queryByTestId("summary-scope-notice")).toBeNull();
     expect(screen.getByText(/平均分：90/)).toBeInTheDocument();
     expect(screen.queryByTestId("unfinished-notice")).toBeNull();
     stub.restore();
@@ -428,7 +430,8 @@ describe("谁还没交（RQ-B-1-30 验收 4 的操作化形态）", () => {
     );
   }
 
-  it("名单与成绩按 student_id 外连接：未提交 / 技术失败 / 已评分各自成类", async () => {
+  it("名单与成绩按 student_id 外连接：默认只看未完成，切换全部可见已完成学生", async () => {
+    const user = userEvent.setup();
     const { stub } = await openMissingTab(
       withGrades([
         // 张三：已完成
@@ -459,20 +462,27 @@ describe("谁还没交（RQ-B-1-30 验收 4 的操作化形态）", () => {
     );
 
     expect(await screen.findByTestId("cohort-summary")).toHaveTextContent(
-      "未提交 1，技术失败 1",
+      "共 3 人：已完成 1 人，未完成 2 人（未提交 1，技术失败 1）",
     );
 
     const table = screen.getByTestId("cohort-table");
-    expect(within(table).getAllByRole("row")).toHaveLength(4); // 表头 + 3 人
+    expect(within(table).getAllByRole("row")).toHaveLength(3); // 表头 + 2 位未完成学生
     // 王五在名单里但没有任何提交 → 未提交，且得分列不出现数字（未提交 ≠ 0 分）
     const missing = within(table).getByText("20260003").closest("tr") as HTMLTableRowElement;
     expect(within(missing).getByText("未提交")).toBeInTheDocument();
-    expect(within(missing).getByTestId("cohort-unscored").textContent).not.toMatch(/\d/);
+    const unscored = within(missing).getByTestId("cohort-unscored");
+    expect(unscored).toHaveTextContent("—");
+    expect(unscored.textContent).not.toMatch(/\d/);
     // 李四是技术失败，不是"未提交"
     const failed = within(table).getByText("20260002").closest("tr") as HTMLTableRowElement;
     expect(within(failed).getByText("技术失败")).toBeInTheDocument();
-    // 姓名与学号来自**名单侧**（B2 的对应字段恒为 null）
-    expect(table).toHaveTextContent("张三");
+
+    // 切到「全部学生」可看到已完成学生（姓名来自名单侧）
+    await user.selectOptions(screen.getByLabelText("按状态筛选"), "all");
+    const allTable = screen.getByTestId("cohort-table");
+    expect(within(allTable).getAllByRole("row")).toHaveLength(4); // 表头 + 3 人
+    expect(allTable).toHaveTextContent("张三");
+    expect(within(allTable).getByText("已完成")).toBeInTheDocument();
     stub.restore();
   });
 
@@ -488,8 +498,10 @@ describe("谁还没交（RQ-B-1-30 验收 4 的操作化形态）", () => {
       ]),
     );
 
-    expect(await screen.findByTestId("cohort-summary")).toHaveTextContent("未绑定账号 1");
-    expect(screen.getByTestId("cohort-summary")).toHaveTextContent("未提交 0");
+    expect(await screen.findByTestId("cohort-summary")).toHaveTextContent(
+      "共 1 人：已完成 0 人，未完成 1 人（未绑定账号 1）",
+    );
+    expect(screen.getByTestId("cohort-summary")).not.toHaveTextContent("未提交");
     stub.restore();
   });
 

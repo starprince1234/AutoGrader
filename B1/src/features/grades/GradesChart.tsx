@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { t } from "../../i18n";
+import { useTheme } from "../../ui/themeStore";
 import type { ScoreBucket } from "./aggregate";
 import { loadECharts, type EChartsInstance, type EChartsLoader } from "./echartsLoader";
 
@@ -16,6 +17,7 @@ export function GradesChart({
   buckets: ScoreBucket[];
   loader?: EChartsLoader;
 }) {
+  const [theme] = useTheme();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [failed, setFailed] = useState(false);
   // 0 行时画一张空坐标系只是占地方的装饰：没有数据就没有分布可言。
@@ -81,7 +83,7 @@ export function GradesChart({
       disposed = true;
       chart?.dispose();
     };
-  }, [buckets, loader, empty]);
+  }, [buckets, loader, empty, theme]);
 
   if (empty) {
     return (

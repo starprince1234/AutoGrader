@@ -25,6 +25,7 @@ import {
 } from "../testing/httpBoundary";
 import { UUID_A, UUID_B } from "../testing/contractFixtures";
 import { renderWithProviders } from "../testing/renderWithProviders";
+import { resetTheme, THEME_STORAGE_KEY } from "../ui/themeStore";
 
 /**
  * 应用外壳的集成测试（P01）：会话恢复门、根入口、角色导航、用户名与直接退出。
@@ -42,6 +43,7 @@ afterEach(() => {
   stub?.restore();
   stub = null;
   resetSessionForTests();
+  resetTheme();
   sessionStorage.clear();
 });
 
@@ -358,5 +360,24 @@ describe("角色导航与右上角账户区", () => {
     await waitFor(() => expect(router.state.location.pathname).toBe("/admin/users"));
     expect(await screen.findByText("用户管理页")).toBeInTheDocument();
     await waitFor(() => expect(screen.queryByTestId("nav-drawer")).toBeNull());
+  });
+
+  it("主题切换按钮在白天与黑夜模式间切换并持久化选择", async () => {
+    const user = userEvent.setup();
+    await establishSession("teacher");
+    renderApp("/grades");
+
+    const toggle = await screen.findByTestId("theme-toggle");
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+
+    await user.click(toggle);
+    expect(document.documentElement.dataset.theme).toBe("dark");
+    expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("dark");
+    expect(toggle).toHaveAttribute("aria-pressed", "true");
+
+    await user.click(toggle);
+    expect(document.documentElement.dataset.theme).toBe("light");
+    expect(localStorage.getItem(THEME_STORAGE_KEY)).toBe("light");
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
   });
 });

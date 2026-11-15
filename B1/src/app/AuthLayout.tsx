@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import { t } from "../i18n";
+import { ThemeToggle } from "../ui/ThemeToggle";
 import { useSession } from "../auth/sessionContext";
 
 /**
@@ -17,11 +18,14 @@ export function AuthLayout({ children }: { children: ReactNode }) {
     <div className="auth-page">
       <header className="auth-page__head">
         <span className="auth-brand">{t("app.brand")}</span>
-        {session.status === "authenticated" ? (
-          <Link to="/assignments" className="auth-page__back" data-testid="auth-back">
-            {t("nav.returnToAssignments")}
-          </Link>
-        ) : null}
+        <div className="auth-page__actions">
+          <ThemeToggle />
+          {session.status === "authenticated" ? (
+            <Link to="/assignments" className="auth-page__back" data-testid="auth-back">
+              {t("nav.returnToAssignments")}
+            </Link>
+          ) : null}
+        </div>
       </header>
       <main className="auth-page__main">{children}</main>
     </div>
