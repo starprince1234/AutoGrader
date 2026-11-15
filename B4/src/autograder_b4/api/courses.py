@@ -83,6 +83,7 @@ from .pagination import clamp_limit, descending_page_filter, page_envelope
 from .problem import ProblemRoute
 from .timestamps import rfc3339 as _rfc3339
 from .timestamps import same_instant as _same_instant
+from .timestamps import to_millis as _to_millis
 
 #: The contract's `kind` domain. Defaulting to `publication` keeps every older caller
 #: unchanged, while a reminder batch is addressed explicitly instead of "whatever is newest".
@@ -169,8 +170,8 @@ class EnrollmentUpdate(BaseModel):
 
 
 def _now() -> datetime:
-    """Current time; the columns round it to the millisecond on store."""
-    return datetime.now(UTC)
+    """Current time truncated to millisecond precision to match stored and serialized values."""
+    return _to_millis(datetime.now(UTC))
 
 
 def _class_document(item: dict[str, object]) -> dict[str, object]:
