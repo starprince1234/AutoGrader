@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithRouter } from "../../testing/renderWithProviders";
@@ -385,5 +385,24 @@ describe("新建作业（v0.32.0 课程级）", () => {
     expect(await screen.findByTestId("assignment-compose-error")).toHaveTextContent(
       "请确认所选题目均属于本课程且已发布",
     );
+  });
+
+  it("选择截止日期后可通过下拉选择具体小时与分钟并提交 due_at", async () => {
+    stub = installFetchStub(baseRoutes());
+    await signIn("teacher1", "pw");
+    renderComposer();
+    const user = userEvent.setup();
+
+    await fillBase(user);
+    fireEvent.change(screen.getByLabelText("截止时间"), { target: { value: "2026-12-01" } });
+    await user.selectOptions(screen.getByTestId("compose-due-hour"), "18");
+    await user.selectOptions(screen.getByTestId("compose-due-minute"), "30");
+
+    await user.click(screen.getByTestId("assignment-compose-preview"));
+    await user.click(await screen.findByTestId("assignment-compose-confirm-button"));
+
+    await waitFor(() => expect(postRequests(stub)).toHaveLength(1));
+    const body = postRequests(stub)[0].body as Record<string, unknown>;
+    expect(body.due_at).toBe(new Date("2026-12-01T18:30").toISOString());
   });
 });

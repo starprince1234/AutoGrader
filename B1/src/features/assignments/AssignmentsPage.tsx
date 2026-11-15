@@ -746,7 +746,6 @@ export function AssignmentsPage() {
         >
           <div className="stack">
             <p>{t("assignments.closeConfirmBody", { title: closeTarget.title })}</p>
-            <p className="muted">{t("assignments.closeConfirmHint")}</p>
             {closeError ? (
               <Banner tone="error" testId="assignment-close-error">
                 {closeError}
