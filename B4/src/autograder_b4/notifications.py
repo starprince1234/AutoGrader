@@ -37,6 +37,9 @@ from .db.tables import (
 )
 from .db.tables import courses, enrollments, users
 from .errors import not_found, unprocessable
+from .logging import get_logger
+
+logger = get_logger("notifications")
 
 #: Campaign status values (`b4.assignment_notifications.status`).
 CAMPAIGN_PENDING = "pending"
@@ -558,6 +561,7 @@ def send_pass(
     *,
     settings,
     send_email,
+    send_reminder=None,
     limit: int = DEFAULT_SEND_LIMIT,
     now: datetime | None = None,
 ) -> SendReport:
@@ -590,7 +594,8 @@ def send_pass(
             continue
         try:
             if row.kind == CAMPAIGN_KIND_REMINDER:
-                send_email(
+                reminder_sender = send_reminder or send_email
+                reminder_sender(
                     settings,
                     to=row.email,
                     student_name=row.display_name,
@@ -610,6 +615,16 @@ def send_pass(
                 )
         except Exception as error:  # noqa: BLE001 - translated to a status, never hidden
             reason = _failure_reason(error)
+            logger.warning(
+                "assignment.notification.delivery_failed",
+                extra={
+                    "event": "assignment.notification.delivery_failed",
+                    "delivery_id": str(row.delivery_id),
+                    "kind": row.kind,
+                    "error_type": type(error).__name__,
+                    "reason_code": reason,
+                },
+            )
             results[row.delivery_id] = {
                 "status": DELIVERY_FAILED,
                 "reason_code": reason,

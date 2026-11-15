@@ -29,7 +29,7 @@ from ..config import ConfigurationError, Settings
 from ..db.engine import create_engine_from_settings
 from ..logging import configure_logging
 from ..notifications import DEFAULT_SEND_LIMIT, send_pass
-from ..security.mailer import send_assignment_published
+from ..security.mailer import send_assignment_published, send_assignment_reminder
 
 EXIT_OK = 0
 EXIT_INFRASTRUCTURE = 1
@@ -71,6 +71,7 @@ def main(argv: list[str] | None = None) -> int:
             engine,
             settings=settings,
             send_email=send_assignment_published,
+            send_reminder=send_assignment_reminder,
             limit=arguments.limit,
         )
     except Exception as error:  # noqa: BLE001 - the pass reports, it does not crash-loop

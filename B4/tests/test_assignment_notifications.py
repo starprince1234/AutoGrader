@@ -985,3 +985,42 @@ def test_the_reminder_mail_always_carries_the_server_composed_prompt(
     with_note = captured[0].get_content()
     assert "你还没有提交" in with_note
     assert "下周一上课前交" in with_note
+
+
+def test_ops_notifications_dispatches_reminder_with_note_to_reminder_mailer(
+    client, factory, sign_in_as, engine, settings, monkeypatch
+) -> None:
+    setup = _reminder_course(factory)
+    headers = sign_in_as("owner").headers
+    assignment_id = uuid.uuid4()
+
+    assert (
+        _remind(
+            client,
+            headers,
+            setup["course_id"],
+            assignment_id,
+            [setup["reachable"]],
+            note="周五前补交",
+        ).status_code
+        == 200
+    )
+
+    sent_messages: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        mailer,
+        "_deliver",
+        lambda _settings, message, event: sent_messages.append((event, message.get_content())),
+    )
+
+    report = send_pass(
+        engine,
+        settings=settings,
+        send_email=mailer.send_assignment_published,
+        send_reminder=mailer.send_assignment_reminder,
+    )
+    assert report.sent == 1
+    assert report.failed == 0
+    assert len(sent_messages) == 1
+    assert sent_messages[0][0] == "assignment.reminder.sent"
+    assert "周五前补交" in sent_messages[0][1]
