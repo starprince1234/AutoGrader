@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { t } from "../../i18n";
 import { MAX_AUTO_PAGES } from "../../api/pagination";
-import { formatDateTime, shortenId } from "../../ui/format";
+import { formatDateTime } from "../../ui/format";
 import {
   Banner,
   EmptyState,
@@ -12,12 +12,7 @@ import {
   StatusPill,
   Table,
 } from "../../ui/components";
-import {
-  COHORT_STATUS_ORDER,
-  cohortStatusLabel,
-  cohortStatusTone,
-  type CohortStatus,
-} from "./cohort";
+import { cohortStatusLabel, cohortStatusTone, type CohortStatus } from "./cohort";
 import { useCohort, type CohortFilter } from "./useCohort";
 import { Select } from "../../ui/Select";
 
@@ -37,7 +32,16 @@ import { Select } from "../../ui/Select";
  * 既不算成"未提交"，也不拿学号或 `enrollment_id` 冒充用户 ID。
  */
 
-function filterLabel(status: CohortStatus | "all", count: number): string {
+const INCOMPLETE_STATUS_ORDER: readonly CohortStatus[] = [
+  "not_submitted",
+  "unbound",
+  "running",
+  "failed",
+  "rejected",
+];
+
+function filterLabel(status: CohortStatus | "all" | "incomplete", count: number): string {
+  if (status === "incomplete") return t("grades.missing.filterIncomplete", { count });
   if (status === "all") return t("grades.missing.filterAll", { count });
   if (status === "not_submitted") return t("grades.missing.filterNotSubmitted", { count });
   if (status === "unbound") return t("grades.missing.filterUnbound", { count });
@@ -49,17 +53,19 @@ function filterLabel(status: CohortStatus | "all", count: number): string {
 
 export function SubmissionMatrix({ filter }: { filter: CohortFilter }) {
   const cohort = useCohort(filter);
-  const [statusFilter, setStatusFilter] = useState<CohortStatus | "all">("all");
-
-  const visible = useMemo(
-    () =>
-      statusFilter === "all"
-        ? cohort.rows
-        : cohort.rows.filter((row) => row.status === statusFilter),
-    [cohort.rows, statusFilter],
+  const [statusFilter, setStatusFilter] = useState<CohortStatus | "all" | "incomplete">(
+    "incomplete",
   );
 
-  if (filter.sectionId === null) {
+  const visible = useMemo(() => {
+    if (statusFilter === "all") return cohort.rows;
+    if (statusFilter === "incomplete") {
+      return cohort.rows.filter((row) => row.status !== "graded");
+    }
+    return cohort.rows.filter((row) => row.status === statusFilter);
+  }, [cohort.rows, statusFilter]);
+
+  if (filter.sectionId === null && (!filter.sectionIds || filter.sectionIds.length === 0)) {
     return (
       <Panel title={t("grades.missing.title")}>
         <EmptyState>{t("grades.missing.needsSection")}</EmptyState>
@@ -102,43 +108,57 @@ export function SubmissionMatrix({ filter }: { filter: CohortFilter }) {
           </Banner>
         </>
       ) : (
-        <>
-          <Banner tone="info" testId="cohort-summary">
-            {t("grades.missing.summary", {
-              total: cohort.rows.length,
-              missing: cohort.counts.not_submitted,
-              failed: cohort.counts.failed,
-              running: cohort.counts.running,
-              rejected: cohort.counts.rejected,
-              graded: cohort.counts.graded,
-              unbound: cohort.counts.unbound,
-            })}
-          </Banner>
-          {filter.questionVersionIds === null ? (
-            <p className="muted" data-testid="cohort-version-unset">
-              {t("grades.missing.versionUnset")}
-            </p>
-          ) : null}
-          {cohort.outsideRoster > 0 ? (
-            <Banner tone="warn" testId="cohort-outside-roster">
-              {t("grades.missing.outsideRoster", { count: cohort.outsideRoster })}
-            </Banner>
-          ) : null}
+        (() => {
+          const incompleteCount = cohort.rows.length - cohort.counts.graded;
+          const detail = INCOMPLETE_STATUS_ORDER.filter((status) => cohort.counts[status] > 0)
+            .map((status) => `${cohortStatusLabel(status)} ${cohort.counts[status]}`)
+            .join("，");
+          const summaryText = detail
+            ? t("grades.missing.summaryWithDetail", {
+                total: cohort.rows.length,
+                graded: cohort.counts.graded,
+                incomplete: incompleteCount,
+                detail,
+              })
+            : t("grades.missing.summarySimple", {
+                total: cohort.rows.length,
+                graded: cohort.counts.graded,
+                incomplete: incompleteCount,
+              });
 
-          <Field label={t("grades.missing.filterLabel")} htmlFor="cohort-status">
-            <Select
-              id="cohort-status"
-              value={statusFilter}
-              onChange={(event) => setStatusFilter(event.target.value as CohortStatus | "all")}
-            >
-              <option value="all">{filterLabel("all", cohort.rows.length)}</option>
-              {COHORT_STATUS_ORDER.map((status) => (
-                <option key={status} value={status}>
-                  {filterLabel(status, cohort.counts[status])}
-                </option>
-              ))}
-            </Select>
-          </Field>
+          return (
+            <>
+              <Banner tone="info" testId="cohort-summary">
+                {summaryText}
+              </Banner>
+              {cohort.outsideRoster > 0 ? (
+                <Banner tone="warn" testId="cohort-outside-roster">
+                  {t("grades.missing.outsideRoster", { count: cohort.outsideRoster })}
+                </Banner>
+              ) : null}
+
+              <Field label={t("grades.missing.filterLabel")} htmlFor="cohort-status">
+                <Select
+                  id="cohort-status"
+                  value={statusFilter}
+                  onChange={(event) =>
+                    setStatusFilter(event.target.value as CohortStatus | "all" | "incomplete")
+                  }
+                >
+                  <option value="incomplete">
+                    {filterLabel("incomplete", incompleteCount)}
+                  </option>
+                  <option value="graded">{filterLabel("graded", cohort.counts.graded)}</option>
+                  <option value="all">{filterLabel("all", cohort.rows.length)}</option>
+                  {INCOMPLETE_STATUS_ORDER.filter(
+                    (status) => cohort.counts[status] > 0 || status === statusFilter,
+                  ).map((status) => (
+                    <option key={status} value={status}>
+                      {filterLabel(status, cohort.counts[status])}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
 
           {visible.length === 0 ? (
             <EmptyState />
@@ -160,19 +180,6 @@ export function SubmissionMatrix({ filter }: { filter: CohortFilter }) {
                   render: (row) => row.displayName,
                 },
                 {
-                  // 连接键本身要可见（可复制去对后端日志），但按 8 位缩写显示。
-                  key: "student_id",
-                  header: t("grades.missing.studentId"),
-                  render: (row) =>
-                    row.studentId === null ? (
-                      <span className="muted">{t("grades.missing.statusUnbound")}</span>
-                    ) : (
-                      <span className="mono-id" title={`学生 ID：${row.studentId}`}>
-                        {shortenId(row.studentId)}
-                      </span>
-                    ),
-                },
-                {
                   key: "status",
                   header: t("grades.state"),
                   render: (row) => (
@@ -191,7 +198,7 @@ export function SubmissionMatrix({ filter }: { filter: CohortFilter }) {
                       row.grade.score
                     ) : (
                       <span className="muted" data-testid="cohort-unscored">
-                        {t("grades.unfinished")}
+                        —
                       </span>
                     ),
                 },
@@ -208,7 +215,9 @@ export function SubmissionMatrix({ filter }: { filter: CohortFilter }) {
               ]}
             />
           )}
-        </>
+            </>
+          );
+        })()
       )}
     </Panel>
   );

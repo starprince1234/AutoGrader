@@ -9,7 +9,6 @@ import {
   type StubbedRoute,
 } from "../../testing/httpBoundary";
 import {
-  SHA_A,
   UUID_A,
   UUID_B,
   UUID_RUN,
@@ -248,7 +247,9 @@ describe("成绩查询（RQ-B-1-30）", () => {
       within(unfinishedRow).getByText(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/),
     ).toBeInTheDocument();
 
-    expect(screen.getByTestId("summary-scope-notice")).toHaveTextContent("统计仅基于已完成评测的成绩");
+    expect(await screen.findByTestId("summary-completed")).toHaveTextContent("已完成：1");
+    expect(screen.getByTestId("summary-unfinished")).toHaveTextContent("未完成：2");
+    expect(screen.queryByTestId("summary-scope-notice")).toBeNull();
     expect(screen.getByText(/平均分：90/)).toBeInTheDocument();
     expect(screen.queryByTestId("unfinished-notice")).toBeNull();
     stub.restore();
@@ -294,98 +295,37 @@ describe("成绩查询（RQ-B-1-30）", () => {
     stub.restore();
   });
 
-  it("下钻到逐项证据：教师视图包含逐用例证据与合计校验", async () => {
+  it("下钻到评测详细：教师视图只展示 AI 评分与 AI 评价，不含测试用例与技术详情", async () => {
     const { stub, user } = await openGrades("teacher");
 
     await user.click(screen.getByTestId(`drilldown-${UUID_RUN}`));
 
     const drilldown = await screen.findByTestId("grade-drilldown");
-    expect(within(drilldown).getByTestId("case-evidence")).toHaveTextContent("资源超限");
-    expect(within(drilldown).getByText(/逐项合计与总分一致/)).toBeInTheDocument();
-    // 三态安全结论：夹具是 not_found，页面必须显示"未发现"而不是空白或"安全"
-    expect(within(drilldown).getByText("未发现")).toBeInTheDocument();
-    expect(within(drilldown).getByTestId("static-findings")).toHaveTextContent("PY-UNUSED-IMPORT");
-    expect(within(drilldown).getAllByTestId("expected-output").length).toBeGreaterThan(0);
+    expect(within(drilldown).getByTestId("authoritative-score")).toHaveTextContent("AI 评分：86 / 100");
+    expect(await within(drilldown).findByTestId("commentary-text")).toHaveTextContent(
+      "本题主要失分在第二个用例",
+    );
+    expect(within(drilldown).queryByTestId("case-evidence")).toBeNull();
+    expect(within(drilldown).queryByTestId("static-findings")).toBeNull();
+    expect(within(drilldown).queryByTestId("security-findings")).toBeNull();
+    expect(within(drilldown).queryByTestId("binding-details")).toBeNull();
 
     const reportRequest = stub.requests.find((request) => request.url.pathname.endsWith("/report"));
     expect(reportRequest?.url.searchParams.get("view")).toBe("teacher");
     stub.restore();
   });
 
-  it("逐用例证据：资源峰值、文件改动与确定性说明都能直接读，不用看 JSON", async () => {
-    const { stub, user } = await openGrades("teacher");
-    await user.click(screen.getByTestId(`drilldown-${UUID_RUN}`));
-    const drilldown = await screen.findByTestId("grade-drilldown");
-
-    const failing = within(drilldown).getByTestId(`case-${UUID_B}`);
-    // 峰值按人读的单位显示，未测量的那一项（内核态 CPU）单列"未测量"，不是 0。
-    expect(within(failing).getByTestId("case-resource")).toHaveTextContent("1.0 MB");
-    expect(within(failing).getByTestId("case-resource")).toHaveTextContent("0.25 s");
-    expect(within(failing).getAllByTestId("metric-unmeasured")).toHaveLength(1);
-    // `limit_hit` 读作"哪个上限被触发"，而不是渲染枚举值 `memory`。
-    expect(within(failing).getByTestId("limit-hit")).toHaveTextContent("内存上限");
-    // 文件改动：期望/实际摘要与逐文件清单。
-    const artifacts = within(failing).getByTestId("case-artifacts");
-    expect(within(artifacts).getByTestId("artifact-actual")).toHaveTextContent(SHA_A.slice(0, 8));
-    expect(within(artifacts).getByTestId("artifact-digest-verdict")).toHaveTextContent(
-      "与期望不一致",
-    );
-    expect(artifacts).toHaveTextContent("out/count.txt");
-    expect(artifacts).toHaveTextContent("input/data.txt");
-    // 确定性说明（契约明确它不是模型输出）。
-    expect(within(failing).getByTestId("case-explanation")).toHaveTextContent(
-      "the memory limit was hit",
-    );
-
-    // 通过的那一个用例：`resource`/`artifacts` 都是 null → 如实显示"未测量/无数据"。
-    const passed = within(drilldown).getByTestId(`case-${UUID_A}`);
-    expect(within(passed).getByTestId("resource-unmeasured")).toHaveTextContent("未测量");
-    expect(within(passed).getByTestId("artifacts-missing")).toHaveTextContent("没有提供文件改动信息");
-    expect(within(passed).queryAllByTestId("limit-hit")).toHaveLength(0);
-    stub.restore();
-  });
-
-  it("证据缺字段（B2 尚未下发 CHG-0012 的字段）时显示未测量，不显示 0", async () => {
-    const legacy = evaluationReport();
-    const { stub, user } = await openGrades("teacher", {
-      report: {
-        ...legacy,
-        // 用**完全不出现这些键**的对象模拟旧响应：既没有 resource/artifacts/explanation。
-        case_evidence: legacy.case_evidence.map((item) => {
-          const { resource: _resource, artifacts: _artifacts, explanation: _explanation, ...rest } =
-            item;
-          return rest;
-        }),
-      },
-    });
-    await user.click(screen.getByTestId(`drilldown-${UUID_RUN}`));
-    const drilldown = await screen.findByTestId("grade-drilldown");
-
-    const card = within(drilldown).getByTestId(`case-${UUID_A}`);
-    expect(within(card).getByTestId("resource-unmeasured")).toHaveTextContent("未测量");
-    expect(within(card).getByTestId("artifacts-missing")).toBeInTheDocument();
-    expect(within(card).getByTestId("explanation-missing")).toHaveTextContent("没有提供逐步说明");
-    // 任何"0 B / 0.00 s / 0 MB"式的读数都不允许出现：没测过不等于用了 0
-    // （提示文案里出现的那个"0"是解释文字，不是度量值，因此按"数值 + 单位"判定）。
-    expect(within(card).getByTestId("case-resource").textContent).not.toMatch(
-      /\d+\s*(?:B|KB|MB|s)\b/,
-    );
-    stub.restore();
-  });
-
-  it("学生视图不下发也不渲染受保护的期望输出与期望摘要", async () => {
+  it("学生视图下钻同样只显示 AI 评分与 AI 评价，不泄露受保护信息或测试用例", async () => {
     const { stub, user } = await openGrades("student");
 
     await user.click(screen.getByTestId(`drilldown-${UUID_RUN}`));
     const drilldown = await screen.findByTestId("grade-drilldown");
 
+    expect(within(drilldown).getByTestId("authoritative-score")).toHaveTextContent("AI 评分：86 / 100");
+    expect(await within(drilldown).findByTestId("commentary-text")).toBeInTheDocument();
     expect(within(drilldown).queryAllByTestId("expected-output")).toHaveLength(0);
-    expect(within(drilldown).queryAllByTestId("expected-output-block")).toHaveLength(0);
-    expect(within(drilldown).queryAllByTestId("artifact-expected")).toHaveLength(0);
-    // 学生视图连"是否一致"这个由受保护字段推导出来的结论也不显示。
-    expect(within(drilldown).queryAllByTestId("artifact-digest-verdict")).toHaveLength(0);
-    expect(drilldown.textContent).not.toContain("期望输出（教师视图）");
-    expect(drilldown.textContent).not.toContain("期望文件摘要");
+    expect(within(drilldown).queryByTestId("case-evidence")).toBeNull();
+    expect(within(drilldown).queryByTestId("learning-hints")).toBeNull();
 
     const reportRequest = stub.requests.find((request) => request.url.pathname.endsWith("/report"));
     expect(reportRequest?.url.searchParams.get("view")).toBe("student");
@@ -490,7 +430,8 @@ describe("谁还没交（RQ-B-1-30 验收 4 的操作化形态）", () => {
     );
   }
 
-  it("名单与成绩按 student_id 外连接：未提交 / 技术失败 / 已评分各自成类", async () => {
+  it("名单与成绩按 student_id 外连接：默认只看未完成，切换全部可见已完成学生", async () => {
+    const user = userEvent.setup();
     const { stub } = await openMissingTab(
       withGrades([
         // 张三：已完成
@@ -521,20 +462,27 @@ describe("谁还没交（RQ-B-1-30 验收 4 的操作化形态）", () => {
     );
 
     expect(await screen.findByTestId("cohort-summary")).toHaveTextContent(
-      "未提交 1，技术失败 1",
+      "共 3 人：已完成 1 人，未完成 2 人（未提交 1，技术失败 1）",
     );
 
     const table = screen.getByTestId("cohort-table");
-    expect(within(table).getAllByRole("row")).toHaveLength(4); // 表头 + 3 人
+    expect(within(table).getAllByRole("row")).toHaveLength(3); // 表头 + 2 位未完成学生
     // 王五在名单里但没有任何提交 → 未提交，且得分列不出现数字（未提交 ≠ 0 分）
     const missing = within(table).getByText("20260003").closest("tr") as HTMLTableRowElement;
     expect(within(missing).getByText("未提交")).toBeInTheDocument();
-    expect(within(missing).getByTestId("cohort-unscored").textContent).not.toMatch(/\d/);
+    const unscored = within(missing).getByTestId("cohort-unscored");
+    expect(unscored).toHaveTextContent("—");
+    expect(unscored.textContent).not.toMatch(/\d/);
     // 李四是技术失败，不是"未提交"
     const failed = within(table).getByText("20260002").closest("tr") as HTMLTableRowElement;
     expect(within(failed).getByText("技术失败")).toBeInTheDocument();
-    // 姓名与学号来自**名单侧**（B2 的对应字段恒为 null）
-    expect(table).toHaveTextContent("张三");
+
+    // 切到「全部学生」可看到已完成学生（姓名来自名单侧）
+    await user.selectOptions(screen.getByLabelText("按状态筛选"), "all");
+    const allTable = screen.getByTestId("cohort-table");
+    expect(within(allTable).getAllByRole("row")).toHaveLength(4); // 表头 + 3 人
+    expect(allTable).toHaveTextContent("张三");
+    expect(within(allTable).getByText("已完成")).toBeInTheDocument();
     stub.restore();
   });
 
@@ -550,8 +498,10 @@ describe("谁还没交（RQ-B-1-30 验收 4 的操作化形态）", () => {
       ]),
     );
 
-    expect(await screen.findByTestId("cohort-summary")).toHaveTextContent("未绑定账号 1");
-    expect(screen.getByTestId("cohort-summary")).toHaveTextContent("未提交 0");
+    expect(await screen.findByTestId("cohort-summary")).toHaveTextContent(
+      "共 1 人：已完成 0 人，未完成 1 人（未绑定账号 1）",
+    );
+    expect(screen.getByTestId("cohort-summary")).not.toHaveTextContent("未提交");
     stub.restore();
   });
 

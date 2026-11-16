@@ -400,7 +400,7 @@ describe("批改界面（作业情况子界面）", () => {
     expect(scoreInput.value).toBe("80");
     expect(screen.queryByTestId("grading-manual-grade")).toBeNull();
     expect(screen.queryByTestId("manual-grade-drawer")).toBeNull();
-    expect(screen.getByTestId("grading-score-hint")).toHaveTextContent("不改就按它");
+    expect(screen.getByTestId("grading-score-hint")).toHaveTextContent("默认采用 AI 评分");
   });
 
   it("评分输入：改数字后失焦即按教师分保存；非法输入不发请求", async () => {

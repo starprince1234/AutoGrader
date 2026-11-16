@@ -266,18 +266,28 @@ describe("P11 成绩筛选、身份关联、导出与深链", () => {
     stub.restore();
   });
 
-  it("教师能看到模型参考分；学生视图中不出现参考分", async () => {
+  it("教师与学生视图打开评测详细弹窗：均精简展示 AI 评分与 AI 评价", async () => {
     const teacher = await openGrades("teacher");
     await teacher.user.click(screen.getByTestId(`drilldown-${UUID_RUN}`));
     const teacherDrilldown = await screen.findByTestId("grade-drilldown");
-    expect(within(teacherDrilldown).getByTestId("advisory-score")).toBeInTheDocument();
+    expect(within(teacherDrilldown).getByTestId("authoritative-score")).toHaveTextContent(
+      "AI 评分：86 / 100",
+    );
+    expect(await within(teacherDrilldown).findByTestId("commentary-text")).toBeInTheDocument();
+    expect(within(teacherDrilldown).queryByTestId("advisory-score")).toBeNull();
+    expect(within(teacherDrilldown).queryByTestId("case-evidence")).toBeNull();
     teacher.stub.restore();
 
     const student = await openGrades("student");
     await student.user.click(screen.getByTestId(`drilldown-${UUID_RUN}`));
     const studentDrilldown = await screen.findByTestId("grade-drilldown");
+    expect(within(studentDrilldown).getByTestId("authoritative-score")).toHaveTextContent(
+      "AI 评分：86 / 100",
+    );
+    expect(await within(studentDrilldown).findByTestId("commentary-text")).toBeInTheDocument();
     expect(within(studentDrilldown).queryByTestId("advisory-score")).toBeNull();
-    expect(within(studentDrilldown).getByTestId("learning-hints")).toBeInTheDocument();
+    expect(within(studentDrilldown).queryByTestId("learning-hints")).toBeNull();
+    expect(within(studentDrilldown).queryByTestId("case-evidence")).toBeNull();
     student.stub.restore();
   });
 

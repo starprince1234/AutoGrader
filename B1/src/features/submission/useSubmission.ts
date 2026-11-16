@@ -1,6 +1,11 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { apiRequest } from "../../api/client";
-import type { SubmissionAccepted, SubmissionView } from "../../api/types";
+import type {
+  DraftAiAssistantRequest,
+  DraftAiAssistantResponse,
+  SubmissionAccepted,
+  SubmissionView,
+} from "../../api/types";
 import { log, newRequestId } from "../../logging/logger";
 import { queryKeys } from "../../app/queryClient";
 import type { SubmissionEnvelopeBody } from "./validation";
@@ -74,5 +79,21 @@ export function useSubmissionView(submissionId: string | null) {
       apiRequest<SubmissionView>(`/api/v1/submissions/${encodeURIComponent(submissionId as string)}`),
     // 提交视图会随评测推进而变化；这里只在打开页面时读一次，后续进度由 SSE 提供。
     staleTime: 0,
+  });
+}
+
+/** 实时 AI 助教：提交编辑器草稿与可选疑问，获取启发式下一步建议。 */
+export function useDraftAiAssistant() {
+  return useMutation({
+    mutationFn: async (
+      payload: DraftAiAssistantRequest,
+    ): Promise<DraftAiAssistantResponse> => {
+      const requestId = newRequestId();
+      return apiRequest<DraftAiAssistantResponse>("/api/v1/submissions/ai-assistant", {
+        method: "POST",
+        body: payload,
+        requestId,
+      });
+    },
   });
 }

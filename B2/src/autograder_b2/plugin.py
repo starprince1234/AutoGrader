@@ -39,6 +39,7 @@ from __future__ import annotations
 from autograder_platform import HealthReport, ModuleDescriptor
 from fastapi import APIRouter
 
+from autograder_b2.api.assistant_routes import build_assistant_router
 from autograder_b2.api.email_verification_routes import (
     build_router as build_email_verification_router,
 )
@@ -97,6 +98,8 @@ class B2Module:
         """路由族的唯一注册点：intake + 评测 + 成绩 + 参考解答验证 + 邮件核验码。"""
         runtime = self._runtime_for(context)
         router = APIRouter()
+        # 字面路径 `/api/v1/submissions/ai-assistant` 必须在 `{submission_id}` 之前注册。
+        router.include_router(build_assistant_router(runtime))
         router.include_router(build_intake_router(runtime.intake))
         router.include_router(build_evaluation_router(runtime))
         router.include_router(build_grades_router(runtime))

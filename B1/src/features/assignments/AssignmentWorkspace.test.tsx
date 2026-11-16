@@ -26,6 +26,7 @@ import {
   currentUser,
   emailVerificationChallenge,
   emailVerificationChallengeStatus,
+  evaluationCommentary,
   gradePage,
   gradeRow,
   myMembership,
@@ -84,6 +85,8 @@ function baseRoutes(options: {
   submit?: () => Response;
   events?: () => Response;
   challengeStatus?: () => Response;
+  submissionFiles?: Record<string, string>;
+  aiAssistant?: () => Response;
   /** 覆盖 `GET /me` 的 memberships（默认本人在这门课里有一个有效选课）。 */
   memberships?: ReturnType<typeof myMembership>[];
 } = {}): StubbedRoute[] {
@@ -217,6 +220,43 @@ function baseRoutes(options: {
           files: [{ path: "1.txt", content_sha256: "a".repeat(64), size_bytes: 12 }],
           created_at: "2026-09-15T08:00:00.000Z",
         }),
+    },
+    {
+      path: /^\/api\/v1\/submissions\/[^/]+\/files$/,
+      respond: ({ url }) => {
+        const parts = url.pathname.split("/");
+        const subId = parts[parts.length - 2] ?? "";
+        const text = options.submissionFiles?.[subId] ?? "# submitted code";
+        return new Response(text, {
+          status: 200,
+          headers: { "content-type": "text/plain; charset=utf-8" },
+        });
+      },
+    },
+    {
+      path: /^\/api\/v1\/evaluation-runs\/[^/]+\/commentary$/,
+      respond: () => jsonResponse(evaluationCommentary()),
+    },
+    {
+      method: "POST",
+      path: "/api/v1/submissions/ai-assistant",
+      respond:
+        options.aiAssistant ??
+        (() =>
+          jsonResponse({
+            question_version_id: V1,
+            provider_name: "openai_compatible",
+            model_name: "test-tutor-model",
+            generated_at: "2026-09-15T08:10:00.000Z",
+            stage_diagnosis: "当前已写出部分循环初始化，但循环体尚未补全。",
+            next_steps: [
+              "在 for 循环内补充输出语句。",
+              "确认范围为 1 到 100（包含 100）。",
+            ],
+            key_concepts: ["for 循环与 range(1, 101)"],
+            check_points: ["检查每行仅输出一个数字"],
+            disclaimers: ["AI 助教建议仅供参考，不代表提交后的最终评测得分。"],
+          })),
     },
   ];
 }
@@ -538,5 +578,59 @@ describe("学生作业工作区（CHG-0032）", () => {
     expect(await screen.findByTestId("email-challenge-reason")).toHaveTextContent(
       "邮件正文中的作业编号、姓名或学号与账号登记不一致",
     );
+  });
+
+  it("邮件/历史提交自动回填代码到编辑器，并在右下角呈现 AI 评价", async () => {
+    const emailCode = "for i in range(1, 101):\n    print(i)\n";
+    await openWorkspace({
+      grades: [
+        gradeRow({
+          submission_id: EMAIL_SUBMISSION,
+          assignment_id: UUID_A,
+          question_version_id: V1,
+          student_id: STUDENT,
+          state: "completed",
+          score: 96,
+          max_score: 100,
+          evaluation_run_id: UUID_RUN,
+        }),
+      ],
+      submissionFiles: {
+        [EMAIL_SUBMISSION]: emailCode,
+      },
+    });
+
+    await waitFor(() =>
+      expect(screen.getByTestId("workspace-answer-text")).toHaveValue(emailCode),
+    );
+    expect(screen.getByTestId("workspace-synced-submission")).toBeInTheDocument();
+    expect(await screen.findByTestId("commentary-text")).toBeInTheDocument();
+  });
+
+  it("点击 AI 助教按钮读取当前代码草稿并展示下一步启发式提示", async () => {
+    await openWorkspace();
+    const user = userEvent.setup();
+
+    const textarea = await screen.findByTestId("workspace-answer-text");
+    await user.click(textarea);
+    await user.paste("x = 1\n");
+
+    await user.click(screen.getByTestId("workspace-ai-assistant"));
+
+    const reply = await screen.findByTestId("workspace-ai-reply");
+    expect(reply).toHaveTextContent("当前已写出部分循环初始化");
+    expect(reply).toHaveTextContent("在 for 循环内补充输出语句");
+    expect(reply).toHaveTextContent("for 循环与 range(1, 101)");
+
+    const req = stub?.requests.find(
+      (item) =>
+        item.method === "POST" && item.url.pathname === "/api/v1/submissions/ai-assistant",
+    );
+    expect(req?.body).toEqual({
+      assignment_id: UUID_A,
+      question_version_id: V1,
+      draft_code: "x = 1\n",
+      student_question: null,
+    });
   });
 });
