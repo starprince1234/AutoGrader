@@ -1198,6 +1198,12 @@ export const messages = {
 "workspace.restoreSubmittedCode": "恢复已提交代码",
 "workspace.noEvaluationYet": "提交后显示 AI 评价与得分。",
 "workspace.editorTitle": "代码作答区",
+"workspace.historyOpen": "历史作答（{count}）",
+"workspace.historyViewing": "正在查看历史作答：提交于 {at}",
+"workspace.historyExit": "返回当前作答",
+"workspace.historyTitle": "历史作答",
+"workspace.historyEmpty": "这个题目还没有提交记录。",
+"workspace.historyPick": "查看这一次",
 "workspace.scoreSummary": "本题得分",
 
     "submit.identityUnavailable": "无法确认你的身份，请重新登录后再试。",

@@ -24,6 +24,7 @@ import {
   Modal,
   Panel,
   StatusPill,
+  Table,
 } from "../../ui/components";
 import { formatDateTime } from "../../ui/format";
 import {
@@ -41,6 +42,17 @@ import { EmailSubmissionPanel } from "./EmailSubmissionPanel";
 import { EmailSubmissionStatus } from "./EmailSubmissionStatus";
 import { clearDraft, loadDraft, saveDraft } from "./draft";
 import { ProgressPanel } from "./ProgressPanel";
+import type { GradeRow } from "../../api/types";
+
+const STATE_KEY: Record<string, Parameters<typeof t>[0]> = {
+  completed: "grades.state.completed",
+  failed: "grades.state.failed",
+  rejected: "grades.state.rejected",
+  running: "grades.state.running",
+  queued: "grades.state.queued",
+  received: "grades.state.received",
+  validated: "grades.state.validated",
+};
 import { useEvaluationStream } from "./useEvaluationStream";
 import {
   useCreateSubmission,
@@ -353,7 +365,38 @@ export function AssignmentWorkspace({
   }, [pendingSubmission, runLookup.data, refreshGradesAndFiles]);
 
   const currentRunId = runInfo?.versionId === selectedVersionId ? runInfo.runId : null;
-  const knownRunId = currentSubmission?.evaluation_run_id ?? null;
+  // 历史作答：选中的是"某一次提交"，选中后代码区与评测区都切到那一次。
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [historyPick, setHistoryPick] = useState<{
+    submissionId: string;
+    evaluationRunId: string | null;
+    submittedAt: string | null;
+    score: number | null;
+    maxScore: number | null;
+    state: string;
+    isPass: boolean | null;
+  } | null>(null);
+  const historyRows = useMemo(
+    () =>
+      (progress.gradeRows ?? []).filter(
+        (row) => row.question_version_id === selectedVersionId,
+      ),
+    [progress.gradeRows, selectedVersionId],
+  );
+  const historyFile = useSubmissionFileText(
+    historyPick?.submissionId ?? null,
+    answerFileName(currentOrdinal),
+  );
+
+    // 历史文本到位后写进编辑器：只影响显示，不会把历史内容当成新提交发出去。
+  useEffect(() => {
+    if (historyPick !== null && typeof historyFile.data === "string") {
+      setContent(historyFile.data);
+      setHasUserEdited(false);
+    }
+  }, [historyPick, historyFile.data]);
+
+  const knownRunId = historyPick?.evaluationRunId ?? currentSubmission?.evaluation_run_id ?? null;
   const displayRunId = knownRunId ?? (terminal === "completed" ? currentRunId : null);
 
   const [emailOpen, setEmailOpen] = useState(false);
@@ -645,6 +688,84 @@ export function AssignmentWorkspace({
           </Panel>
         </div>
 
+        {historyOpen ? (
+          <Modal
+            title={t("workspace.historyTitle")}
+            testId="workspace-history-modal"
+            onClose={() => setHistoryOpen(false)}
+          >
+            <div className="stack">
+              {historyRows.length === 0 ? (
+                <p className="muted">{t("workspace.historyEmpty")}</p>
+              ) : (
+                <Table<GradeRow>
+                  testId="workspace-history-table"
+                  label={t("workspace.historyTitle")}
+                  rows={historyRows}
+                  getRowKey={(row) => row.submission_id}
+                  columns={[
+                    {
+                      key: "submitted_at",
+                      header: t("grades.submittedAt"),
+                      render: (row) => formatDateTime(row.submitted_at, t("common.none")),
+                    },
+                    {
+                      key: "state",
+                      header: t("grades.state"),
+                      render: (row) => t(STATE_KEY[row.state] ?? "grades.state.completed"),
+                    },
+                    {
+                      key: "score",
+                      header: t("grades.scoreSlashMax"),
+                      align: "right",
+                      render: (row) =>
+                        typeof row.score === "number"
+                          ? `${row.score} / ${row.max_score ?? t("common.none")}`
+                          : t("grades.unscored"),
+                    },
+                    {
+                      key: "result",
+                      header: t("grades.result"),
+                      render: (row) =>
+                        row.state === "completed"
+                          ? row.is_pass === true
+                            ? t("grades.pass")
+                            : t("grades.fail")
+                          : t("grades.notScored"),
+                    },
+                    {
+                      key: "pick",
+                      header: t("grades.colDetail"),
+                      render: (row) => (
+                        <button
+                          type="button"
+                          className="button button--ghost"
+                          data-testid={`workspace-history-pick-${row.submission_id}`}
+                          onClick={() => {
+                            setHistoryPick({
+                              submissionId: row.submission_id,
+                              evaluationRunId: row.evaluation_run_id ?? null,
+                              submittedAt: row.submitted_at ?? null,
+                              score: typeof row.score === "number" ? row.score : null,
+                              maxScore:
+                                typeof row.max_score === "number" ? row.max_score : null,
+                              state: row.state,
+                              isPass: row.is_pass ?? null,
+                            });
+                            setHistoryOpen(false);
+                          }}
+                        >
+                          {t("workspace.historyPick")}
+                        </button>
+                      ),
+                    },
+                  ]}
+                />
+              )}
+            </div>
+          </Modal>
+        ) : null}
+
         <div className="lc-right-pane">
           {/* 右上：代码编辑器 */}
           <Panel title={t("workspace.editorTitle")} testId="workspace-answer">
@@ -665,6 +786,16 @@ export function AssignmentWorkspace({
                   </span>
                 </div>
 
+                <button
+                  type="button"
+                  className="button button--ghost"
+                  data-testid="workspace-history-open"
+                  disabled={historyRows.length === 0}
+                  onClick={() => setHistoryOpen(true)}
+                >
+                  {t("workspace.historyOpen", { count: historyRows.length })}
+                </button>
+
                 <label className="lc-editor-upload-btn">
                   <span className="muted">{t("workspace.chooseFile")}</span>
                   <input
@@ -681,6 +812,28 @@ export function AssignmentWorkspace({
                   />
                 </label>
               </div>
+
+              {historyPick !== null ? (
+                <Banner tone="warn" testId="workspace-history-banner">
+                  <span>
+                    {t("workspace.historyViewing", {
+                      at: historyPick.submittedAt ?? t("common.none"),
+                    })}
+                  </span>
+                  <button
+                    type="button"
+                    className="button button--ghost"
+                    data-testid="workspace-history-exit"
+                    onClick={() => {
+                      setHistoryPick(null);
+                      setContent(submittedFile.data ?? "");
+                      setHasUserEdited(false);
+                    }}
+                  >
+                    {t("workspace.historyExit")}
+                  </button>
+                </Banner>
+              ) : null}
 
               {syncedSubmissionId !== null ? (
                 <Banner tone="info" testId="workspace-synced-submission">
