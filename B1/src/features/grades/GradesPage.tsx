@@ -304,6 +304,50 @@ export function GradesPage({
 
   const drilldownRow = displayRows.find((entry) => entry.row.evaluation_run_id === drilldownRunId);
 
+  // 学生视图按题目折叠：同一题目的多次提交只留一条（最高分），其余进"历史记录"。
+  const [historyQuestionId, setHistoryQuestionId] = useState<string | null>(null);
+  const studentGroups = useMemo(() => {
+    const groups = new Map<string, DisplayRow[]>();
+    for (const entry of displayRows) {
+      const key = entry.row.question_version_id;
+      const bucket = groups.get(key);
+      if (bucket) {
+        bucket.push(entry);
+      } else {
+        groups.set(key, [entry]);
+      }
+    }
+    return groups;
+  }, [displayRows]);
+
+  const bestOf = (entries: DisplayRow[]): DisplayRow => {
+    // 最高分优先；未评分（score 为 null）视为最低；同分取最近提交。
+    const scoreOf = (entry: DisplayRow) =>
+      typeof entry.row.score === "number" ? entry.row.score : Number.NEGATIVE_INFINITY;
+    return entries.reduce((best, current) => {
+      const diff = scoreOf(current) - scoreOf(best);
+      if (diff > 0) return current;
+      if (diff === 0 && (current.row.submitted_at ?? "") > (best.row.submitted_at ?? "")) {
+        return current;
+      }
+      return best;
+    });
+  };
+
+  const studentRows = useMemo<DisplayRow[]>(() => {
+    const collapsed: DisplayRow[] = [];
+    for (const entries of studentGroups.values()) {
+      collapsed.push(bestOf(entries));
+    }
+    return collapsed.sort((left, right) =>
+      (right.row.submitted_at ?? "").localeCompare(left.row.submitted_at ?? ""),
+    );
+  }, [studentGroups]);
+
+  const historyRows =
+    historyQuestionId === null ? [] : (studentGroups.get(historyQuestionId) ?? []);
+
+
   const evidenceButton = (row: GradeRow) =>
     row.evaluation_run_id ? (
       <button
@@ -402,7 +446,7 @@ export function GradesPage({
         <Table<DisplayRow>
           testId="grades-table"
           label={t("grades.countLoaded", { count: displayRows.length })}
-          rows={displayRows}
+          rows={cohortView ? displayRows : studentRows}
           getRowKey={(entry) => entry.row.submission_id}
           columns={
             cohortView
@@ -454,13 +498,80 @@ export function GradesPage({
                   { key: "state", header: t("grades.state"), render: (entry) => stateCell(entry.row) },
                   { key: "score", header: t("grades.scoreSlashMax"), align: "right", render: (entry) => scoreCell(entry.row) },
                   { key: "result", header: t("grades.result"), render: (entry) => resultCell(entry.row) },
-                  { key: "evidence", header: t("grades.colDetail"), render: (entry) => evidenceButton(entry.row) },
+                  {
+                    key: "history",
+                    header: t("grades.colHistory"),
+                    render: (entry) => {
+                      const versionId = entry.row.question_version_id;
+                      const attempts = studentGroups.get(versionId)?.length ?? 0;
+                      if (attempts < 2) {
+                        return <span className="muted">{t("common.none")}</span>;
+                      }
+                      const open = historyQuestionId === versionId;
+                      return (
+                        <button
+                          type="button"
+                          className="button button--ghost"
+                          data-testid={`history-${versionId}`}
+                          aria-expanded={open}
+                          onClick={() =>
+                            setHistoryQuestionId(open ? null : versionId)
+                          }
+                        >
+                          {open
+                            ? t("grades.historyHide")
+                            : t("grades.historyShow", { count: attempts })}
+                        </button>
+                      );
+                    },
+                  },
                 ]
           }
         />
       )}
       {gradeTarget ? (
         <ManualGradeDrawer submissionId={gradeTarget} onClose={() => setGradeTarget(null)} />
+      ) : null}
+      {!cohortView && historyQuestionId !== null ? (
+        <div className="stack" data-testid="grades-history">
+          <h3>
+            {t("grades.historyTitle")} · {questionLabel(historyQuestionId)}
+          </h3>
+          {historyRows.length === 0 ? (
+            <p className="muted">{t("grades.historyEmpty")}</p>
+          ) : (
+            <Table<DisplayRow>
+              testId="grades-history-table"
+              label={t("grades.historyTitle")}
+              rows={historyRows}
+              getRowKey={(entry) => entry.row.submission_id}
+              columns={[
+                {
+                  key: "submitted_at",
+                  header: t("grades.submittedAt"),
+                  render: (entry) => formatDateTime(entry.row.submitted_at, t("common.none")),
+                },
+                { key: "state", header: t("grades.state"), render: (entry) => stateCell(entry.row) },
+                {
+                  key: "score",
+                  header: t("grades.scoreSlashMax"),
+                  align: "right",
+                  render: (entry) => scoreCell(entry.row),
+                },
+                {
+                  key: "result",
+                  header: t("grades.result"),
+                  render: (entry) => resultCell(entry.row),
+                },
+                {
+                  key: "evidence",
+                  header: t("grades.colDetail"),
+                  render: (entry) => evidenceButton(entry.row),
+                },
+              ]}
+            />
+          )}
+        </div>
       ) : null}
     </Panel>
   );

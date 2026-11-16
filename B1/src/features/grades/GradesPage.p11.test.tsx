@@ -168,6 +168,15 @@ async function openGrades(
   return { stub, user };
 }
 
+
+/** 展开所有题目的历史记录：折叠视图下，非最高分的提交只在这里可见。 */
+async function expandStudentHistory(user: ReturnType<typeof userEvent.setup>) {
+  const buttons = screen.queryAllByTestId(/^history-/);
+  for (const button of buttons) {
+    await user.click(button);
+  }
+}
+
 describe("P11 成绩筛选、身份关联、导出与深链", () => {
   it("时间范围按本地输入转 UTC RFC 3339 发送，结束早于开始时不发查询", async () => {
     const { stub, user } = await openGrades("teacher");
@@ -279,6 +288,7 @@ describe("P11 成绩筛选、身份关联、导出与深链", () => {
     teacher.stub.restore();
 
     const student = await openGrades("student");
+    await expandStudentHistory(student.user);
     await student.user.click(screen.getByTestId(`drilldown-${UUID_RUN}`));
     const studentDrilldown = await screen.findByTestId("grade-drilldown");
     expect(within(studentDrilldown).getByTestId("authoritative-score")).toHaveTextContent(

@@ -222,6 +222,15 @@ async function openGrades(
   return { stub, user };
 }
 
+
+/** 展开所有题目的历史记录：折叠视图下，非最高分的提交只在这里可见。 */
+async function expandStudentHistory(user: ReturnType<typeof userEvent.setup>) {
+  const buttons = screen.queryAllByTestId(/^history-/);
+  for (const button of buttons) {
+    await user.click(button);
+  }
+}
+
 describe("成绩查询（RQ-B-1-30）", () => {
   it("每个页面恰好一个 h1（页面标题），面板是 h2", async () => {
     const { stub } = await openGrades("teacher");
@@ -317,6 +326,7 @@ describe("成绩查询（RQ-B-1-30）", () => {
 
   it("学生视图下钻同样只显示 AI 评分与 AI 评价，不泄露受保护信息或测试用例", async () => {
     const { stub, user } = await openGrades("student");
+    await expandStudentHistory(user);
 
     await user.click(screen.getByTestId(`drilldown-${UUID_RUN}`));
     const drilldown = await screen.findByTestId("grade-drilldown");
