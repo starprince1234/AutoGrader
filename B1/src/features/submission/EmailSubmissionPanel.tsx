@@ -24,8 +24,10 @@ import type { QuestionVersionRow } from "../questions/useQuestions";
  * 1. 正文五行：核验码 / 作业编号 / 课序 / 姓名 / 学号。核验码在申请后填入，作业编号来自作业，
  *    姓名与学号来自 `GET /api/v1/me`（B2 会拿它们与身份库逐字比较，手输错一个字整封邮件就会
  *    被判为 `email_body_mismatch`）；课序取本人所在课序的显示名。
- * 2. 附件映射：第 N 题 → `N.txt`（1 基题号，作业顺序）。
- * 3. 申请下方给一句结果提示：成功绿色「提交成功」，失败红色「提交失败：<短原因>」，
+ * 2. 附件映射：第 N 题 → `N.txt`（1 基题号，作业顺序）；附件由学生在自己的邮箱客户端添加。
+ * 3. 收件邮箱：核验码签发响应带 `mailbox_address`（部署配置；未声明为 null），面板显示并支持复制，
+ *    否则学生无法在平台内得知该发往哪里。
+ * 4. 申请下方给一句结果提示：成功绿色「提交成功」，失败红色「提交失败：<短原因>」，
  *    pending 灰色；详细核验逻辑不在界面上铺开。
  *
  * 状态轮询只在 `pending` 时进行；`received` 后按 `submissions[]` 提供逐题结果入口，
@@ -166,6 +168,7 @@ export function EmailSubmissionPanel({
 }) {
   const [challenge, setChallenge] = useState<EmailVerificationChallenge | null>(null);
   const [copyState, setCopyState] = useState<CopyState>("idle");
+  const [addressCopy, setAddressCopy] = useState<CopyState>("idle");
   const [overrides, setOverrides] = useState<{
     code?: string;
     section?: string;
@@ -193,6 +196,7 @@ export function EmailSubmissionPanel({
     onSuccess: (created) => {
       setChallenge(created);
       setCopyState("idle");
+      setAddressCopy("idle");
       setOverrides((previous) => ({ ...previous, code: created.code }));
     },
   });
@@ -248,7 +252,12 @@ export function EmailSubmissionPanel({
   return (
     <Panel testId="email-submission-panel">
       <div className="stack">
-        <p style={{ whiteSpace: "pre-line" }}>{t("submit.email.instructions")}</p>
+        <ol className="email-submit-steps" data-testid="email-submit-steps">
+          <li>{t("submit.email.step.issue")}</li>
+          <li>{t("submit.email.step.save")}</li>
+          <li>{t("submit.email.step.send")}</li>
+          <li>{t("submit.email.step.wait")}</li>
+        </ol>
 
         <fieldset className="stack" data-testid="email-template-fields">
           <legend>{t("submit.email.templateTitle")}</legend>
@@ -410,6 +419,36 @@ export function EmailSubmissionPanel({
               {t("submit.email.expires")}：
               {formatDateTime(challenge.expires_at, t("common.none"))}
             </p>
+            {challenge.mailbox_address ? (
+              <p data-testid="email-mailbox-address">
+                {t("submit.email.toAddress")}：
+                <strong className="mono-id">{challenge.mailbox_address}</strong>{" "}
+                <button
+                  type="button"
+                  className="button button--ghost"
+                  data-testid="email-copy-address"
+                  onClick={() => {
+                    void copyText(challenge.mailbox_address as string).then(setAddressCopy);
+                  }}
+                >
+                  {t("submit.email.copyAddress")}
+                </button>
+                {addressCopy === "ok" ? (
+                  <span className="muted" data-testid="email-address-copied">
+                    {t("submit.email.addressCopied")}
+                  </span>
+                ) : null}
+                {addressCopy === "manual" ? (
+                  <span className="muted" data-testid="email-address-copy-manual">
+                    {t("submit.email.copyManual")}
+                  </span>
+                ) : null}
+              </p>
+            ) : (
+              <p className="muted" data-testid="email-mailbox-address-missing">
+                {t("submit.email.addressMissing")}
+              </p>
+            )}
             {status.isError ? (
               <Banner tone="error" testId="email-status-error">
                 {describeApiError(status.error)}

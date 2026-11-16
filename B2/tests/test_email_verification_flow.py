@@ -335,6 +335,7 @@ def harness(
         assignment_directory=assignments,
         authorization_directory=authorization,
         now=clock,
+        mailbox_address="homework@example.edu",
     )
     return Harness(
         engine=engine,
@@ -1407,8 +1408,15 @@ def test_create_challenge_endpoint_returns_the_code_once(
     )
     assert response.status_code == 201, response.text
     body = response.json()
-    assert set(body) == {"challenge_id", "code", "expires_at", "assignment_id"}
+    assert set(body) == {
+        "challenge_id",
+        "code",
+        "expires_at",
+        "assignment_id",
+        "mailbox_address",
+    }
     assert body["assignment_id"] == ASSIGNMENT_ID
+    assert body["mailbox_address"] == "homework@example.edu"
     assert re.fullmatch(r"AG-[A-Z0-9]{12}", body["code"])
     assert body["expires_at"].endswith("Z")
     row = only_row(harness.engine, email_verification_challenges)

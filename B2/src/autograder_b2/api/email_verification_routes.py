@@ -2,7 +2,7 @@
 
 | 端点 | 语义 |
 |---|---|
-| `POST /api/v1/email-verification/challenges` | 已认证学生为**一个作业**申请一次性核验码（201，明文码只出现这一次） |
+| `POST /api/v1/email-verification/challenges` | 已认证学生为**一个作业**申请一次性核验码（201，明文码只出现这一次；同时返回部署配置的收件邮箱地址） |
 | `GET /api/v1/email-verification/challenges/{challenge_id}` | 只有**所有者**可读的状态反馈（pending/received/rejected(reason)/expired + 按题提交） |
 
 分层：本模块只做 HTTP 关注点（认证头、请求体形状、状态码映射、Problem Details、时间序列化）；
@@ -171,6 +171,8 @@ def build_router(service: EmailVerificationService | None) -> APIRouter:
                 "code": issued.code,
                 "expires_at": rfc3339_millis(issued.expires_at),
                 "assignment_id": issued.assignment_id,
+                # 公开展示地址（部署配置的收件邮箱；未声明为 null），不含凭据。
+                "mailbox_address": issued.mailbox_address,
             },
         )
 

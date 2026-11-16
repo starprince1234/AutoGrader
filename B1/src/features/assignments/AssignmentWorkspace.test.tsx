@@ -511,6 +511,10 @@ describe("学生作业工作区（CHG-0032）", () => {
     await user.click(await screen.findByTestId("workspace-email-entry"));
     const panel = await screen.findByTestId("email-submission-panel");
 
+    // 分步指引说清“附件在哪里加”：学生的邮箱客户端，平台不能代替其发信。
+    const steps = within(panel).getByTestId("email-submit-steps");
+    expect(steps).toHaveTextContent("在邮箱里添加附件");
+
     // 正文五行：作业编号 / 课序 / 姓名 / 学号自动填充；核验码在申请后填入。
     await waitFor(() =>
       expect(within(panel).getByTestId("email-field-name")).toHaveValue("张三"),
@@ -531,6 +535,12 @@ describe("学生作业工作区（CHG-0032）", () => {
     await user.click(within(panel).getByTestId("email-issue-code"));
     expect(await within(panel).findByTestId("email-code")).toHaveTextContent("AG-123456789012");
     expect(body.value).toContain("核验码：AG-123456789012");
+
+    // 收件邮箱由签发响应带出，学生在平台内就能看到该发到哪。
+    expect(await within(panel).findByTestId("email-mailbox-address")).toHaveTextContent(
+      "homework@example.edu",
+    );
+    expect(within(panel).getByTestId("email-copy-address")).toBeInTheDocument();
 
     const issueRequest = stub?.requests.find(
       (request) => request.url.pathname === "/api/v1/email-verification/challenges",

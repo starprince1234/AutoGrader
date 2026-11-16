@@ -363,10 +363,43 @@ def test_imap_settings_are_explicit_or_absent() -> None:
     )
     assert settings is not None
     assert settings.identity is None
+    # 收件账号本身就是完整邮箱 → 默认把它当作展示给学生的收件地址。
+    assert settings.address == "inbox@example.edu"
     # 旧路由字段（匹配规则表/固定目标）已经不存在，且不再被读取。
     assert not hasattr(settings, "matching")
     assert load_imap_settings({"B2_IMAP_MATCHING_JSON": "{}"}) is None
     assert load_imap_settings({"B2_IMAP_TARGET_JSON": "{}"}) is None
+
+
+def test_mailbox_address_is_configured_or_derived_from_the_login_name() -> None:
+    base = {
+        "B2_IMAP_HOST": "imap.example.edu",
+        "B2_IMAP_PASSWORD": "secret",
+        "B2_IMAP_MAILBOX": "INBOX",
+    }
+    explicit = load_imap_settings(
+        {
+            **base,
+            "B2_IMAP_USERNAME": "inbox",
+            "B2_IMAP_ADDRESS": "Homework@Example.EDU",
+        }
+    )
+    assert explicit is not None and explicit.address == "homework@example.edu"
+
+    derived = load_imap_settings({**base, "B2_IMAP_USERNAME": "Homework@Example.EDU"})
+    assert derived is not None and derived.address == "homework@example.edu"
+
+    unknown = load_imap_settings({**base, "B2_IMAP_USERNAME": "mailbox"})
+    assert unknown is not None and unknown.address is None
+
+    with pytest.raises(ConfigurationError):
+        load_imap_settings(
+            {
+                **base,
+                "B2_IMAP_USERNAME": "inbox@example.edu",
+                "B2_IMAP_ADDRESS": "not-an-address",
+            }
+        )
 
 
 def test_identity_config_is_optional_but_must_be_complete() -> None:

@@ -288,6 +288,7 @@ def _wire_email_intake(
         directory=directory,
         assignment_directory=runtime.assignment_directory,
         authorization_directory=runtime.authorization_directory,
+        mailbox_address=imap.address,
     )
     runtime.email = EmailIntakeService(
         engine=engine,

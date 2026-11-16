@@ -198,7 +198,9 @@ nsjail 内以“用户命名空间内的 root”（宿主 uid 仍是服务账号
 
 新增公开端点（B2，契约）：
 
-- `POST /api/v1/email-verification/challenges`（学生）→ `201 {challenge_id, code, expires_at, assignment_id}`。
+- `POST /api/v1/email-verification/challenges`（学生）→ `201 {challenge_id, code, expires_at, assignment_id, mailbox_address}`。
+  `mailbox_address` 是部署配置的收件邮箱（公开地址，未声明为 `null`）：学生端据此显示该发往哪里，
+  并把“附件在自己的邮箱客户端里添加”的步骤写进面板。
 - `GET /api/v1/email-verification/challenges/{challenge_id}`（学生）→ 状态、脱敏原因码与按题 `submissions[]`。
 
 新增内部表（b2 schema，迁移）：`email_verification_challenges`、`email_verifications`、

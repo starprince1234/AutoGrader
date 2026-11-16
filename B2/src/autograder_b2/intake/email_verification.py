@@ -186,12 +186,17 @@ class ChallengeAssignmentClosedError(RuntimeError):
 
 @dataclass(frozen=True, slots=True)
 class IssuedChallenge:
-    """签发结果。`code` 只在这一次响应里出现；库里只有它的 SHA-256。"""
+    """签发结果。`code` 只在这一次响应里出现；库里只有它的 SHA-256。
+
+    `mailbox_address` 是部署配置的收件邮箱（学生要把信发到它），None 表示部署未声明；
+    它只是公开地址，不含任何凭据。
+    """
 
     challenge_id: str
     code: str
     expires_at: datetime
     assignment_id: str
+    mailbox_address: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -289,6 +294,7 @@ class EmailVerificationService:
         now: Callable[[], datetime] = utc_now,
         challenge_ttl: timedelta = CHALLENGE_TTL,
         heartbeat_max_age: timedelta = HEARTBEAT_MAX_AGE,
+        mailbox_address: str | None = None,
     ) -> None:
         if challenge_ttl <= timedelta(0):
             raise ValueError("the challenge TTL must be positive")
@@ -302,6 +308,7 @@ class EmailVerificationService:
         self._now = now
         self._challenge_ttl = challenge_ttl
         self._heartbeat_max_age = heartbeat_max_age
+        self._mailbox_address = mailbox_address
 
     # --- 只读属性 -----------------------------------------------------------------
 
@@ -329,6 +336,11 @@ class EmailVerificationService:
     def authorization_directory(self) -> UserAuthorizationDirectory | None:
         """B4 权威授权目录（提交入口、邮件入口与隔离复核共用同一个实例；未配置为 `None`）。"""
         return self._authorization_directory
+
+    @property
+    def mailbox_address(self) -> str | None:
+        """部署配置的收件邮箱（展示给学生）；`None` = 部署未声明，不猜地址。"""
+        return self._mailbox_address
 
     def authenticate(self, authorization_header: str | None) -> Principal:
         """认证头 → `Principal`；任何失败都是 `AuthenticationError`（路由层映射 401）。"""
@@ -423,6 +435,7 @@ class EmailVerificationService:
                 code=code,
                 expires_at=expires_at,
                 assignment_id=canonical_assignment,
+                mailbox_address=self._mailbox_address,
             )
         raise RuntimeError("could not allocate a unique e-mail verification code")
 

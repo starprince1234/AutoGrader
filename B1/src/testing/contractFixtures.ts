@@ -41,6 +41,7 @@ import type {
   Role,
   SessionCreated,
   SubmissionAccepted,
+  SubmissionView,
   UserSummary,
 } from "../api/types";
 
@@ -235,6 +236,7 @@ export function emailVerificationChallenge(
     assignment_id: UUID_A,
     code: "AG-123456789012",
     expires_at: "2099-01-01T00:00:00.000Z",
+    mailbox_address: "homework@example.edu",
     ...overrides,
   } as EmailVerificationChallenge;
 }
@@ -416,6 +418,25 @@ export function submissionAccepted(overrides?: Partial<SubmissionAccepted>): Sub
     accepted_at: "2026-09-15T08:00:05.000Z",
     ...overrides,
   } as SubmissionAccepted;
+}
+
+/** 提交视图（`GET /api/v1/submissions/{id}`）：教师端「来源：网页/邮件」读取 `intake`。 */
+export function submissionView(overrides?: Partial<SubmissionView>): SubmissionView {
+  return {
+    submission_id: UUID_C,
+    assignment_id: UUID_A,
+    student_id: UUID_D,
+    course_id: UUID_A,
+    section_id: UUID_B,
+    question_version_id: UUID_C,
+    state: "completed",
+    intake: "api",
+    evaluation_run_id: UUID_RUN,
+    files: [],
+    state_history: [],
+    created_at: "2026-09-15T08:00:05.000Z",
+    ...overrides,
+  } as SubmissionView;
 }
 
 export function streamFrame(

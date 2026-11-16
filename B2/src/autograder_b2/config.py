@@ -52,6 +52,9 @@ DEFAULT_IMAP_MAX_MESSAGE_BYTES = 8 * 1024 * 1024
 #: 邮箱**标签**的允许形态。它是服务端配置（不是邮件头），进 checkpoint 主键、隔离记录与信封
 #: provenance；限定字符集与长度是为了让幂等键可确定复现，且不引入控制字符。
 MAILBOX_LABEL_PATTERN = re.compile(r"^[A-Za-z0-9_.@+-]{1,100}$")
+#: 展示给学生的收件邮箱地址（`EmailVerificationChallenge.mailbox_address`）的允许形态。
+#: 只放行不含空白的 `local@domain.tld`；长度上限与用户邮箱字段一致（320）。
+EMAIL_ADDRESS_PATTERN = re.compile(r"^[^@\s]{1,64}@[^@\s]{1,255}\.[^@\s]{1,63}$")
 
 #: 与 IMAP 接收有关的全部环境变量名；用于区分"完全未配置"与"半配置"。
 #: 旧邮件路由的 `B2_IMAP_MATCHING_JSON` / `B2_IMAP_MATCHING_PATH` 已随作业模型整体移除（CHG-0032：
@@ -63,6 +66,7 @@ _IMAP_VARIABLES = (
     "B2_IMAP_PASSWORD",
     "B2_IMAP_PASSWORD_FILE",
     "B2_IMAP_MAILBOX",
+    "B2_IMAP_ADDRESS",
     "B2_IMAP_USE_SSL",
     "B2_IMAP_PROCESSED_MAILBOX",
     "B2_IMAP_MAX_MESSAGES",
@@ -502,6 +506,9 @@ class ImapSettings:
     max_message_bytes: int
     timeout_seconds: float
     processed_mailbox: str | None = None
+    #: 展示给学生的收件邮箱地址（`B2_IMAP_ADDRESS`；缺省取 `username` 中形如邮箱的完整地址）。
+    #: 只用于界面展示与 `EmailVerificationChallenge.mailbox_address`，不参与 IMAP 认证。
+    address: str | None = None
     #: 按发件人查账号的 B4 身份目录配置（`B2_IDENTITY_URL` + `B2_IDENTITY_AUTHORIZATION`）。
     identity: IdentitySettings | None = None
 
@@ -539,12 +546,27 @@ def load_imap_settings(environ: Mapping[str, str] | None = None) -> ImapSettings
     if processed and not MAILBOX_LABEL_PATTERN.match(processed):
         raise ConfigurationError("B2_IMAP_PROCESSED_MAILBOX must match ^[A-Za-z0-9_.@+-]{1,100}$")
 
+    # 展示给学生的收件邮箱：显式配置优先；缺省时只在 IMAP 登录名本身就是完整邮箱时展示
+    # （163/QQ 等 IMAP 账号通常如此），绝不猜测一个可能投错的地址。
+    address = (source.get("B2_IMAP_ADDRESS") or "").strip()
+    if address:
+        if len(address) > 320 or not EMAIL_ADDRESS_PATTERN.match(address):
+            raise ConfigurationError(
+                "B2_IMAP_ADDRESS must be one e-mail address (local@domain.tld, at most 320 chars)"
+            )
+        address = address.lower()
+    elif len(username) <= 320 and EMAIL_ADDRESS_PATTERN.match(username):
+        address = username.lower()
+    else:
+        address = None
+
     return ImapSettings(
         host=host,
         port=port,
         username=username,
         password=_imap_password(source),
         mailbox=mailbox,
+        address=address,
         use_ssl=use_ssl,
         identity=load_identity_settings(source),
         max_messages_per_pull=_positive_int(

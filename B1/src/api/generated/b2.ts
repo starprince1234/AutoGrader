@@ -1478,6 +1478,8 @@ export interface components {
         /**
          * @description The one-time code, returned once at creation. The server stores only its SHA-256, so a
          *     database read cannot recover it; it is never logged and never appears in an event.
+         *     `mailbox_address` exposes the deployment-configured receiving mailbox so the student can
+         *     address the message from inside the product (the address is public; credentials never are).
          */
         EmailVerificationChallenge: {
             challenge_id: components["schemas"]["Uuid"];
@@ -1485,6 +1487,13 @@ export interface components {
             /** @description Single-use ownership proof the student puts in the message body. */
             code: string;
             expires_at: components["schemas"]["Timestamp"];
+            /**
+             * @description Deployment-configured mailbox that receives answer e-mails and is published to
+             *     students (public address only; never credentials). Null when the deployment has not
+             *     declared one — the client must then tell the student to ask the course staff instead
+             *     of inventing an address.
+             */
+            mailbox_address: string | null;
         };
         /**
          * @description Student-visible state of the ownership proof. `pending` means no message carrying this

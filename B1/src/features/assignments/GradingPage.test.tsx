@@ -30,6 +30,7 @@ import {
   questionPublic,
   questionVersionPublic,
   sessionCreated,
+  submissionView,
 } from "../../testing/contractFixtures";
 import { signIn } from "../../auth/sessionStore";
 import { GradingPage } from "./GradingPage";
@@ -134,7 +135,9 @@ function jwtFor(subject: string): string {
   return `${encode({ alg: "EdDSA" })}.${encode({ sub: subject })}.signature`;
 }
 
-function routes(options: { gradeNextCursor?: string | null } = {}): StubbedRoute[] {
+function routes(
+  options: { gradeNextCursor?: string | null; submissionIntake?: "api" | "email" } = {},
+): StubbedRoute[] {
   return [
     {
       method: "POST",
@@ -250,6 +253,17 @@ function routes(options: { gradeNextCursor?: string | null } = {}): StubbedRoute
           status: 200,
           headers: { "content-type": "text/plain" },
         }),
+    },
+    {
+      // 教师端“来源：网页/邮件”标识读取提交视图的 `intake`。
+      path: `/api/v1/submissions/${SUB_S1_V1}`,
+      respond: () =>
+        jsonResponse(
+          submissionView({
+            submission_id: SUB_S1_V1,
+            intake: options.submissionIntake ?? "api",
+          }),
+        ),
     },
     {
       // GET = 当前人工评分（204 表示还没评过）；POST = 保存教师分。
@@ -384,6 +398,11 @@ describe("批改界面（作业情况子界面）", () => {
     // 答案文件带 Authorization 读取后以文本呈现。
     expect(await screen.findByTestId("answer-content")).toHaveTextContent("进程是资源分配单位");
 
+    // 作业内直接标明提交来源（网页/邮件），教师不需要去邮箱里翻。
+    expect(await screen.findByTestId("grading-submission-source")).toHaveTextContent(
+      "来源：网页提交",
+    );
+
     // 百分制：只完成 1/2 题且 80/100 → (0.8 / 2) * 100 = 40，而不是 80。
     expect(screen.getByTestId("grading-student-score")).toHaveTextContent("40");
 
@@ -401,6 +420,20 @@ describe("批改界面（作业情况子界面）", () => {
     expect(screen.queryByTestId("grading-manual-grade")).toBeNull();
     expect(screen.queryByTestId("manual-grade-drawer")).toBeNull();
     expect(screen.getByTestId("grading-score-hint")).toHaveTextContent("默认采用 AI 评分");
+  });
+
+  it("邮件提交在作业内标出来源（来源：邮件提交）", async () => {
+    stub = installFetchStub(routes({ submissionIntake: "email" }));
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderGrading();
+
+    await user.click(await screen.findByTestId("grading-toggle-completed"));
+    await user.click(await screen.findByTestId(`grading-student-completed-${E1}`));
+
+    expect(await screen.findByTestId("grading-submission-source")).toHaveTextContent(
+      "来源：邮件提交",
+    );
   });
 
   it("评分输入：改数字后失焦即按教师分保存；非法输入不发请求", async () => {

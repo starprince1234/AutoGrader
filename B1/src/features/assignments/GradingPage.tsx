@@ -21,6 +21,7 @@ import { SafeMarkdown } from "../questions/SafeMarkdown";
 import { useQuestionVersionRows } from "../questions/useQuestions";
 import { GradeDrilldown } from "../grades/GradeDrilldown";
 import { answerFileName } from "../submission/validation";
+import { useSubmissionView } from "../submission/useSubmission";
 import { AnswerViewer } from "./AnswerViewer";
 import {
   overallStateLabel,
@@ -603,6 +604,9 @@ function QuestionAnswer({
   const question =
     student.questions.find((item) => item.questionVersionId === versionId) ?? null;
   const submission = question?.submission ?? null;
+  // 来源（网页 / 邮件）来自提交视图的 `intake`；它在作业内与成绩/答案一起展示，
+  // 教师不需要再去邮箱里翻。
+  const submissionView = useSubmissionView(submission?.submission_id ?? null);
 
   return (
     <div className="stack">
@@ -627,6 +631,15 @@ function QuestionAnswer({
                 {t("grades.submittedAt")}：
                 {formatDateTime(submission.submitted_at, t("common.none"))}
               </span>
+              {submissionView.data ? (
+                <span className="muted" data-testid="grading-submission-source">
+                  {t(
+                    submissionView.data.intake === "email"
+                      ? "grading.sourceEmail"
+                      : "grading.sourceWeb",
+                  )}
+                </span>
+              ) : null}
               <ScoreInput
                 submissionId={submission.submission_id}
                 aiScore={typeof submission.score === "number" ? submission.score : null}
