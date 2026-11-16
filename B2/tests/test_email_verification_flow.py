@@ -1538,6 +1538,9 @@ def test_list_endpoint_returns_one_record_per_application(
     first = issue(harness)
     harness.clock.advance(timedelta(seconds=1))
     second = issue(harness)
+    # 未拉取过邮箱时状态是 rejected(intake_unavailable)（平台条件，不是 pending）；
+    # 这里先写一次成功心跳，让记录处于真正的“等待收件”。
+    IntakeStateStore(harness.engine).record_pull_success()
     token = harness.signer.token(user_id=STUDENT_ID)
     endpoint = "/api/v1/email-verification/challenges"
     response = api_client.get(
