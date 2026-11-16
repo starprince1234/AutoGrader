@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useRef, useState, type ChangeEvent } from "react";
 import { t } from "../../i18n";
 import { describeApiError } from "../../api/problem";
+import { formatDateTime } from "../../ui/format";
 import { Banner, EmptyState, ErrorState, Panel, Spinner } from "../../ui/components";
 import {
   useAddAllowlistBatch,
@@ -28,52 +29,66 @@ export function RegistrationAllowlistPanel() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const items = batches.data?.items ?? [];
+
+  const pickFile = (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) {
+      return;
+    }
+    setNotice(null);
+    setError(null);
+    addBatch.mutate(file, {
+      onSuccess: (result) => {
+        // "更新了某班"与"新增了某班"必须说清楚：两者对名单的影响完全不同。
+        const key = result.replaced
+          ? result.skipped_row_count > 0
+            ? "allowlist.updatedWithSkipped"
+            : "allowlist.updated"
+          : result.skipped_row_count > 0
+            ? "allowlist.addedWithSkipped"
+            : "allowlist.added";
+        setNotice(
+          t(key, {
+            name: result.class_name,
+            count: result.row_count,
+            skipped: result.skipped_row_count,
+          }),
+        );
+      },
+      onError: (failure) => setError(failure),
+    });
+  };
 
   return (
     <div className="stack" data-testid="allowlist-panel">
       <Panel
         title={t("allowlist.registered")}
         actions={
-          <label className="button button--primary" data-testid="allowlist-add-label">
-            {t("allowlist.add")}
+          <>
+            {/* 真正的按钮：键盘用户能 Tab 到它并用 Enter/Space 打开文件选择器；
+                直接给隐藏的 file input 套 label 时，label 不可聚焦，键盘用户没有入口。 */}
+            <button
+              type="button"
+              className="button button--primary"
+              data-testid="allowlist-add"
+              disabled={addBatch.isPending}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              {t("allowlist.add")}
+            </button>
             <input
+              ref={fileInputRef}
               type="file"
               accept=".csv,text/csv"
-              data-testid="allowlist-add"
-              style={{ display: "none" }}
-              onChange={(event) => {
-                const file = event.target.files?.[0];
-                event.target.value = "";
-                if (!file) {
-                  return;
-                }
-                setNotice(null);
-                setError(null);
-                addBatch.mutate(file, {
-                  onSuccess: (result) => {
-                    // "更新了某班"与"新增了某班"必须说清楚：两者对名单的影响完全不同。
-                    const key = result.replaced
-                      ? result.skipped_row_count > 0
-                        ? "allowlist.updatedWithSkipped"
-                        : "allowlist.updated"
-                      : result.skipped_row_count > 0
-                        ? "allowlist.addedWithSkipped"
-                        : "allowlist.added";
-                    setNotice(
-                      t(key, {
-                        name: result.class_name,
-                        count: result.row_count,
-                        skipped: result.skipped_row_count,
-                      }),
-                    );
-                  },
-                  onError: (failure) => setError(failure),
-                });
-              }}
+              data-testid="allowlist-add-input"
+              hidden
+              onChange={pickFile}
             />
-          </label>
+          </>
         }
       >
         {notice ? (
@@ -117,7 +132,7 @@ export function RegistrationAllowlistPanel() {
                       {t("allowlist.students", { count: batch.row_count })}
                     </span>
                     <span className="muted">
-                      {batch.uploaded_at.slice(0, 19).replace("T", " ")}
+                      {formatDateTime(batch.uploaded_at, t("common.none"))}
                     </span>
                   </button>
                   <button

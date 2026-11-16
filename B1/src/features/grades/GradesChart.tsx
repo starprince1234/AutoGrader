@@ -26,6 +26,8 @@ export function GradesChart({
   useEffect(() => {
     let disposed = false;
     let chart: EChartsInstance | null = null;
+    let observer: ResizeObserver | null = null;
+    let onWindowResize: (() => void) | null = null;
 
     if (empty) return;
 
@@ -74,6 +76,19 @@ export function GradesChart({
             },
           ],
         });
+        // ECharts measures its canvas once at `init` and never reacts to the container on
+        // its own. Without an explicit resize the chart keeps its first width after the
+        // window changes: blank space when it grows, horizontal overflow when it shrinks.
+        const fit = () => {
+          if (!disposed) chart?.resize();
+        };
+        if (typeof ResizeObserver === "function" && containerRef.current) {
+          observer = new ResizeObserver(fit);
+          observer.observe(containerRef.current);
+        } else {
+          onWindowResize = fit;
+          window.addEventListener("resize", fit);
+        }
       })
       .catch(() => {
         if (!disposed) setFailed(true);
@@ -81,6 +96,8 @@ export function GradesChart({
 
     return () => {
       disposed = true;
+      observer?.disconnect();
+      if (onWindowResize) window.removeEventListener("resize", onWindowResize);
       chart?.dispose();
     };
   }, [buckets, loader, empty, theme]);

@@ -11,6 +11,7 @@ import {
 } from "../../testing/httpBoundary";
 import { sessionCreated } from "../../testing/contractFixtures";
 import { signIn } from "../../auth/sessionStore";
+import { formatDateTime } from "../../ui/format";
 import { RegistrationAllowlistPanel } from "./RegistrationAllowlistPanel";
 
 /**
@@ -116,6 +117,10 @@ describe("注册名单面板", () => {
     const list = await screen.findByTestId("allowlist-batches");
     expect(within(list).getByText("软工01班")).toBeInTheDocument();
     expect(screen.getByTestId(`allowlist-count-${BATCH}`)).toHaveTextContent("2 人");
+    // 导入时间按本地时区显示，而不是直接把服务端的 UTC 字符串切一段。
+    expect(
+      screen.getByText(formatDateTime("2026-10-29T12:00:00.000Z", "")),
+    ).toBeInTheDocument();
   });
 
   it("没有班级时提示去添加名单", async () => {
@@ -127,7 +132,7 @@ describe("注册名单面板", () => {
 
   it("添加名单：选中文件即上传，成功后提示班级与人数", async () => {
     const panel = await openPanel();
-    const input = within(panel).getByTestId("allowlist-add") as HTMLInputElement;
+    const input = within(panel).getByTestId("allowlist-add-input") as HTMLInputElement;
     await userEvent.upload(input, csvFile());
     expect(await screen.findByTestId("allowlist-notice")).toHaveTextContent("已添加「软工01班」");
     const posted = stub?.requests.find(
@@ -136,6 +141,18 @@ describe("注册名单面板", () => {
         request.url.pathname === "/api/v1/registration-allowlists",
     );
     expect(posted).toBeTruthy();
+  });
+
+  it("添加名单是真正的按钮：可聚焦，回车也能打开文件选择器", async () => {
+    const panel = await openPanel();
+    const button = within(panel).getByTestId("allowlist-add");
+    expect(button.tagName).toBe("BUTTON");
+    const input = within(panel).getByTestId("allowlist-add-input") as HTMLInputElement;
+    const click = vi.spyOn(input, "click").mockImplementation(() => {});
+    button.focus();
+    expect(button).toHaveFocus();
+    await userEvent.keyboard("{Enter}");
+    expect(click).toHaveBeenCalledTimes(1);
   });
 
   it("展开班级才读学生，并显示姓名与学号", async () => {
