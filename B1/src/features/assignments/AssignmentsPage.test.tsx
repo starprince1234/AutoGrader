@@ -495,8 +495,14 @@ describe("作业中心（教师侧作业列表）", () => {
     expect(screen.getByTestId("teacher-assignments-table")).toHaveTextContent("进行");
     expect(screen.getByTestId("teacher-assignments-table")).toHaveTextContent("结束");
 
+    // 起始与截止两行都带标签；截止时间只比起始时间多一个加粗。
+    expect(screen.getByTestId(`due-${UUID_A}`)).toHaveTextContent("起始时间：");
+    const dueAt = screen.getByTestId(`due-at-${UUID_A}`);
+    expect(dueAt).toHaveTextContent("截止时间：");
+    expect(dueAt.tagName).toBe("STRONG");
+
     // 未设置结束时间的行必须明确写出来（这是"手动结束"存在的理由）。
-    expect(screen.getByTestId(`no-end-${UUID_C}`)).toHaveTextContent("未设置结束时间");
+    expect(screen.getByTestId(`no-end-${UUID_C}`)).toHaveTextContent("截止时间：未设置");
 
     // 题目数量可点，直达批改界面。
     const gradingLink = screen.getByTestId(`grading-link-${UUID_A}`);

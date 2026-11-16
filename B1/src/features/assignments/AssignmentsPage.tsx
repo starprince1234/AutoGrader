@@ -288,12 +288,20 @@ function TeacherAssignmentList({
                 {formatDateTime(row.created_at, t("common.none"))}
               </span>
               {row.due_at ? (
-                <DueCell dueAt={row.due_at} now={Date.now()} />
+                <strong className="muted" data-testid={`due-at-${row.assignment_id}`}>
+                  {t("assignments.windowEnd")}：
+                  {formatDateTime(row.due_at, t("common.none"))}
+                </strong>
               ) : (
-                <span className="muted" data-testid={`no-end-${row.assignment_id}`}>
-                  {t("assignments.noEnd")}
-                </span>
+                <strong className="muted" data-testid={`no-end-${row.assignment_id}`}>
+                  {t("assignments.windowEnd")}：{t("assignments.noEnd")}
+                </strong>
               )}
+              {row.due_at && isOverdue(row.due_at, Date.now()) ? (
+                <span className="muted" data-testid={`overdue-${row.assignment_id}`}>
+                  {t("assignments.overdue")}
+                </span>
+              ) : null}
             </span>
           ),
         },
