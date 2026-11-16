@@ -482,7 +482,6 @@ export function AssignmentsPage() {
       sectionId: sectionScope === "" ? null : sectionScope,
       resolved: false,
       held: false,
-      reasonCode: null,
       cursor: null,
       limit: REVIEW_PAGE_SIZE,
     },

@@ -33,7 +33,7 @@ import {
   useRejectQuarantine,
   useSetQuarantineHold,
 } from "./useReviewMail";
-import { isAttributableReason, REASON_CODES, reasonHint, reasonLabel } from "./reasonCodes";
+import { isAttributableReason } from "./reasonCodes";
 import {
   readMailFilter,
   withMailFilter,
@@ -141,7 +141,6 @@ export function MailReviewTab({
       sectionId: filter.sectionId,
       resolved: filter.resolved,
       held: filter.held,
-      reasonCode: filter.reasonCode,
       cursor: filter.cursor,
     },
   });
@@ -378,7 +377,6 @@ export function MailReviewTab({
     sectionId?: string | null;
     resolved?: boolean | null;
     held?: boolean | null;
-    reasonCode?: string | null;
   }) => {
     onChange(
       withMailFilter(search, {
@@ -386,7 +384,6 @@ export function MailReviewTab({
         sectionId: next.sectionId === undefined ? filter.sectionId : next.sectionId,
         resolved: next.resolved === undefined ? filter.resolved : next.resolved,
         held: next.held === undefined ? filter.held : next.held,
-        reasonCode: next.reasonCode === undefined ? filter.reasonCode : next.reasonCode,
       }),
     );
   };
@@ -505,22 +502,6 @@ export function MailReviewTab({
                 <option value="held">{t("review.mail.heldFilter")}</option>
                 <option value="processed">{t("review.mail.processedFilter")}</option>
                 <option value="all">{t("review.mail.allStates")}</option>
-              </Select>
-            </Field>
-
-            <Field label={t("review.mail.reason")} htmlFor="review-mail-reason">
-              <Select
-                id="review-mail-reason"
-                data-testid="review-mail-reason"
-                value={filter.reasonCode ?? ""}
-                onChange={(event) => changeFilter({ reasonCode: event.target.value || null })}
-              >
-                <option value="">{t("review.mail.allReasons")}</option>
-                {REASON_CODES.map((code) => (
-                  <option key={code} value={code}>
-                    {reasonLabel(code)}
-                  </option>
-                ))}
               </Select>
             </Field>
           </div>
@@ -733,10 +714,6 @@ export function MailReviewTab({
               {detailTarget.sender ?? t("review.mail.notProvided")}
             </p>
             <p>
-              {t("review.mail.reason")}：{reasonLabel(detailTarget.reason_code)}
-            </p>
-            <p className="muted">{reasonHint(detailTarget.reason_code)}</p>
-            <p>
               {t("review.mail.state")}：
               {resolutionText(detailTarget)}
               {trailText(detailTarget) ? ` · ${trailText(detailTarget)}` : ""}
@@ -759,7 +736,6 @@ export function MailReviewTab({
           <div className="stack">
             <p className="muted">{t("review.mail.resolveScopeNote")}</p>
             <p className="muted" data-testid="review-mail-resolve-target">
-              {reasonLabel(resolveTarget.reason_code)} ·{" "}
               {formatDateTime(resolveTarget.recorded_at, t("common.none"))} ·{" "}
               {scopeText(resolveTarget, courseMap, sectionMap)}
             </p>
@@ -951,7 +927,6 @@ export function MailReviewTab({
           <div className="stack">
             <p className="muted">{t("review.mail.dismissHint")}</p>
             <p className="muted">
-              {reasonLabel(dismissTarget.reason_code)} ·{" "}
               {formatDateTime(dismissTarget.recorded_at, t("common.none"))} ·{" "}
               {scopeText(dismissTarget, courseMap, sectionMap)}
             </p>
@@ -1041,7 +1016,6 @@ export function MailReviewTab({
           <div className="stack">
             <p className="muted">{t("review.mail.rejectHint")}</p>
             <p className="muted" data-testid="review-mail-reject-target">
-              {reasonLabel(rejectTarget.reason_code)} ·{" "}
               {formatDateTime(rejectTarget.recorded_at, t("common.none"))} ·{" "}
               {scopeText(rejectTarget, courseMap, sectionMap)}
             </p>
