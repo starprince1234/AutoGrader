@@ -1422,8 +1422,44 @@ samp {
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
+  min-width: 0;
+  max-width: 100%;
   background: var(--color-surface-2);
   border-radius: var(--radius-md);
+}
+
+.case-card pre {
+  margin: 0;
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.preview-code,
+.preview-prose {
+  margin: 0;
+  max-width: 100%;
+  padding: var(--space-3);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.preview-code {
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-x: auto;
+}
+
+.preview-prose {
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.7;
 }
 
 .case-card__legend {
@@ -2376,6 +2412,7 @@ samp {
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
+  min-width: 0;
 }
 
 /* 权威分（ADR-0014 决策 3）：确定性判分结果，是这一页最该被先读到的数字。 */
@@ -3518,6 +3555,72 @@ samp {
   min-height: 28px;
   padding: 2px 4px;
   color: var(--color-bad);
+}
+
+.roster-class-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.08));
+  border-radius: var(--radius-md);
+  background: var(--color-surface-1);
+}
+
+.roster-students-wrap {
+  width: 100%;
+  overflow-x: auto;
+  padding-top: 4px;
+}
+
+.roster-students-table {
+  width: 100%;
+  table-layout: auto;
+}
+
+.roster-status-badge {
+  white-space: nowrap;
+}
+
+.account__meta {
+  color: var(--color-text-muted);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.roster-edit-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-top: 12px;
+  border-top: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.08));
+}
+
+.roster-section-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.roster-section-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  border: 1px solid var(--color-border-subtle, rgba(255, 255, 255, 0.1));
+  font-size: 13px;
+}
+
+.roster-section-chip__del {
+  background: none;
+  border: none;
+  color: var(--color-bad);
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: 14px;
+  line-height: 1;
 }
 
 /* ---------------------------------------------------------------- 响应式 */

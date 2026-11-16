@@ -48,8 +48,10 @@ def test_the_caller_reads_their_own_row(client, factory, sign_in_as):
         "student_number",
         "roles",
         "memberships",
+        "registered_classes",
     }
     assert body["memberships"] == []
+    assert body["registered_classes"] == []
 
 
 def test_another_account_sees_its_own_details_not_someone_elses(client, factory, sign_in_as):

@@ -1,5 +1,8 @@
 import { useMemo, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useSearch } from "@tanstack/react-router";
+import { apiRequest } from "../../api/client";
+import { queryKeys } from "../../app/queryClient";
 import { t } from "../../i18n";
 import { describeApiError, isApiError } from "../../api/problem";
 import { useSession } from "../../auth/sessionContext";
@@ -77,16 +80,22 @@ export function RosterPage() {
   const courses = useCourses();
   const courseOptions = useMemo(() => loadedCourses(courses.data?.pages), [courses.data]);
 
+  const queryClient = useQueryClient();
   const [createOpen, setCreateOpen] = useState(false);
   const [createTitle, setCreateTitle] = useState("");
   const [createCode, setCreateCode] = useState("");
+  const [createSectionsText, setCreateSectionsText] = useState("");
   const createCourse = useCreateCourse();
 
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameTarget, setRenameTarget] = useState<CoursePublic | null>(null);
   const [renameTitle, setRenameTitle] = useState("");
   const [renameCode, setRenameCode] = useState("");
+  const [editSectionCode, setEditSectionCode] = useState("");
   const renameCourse = useRenameCourse();
+  const editTargetSections = useSections(renameOpen && renameTarget ? renameTarget.course_id : null);
+  const createSectionInEdit = useCreateSection(renameTarget?.course_id ?? null);
+  const deleteSectionInEdit = useDeleteSection(renameTarget?.course_id ?? null);
 
   const selectedCourseId = search.course_id ?? "";
   const expandedSectionId = search.section_id ?? null;
@@ -211,7 +220,10 @@ export function RosterPage() {
               {
                 key: "code",
                 header: t("roster.column.code"),
-                render: (row) => row.course_code ?? t("roster.column.noCode"),
+                render: (row) =>
+                  row.section_codes?.length
+                    ? row.section_codes.join("、")
+                    : t("roster.column.noCode"),
               },
               {
                 key: "sections",
@@ -477,6 +489,7 @@ export function RosterPage() {
               onClick={() => {
                 setCreateTitle("");
                 setCreateCode("");
+                setCreateSectionsText("");
                 setCreateOpen(true);
               }}
             >
@@ -498,11 +511,38 @@ export function RosterPage() {
             className="stack"
             onSubmit={(event) => {
               event.preventDefault();
-              if (createTitle.trim() === "" || createCode.trim() === "") return;
+              if (createTitle.trim() === "") return;
               createCourse.mutate(
-                { title: createTitle.trim(), course_code: createCode.trim() },
                 {
-                  onSuccess: (created) => {
+                  title: createTitle.trim(),
+                  ...(createCode.trim() === "" ? {} : { course_code: createCode.trim() }),
+                },
+                {
+                  onSuccess: async (created) => {
+                    const codes = Array.from(
+                      new Set(
+                        createSectionsText
+                          .split(/[,，、\s]+/)
+                          .map((s) => s.trim())
+                          .filter(Boolean),
+                      ),
+                    );
+                    for (const code of codes) {
+                      try {
+                        await apiRequest(
+                          `/api/v1/courses/${encodeURIComponent(created.course_id)}/sections`,
+                          { method: "POST", body: { section_code: code } },
+                        );
+                      } catch {
+                        // Individual section failures still allow navigating to the created course
+                      }
+                    }
+                    if (codes.length > 0) {
+                      await queryClient.invalidateQueries({ queryKey: queryKeys.courses });
+                      await queryClient.invalidateQueries({
+                        queryKey: queryKeys.sections(created.course_id),
+                      });
+                    }
                     setCreateOpen(false);
                     void navigate({
                       search: (previous) => ({
@@ -522,6 +562,15 @@ export function RosterPage() {
                 value={createTitle}
                 data-testid="create-course-title"
                 onChange={(event) => setCreateTitle(event.target.value)}
+              />
+            </Field>
+            <Field label={t("roster.create.sectionsLabel")} htmlFor="create-course-sections">
+              <input
+                id="create-course-sections"
+                value={createSectionsText}
+                placeholder={t("roster.create.sectionsPlaceholder")}
+                data-testid="create-course-sections"
+                onChange={(event) => setCreateSectionsText(event.target.value)}
               />
             </Field>
             <Field label={t("roster.create.codeLabel")} htmlFor="create-course-code">
@@ -544,9 +593,7 @@ export function RosterPage() {
                 type="submit"
                 className="button button--primary"
                 data-testid="create-course-save"
-                disabled={
-                  createTitle.trim() === "" || createCode.trim() === "" || createCourse.isPending
-                }
+                disabled={createTitle.trim() === "" || createCourse.isPending}
               >
                 {t("roster.create.submit")}
               </button>
@@ -601,7 +648,6 @@ export function RosterPage() {
                 onChange={(event) => setRenameCode(event.target.value)}
               />
             </Field>
-            <p className="muted">{t("roster.rename.hint")}</p>
             {renameCourse.isError ? (
               <Banner tone="error" testId="rename-course-error">
                 {describeApiError(renameCourse.error)}
@@ -625,6 +671,61 @@ export function RosterPage() {
               </button>
             </div>
           </form>
+          <div className="roster-edit-sections" data-testid="edit-course-sections">
+            <strong>{t("roster.rename.sectionsTitle")}</strong>
+            {editTargetSections.isPending ? (
+              <Spinner />
+            ) : (
+              <div className="roster-section-chips">
+                {(editTargetSections.data ?? []).map((sec) => (
+                  <span key={sec.sectionId} className="roster-section-chip">
+                    <span>{sec.row.section_code}</span>
+                    <button
+                      type="button"
+                      className="roster-section-chip__del"
+                      aria-label={t("roster.section.delete", { code: sec.row.section_code })}
+                      title={t("roster.section.delete", { code: sec.row.section_code })}
+                      data-testid={`edit-section-delete-${sec.sectionId}`}
+                      disabled={deleteSectionInEdit.isPending}
+                      onClick={() => deleteSectionInEdit.mutate(sec.sectionId)}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            <div className="inline">
+              <input
+                value={editSectionCode}
+                placeholder={t("roster.rename.addSectionPlaceholder")}
+                data-testid="edit-section-add-input"
+                onChange={(event) => setEditSectionCode(event.target.value)}
+              />
+              <button
+                type="button"
+                className="button button--ghost"
+                data-testid="edit-section-add-submit"
+                disabled={editSectionCode.trim() === "" || createSectionInEdit.isPending}
+                onClick={() => {
+                  const code = editSectionCode.trim();
+                  if (!code) return;
+                  createSectionInEdit.mutate(
+                    { section_code: code },
+                    { onSuccess: () => setEditSectionCode("") },
+                  );
+                }}
+              >
+                {t("roster.rename.addSection")}
+              </button>
+            </div>
+            {createSectionInEdit.isError ? (
+              <Banner tone="error">{describeApiError(createSectionInEdit.error)}</Banner>
+            ) : null}
+            {deleteSectionInEdit.isError ? (
+              <Banner tone="error">{describeApiError(deleteSectionInEdit.error)}</Banner>
+            ) : null}
+          </div>
         </Modal>
       ) : null}
 
@@ -789,7 +890,6 @@ export function RosterPage() {
               );
             }}
           >
-            <Banner tone="info">{t("roster.class.attach.hint")}</Banner>
             <Field label={t("roster.class.attach.batch")} htmlFor="attach-batch">
               <Select
                 id="attach-batch"
@@ -1052,11 +1152,11 @@ function SectionClasses({
     return <EmptyState>{t("roster.classes.empty")}</EmptyState>;
   }
   return (
-    <ul className="allowlist-entries" data-testid={`section-classes-${sectionId}`}>
+    <ul className="allowlist-batches" data-testid={`section-classes-${sectionId}`}>
       {rows.map((row) => {
         const isOpen = expandedClassId === row.class_id;
         return (
-          <li key={row.class_id} className="allowlist-entry" data-testid={`class-card-${row.class_id}`}>
+          <li key={row.class_id} className="roster-class-card" data-testid={`class-card-${row.class_id}`}>
             <div className="allowlist-batch__head">
               <button
                 type="button"
@@ -1141,33 +1241,52 @@ function ClassStudents({
     return <p className="muted">{t("roster.classes.noStudents")}</p>;
   }
   return (
-    <ul className="allowlist-entries" data-testid={`class-students-${classId}`}>
-      {rows.map((row) => (
-        <li
-          key={row.enrollment_id}
-          className="allowlist-entry"
-          data-testid={`class-student-${row.enrollment_id}`}
-        >
-          <span className="allowlist-entry__name">{row.display_name}</span>
-          <span className="mono-id allowlist-entry__number">{row.student_number}</span>
-          {row.student_id === null ? (
-            <span className="muted" data-testid={`class-student-unbound-${row.enrollment_id}`}>
-              {t("roster.studentUnbound")}
-            </span>
-          ) : null}
-          <button
-            type="button"
-            className="button button--ghost allowlist-entry__delete"
-            aria-label={t("roster.classes.remove", { name: row.display_name })}
-            title={t("roster.classes.remove", { name: row.display_name })}
-            data-testid={`class-student-delete-${row.enrollment_id}`}
-            onClick={() => removeEnrollment.mutate(row.enrollment_id)}
-          >
-            <TrashIcon />
-          </button>
-        </li>
-      ))}
-    </ul>
+    <div className="roster-students-wrap" data-testid={`class-students-${classId}`}>
+      <table className="table roster-students-table">
+        <thead>
+          <tr>
+            <th>{t("roster.classes.colName")}</th>
+            <th>{t("roster.classes.colNumber")}</th>
+            <th>{t("roster.classes.colStatus")}</th>
+            <th>{t("roster.column.actions")}</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.enrollment_id} data-testid={`class-student-${row.enrollment_id}`}>
+              <td>{row.display_name}</td>
+              <td className="mono-id">{row.student_number}</td>
+              <td>
+                {row.student_id === null ? (
+                  <span
+                    className="badge badge--warn roster-status-badge"
+                    data-testid={`class-student-unbound-${row.enrollment_id}`}
+                  >
+                    {t("roster.studentUnbound")}
+                  </span>
+                ) : (
+                  <span className="badge badge--ok roster-status-badge">
+                    {t("roster.studentBound")}
+                  </span>
+                )}
+              </td>
+              <td>
+                <button
+                  type="button"
+                  className="button button--ghost allowlist-entry__delete"
+                  aria-label={t("roster.classes.remove", { name: row.display_name })}
+                  title={t("roster.classes.remove", { name: row.display_name })}
+                  data-testid={`class-student-delete-${row.enrollment_id}`}
+                  onClick={() => removeEnrollment.mutate(row.enrollment_id)}
+                >
+                  <TrashIcon />
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
   );
 }
 

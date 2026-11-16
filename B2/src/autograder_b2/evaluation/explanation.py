@@ -71,6 +71,12 @@ def _sentence(evidence: CaseEvidence, mode: str) -> str:
     category = evidence.failure_category
     if mode == "email_delivery":
         return _email_sentence(evidence, category)
+    if category is None and evidence.message and evidence.message.startswith("AI 逻辑评分："):
+        return (
+            "AI 逻辑与代码质量评测完成（详见 AI 评测反馈）。"
+            if evidence.passed
+            else "AI 逻辑与代码质量评分未达及格线（详见 AI 评测反馈）。"
+        )
     if evidence.passed and category is None:
         return "本用例通过：比较策略判定相符，未触发资源上限，也没有安全违规。"
     if category is None:

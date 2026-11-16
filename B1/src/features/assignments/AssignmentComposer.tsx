@@ -50,10 +50,13 @@ export function AssignmentComposer({
   const courseOptions = useMemo(() => loadedCourses(courses.data?.pages), [courses.data]);
   const [courseId, setCourseId] = useState("");
   const [title, setTitle] = useState("");
-  const [dueAt, setDueAt] = useState("");
+  const [dueDate, setDueDate] = useState("");
+  const [dueHour, setDueHour] = useState("23");
+  const [dueMinute, setDueMinute] = useState("59");
   const [selected, setSelected] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [previewing, setPreviewing] = useState(false);
+  const dueAt = dueDate ? `${dueDate}T${dueHour}:${dueMinute}` : "";
 
   const selectedCourseId = courseId || (courseOptions[0]?.course_id ?? "");
   const selectedCourse = courseOptions.find(
@@ -264,13 +267,57 @@ export function AssignmentComposer({
               htmlFor="compose-due"
               hint={t("assignments.create.dueHint")}
             >
-              <input
-                id="compose-due"
-                type="datetime-local"
-                value={dueAt}
-                onChange={(event) => setDueAt(event.target.value)}
-                disabled={create.isPending}
-              />
+              <div className="inline">
+                <input
+                  id="compose-due"
+                  type="date"
+                  value={dueDate}
+                  onChange={(event) => setDueDate(event.target.value)}
+                  disabled={create.isPending}
+                />
+                <select
+                  aria-label="截止小时"
+                  data-testid="compose-due-hour"
+                  value={dueHour}
+                  onChange={(event) => setDueHour(event.target.value)}
+                  disabled={create.isPending || !dueDate}
+                >
+                  {Array.from({ length: 24 }, (_, index) => {
+                    const value = String(index).padStart(2, "0");
+                    return (
+                      <option key={value} value={value}>
+                        {value} 时
+                      </option>
+                    );
+                  })}
+                </select>
+                <select
+                  aria-label="截止分钟"
+                  data-testid="compose-due-minute"
+                  value={dueMinute}
+                  onChange={(event) => setDueMinute(event.target.value)}
+                  disabled={create.isPending || !dueDate}
+                >
+                  {Array.from({ length: 60 }, (_, index) => {
+                    const value = String(index).padStart(2, "0");
+                    return (
+                      <option key={value} value={value}>
+                        {value} 分
+                      </option>
+                    );
+                  })}
+                </select>
+                {dueDate ? (
+                  <button
+                    type="button"
+                    className="button button--ghost"
+                    onClick={() => setDueDate("")}
+                    disabled={create.isPending}
+                  >
+                    清除
+                  </button>
+                ) : null}
+              </div>
             </Field>
 
             {/* 打分标准（PDF 要求）：百分制是固定口径，不新增契约字段，这里只做说明。 */}

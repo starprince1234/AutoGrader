@@ -3,7 +3,7 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { t } from "../../i18n";
 import { isApiError } from "../../api/problem";
 import { useSession } from "../../auth/sessionContext";
-import { canAuthorQuestions, canSubmitAnswer, canViewQuestionQuality } from "../../auth/visibility";
+import { canAuthorQuestions, canSubmitAnswer } from "../../auth/visibility";
 import {
   Banner,
   EmptyState,
@@ -14,7 +14,7 @@ import {
   Spinner,
   StatusPill,
 } from "../../ui/components";
-import { ReferenceVerificationPanel } from "../authoring/ReferenceVerificationPanel";
+import { useDraftContent, usePublishQuestionVersion } from "../authoring/useAuthoring";
 import { SafeMarkdown } from "./SafeMarkdown";
 import { useDeleteQuestionVersion, useQuestion, useQuestionVersion } from "./useQuestions";
 
@@ -25,7 +25,7 @@ import { useDeleteQuestionVersion, useQuestion, useQuestionVersion } from "./use
  * 不再把"标题卡"与"版本卡"叠成两层同一件事。题干是主要内容，图片走受控资源路径。
  *
  * 版本：
- * - `?version=<question_version_id>` 仍决定**用哪个版本取数**（质量入口、验证并发布面板、学生入口），
+ * - `?version=<question_version_id>` 仍决定**用哪个版本取数**（质量入口、教师参考解法/直接发布、学生入口），
  *   刷新或复制链接都回到同一版本；
  * - **版本卡（选择版本 / 版本详情 / 相关信息 / 此版本题干）已删除**：页面上不再有切换版本的入口，
  *   也不再渲染历史版本的冻结题干。
@@ -46,6 +46,7 @@ export function QuestionDetailPage({
   const session = useSession();
   const navigate = useNavigate();
   const removeVersion = useDeleteQuestionVersion();
+  const publishVersion = usePublishQuestionVersion();
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const versions = question.data?.versions ?? [];
@@ -58,8 +59,17 @@ export function QuestionDetailPage({
   const effectiveId = versionId ?? preferred?.question_version_id ?? null;
   // 必须用 effectiveId 取数：传原始 prop 会让"未显式选择"时根本不发请求，
   // 面板因此永远空白（集成时踩到过）。
-  // 版本卡删除后这个查询仍有用途：验证并发布面板需要 `version.data`，学生入口也依赖它的状态。
+  // 版本卡删除后这个查询仍有用途：教师的多档参考解法与直接发布面板需要 `version.data`，
+  // 学生入口也依赖它的状态。
   const version = useQuestionVersion(effectiveId);
+  // 教师可见的多档参考解法 / 评分提示词要按当前版本取内容（学生不请求）。
+  const draftContent = useDraftContent(
+    canAuthorQuestions(session) &&
+      version.data &&
+      (version.data.status === "draft" || version.data.status === "published")
+      ? effectiveId
+      : null,
+  );
 
   if (question.isPending) return <Spinner />;
   if (question.isError) return <ErrorState error={question.error} />;
@@ -132,25 +142,7 @@ export function QuestionDetailPage({
             {t("questions.deleteDraft")}
           </button>
         ) : null}
-        {/* 题目质量入口（P13）：打开复核工作区的 quality 标签，并带上**当前选中的版本**。
-            P13 是唯一入口（旧 `/quality` 已合并），版本 id 由这里带过去，教师不必手填 UUID。 */}
-        {effectiveId && canViewQuestionQuality(session) ? (
-          <Link
-            className="button button--ghost"
-            to="/review"
-            search={{
-              tab: "quality",
-              origin: "question",
-              // 复核页的「返回该题」要靠它回到这一道题，而不是让老师回题库自己再找一遍。
-              question_id: questionId,
-              course_id: shown.course_id,
-              question_version_id: effectiveId,
-            }}
-            data-testid="question-quality-link"
-          >
-            {t("questions.qualityLink")}
-          </Link>
-        ) : null}
+        {/* 老师要求删掉「查看题目质量」入口：复核页只保留邮件隔离，题库不再把人引过去。 */}
       </div>
 
       <Panel title={t("questions.stemTitle")} testId="question-stem">
@@ -167,11 +159,61 @@ export function QuestionDetailPage({
         </div>
       ) : null}
 
-      {/* 未发布版本看到这里时，读者会去找"发布"动作。入口在 `ReferenceVerificationPanel`
-          （请求平台验证 → 全通过且存证已记录才可发布），**只对出题角色渲染**：
-          存证的存在与否不是学生需要的信息。 */}
+      {/* 仅教师可见：多档参考解法与 AI 评分提示词/细则，学生视图不获取也不渲染。 */}
+      {canAuthorQuestions(session) && draftContent.data ? (
+        <Panel title={t("questions.teacherReferenceTitle")} testId="teacher-grading-context">
+          <div className="stack">
+            {(draftContent.data.reference_answers && draftContent.data.reference_answers.length > 0
+              ? draftContent.data.reference_answers
+              : draftContent.data.reference_answer
+                ? [{ label: t("authoring.referenceDefaultTier"), body: draftContent.data.reference_answer }]
+                : []
+            ).map((tier, index) => (
+              <div className="stack" key={`${index}-${tier.label}`} data-testid={`teacher-tier-${index}`}>
+                <strong>{tier.label}</strong>
+                <pre>
+                  <code>{tier.body}</code>
+                </pre>
+              </div>
+            ))}
+            <div className="stack" data-testid="teacher-grading-prompt">
+              <strong>{t("authoring.gradingPrompt")}</strong>
+              {draftContent.data.grading_prompt ? (
+                <pre>{draftContent.data.grading_prompt}</pre>
+              ) : (
+                <p className="muted">{t("questions.teacherGradingPromptEmpty")}</p>
+              )}
+            </div>
+          </div>
+        </Panel>
+      ) : null}
+
+      {/* 草稿版本支持教师确认后直接发布，不再需要先运行测试用例沙箱验证。 */}
       {version.data && version.data.status !== "published" && canAuthorQuestions(session) ? (
-        <ReferenceVerificationPanel version={version.data} questionId={questionId} />
+        <Panel title={t("questions.directPublishTitle")} testId="direct-publish-panel">
+          <div className="stack">
+            <p className="muted">{t("questions.directPublishHint")}</p>
+            {publishVersion.isError ? <ErrorState error={publishVersion.error} /> : null}
+            <div className="inline">
+              <button
+                type="button"
+                className="button"
+                data-testid="reference-publish"
+                disabled={publishVersion.isPending}
+                onClick={() => {
+                  publishVersion.mutate({
+                    questionId,
+                    questionVersionId: version.data.question_version_id,
+                  });
+                }}
+              >
+                {publishVersion.isPending
+                  ? t("questions.publishing")
+                  : t("questions.directPublishAction")}
+              </button>
+            </div>
+          </div>
+        </Panel>
       ) : null}
 
       {deleteError !== null ? (

@@ -260,6 +260,7 @@ def build_registration_router(state: B4State, dependencies: Dependencies) -> API
         created_username: str | None = None
         bound_course_count = 0
         identity_mismatch_count = 0
+        registered_classes: list[str] = []
         duplicating_field: str | None = None
 
         try:
@@ -326,6 +327,11 @@ def build_registration_router(state: B4State, dependencies: Dependencies) -> API
                                 password=password,
                             )
                             created_username = row.username
+                            registered_classes = domain.allowlist_class_names(
+                                write,
+                                student_number=row.student_number,
+                                display_name=row.display_name,
+                            )
                             AuditLog(write).record(
                                 action=ACTION_REGISTRATION_CREATED,
                                 outcome=OUTCOME_SUCCESS,
@@ -364,6 +370,7 @@ def build_registration_router(state: B4State, dependencies: Dependencies) -> API
             "username": created_username,
             "bound_course_count": bound_course_count,
             "identity_mismatch_count": identity_mismatch_count,
+            "registered_classes": registered_classes,
         }
 
     @router.post("/api/v1/registration-allowlists")

@@ -104,8 +104,21 @@ def reference_answer_digest(reference_answers: Sequence[ReferenceAnswerInternal]
         return None
     return digest_of(
         [
-            {"language": answer.language, "body": answer.body}
-            for answer in sorted(reference_answers, key=lambda item: item.language)
+            {
+                "language": answer.language,
+                "body": answer.body,
+                **({"ordinal": answer.ordinal} if answer.ordinal != 0 else {}),
+                **({"label": answer.label} if answer.label != "标准参考答案" else {}),
+                **(
+                    {"grading_prompt": answer.grading_prompt}
+                    if answer.grading_prompt is not None
+                    else {}
+                ),
+            }
+            for answer in sorted(
+                reference_answers,
+                key=lambda item: (item.ordinal, item.language),
+            )
         ]
     )
 

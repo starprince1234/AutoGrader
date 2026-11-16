@@ -310,9 +310,6 @@ export function RosterImportPanel({
   return (
     <div className="stack">
       <Panel title={t("import.scopeTitle")} testId="import-scope">
-        <Banner tone="info" testId="import-scope-hint">
-          {t("import.scopeHint")}
-        </Banner>
         <div className="form-grid">
           <Field label={t("import.course")} htmlFor="import-course">
             <Select

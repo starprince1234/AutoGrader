@@ -366,7 +366,7 @@ describe("作业中心（学生侧）", () => {
     await signIn("student1", "pw");
     renderAt("/", () => <AssignmentsPage />);
 
-    expect(await screen.findByText(/当前账号还没有任何有效选课/)).toBeInTheDocument();
+    expect(await screen.findByText(/当前账号还没有有效选课/)).toBeInTheDocument();
     expect(screen.queryByTestId("my-assignments-table")).toBeNull();
   });
 
@@ -418,7 +418,7 @@ describe("作业中心（学生侧）", () => {
     renderAt("/", () => <AssignmentsPage />);
 
     const notice = await screen.findByTestId("assignments-truncated", {}, { timeout: 5000 });
-    expect(notice).toHaveTextContent(`已达到自动翻页上限（${MAX_AUTO_PAGES} 页）`);
+    expect(notice).toHaveTextContent(`结果较多，仅展示前 ${MAX_AUTO_PAGES} 页`);
     const panel = notice.closest("section") as HTMLElement;
     expect(within(panel).queryAllByRole("status")).toHaveLength(0);
     expect(screen.queryByTestId("my-assignments-table")).toBeNull();
@@ -557,7 +557,7 @@ describe("作业中心（教师侧作业列表）", () => {
       {},
       { timeout: 5000 },
     );
-    expect(notice).toHaveTextContent(`已达到自动翻页上限（${MAX_AUTO_PAGES} 页）`);
+    expect(notice).toHaveTextContent(`结果较多，仅展示前 ${MAX_AUTO_PAGES} 页`);
     expect(within(notice).queryAllByRole("status")).toHaveLength(0);
     expect(screen.queryByTestId("teacher-assignments-table")).toBeNull();
     expect(screen.queryByTestId(`handled-${UUID_A}`)).toBeNull();

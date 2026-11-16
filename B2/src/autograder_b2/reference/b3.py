@@ -52,6 +52,11 @@ _REQUIRED_ANSWER_FIELDS = (
     "adapter_kind",
     "reference_answer",
 )
+_OPTIONAL_ANSWER_FIELDS = (
+    "stem_markdown",
+    "reference_answers",
+    "grading_prompt",
+)
 _DIGEST_HEX = set("0123456789abcdef")
 
 
@@ -145,6 +150,9 @@ class ReferenceAnswerView:
     language: str
     adapter_kind: str
     reference_answer: str = field(repr=False)
+    stem_markdown: str = field(default="", repr=False)
+    reference_answers: tuple[dict[str, str], ...] = field(default=(), repr=False)
+    grading_prompt: str | None = field(default=None, repr=False)
 
 
 class B3VerificationClient:
@@ -307,7 +315,9 @@ def _parse_answer(body: str, *, expected_version: str) -> ReferenceAnswerView:
         raise ReferenceAnswerUnavailable("reference answer response is not valid JSON") from error
     if not isinstance(document, Mapping):
         raise ReferenceAnswerUnavailable("reference answer response is not a JSON object")
-    unknown = sorted(set(document) - set(_REQUIRED_ANSWER_FIELDS))
+    unknown = sorted(
+        set(document) - set(_REQUIRED_ANSWER_FIELDS) - set(_OPTIONAL_ANSWER_FIELDS)
+    )
     if unknown:
         raise ReferenceAnswerUnavailable(
             "reference answer response has unknown fields: " + ", ".join(unknown)
@@ -337,12 +347,37 @@ def _parse_answer(body: str, *, expected_version: str) -> ReferenceAnswerView:
     answer = document["reference_answer"]
     if not isinstance(answer, str) or not answer:
         raise ReferenceAnswerUnavailable("reference answer body is not a non-empty string")
+    raw_stem = document.get("stem_markdown")
+    if raw_stem is not None and not isinstance(raw_stem, str):
+        raise ReferenceAnswerUnavailable("reference answer stem_markdown must be a string")
+    raw_prompt = document.get("grading_prompt")
+    if raw_prompt is not None and not isinstance(raw_prompt, str):
+        raise ReferenceAnswerUnavailable("reference answer grading_prompt must be a string")
+    tiers: list[dict[str, str]] = []
+    raw_tiers = document.get("reference_answers")
+    if raw_tiers is not None:
+        if not isinstance(raw_tiers, list):
+            raise ReferenceAnswerUnavailable("reference answer reference_answers must be a list")
+        for item in raw_tiers:
+            if not isinstance(item, Mapping):
+                raise ReferenceAnswerUnavailable("reference answer tier entry must be an object")
+            body_val = item.get("body")
+            if not isinstance(body_val, str) or not body_val.strip():
+                raise ReferenceAnswerUnavailable("reference answer tier body must be a non-empty string")
+            label_val = item.get("label")
+            label = label_val.strip() if isinstance(label_val, str) and label_val.strip() else "标准参考答案"
+            tiers.append({"label": label, "body": body_val})
+    if not tiers:
+        tiers.append({"label": "标准参考答案", "body": answer})
     return ReferenceAnswerView(
         question_version_id=version,
         content_digest=digest,
         language=language,
         adapter_kind=adapter_kind,
         reference_answer=answer,
+        stem_markdown=raw_stem or "",
+        reference_answers=tuple(tiers),
+        grading_prompt=raw_prompt,
     )
 
 

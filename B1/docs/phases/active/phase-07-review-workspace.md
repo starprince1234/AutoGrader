@@ -1,5 +1,11 @@
 # Phase 07 复核工作区（P13：邮件隔离 + 题目质量）
 
+> **现状（2026-11）**：老师要求把「题目质量」视图（含题库的入口）与「示例预览」一起删掉。
+> 复核页现在**只有邮件隔离**，`/review` 不再有标签、示例开关或质量汇总；题号相关的 URL 参数
+> （`tab`、`origin`、`question_id`、`question_version_id`、`from`、`to`、`demo`、`q`）一律丢弃。
+> 下面的记录是当时的设计与验证史，**其中"题目质量""示例预览"两节已不再适用**；删除明细见
+> 文末「10. 移除题目质量与示例预览」。
+
 - **口径**：P13 是唯一复核页 `/review?tab=mail|quality`。旧 `/intake/quarantines` 与 `/quality`
   **已删除**（不保留别名或隐藏路由）；不占主导航，入口来自 P04（邮件，带课程/课序）与 P07
   （质量，带 `question_version_id`）。
@@ -263,3 +269,26 @@ Vitest **59 文件 / 555 用例全部通过**（新增：数量气泡 2 例、�
 Vitest 全量通过（复核模块 4 文件 / 51 用例）。无头 Edge 实拍更新：
 `review-demo-quality-prompt.png`（示例里点查询前）、`review-demo-quality.png`（查询后：统计范围行 +
 「清除全部」按钮）、`review-demo-quality-locked.png`（从题目点进示例的锁定视图，只剩「查询」）。
+
+## 10. 移除题目质量与示例预览（老师要求）
+
+老师明确要求：网页里的「邮件提交示例」删掉；复核页里的「题目质量」和题库点进去的「题目质量」
+也一并删掉。这是一次**减法**，不是隐藏入口：
+
+- **删掉的代码**：`QualityReviewTab`、`useQualityVersions`、`useReviewQuality`、`demoData`、
+  `DemoHint`、开发预览页 `demo.html` + `src/demo/`；`canViewQuestionQuality`、
+  `queryKeys.reviewQualitySummary` 一并移除。
+- **复核页**：只剩邮件隔离。没有标签栏、没有「查看示例」，右上角只有「返回作业列表」。
+- **题库**：题目详情的「查看题目质量」入口删除，题库不再把人引到复核页。
+- **URL**：`ReviewSearch` 只剩邮件筛选（课程/课序/处理状态/原因/游标）。旧的
+  `tab`、`origin`、`question_id`、`question_version_id`、`from`、`to`、`demo`、`q`
+  以及 `mail_*`/`quality_*` 暂存参数全部丢弃——旧链接打开就是邮件列表，不会复活一个视图。
+- **文案**：导览页的复核说明改为「邮件隔离复核」；i18n 清掉 `review.quality.*`、
+  `review.demo*`、`review.tab*`、`review.backToQuestion(s)`、`questions.qualityLink`。
+
+保留了 `B2` 的 `quality-summary` 端点与生成类型（契约仍在，后端可能被其它客户端使用）；
+前端只是不再有页面调用它。
+
+**验证**：`tsc -b`、`eslint src --max-warnings 0`、`vitest` 全量、`vite build`、`api:check` 通过。
+新增/改写的测试只覆盖仍然存在的行为：复核页外壳（只有邮件、返回作业列表、没有标签与示例开关）、
+邮件列表筛选与处置、以及「旧参数被丢弃」的 URL 解析。

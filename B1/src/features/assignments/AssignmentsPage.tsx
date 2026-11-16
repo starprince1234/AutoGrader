@@ -352,6 +352,7 @@ function TeacherAssignmentList({
 function MyMembershipsPanel() {
   const currentUser = useCurrentUser();
   const memberships = currentUser.data?.memberships ?? [];
+  const registeredClasses = currentUser.data?.registered_classes ?? [];
   return (
     <Panel title={t("assignments.myMembershipsTitle")} testId="my-memberships">
       {currentUser.isPending ? (
@@ -370,9 +371,22 @@ function MyMembershipsPanel() {
               {t("assignments.myStudentNumber")}：
               {currentUser.data?.student_number ?? t("common.none")}
             </span>
+            {registeredClasses.length > 0 ? (
+              <span className="muted" data-testid="my-registered-classes">
+                {t("assignments.myRegisteredClasses")}：{registeredClasses.join("、")}
+              </span>
+            ) : null}
           </div>
           {memberships.length === 0 ? (
-            <EmptyState>{t("assignments.myCoursesEmpty")}</EmptyState>
+            registeredClasses.length > 0 ? (
+              <EmptyState>
+                {t("assignments.myRegisteredClassesPendingCourse", {
+                  classes: registeredClasses.join("、"),
+                })}
+              </EmptyState>
+            ) : (
+              <EmptyState>{t("assignments.myCoursesEmpty")}</EmptyState>
+            )
           ) : (
             <ul className="stack" data-testid="my-membership-list">
               {memberships.map((membership) => (
@@ -490,13 +504,9 @@ export function AssignmentsPage() {
     <div className="stack">
       {cohortView ? null : <MyMembershipsPanel />}
       <Panel title={cohortView ? t("assignments.tabs.list") : t("assignments.myTitle")}>
-        {cohortView ? (
-          <Banner tone="info" testId="assignment-course-wide">
-            {t("assignments.courseWideAudience")}
-          </Banner>
-        ) : (
+        {!cohortView ? (
           <p className="muted">{t("assignments.studentHint")}</p>
-        )}
+        ) : null}
         {!cohortView && currentUser.isPending ? (
           <Spinner label={t("assignments.membershipLoading")} />
         ) : !cohortView && currentUser.isError ? (
@@ -607,7 +617,6 @@ export function AssignmentsPage() {
             <Link
               to="/review"
               search={{
-                tab: "mail",
                 course_id: listFilter.courseId ?? undefined,
                 section_id: sectionScope === "" ? undefined : sectionScope,
               }}
@@ -751,7 +760,6 @@ export function AssignmentsPage() {
         >
           <div className="stack">
             <p>{t("assignments.closeConfirmBody", { title: closeTarget.title })}</p>
-            <p className="muted">{t("assignments.closeConfirmHint")}</p>
             {closeError ? (
               <Banner tone="error" testId="assignment-close-error">
                 {closeError}

@@ -290,10 +290,12 @@ def test_registration_creates_a_usable_account_and_links_the_roster(
         "username",
         "bound_course_count",
         "identity_mismatch_count",
+        "registered_classes",
     }
     assert body["username"] == "alice"
     assert body["bound_course_count"] == 1
     assert body["identity_mismatch_count"] == 0
+    assert len(body["registered_classes"]) == 1
 
     with factory.engine.connect() as connection:
         user = connection.execute(

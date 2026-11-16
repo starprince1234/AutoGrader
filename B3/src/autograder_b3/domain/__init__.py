@@ -12,6 +12,7 @@ from .assignments import (
     close_assignment,
     create_assignment,
     get_assignment_detail,
+    get_assignment_targets,
     list_assignment_versions,
     retry_assignment_notification,
 )
@@ -64,6 +65,7 @@ __all__ = [
     "create_assignment",
     "get_assignment_detail",
     "create_question",
+    "get_assignment_targets",
     "delete_fixture",
     "delete_version",
     "run_batch_operation",

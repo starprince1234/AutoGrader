@@ -246,11 +246,13 @@ class ReferenceAnswer(Base):
     __table_args__ = (
         UniqueConstraint(
             "question_version_id",
-            "language",
-            name="uq_reference_answers_question_version_id_language",
+            "ordinal",
+            name="uq_reference_answers_question_version_id_ordinal",
         ),
         CheckConstraint("language IN ('python', 'bash')", name="ck_reference_answers_language"),
         CheckConstraint("length(body) >= 1", name="ck_reference_answers_body_not_empty"),
+        CheckConstraint("ordinal >= 0", name="ck_reference_answers_ordinal_non_negative"),
+        CheckConstraint("length(label) >= 1", name="ck_reference_answers_label_not_empty"),
         {"schema": SCHEMA},
     )
 
@@ -264,8 +266,11 @@ class ReferenceAnswer(Base):
         ),
         nullable=False,
     )
+    ordinal: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    label: Mapped[str] = mapped_column(String(200), nullable=False, default="标准参考答案")
     language: Mapped[str] = mapped_column(String(16), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
+    grading_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
@@ -692,6 +697,52 @@ class AssignmentItem(Base):
         nullable=False,
     )
     ordinal: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AssignmentSection(Base):
+    """A target section of an assignment (migration 0012).
+
+    **Zero rows means the whole course** (historical assignments and "the entire course"
+    ones). 0008 additionally required at least one row at the write path; that rule cannot
+    represent the state every assignment created between 0010 and 0012 is in, and the empty
+    case is expressed by the absence of rows rather than by a sentinel row.
+    """
+
+    __tablename__ = "assignment_sections"
+    __table_args__ = (
+        Index("ix_assignment_sections_section_id", "section_id"),
+        {"schema": SCHEMA},
+    )
+
+    assignment_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("b3.assignments.assignment_id", name="fk_assignment_sections_assignment_id"),
+        primary_key=True,
+    )
+    section_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+
+class AssignmentStudent(Base):
+    """The optional narrowing list of an assignment (migration 0012).
+
+    No row means "everyone in the target sections"; with no target sections either, the
+    audience is the course's current effective students.
+    """
+
+    __tablename__ = "assignment_students"
+    __table_args__ = (
+        Index("ix_assignment_students_student_id", "student_id"),
+        {"schema": SCHEMA},
+    )
+
+    assignment_id: Mapped[uuid.UUID] = mapped_column(
+        Uuid,
+        ForeignKey("b3.assignments.assignment_id", name="fk_assignment_students_assignment_id"),
+        primary_key=True,
+    )
+    student_id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 

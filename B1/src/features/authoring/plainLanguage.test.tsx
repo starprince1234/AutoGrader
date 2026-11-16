@@ -23,7 +23,6 @@ import {
   questionPublic,
   questionTagCoverage,
   questionVersionPublic,
-  referenceVerification,
   sessionCreated,
 } from "../../testing/contractFixtures";
 import { signIn } from "../../auth/sessionStore";
@@ -221,7 +220,7 @@ describe("教师界面只说人话", () => {
     await screen.findByTestId("generation-panel");
     await user.type(screen.getByLabelText("教学目标"), "统计每个单词出现的次数");
     await user.click(screen.getByTestId("generation-generate"));
-    await screen.findByTestId("generation-result");
+    await screen.findByTestId("step-preview");
 
     assertPlainLanguage(document.body.textContent ?? "");
   });
@@ -254,9 +253,14 @@ describe("教师界面只说人话", () => {
         respond: () => jsonResponse(authoringAssistance()),
       },
       {
-        method: "POST",
-        path: "/api/v1/reference-verifications",
-        respond: () => jsonResponse(referenceVerification()),
+        path: `/api/v1/question-versions/${UUID_A}/draft-content`,
+        respond: () =>
+          jsonResponse({
+            reference_answer: "wc -l",
+            reference_answers: [{ label: "标准参考答案", body: "wc -l" }],
+            grading_prompt: "按逻辑完整性给分。",
+            cases: [],
+          }),
       },
     ]);
     await signIn("teacher1", "pw");
@@ -264,11 +268,13 @@ describe("教师界面只说人话", () => {
 
     await user.click(await screen.findByTestId("request-assistance"));
     await screen.findByTestId("assistance-result");
-    // 「检验并发布」现在在最后一步里：先切到那一步。
-    await user.click(await screen.findByTestId("wizard-step-comparison"));
-    await screen.findByTestId("step-comparison");
-    await user.click(screen.getByTestId("reference-verify"));
-    await screen.findByTestId("reference-verification-result");
+    // 简化后的 4 步出题向导：第 3 步检查多档参考解法与 AI 评分细则，第 4 步进入预览与发布。
+    await user.click(await screen.findByTestId("wizard-step-reference"));
+    await screen.findByTestId("step-reference");
+    await screen.findByTestId("reference-tier-add");
+    await user.click(await screen.findByTestId("wizard-step-preview"));
+    await screen.findByTestId("step-preview");
+    await screen.findByTestId("authoring-save-publish");
 
     assertPlainLanguage(document.body.textContent ?? "");
   });

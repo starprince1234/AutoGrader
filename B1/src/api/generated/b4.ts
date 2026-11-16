@@ -1261,6 +1261,8 @@ export interface components {
              *     between -- every course they belong to without reading a staff-only roster.
              */
             memberships: components["schemas"]["MyMembership"][];
+            /** @description Allowlist class names the caller belongs to (by student_number + display_name). */
+            registered_classes?: string[];
         };
         UserSummary: {
             user_id: components["schemas"]["Uuid"];
@@ -1284,6 +1286,10 @@ export interface components {
              */
             updated_at: components["schemas"]["Timestamp"];
             created_at?: components["schemas"]["Timestamp"];
+            /** @description Allowlist class names matched by this user's student_number and display_name. */
+            registered_classes?: string[];
+            /** @description Active course/section/class enrollments bound to this user. */
+            course_bindings?: components["schemas"]["MyMembership"][];
         };
         /**
          * @description One imported allowlist, i.e. one class. `class_name` is derived from the file name: a
@@ -1326,6 +1332,8 @@ export interface components {
             /** @description Optional label; null means the course was created without one. */
             course_code: string | null;
             section_count: number;
+            /** @description Ordered section codes under this course. */
+            section_codes?: string[];
             title: string;
             updated_at: components["schemas"]["Timestamp"];
         };
@@ -1763,6 +1771,8 @@ export interface operations {
                         username: string;
                         bound_course_count: number;
                         identity_mismatch_count: number;
+                        /** @description Allowlist class names matched by the registered student_number + display_name. */
+                        registered_classes?: string[];
                     };
                 };
             };
@@ -2245,11 +2255,14 @@ export interface operations {
                 /**
                  * @description Restrict the page to holders of that **platform** role (a course-scoped grant is
                  *     not a platform role). The filter selects rows; it never widens what a row shows.
-                 *     There is no name/username search: the contract declares none, and a client that
-                 *     pulled the whole table to filter locally would spread identity data for a feature
-                 *     the server does not offer.
                  */
                 role?: components["schemas"]["Role"];
+                /** @description Filter by account activation status (true = active only, false = deactivated only). */
+                is_active?: boolean;
+                /** @description Restrict to users belonging to the given allowlist or enrolled class name. */
+                class_name?: string;
+                /** @description Case-insensitive substring match against username, display_name, or student_number. */
+                q?: string;
             };
             header?: never;
             path?: never;
@@ -2361,6 +2374,7 @@ export interface operations {
             content: {
                 "application/json": {
                     display_name?: string;
+                    student_number?: string | null;
                     /** Format: email */
                     email?: string | null;
                     roles?: components["schemas"]["Role"][];

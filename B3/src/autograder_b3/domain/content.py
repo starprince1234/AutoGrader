@@ -76,8 +76,21 @@ def content_wire(snapshot: VersionContentSnapshot) -> dict[str, Any]:
         "language": snapshot.language,
         "stem_markdown": snapshot.stem_markdown,
         "reference_answers": [
-            {"language": answer.language, "body": answer.body}
-            for answer in sorted(snapshot.reference_answers, key=lambda item: item.language)
+            {
+                "language": answer.language,
+                "body": answer.body,
+                **({"ordinal": answer.ordinal} if answer.ordinal != 0 else {}),
+                **({"label": answer.label} if answer.label != "标准参考答案" else {}),
+                **(
+                    {"grading_prompt": answer.grading_prompt}
+                    if answer.grading_prompt is not None
+                    else {}
+                ),
+            }
+            for answer in sorted(
+                snapshot.reference_answers,
+                key=lambda item: (item.ordinal, item.language),
+            )
         ],
         "adapter": manifest_to_storage(snapshot.manifest),
         # One mapping function for the package and the digest: `case_to_package_entry` emits a

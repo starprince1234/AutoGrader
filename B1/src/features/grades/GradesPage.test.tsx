@@ -589,7 +589,7 @@ describe("谁还没交（RQ-B-1-30 验收 4 的操作化形态）", () => {
       {},
       { timeout: 5000 },
     );
-    expect(notice).toHaveTextContent(`已达到自动翻页上限（${MAX_AUTO_PAGES} 页）`);
+    expect(notice).toHaveTextContent(`结果较多，仅展示前 ${MAX_AUTO_PAGES} 页`);
 
     const panel = notice.closest("section") as HTMLElement;
     // 上限是**终局**：这里不能出现 spinner（否则是一个永远不会结束的"加载中"）。

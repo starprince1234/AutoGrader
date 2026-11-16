@@ -31,12 +31,15 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import Connection, and_, delete, func, insert, select, update
 
-from .classes import bind_account_to_enrollments
+from .classes import CLASS_SOURCE_REGISTERED, bind_account_to_enrollments, bound_accounts
 from .db.tables import (
+    classes,
     credentials,
+    enrollments,
     registration_allowlist,
     registration_allowlist_batches,
     registration_codes,
+    sections,
     users,
 )
 from .db.tables import roles as roles_table
@@ -221,6 +224,32 @@ def allowlist_entry(
     return None if row is None else AllowlistRow(row[0], row[1])
 
 
+def allowlist_class_names(
+    connection: Connection, *, student_number: str | None, display_name: str | None
+) -> list[str]:
+    """All registered allowlist class names matching `(student_number, display_name)`."""
+    number = (student_number or "").strip()
+    name = (display_name or "").strip()
+    if not number or not name:
+        return []
+    rows = connection.execute(
+        select(registration_allowlist_batches.c.filename)
+        .select_from(
+            registration_allowlist.join(
+                registration_allowlist_batches,
+                registration_allowlist.c.batch_id == registration_allowlist_batches.c.batch_id,
+            )
+        )
+        .where(
+            and_(
+                registration_allowlist.c.student_number == number,
+                func.btrim(registration_allowlist.c.display_name) == name,
+            )
+        )
+    ).fetchall()
+    return sorted({class_name_of(row[0]) for row in rows})
+
+
 def active_batch(connection: Connection) -> dict[str, object] | None:
     row = connection.execute(
         select(
@@ -364,6 +393,104 @@ def class_name_of(filename: str) -> str:
     return stem
 
 
+def _sync_attached_course_classes(
+    connection: Connection,
+    *,
+    batch_id: uuid.UUID,
+    rows: list[tuple[str, str]],
+    now: datetime,
+) -> None:
+    """Propagate newly added allowlist members to any course class attached to `batch_id`.
+
+    Existing active enrollments (and students already enrolled in another section of the same
+    course) are preserved untouched; newly added students are inserted and linked to any
+    existing user account matching `(student_number, display_name)`.
+    """
+    if not rows:
+        return
+    attached = connection.execute(
+        select(classes.c.class_id, classes.c.section_id, sections.c.course_id)
+        .select_from(classes.join(sections, classes.c.section_id == sections.c.section_id))
+        .where(classes.c.allowlist_batch_id == batch_id)
+    ).fetchall()
+    if not attached:
+        return
+
+    accounts_by_number = bound_accounts(connection, student_numbers=[num for num, _ in rows])
+    user_names: dict[uuid.UUID, str] = {}
+    if accounts_by_number:
+        for urow in connection.execute(
+            select(users.c.user_id, users.c.display_name).where(
+                users.c.user_id.in_(list(accounts_by_number.values()))
+            )
+        ).fetchall():
+            user_names[urow.user_id] = str(urow.display_name).strip()
+
+    for target in attached:
+        existing_in_class = {
+            str(r.student_number): r
+            for r in connection.execute(
+                select(
+                    enrollments.c.enrollment_id,
+                    enrollments.c.student_number,
+                    enrollments.c.is_active,
+                ).where(enrollments.c.class_id == target.class_id)
+            ).fetchall()
+        }
+        active_in_course = {
+            str(r[0])
+            for r in connection.execute(
+                select(enrollments.c.student_number).where(
+                    and_(
+                        enrollments.c.course_id == target.course_id,
+                        enrollments.c.is_active.is_(True),
+                    )
+                )
+            ).fetchall()
+        }
+        to_insert: list[dict[str, object]] = []
+        for number, name in rows:
+            matched_uid = accounts_by_number.get(number)
+            if matched_uid is not None and user_names.get(matched_uid) != name.strip():
+                matched_uid = None
+            existing = existing_in_class.get(number)
+            if existing is not None:
+                if not existing.is_active and number not in active_in_course:
+                    connection.execute(
+                        update(enrollments)
+                        .where(enrollments.c.enrollment_id == existing.enrollment_id)
+                        .values(
+                            is_active=True,
+                            display_name=name,
+                            user_id=matched_uid,
+                            updated_at=now,
+                        )
+                    )
+                    active_in_course.add(number)
+                continue
+            if number in active_in_course:
+                continue
+            to_insert.append(
+                {
+                    "enrollment_id": uuid.uuid4(),
+                    "course_id": target.course_id,
+                    "section_id": target.section_id,
+                    "class_id": target.class_id,
+                    "user_id": matched_uid,
+                    "student_number": number,
+                    "display_name": name,
+                    "source": CLASS_SOURCE_REGISTERED,
+                    "roster_import_id": None,
+                    "is_active": True,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            )
+            active_in_course.add(number)
+        if to_insert:
+            connection.execute(enrollments.insert(), to_insert)
+
+
 def add_allowlist_batch(
     connection: Connection,
     *,
@@ -441,6 +568,7 @@ def add_allowlist_batch(
 
     inserted = 0
     seen: set[str] = set()
+    inserted_rows: list[tuple[str, str]] = []
     for row in rows:
         if row.student_number in seen:
             duplicates.append(row.student_number)
@@ -455,6 +583,7 @@ def add_allowlist_batch(
                 created_at=now,
             )
         )
+        inserted_rows.append((row.student_number, row.display_name))
         inserted += 1
 
     connection.execute(
@@ -462,6 +591,13 @@ def add_allowlist_batch(
         .where(registration_allowlist_batches.c.batch_id == batch_id)
         .values(row_count=inserted)
     )
+    if replaced:
+        _sync_attached_course_classes(
+            connection,
+            batch_id=batch_id,
+            rows=inserted_rows,
+            now=now,
+        )
     return {
         "batch_id": batch_id,
         "class_name": class_name,

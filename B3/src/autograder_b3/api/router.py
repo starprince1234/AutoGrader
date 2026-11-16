@@ -34,6 +34,7 @@ from ..domain import (
     discard_generation,
     generation_capabilities,
     get_assignment_detail,
+    get_assignment_targets,
     get_question,
     get_version,
     list_assignment_versions,
@@ -243,9 +244,8 @@ def create_question_endpoint(
         # from a present one, so that fact is read here and passed down, rather than
         # guessed from the parsed value inside the domain.
         cases_supplied="cases" in payload.model_fields_set,
-        # Same fact about `execution`: an omitted key keeps the stored declaration, while an
-        # explicit `null` resets it to per_case. Only the transport can tell them apart.
         execution_supplied="execution" in payload.model_fields_set,
+        grading_prompt_supplied="grading_prompt" in payload.model_fields_set,
         generation_id=generation_id,
         now=dependencies.now,
     )
@@ -331,8 +331,8 @@ def update_question_endpoint(
         # Same fact about `cases` (CHG-0017): absent means "keep the stored cases", so a
         # caller that only renames a question never has to send hidden cases back.
         cases_supplied="cases" in payload.model_fields_set,
-        # Absent means "keep the stored execution declaration"; explicit `null` resets it.
         execution_supplied="execution" in payload.model_fields_set,
+        grading_prompt_supplied="grading_prompt" in payload.model_fields_set,
         now=dependencies.now,
     )
     log_event(
@@ -1168,12 +1168,18 @@ def get_internal_assignment_endpoint(request: Request, assignment_id: uuid.UUID)
         assignment_id=assignment_id,
         directory=dependencies.b4_authorization,
     )
+    # 目标课序/指定学生：空元组 = 全课程（历史作业）。B2 会用它与 B4 的在读名单求交。
+    section_ids, student_ids = get_assignment_targets(
+        dependencies.database, assignment_id=assignment_id
+    )
     internal = AssignmentAudience(
         assignment_id=view.assignment.assignment_id,
         course_id=view.assignment.course_id,
         title=view.assignment.title,
         status=view.assignment.status,
         question_version_ids=view.question_version_ids,
+        section_ids=section_ids,
+        student_ids=student_ids,
     )
     log_event(
         get_logger("api.internal"),

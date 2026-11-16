@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Query, Response
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
-from sqlalchemy import Connection, and_, select, update
+from sqlalchemy import Connection, and_, func, or_, select, tuple_, update
 
 from ..audit import (
     ACTION_USER_ACTIVATED,
@@ -25,10 +25,21 @@ from ..audit import (
     changed_fields,
 )
 from ..authorization import ROLES
-from ..db.tables import credentials, users
+from ..classes import bind_account_to_enrollments
+from ..db.tables import (
+    classes,
+    courses,
+    credentials,
+    enrollments,
+    registration_allowlist,
+    registration_allowlist_batches,
+    sections,
+    users,
+)
 from ..db.tables import roles as roles_table
 from ..errors import bad_request, conflict, not_found, unprocessable
 from ..logging import get_logger
+from ..registration import class_name_of
 from ..security.passwords import hash_password
 from .dependencies import B4State, Dependencies, actor_of, audit_denial
 from .pagination import clamp_limit, descending_page_filter, page_envelope
@@ -60,6 +71,7 @@ class UserUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     display_name: str | None = Field(default=None, min_length=1, max_length=MAX_DISPLAY_NAME_LENGTH)
+    student_number: str | None = Field(default=None, max_length=MAX_STUDENT_NUMBER_LENGTH)
     email: EmailStr | None = None
     roles: list[str] | None = None
     expected_updated_at: datetime | None = None
@@ -79,7 +91,13 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _user_document(row, role_values: list[str]) -> dict[str, object]:
+def _user_document(
+    row,
+    role_values: list[str],
+    *,
+    registered_classes: list[str] | None = None,
+    course_bindings: list[dict[str, object]] | None = None,
+) -> dict[str, object]:
     return {
         "user_id": str(row.user_id),
         # `username` is the login identifier and the only human-recognisable handle an
@@ -99,7 +117,88 @@ def _user_document(row, role_values: list[str]) -> dict[str, object]:
         # overwrite each other silently.
         "updated_at": rfc3339(row.updated_at),
         "created_at": rfc3339(row.created_at),
+        "registered_classes": registered_classes or [],
+        "course_bindings": course_bindings or [],
     }
+
+
+def _registered_classes_by_user(
+    connection: Connection, rows: list[object]
+) -> dict[uuid.UUID, list[str]]:
+    """Batch-resolve allowlist class names for one page of users."""
+    numbers = sorted({str(r.student_number).strip() for r in rows if r.student_number})
+    if not numbers:
+        return {}
+    allow_rows = connection.execute(
+        select(
+            registration_allowlist.c.student_number,
+            registration_allowlist.c.display_name,
+            registration_allowlist_batches.c.filename,
+        )
+        .select_from(
+            registration_allowlist.join(
+                registration_allowlist_batches,
+                registration_allowlist.c.batch_id == registration_allowlist_batches.c.batch_id,
+            )
+        )
+        .where(registration_allowlist.c.student_number.in_(numbers))
+    ).fetchall()
+    by_identity: dict[tuple[str, str], set[str]] = {}
+    for arow in allow_rows:
+        key = (str(arow.student_number).strip(), str(arow.display_name).strip())
+        by_identity.setdefault(key, set()).add(class_name_of(arow.filename))
+    result: dict[uuid.UUID, list[str]] = {}
+    for row in rows:
+        sn = (row.student_number or "").strip()
+        dn = (row.display_name or "").strip()
+        if sn and dn:
+            matched = by_identity.get((sn, dn))
+            if matched:
+                result[row.user_id] = sorted(matched)
+    return result
+
+
+def _course_bindings_by_user(
+    connection: Connection, user_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[dict[str, object]]]:
+    """Batch-resolve active course/section/class enrollments for one page of users."""
+    if not user_ids:
+        return {}
+    rows = connection.execute(
+        select(
+            enrollments.c.user_id,
+            courses.c.course_id,
+            courses.c.course_code,
+            courses.c.title,
+            sections.c.section_id,
+            sections.c.section_code,
+            sections.c.term,
+            classes.c.class_id,
+            classes.c.class_name,
+        )
+        .select_from(
+            enrollments.join(courses, enrollments.c.course_id == courses.c.course_id)
+            .join(sections, enrollments.c.section_id == sections.c.section_id)
+            .join(classes, enrollments.c.class_id == classes.c.class_id)
+        )
+        .where(and_(enrollments.c.user_id.in_(user_ids), enrollments.c.is_active.is_(True)))
+        .order_by(courses.c.title, sections.c.section_code, classes.c.class_name)
+    ).fetchall()
+    grouped: dict[uuid.UUID, list[dict[str, object]]] = {}
+    for row in rows:
+        grouped.setdefault(row.user_id, []).append(
+            {
+                "course_id": str(row.course_id),
+                "course_code": row.course_code,
+                "course_title": row.title,
+                "section_id": str(row.section_id),
+                "section_code": row.section_code,
+                "term": row.term,
+                "class_id": str(row.class_id),
+                "class_name": row.class_name,
+            }
+        )
+    return grouped
 
 
 def _platform_roles(connection: Connection, user_id: uuid.UUID) -> list[str]:
@@ -122,6 +221,9 @@ def build_users_router(state: B4State, dependencies: Dependencies) -> APIRouter:
         cursor: str | None = Query(default=None),
         limit: int | None = Query(default=None, ge=1, le=200),
         role: str | None = Query(default=None),
+        is_active: bool | None = Query(default=None),
+        class_name: str | None = Query(default=None),
+        q: str | None = Query(default=None),
     ) -> dict[str, object]:
         size = clamp_limit(limit)
         if role is not None and role not in ROLES:
@@ -143,8 +245,69 @@ def build_users_router(state: B4State, dependencies: Dependencies) -> APIRouter:
                     )
                 )
             )
+        if is_active is not None:
+            statement = statement.where(users.c.is_active.is_(is_active))
+        if q is not None and q.strip():
+            pattern = f"%{q.strip()}%"
+            statement = statement.where(
+                or_(
+                    users.c.username.ilike(pattern),
+                    users.c.display_name.ilike(pattern),
+                    users.c.student_number.ilike(pattern),
+                )
+            )
+        if class_name is not None and class_name.strip():
+            target_class = class_name.strip()
+            batch_ids = [
+                brow.batch_id
+                for brow in connection.execute(
+                    select(
+                        registration_allowlist_batches.c.batch_id,
+                        registration_allowlist_batches.c.filename,
+                    )
+                ).fetchall()
+                if class_name_of(brow.filename) == target_class
+            ]
+            enrolled_ids = select(enrollments.c.user_id).select_from(
+                enrollments.join(classes, enrollments.c.class_id == classes.c.class_id)
+            ).where(
+                and_(
+                    enrollments.c.is_active.is_(True),
+                    enrollments.c.user_id.is_not(None),
+                    classes.c.class_name == target_class,
+                )
+            )
+            if batch_ids:
+                allowlist_identities = select(
+                    registration_allowlist.c.student_number,
+                    func.btrim(registration_allowlist.c.display_name),
+                ).where(registration_allowlist.c.batch_id.in_(batch_ids))
+                statement = statement.where(
+                    or_(
+                        users.c.user_id.in_(enrolled_ids),
+                        and_(
+                            users.c.student_number.is_not(None),
+                            tuple_(users.c.student_number, func.btrim(users.c.display_name)).in_(
+                                allowlist_identities
+                            ),
+                        ),
+                    )
+                )
+            else:
+                statement = statement.where(users.c.user_id.in_(enrolled_ids))
         rows = connection.execute(statement.limit(size)).fetchall()
-        items = [_user_document(row, _platform_roles(connection, row.user_id)) for row in rows]
+        user_ids = [row.user_id for row in rows]
+        reg_classes = _registered_classes_by_user(connection, rows)
+        bindings = _course_bindings_by_user(connection, user_ids)
+        items = [
+            _user_document(
+                row,
+                _platform_roles(connection, row.user_id),
+                registered_classes=reg_classes.get(row.user_id, []),
+                course_bindings=bindings.get(row.user_id, []),
+            )
+            for row in rows
+        ]
         keys = [(row.created_at, row.user_id) for row in rows]
         return page_envelope(items, keys, size)
 
@@ -210,6 +373,14 @@ def build_users_router(state: B4State, dependencies: Dependencies) -> APIRouter:
                         created_at=now,
                     )
                 )
+            if student_number:
+                bind_account_to_enrollments(
+                    connection,
+                    user_id=user_id,
+                    student_number=student_number,
+                    display_name=payload.display_name.strip(),
+                    now=now,
+                )
             AuditLog(connection).record(
                 action=ACTION_USER_CREATED,
                 outcome=OUTCOME_SUCCESS,
@@ -239,12 +410,25 @@ def build_users_router(state: B4State, dependencies: Dependencies) -> APIRouter:
                 raise conflict("The user was modified since it was read; re-read and retry.")
             before = {
                 "display_name": row.display_name,
+                "student_number": row.student_number,
                 "email": row.email,
                 "roles": sorted(_platform_roles(connection, user_id)),
             }
             updates: dict[str, object] = {}
             if payload.display_name is not None:
                 updates["display_name"] = payload.display_name.strip()
+            if "student_number" in payload.model_fields_set:
+                new_sn = (payload.student_number or "").strip() or None
+                if new_sn != row.student_number:
+                    if new_sn is not None:
+                        clash = connection.execute(
+                            select(users.c.user_id).where(
+                                and_(users.c.student_number == new_sn, users.c.user_id != user_id)
+                            )
+                        ).fetchone()
+                        if clash is not None:
+                            raise conflict("A user with that student number already exists.")
+                    updates["student_number"] = new_sn
             if payload.email is not None:
                 stripped = str(payload.email).strip().lower()
                 updates["email"] = stripped or None  # type: ignore[assignment]
@@ -256,6 +440,16 @@ def build_users_router(state: B4State, dependencies: Dependencies) -> APIRouter:
                 updates["updated_at"] = now
                 connection.execute(
                     update(users).where(users.c.user_id == user_id).values(**updates)
+                )
+            effective_sn = updates.get("student_number", row.student_number)
+            effective_dn = str(updates.get("display_name", row.display_name)).strip()
+            if effective_sn and ("student_number" in updates or "display_name" in updates):
+                bind_account_to_enrollments(
+                    connection,
+                    user_id=user_id,
+                    student_number=str(effective_sn),
+                    display_name=effective_dn,
+                    now=now,
                 )
             if role_values is not None:
                 connection.execute(
@@ -279,6 +473,7 @@ def build_users_router(state: B4State, dependencies: Dependencies) -> APIRouter:
                     )
             after = {
                 "display_name": updates.get("display_name", row.display_name),
+                "student_number": updates.get("student_number", row.student_number),
                 "email": updates.get("email", row.email),
                 "roles": role_values if role_values is not None else before["roles"],
             }

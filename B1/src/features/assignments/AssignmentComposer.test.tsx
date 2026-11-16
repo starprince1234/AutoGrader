@@ -1,4 +1,4 @@
-import { screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderWithRouter } from "../../testing/renderWithProviders";
@@ -189,7 +189,7 @@ describe("新建作业（v0.32.0 课程级）", () => {
     expect(postRequests(stub)).toHaveLength(0);
     // 课程级说明在表单上可见：没有课序勾选、也没有指定学生。
     expect(screen.getByTestId("compose-course-wide-notice")).toHaveTextContent(
-      "发布后对本课程全部课序与班级",
+      "发布后对本课程全部课序的学生生效",
     );
     expect(screen.queryByTestId("compose-section-list")).toBeNull();
     expect(screen.queryByTestId("compose-student-fieldset")).toBeNull();
@@ -326,7 +326,7 @@ describe("新建作业（v0.32.0 课程级）", () => {
     await fillBase(user);
     await user.click(screen.getByTestId("assignment-compose-preview"));
     expect(await screen.findByTestId("compose-audience-error")).toHaveTextContent(
-      "受众统计暂时读取不到",
+      "暂无法获取班级人数统计",
     );
     await user.click(screen.getByTestId("assignment-compose-confirm-button"));
     await waitFor(() => expect(postRequests(stub)).toHaveLength(1));
@@ -383,7 +383,26 @@ describe("新建作业（v0.32.0 课程级）", () => {
     await user.click(await screen.findByTestId("assignment-compose-confirm-button"));
 
     expect(await screen.findByTestId("assignment-compose-error")).toHaveTextContent(
-      "服务端拒绝了这个作业（422）",
+      "请确认所选题目均属于本课程且已发布",
     );
+  });
+
+  it("选择截止日期后可通过下拉选择具体小时与分钟并提交 due_at", async () => {
+    stub = installFetchStub(baseRoutes());
+    await signIn("teacher1", "pw");
+    renderComposer();
+    const user = userEvent.setup();
+
+    await fillBase(user);
+    fireEvent.change(screen.getByLabelText("截止时间"), { target: { value: "2026-12-01" } });
+    await user.selectOptions(screen.getByTestId("compose-due-hour"), "18");
+    await user.selectOptions(screen.getByTestId("compose-due-minute"), "30");
+
+    await user.click(screen.getByTestId("assignment-compose-preview"));
+    await user.click(await screen.findByTestId("assignment-compose-confirm-button"));
+
+    await waitFor(() => expect(postRequests(stub)).toHaveLength(1));
+    const body = postRequests(stub)[0].body as Record<string, unknown>;
+    expect(body.due_at).toBe(new Date("2026-12-01T18:30").toISOString());
   });
 });

@@ -192,7 +192,7 @@ describe("用户标签：列表与状态（P14 / RQ-B-4-50）", () => {
     expect(screen.queryByTestId(`deactivate-${UUID_A}`)).toBeNull();
     expect(screen.queryByTestId(`activate-${UUID_A}`)).toBeNull();
     expect(screen.queryByTestId(`change-role-${UUID_A}`)).toBeNull();
-    expect(screen.getByTestId(`role-blocked-${UUID_A}`)).toHaveTextContent("缺少并发字段");
+    expect(screen.getByTestId(`role-blocked-${UUID_A}`)).toHaveTextContent("无法变更角色，请刷新页面");
     expect(screen.getByTestId(`state-unknown-${UUID_A}`)).toHaveTextContent("状态未知");
     // 只读的详情仍然可用。
     expect(screen.getByTestId(`detail-${UUID_A}`)).toBeInTheDocument();

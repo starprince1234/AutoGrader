@@ -13,6 +13,7 @@ import {
   useActivateUser,
   useDeactivateUser,
   useUpdateUserRoles,
+  useUpdateUserStudentNumber,
   useUsers,
 } from "./useUsers";
 import { Select } from "../../ui/Select";
@@ -40,9 +41,26 @@ export function UsersPage({
   createdUserId?: string | null;
 }) {
   const [roleFilter, setRoleFilter] = useState<Role | "">("");
-  const users = useUsers(roleFilter === "" ? null : roleFilter);
+  const [statusFilter, setStatusFilter] = useState<"active" | "inactive" | "all">("active");
+  const [classFilter, setClassFilter] = useState("");
+  const [queryFilter, setQueryFilter] = useState("");
+  const users = useUsers({
+    role: roleFilter === "" ? null : roleFilter,
+    isActive: statusFilter === "all" ? null : statusFilter === "active",
+    className: classFilter,
+    q: queryFilter,
+  });
   const rows = useMemo(() => loadedUsers(users.data?.pages), [users.data]);
+  const knownClassNames = useMemo(() => {
+    const names = new Set<string>();
+    for (const row of rows) {
+      for (const name of row.registered_classes ?? []) names.add(name);
+      for (const binding of row.course_bindings ?? []) names.add(binding.class_name);
+    }
+    return Array.from(names).sort();
+  }, [rows]);
   const updateRoles = useUpdateUserRoles();
+  const updateStudentNumber = useUpdateUserStudentNumber();
   const deactivate = useDeactivateUser();
   const activate = useActivateUser();
   const queryClient = useQueryClient();
@@ -53,6 +71,7 @@ export function UsersPage({
   const [deactivateTargetId, setDeactivateTargetId] = useState<string | null>(null);
   const [activateTargetId, setActivateTargetId] = useState<string | null>(null);
   const [detailTargetId, setDetailTargetId] = useState<string | null>(null);
+  const [studentNumberDraft, setStudentNumberDraft] = useState("");
 
   // 目标行从**当前列表数据**里取，而不是存一份快照：并发冲突后管理员点"重新加载"，
   // 弹窗里的旧/新角色与 `expected_updated_at` 必须一起变成服务端的最新值。
@@ -159,6 +178,37 @@ export function UsersPage({
         ),
     },
     {
+      key: "classes_courses",
+      header: t("users.classesAndCourses"),
+      render: (row: UserSummary) => {
+        const regClasses = row.registered_classes ?? [];
+        const bindings = row.course_bindings ?? [];
+        if (regClasses.length === 0 && bindings.length === 0) {
+          return <span className="muted">{t("common.none")}</span>;
+        }
+        return (
+          <div className="stack" data-testid={`user-classes-${row.user_id}`}>
+            {regClasses.length > 0 ? (
+              <span className="inline">
+                {regClasses.map((name) => (
+                  <StatusPill key={name} tone="ok">
+                    {name}
+                  </StatusPill>
+                ))}
+              </span>
+            ) : null}
+            {bindings.length > 0 ? (
+              <span className="muted">
+                {bindings
+                  .map((b) => `${b.course_title} · ${b.section_code} · ${b.class_name}`)
+                  .join("；")}
+              </span>
+            ) : null}
+          </div>
+        );
+      },
+    },
+    {
       key: "roles",
       header: t("users.roles"),
       render: (row: UserSummary) => (
@@ -253,7 +303,11 @@ export function UsersPage({
               type="button"
               className="button button--ghost"
               data-testid={`detail-${row.user_id}`}
-              onClick={() => setDetailTargetId(row.user_id)}
+              onClick={() => {
+                updateStudentNumber.reset();
+                setStudentNumberDraft(row.student_number ?? "");
+                setDetailTargetId(row.user_id);
+              }}
             >
               {t("users.detail")}
             </button>
@@ -267,6 +321,20 @@ export function UsersPage({
     <div className="stack">
       <Panel title={t("users.filter")}>
         <div className="form-grid">
+          <Field label={t("users.filterStatus")} htmlFor="user-status-filter">
+            <Select
+              id="user-status-filter"
+              data-testid="user-status-filter"
+              value={statusFilter}
+              onChange={(event) =>
+                setStatusFilter(event.target.value as "active" | "inactive" | "all")
+              }
+            >
+              <option value="active">{t("users.statusActiveOnly")}</option>
+              <option value="all">{t("users.statusAll")}</option>
+              <option value="inactive">{t("users.statusInactiveOnly")}</option>
+            </Select>
+          </Field>
           <Field label={t("users.filterRole")} htmlFor="user-role-filter">
             <Select
               id="user-role-filter"
@@ -281,6 +349,30 @@ export function UsersPage({
                 </option>
               ))}
             </Select>
+          </Field>
+          <Field label={t("users.filterClass")} htmlFor="user-class-filter">
+            <input
+              id="user-class-filter"
+              data-testid="user-class-filter"
+              list="known-user-classes"
+              placeholder={t("users.filterClassPlaceholder")}
+              value={classFilter}
+              onChange={(event) => setClassFilter(event.target.value)}
+            />
+            <datalist id="known-user-classes">
+              {knownClassNames.map((name) => (
+                <option key={name} value={name} />
+              ))}
+            </datalist>
+          </Field>
+          <Field label={t("users.filterQuery")} htmlFor="user-query-filter">
+            <input
+              id="user-query-filter"
+              data-testid="user-query-filter"
+              placeholder={t("users.filterQueryPlaceholder")}
+              value={queryFilter}
+              onChange={(event) => setQueryFilter(event.target.value)}
+            />
           </Field>
         </div>
         {createdUserId ? (
@@ -333,7 +425,10 @@ export function UsersPage({
           // 读取失败已经在筛选面板里给出可读原因：这里不再画一张空表，空表会被读成"没有用户"。
           null
         ) : rows.length === 0 ? (
-          roleFilter === "" ? (
+          roleFilter === "" &&
+          statusFilter === "active" &&
+          classFilter.trim() === "" &&
+          queryFilter.trim() === "" ? (
             <div className="stack" data-testid="users-empty">
               <p className="muted">{t("users.empty")}</p>
               <p className="muted">{t("users.emptyHint")}</p>
@@ -577,6 +672,28 @@ export function UsersPage({
                 <dd>{rolesText(detailTarget.roles)}</dd>
               </div>
               <div className="facts__row">
+                <dt>{t("users.registeredClasses")}</dt>
+                <dd>
+                  {(detailTarget.registered_classes ?? []).length === 0 ? (
+                    <span className="muted">{t("common.none")}</span>
+                  ) : (
+                    (detailTarget.registered_classes ?? []).join("、")
+                  )}
+                </dd>
+              </div>
+              <div className="facts__row">
+                <dt>{t("users.courseBindings")}</dt>
+                <dd>
+                  {(detailTarget.course_bindings ?? []).length === 0 ? (
+                    <span className="muted">{t("users.noCourseBindings")}</span>
+                  ) : (
+                    (detailTarget.course_bindings ?? [])
+                      .map((b) => `${b.course_title} · ${b.section_code} · ${b.class_name}`)
+                      .join("；")
+                  )}
+                </dd>
+              </div>
+              <div className="facts__row">
                 <dt>{t("users.status")}</dt>
                 <dd>
                   {accountState(detailTarget.is_active) === "active"
@@ -602,6 +719,60 @@ export function UsersPage({
               </div>
             </dl>
             <CopyUserId userId={detailTarget.user_id} />
+            {concurrencyStamp(detailTarget) !== null ? (
+              <form
+                className="stack"
+                data-testid="edit-student-number-form"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  const stamp = concurrencyStamp(detailTarget);
+                  if (stamp === null || updateStudentNumber.isPending) return;
+                  const normalized = studentNumberDraft.trim() || null;
+                  updateStudentNumber.mutate(
+                    {
+                      userId: detailTarget.user_id,
+                      studentNumber: normalized,
+                      expectedUpdatedAt: stamp,
+                    },
+                    {
+                      onSuccess: () => {
+                        setNotice(
+                          t("users.studentNumberUpdated", { username: detailTarget.username }),
+                        );
+                        setDetailTargetId(null);
+                      },
+                    },
+                  );
+                }}
+              >
+                <Field label={t("users.editStudentNumber")} htmlFor="edit-student-number-input">
+                  <input
+                    id="edit-student-number-input"
+                    data-testid="edit-student-number-input"
+                    placeholder={t("users.studentNumberPlaceholder")}
+                    value={studentNumberDraft}
+                    onChange={(event) => setStudentNumberDraft(event.target.value)}
+                  />
+                </Field>
+                {updateStudentNumber.isError ? (
+                  <Banner tone="error" testId="edit-student-number-error">
+                    {describeApiError(updateStudentNumber.error)}
+                  </Banner>
+                ) : null}
+                <div className="inline">
+                  <button
+                    type="submit"
+                    className="button"
+                    data-testid="save-student-number"
+                    disabled={updateStudentNumber.isPending}
+                  >
+                    {updateStudentNumber.isPending
+                      ? t("users.saving")
+                      : t("users.saveStudentNumber")}
+                  </button>
+                </div>
+              </form>
+            ) : null}
           </div>
         </Modal>
       ) : null}

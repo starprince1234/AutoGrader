@@ -37,6 +37,7 @@ from ..draft_generation import (
     DraftGenerationProviderError,
     GenerationView,
     ProposalOutcome,
+    ResponsesDraftGenerationProvider,
     build_generation_payload,
     normalize_proposal,
     provider_from_settings,
@@ -189,6 +190,7 @@ def request_generation(
         difficulty=payload.difficulty,
         tags=tags,
         desired_case_count=payload.desired_case_count,
+        desired_reference_tiers=payload.desired_reference_tiers,
         constraints=constraints,
         max_objective_chars=settings.draft_generation_max_objective_chars,
     )
@@ -266,12 +268,39 @@ def request_generation(
         raise error
     elapsed_ms = int((time.perf_counter() - started) * 1000)
 
+    document = dict(answer.document)
     outcome: ProposalOutcome = normalize_proposal(
-        answer.document,
+        document,
         language=payload.language,
         adapter_kind=payload.adapter_kind,
         limits=settings,
+        desired_reference_tiers=payload.desired_reference_tiers,
     )
+    if isinstance(resolved, ResponsesDraftGenerationProvider) and outcome.proposal is not None:
+        target_tiers = payload.desired_reference_tiers or 2
+        need_tiers = len(outcome.proposal.reference_answers) < target_tiers
+        need_rubric = outcome.proposal.grading_prompt is None
+        if need_tiers or need_rubric:
+            try:
+                repaired = resolved.repair_missing(
+                    document=document,
+                    language=payload.language,
+                    desired_reference_tiers=target_tiers,
+                    missing_grading_prompt=need_rubric,
+                )
+                if need_tiers and repaired.document.get("reference_answers"):
+                    document["reference_answers"] = repaired.document["reference_answers"]
+                if need_rubric and repaired.document.get("grading_prompt"):
+                    document["grading_prompt"] = repaired.document["grading_prompt"]
+                outcome = normalize_proposal(
+                    document,
+                    language=payload.language,
+                    adapter_kind=payload.adapter_kind,
+                    limits=settings,
+                    desired_reference_tiers=payload.desired_reference_tiers,
+                )
+            except DraftGenerationProviderError:
+                pass
 
     with database.protected_session() as session:
         from ..infra.repositories import DraftGenerationRepository
@@ -356,11 +385,26 @@ def _warning_from_storage(item: dict):
 
 def _proposal_from_storage(row):
     """Re-read a stored candidate. Present only while the record still carries content."""
-    from ..draft_generation import DraftProposal
+    from ..draft_generation import DraftProposal, DraftReferenceTierProposal
 
     stored = row.proposal
     if not isinstance(stored, dict):
         return None
+    raw_tiers = stored.get("reference_answers")
+    tiers: list[DraftReferenceTierProposal] = []
+    if isinstance(raw_tiers, list):
+        for index, item in enumerate(raw_tiers):
+            if not isinstance(item, dict):
+                continue
+            body = item.get("body")
+            if not isinstance(body, str) or not body.strip():
+                continue
+            raw_label = item.get("label")
+            label = raw_label.strip() if isinstance(raw_label, str) and raw_label.strip() else f"解法 {index + 1}"
+            tiers.append(DraftReferenceTierProposal(label=label, body=body))
+    grading_prompt = stored.get("grading_prompt")
+    if not isinstance(grading_prompt, str) or not grading_prompt.strip():
+        grading_prompt = None
     return DraftProposal(
         title=str(stored.get("title") or ""),
         stem_markdown=str(stored.get("stem_markdown") or ""),
@@ -372,6 +416,8 @@ def _proposal_from_storage(row):
             if isinstance(stored.get("reference_answer"), str)
             else None
         ),
+        reference_answers=tuple(tiers),
+        grading_prompt=grading_prompt,
         cases=tuple(_case_from_storage(case) for case in stored.get("cases") or ()),
         fixtures=tuple(
             _fixture_from_storage(fixture) for fixture in stored.get("fixtures") or ()

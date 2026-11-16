@@ -84,6 +84,7 @@ PROTECTED_FIELD_NAMES: frozenset[str] = frozenset(
         "segment_delimiter",
         "subject_template",
         "password",
+        "grading_prompt",
     }
 )
 
@@ -227,15 +228,20 @@ class TestCaseInputModel(BaseModel):
     email_check: EmailCheck | None = None
 
 
+class ReferenceAnswerTierInput(BaseModel):
+    """One graded reference-answer tier (e.g. brute-force vs optimal solution)."""
+
+    model_config = _STRICT
+
+    label: str = Field(default="标准参考答案", min_length=1, max_length=200)
+    body: str = Field(min_length=1)
+
+
 class QuestionDraftInputModel(BaseModel):
     """The contract's ``QuestionDraftInput`` - the only path that accepts answers.
 
-    Two of its fields are protected, and omitting either one **preserves** what is stored
-    rather than clearing it (``CHG-0017``). That is what lets a caller fix a title or a tag
-    without first reading the hidden cases and the reference answer out of the bank and
-    sending them back: the round trip that the executor/recorder split exists to avoid
-    simply does not happen. The per-field notes below record how "omitted" is told apart
-    from "sent" for each.
+    Protected fields follow omission-preserves semantics: omitting a protected
+    field preserves what is stored rather than clearing it.
     """
 
     model_config = _STRICT
@@ -244,24 +250,13 @@ class QuestionDraftInputModel(BaseModel):
     stem_markdown: str = Field(min_length=1)
     language: Language
     reference_answer: str | None = None
-    adapter: AdapterManifestInput
-    #: PROTECTED configuration: how the version's cases are produced. The semantics are
-    #: "omission preserves" like ``cases`` below, but with one deliberate difference: the
-    #: contract makes it nullable, and an explicit ``null`` is the **only** way to set a
-    #: version back to ``per_case``. The transport reads ``model_fields_set`` to tell an
-    #: omitted key (keep the stored declaration) from a present ``null`` (reset it), so this
-    #: model's value alone cannot express the difference.
+    reference_answers: tuple[ReferenceAnswerTierInput, ...] = ()
+    grading_prompt: str | None = Field(default=None, max_length=10000)
+    adapter: AdapterManifestInput = Field(
+        default_factory=lambda: AdapterManifestInput(kind="stdin")
+    )
     execution: ExecutionManifestInputModel | None = None
-    #: PROTECTED. Omitted keeps the version's existing cases unchanged; supplied replaces
-    #: the whole set (CHG-0017 "omission preserves"). Deliberately **not** nullable and
-    #: still ``minItems: 1`` when present, because the contract declares an array:
-    #: ``null`` is a type error and ``[]`` breaks the minimum, so "supplied" and "empty"
-    #: are mutually exclusive by construction -- which is what makes "a version that has
-    #: cases can never lose all of them" a property of the wire format rather than a rule
-    #: somebody has to remember. Omission is the empty tuple here and is told apart from a
-    #: supplied set by ``model_fields_set`` (only the transport can see the difference),
-    #: never by the value.
-    cases: tuple[TestCaseInputModel, ...] = Field(default=(), min_length=1)
+    cases: tuple[TestCaseInputModel, ...] = ()
     max_files: int = Field(default=20, ge=1, le=100)
     max_total_bytes: int = Field(default=1024 * 1024, ge=1, le=10 * 1024 * 1024)
     #: Topic tags (CHG-0008). Shape only: normalised in ``domain/tags.py``, which is
@@ -411,6 +406,7 @@ class QuestionDraftGenerationRequestModel(BaseModel):
     difficulty: str | None = Field(default=None, max_length=200)
     tags: tuple[str, ...] = Field(default=(), max_length=20)
     desired_case_count: int | None = Field(default=None, ge=1, le=100)
+    desired_reference_tiers: int | None = Field(default=None, ge=1, le=5)
     constraints: str | None = None
 
 
@@ -427,6 +423,9 @@ class ReferenceAnswerInternal:
     question_version_id: UUID
     language: Language
     body: str
+    ordinal: int = 0
+    label: str = "标准参考答案"
+    grading_prompt: str | None = None
 
 
 @dataclass(frozen=True)
@@ -704,22 +703,25 @@ class ReferenceAnswerDelivery:
     language: Language
     adapter_kind: AdapterKind
     body: str
+    stem_markdown: str = ""
+    reference_answers: tuple[dict[str, str], ...] = ()
+    grading_prompt: str | None = None
 
     def to_wire(self) -> dict[str, Any]:
-        """The declared five-key shape. Written out here, not in ``dto/wire.py``.
-
-        ``dto/wire.py`` is a wire module scanned for protected key names, because the
-        evaluation package must never grow a ``reference_answer`` key. This endpoint must
-        have exactly that key, so its projection belongs in the internal module that is
-        allowed to name it.
-        """
-        return {
+        payload: dict[str, Any] = {
             "question_version_id": str(self.question_version_id),
             "content_digest": self.content_digest,
             "language": self.language,
             "adapter_kind": self.adapter_kind,
             "reference_answer": self.body,
         }
+        if self.stem_markdown:
+            payload["stem_markdown"] = self.stem_markdown
+        if self.reference_answers:
+            payload["reference_answers"] = [dict(item) for item in self.reference_answers]
+        if self.grading_prompt is not None:
+            payload["grading_prompt"] = self.grading_prompt
+        return payload
 
 
 @dataclass(frozen=True)
@@ -785,6 +787,10 @@ class AssignmentAudience:
     title: str
     status: AssignmentStatus
     question_version_ids: tuple[UUID, ...]
+    #: 目标课序与指定学生（迁移 0012）。空元组 = 全课程 / 目标课序全体。
+    #: B2 用它和 B4 的在读名单求交后决定"谁能提交"；B3 不持有名单事实，只给目标。
+    section_ids: tuple[UUID, ...] = ()
+    student_ids: tuple[UUID, ...] = ()
 
     def to_wire(self) -> dict[str, Any]:
         return {
@@ -793,6 +799,9 @@ class AssignmentAudience:
             "title": self.title,
             "status": self.status,
             "question_version_ids": [str(item) for item in self.question_version_ids],
+            # 新增键：B2 更新前按名读取、忽略未知键，因此这一步不改变现有行为。
+            "section_ids": [str(item) for item in self.section_ids],
+            "student_ids": [str(item) for item in self.student_ids],
         }
 
 

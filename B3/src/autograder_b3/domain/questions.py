@@ -70,7 +70,12 @@ from .content import validate_stem_markdown
 from .draft_generations import accept_generation
 from .revisions import compute_revision_diff, revision_note, snapshot_content
 from .tags import validate_tags
-from .version_content import VersionContent, load_version_content, refresh_content_digest
+from .version_content import (
+    VersionContent,
+    default_ai_case,
+    load_version_content,
+    refresh_content_digest,
+)
 
 IMMUTABLE_SQLSTATE = "23001"
 #: ``QuestionDraftInput.revision_note`` is ``maxLength: 500`` in the contract; the column
@@ -87,32 +92,15 @@ def _validate_ordinals(payload: QuestionDraftInputModel) -> None:
 
 
 def _cases_supplied(payload: QuestionDraftInputModel, supplied: bool | None) -> bool:
-    """Whether the caller *sent* ``cases``, as opposed to omitting the field.
-
-    Same shape as ``revision_note_supplied`` in :func:`_validate_revision_note`: only the
-    transport can tell "the field is absent" from "the field holds a value", so the HTTP
-    layer reads ``model_fields_set`` and passes the answer down. ``None`` therefore means
-    "the caller could not say", and is read strictly from the value: an in-process caller
-    that put cases in the payload gets them written, one that left them out gets the
-    stored set preserved.
-
-    The two contradictions are refused rather than resolved, because either resolution is
-    a silent wrong answer about protected content: "supplied but empty" would be a way to
-    clear a case set (which no path is allowed to offer), and "omitted but non-empty"
-    would mean dropping cases the caller did send. Neither is reachable over HTTP --
-    ``QuestionDraftInputModel`` rejects ``[]`` (``minItems: 1``) and ``null`` (its type) --
-    so reaching one means a programming error in this module, and it is reported as such.
-    """
+    """Whether non-empty ``cases`` were supplied (empty/omitted triggers default AI case on create)."""
     if supplied is None:
         return bool(payload.cases)
-    if supplied != bool(payload.cases):
+    if not supplied and payload.cases:
         raise ManifestInvalid(
-            "`cases` was declared "
-            + ("supplied but is empty" if supplied else "omitted but carries entries")
-            + "; a case set is either provided in full or not provided at all",
+            "`cases` was declared omitted but carries entries",
             field="cases",
         )
-    return supplied
+    return bool(payload.cases)
 
 
 def _execution_from_payload(
@@ -189,20 +177,9 @@ def _revision_diff_against(
     *,
     payload: QuestionDraftInputModel,
     cases: Sequence[TestCaseInternal] | None,
+    grading_prompt_supplied: bool | None = None,
 ) -> dict:
-    """Structural delta between a published version and the draft replacing it.
-
-    The previous content arrives already read on the protected role, because the delta has
-    to know whether the reference answer and the fixture digests actually differ; only the
-    resulting *counts, digests and flags* are stored, never the content they describe.
-
-    ``cases`` is ``None`` when the caller omitted the field, and the version being branched
-    then carries the **previous** cases unchanged (``CHG-0017``). The delta is computed
-    against exactly that set rather than against an empty one, so it reports "the case set
-    did not change" - which is what the new version will actually hold (the write path
-    re-issues those cases onto it). Reporting the omission as "zero cases" would be a delta
-    that contradicts the row it describes.
-    """
+    """Structural delta between a published version and the draft replacing it."""
     return compute_revision_diff(
         snapshot_content(
             language=before.snapshot.language,
@@ -217,8 +194,8 @@ def _revision_diff_against(
         _submitted_content(
             payload,
             cases=before.cases if cases is None else cases,
-            reference_answer=payload.reference_answer,
             unchanged_answers=before.snapshot.reference_answers,
+            grading_prompt_supplied=grading_prompt_supplied,
         ),
     )
 
@@ -227,25 +204,36 @@ def _submitted_content(
     payload: QuestionDraftInputModel,
     *,
     cases: Sequence[TestCaseInternal],
-    reference_answer: str | None,
     unchanged_answers: Sequence[ReferenceAnswerInternal] = (),
+    grading_prompt_supplied: bool | None = None,
 ) -> dict:
-    """The submitted draft as diffable facts.
-
-    Both protected fields follow one rule - what the draft does **not** say, the version
-    keeps - and the delta has to apply the same rule the write path does, or it reports a
-    change nobody made. An answer that is absent **or blank** therefore leaves the stored
-    answers in force (a blank string is not a way to remove the answer, ``CHG-0017`` §3),
-    and is passed through unchanged rather than hashed as an empty body. When the draft
-    carries no case set, the caller has already substituted the previous cases, which is why
-    ``cases`` is never empty merely because the field was omitted. The answer travels only
-    as language plus body, and only into a digest; no expected output is read at all,
-    because the delta is about the declaration, not about what a student produces.
-    """
+    """The submitted draft as diffable facts."""
     manifest = validate_adapter_manifest(payload.adapter)
-    if reference_answer is not None and reference_answer.strip():
-        answers: tuple[ReferenceAnswerInternal, ...] = (
-            _payload_answer(payload, uuid.UUID(int=0)),
+    has_explicit_gp = grading_prompt_supplied is True or (
+        grading_prompt_supplied is None and payload.grading_prompt is not None
+    )
+    normalized_gp = (
+        (payload.grading_prompt or "").strip() or None if has_explicit_gp else None
+    )
+    tiers = _submitted_reference_tiers(payload)
+    if tiers:
+        gp = (
+            normalized_gp
+            if has_explicit_gp
+            else next(
+                (
+                    item.grading_prompt
+                    for item in unchanged_answers
+                    if item.grading_prompt is not None
+                ),
+                None,
+            )
+        )
+        answers = _payload_answers(payload, uuid.UUID(int=0), grading_prompt=gp)
+    elif has_explicit_gp:
+        answers = tuple(
+            replace(answer, grading_prompt=normalized_gp)
+            for answer in unchanged_answers
         )
     else:
         answers = tuple(unchanged_answers)
@@ -296,15 +284,40 @@ def _validate_revision_note(
         )
 
 
-def _payload_answer(
-    payload: QuestionDraftInputModel, question_version_id: uuid.UUID
-) -> ReferenceAnswerInternal:
-    """The submitted answer as an internal record, used for its language and length."""
-    return ReferenceAnswerInternal(
-        reference_answer_id=uuid.UUID(int=0),
-        question_version_id=question_version_id,
-        language=payload.language,
-        body=payload.reference_answer or "",
+def _submitted_reference_tiers(
+    payload: QuestionDraftInputModel,
+) -> tuple[tuple[str, str], ...]:
+    """Resolve multi-tier reference answers, falling back to single ``reference_answer``."""
+    tiers = tuple(
+        (tier.label.strip() or f"解法 {index + 1}", tier.body)
+        for index, tier in enumerate(payload.reference_answers)
+        if tier.body.strip()
+    )
+    if tiers:
+        return tiers
+    if payload.reference_answer is not None and payload.reference_answer.strip():
+        return (("标准参考答案", payload.reference_answer),)
+    return ()
+
+
+def _payload_answers(
+    payload: QuestionDraftInputModel,
+    question_version_id: uuid.UUID,
+    *,
+    grading_prompt: str | None,
+) -> tuple[ReferenceAnswerInternal, ...]:
+    tiers = _submitted_reference_tiers(payload)
+    return tuple(
+        ReferenceAnswerInternal(
+            reference_answer_id=uuid.UUID(int=0),
+            question_version_id=question_version_id,
+            language=payload.language,
+            body=body,
+            ordinal=ordinal,
+            label=label,
+            grading_prompt=grading_prompt,
+        )
+        for ordinal, (label, body) in enumerate(tiers)
     )
 
 
@@ -315,48 +328,75 @@ def _write_protected_content(
     payload: QuestionDraftInputModel,
     cases: Sequence[TestCaseInternal],
     cases_supplied: bool,
+    grading_prompt_supplied: bool | None = None,
     inherited: VersionContent | None = None,
     now: datetime,
 ) -> None:
-    """Write the protected half of a draft, honouring omission (``CHG-0017``).
-
-    ``reference_answer``: omitted **or blank** keeps the stored answer; a blank string is
-    not a way to remove it either.
-
-    ``cases``: only a *supplied* set is written, and it replaces the whole set (the
-    repository deletes the suite's rows and inserts the submitted ones, so nothing
-    accumulates). An omitted set means "this version keeps the cases it already has", so
-    this function does not delete, rewrite or even load them. (The digest refresh that
-    follows does read the version's content, because it has to hash it; what never happens
-    is that content travelling out to the caller and back.) There is deliberately no path
-    that leaves a version with no cases: omitting preserves, and supplying requires at
-    least one, so the two together cannot reduce a case set to zero. A brand-new question
-    that omits cases is the one way to reach a version without them, and ``publish``
-    refuses it until cases are supplied.
-
-    ``inherited`` is the content of the version this write supersedes, and is passed **only**
-    when the write creates a new version. There, an omitted field cannot mean "leave the rows
-    alone": the rows belong to the previous version, which is frozen, so the new draft would
-    start empty and a title correction would silently destroy the question's cases. Instead
-    the omitted field is re-issued onto the new version - same content, new rows, new
-    owner-generated identifiers. An in-place edit passes ``None``, because there the smaller
-    operation is the right one: nothing is written, so the content digest (and any
-    attestation bound to it) survives a rename untouched.
-    """
-    answer = payload.reference_answer
-    if answer is not None and answer.strip():
-        repository.upsert_reference_answer(
+    """Write protected answers, grading_prompt, and cases, honouring omission-preserves."""
+    has_explicit_gp = grading_prompt_supplied is True or (
+        grading_prompt_supplied is None and payload.grading_prompt is not None
+    )
+    normalized_gp = (
+        (payload.grading_prompt or "").strip() or None if has_explicit_gp else None
+    )
+    tiers = _submitted_reference_tiers(payload)
+    if tiers:
+        if has_explicit_gp:
+            effective_gp = normalized_gp
+        elif inherited is not None:
+            effective_gp = next(
+                (
+                    item.grading_prompt
+                    for item in inherited.snapshot.reference_answers
+                    if item.grading_prompt is not None
+                ),
+                None,
+            )
+        else:
+            existing = repository.list_reference_answers(version_id)
+            effective_gp = next(
+                (item.grading_prompt for item in existing if item.grading_prompt is not None),
+                None,
+            )
+        repository.replace_reference_answers(
             question_version_id=version_id,
             language=payload.language,
-            body=answer,
+            items=tiers,
+            grading_prompt=effective_gp,
             now=now,
         )
     elif inherited is not None:
-        for previous in inherited.snapshot.reference_answers:
-            repository.upsert_reference_answer(
+        if inherited.snapshot.reference_answers:
+            effective_gp = (
+                normalized_gp
+                if has_explicit_gp
+                else next(
+                    (
+                        item.grading_prompt
+                        for item in inherited.snapshot.reference_answers
+                        if item.grading_prompt is not None
+                    ),
+                    None,
+                )
+            )
+            repository.replace_reference_answers(
                 question_version_id=version_id,
-                language=previous.language,
-                body=previous.body,
+                language=inherited.snapshot.reference_answers[0].language,
+                items=[
+                    (previous.label, previous.body)
+                    for previous in inherited.snapshot.reference_answers
+                ],
+                grading_prompt=effective_gp,
+                now=now,
+            )
+    elif has_explicit_gp:
+        existing = repository.list_reference_answers(version_id)
+        if existing:
+            repository.replace_reference_answers(
+                question_version_id=version_id,
+                language=payload.language,
+                items=[(item.label, item.body) for item in existing],
+                grading_prompt=normalized_gp,
                 now=now,
             )
 
@@ -382,6 +422,7 @@ def create_question(
     revision_note_supplied: bool | None = None,
     cases_supplied: bool | None = None,
     execution_supplied: bool | None = None,
+    grading_prompt_supplied: bool | None = None,
     generation_id: uuid.UUID | None = None,
     now: datetime,
 ) -> tuple[Question, QuestionVersion]:
@@ -448,13 +489,18 @@ def create_question(
             created_by=_actor_id(actor),
             now=now,
         )
-        cases = _cases_from_payload(payload, version.question_version_id, mode=execution.mode)
+        cases = (
+            _cases_from_payload(payload, version.question_version_id, mode=execution.mode)
+            if cases_provided
+            else (default_ai_case(version.question_version_id, case_id=uuid.uuid4()),)
+        )
         _write_protected_content(
             ProtectedContentRepository(session),
             version_id=version.question_version_id,
             payload=payload,
             cases=cases,
-            cases_supplied=cases_provided,
+            cases_supplied=True,
+            grading_prompt_supplied=grading_prompt_supplied,
             now=now,
         )
         refresh_content_digest(session, version)
@@ -496,6 +542,7 @@ def update_question(
     revision_note_supplied: bool | None = None,
     cases_supplied: bool | None = None,
     execution_supplied: bool | None = None,
+    grading_prompt_supplied: bool | None = None,
     now: datetime,
 ) -> tuple[Question, QuestionVersion]:
     """Edit the current draft, or branch a new draft version (never edit in place).
@@ -577,9 +624,8 @@ def update_question(
             revision_diff = _revision_diff_against(
                 previous_content,
                 payload=payload,
-                # `None` says "the caller omitted the set"; the delta then compares the
-                # previous cases against themselves, which is what the new version holds.
                 cases=submitted_cases,
+                grading_prompt_supplied=grading_prompt_supplied,
             )
             # An author's own reason wins; the derived note is the fallback so a reader
             # is never shown two versions with no explanation at all.
@@ -614,6 +660,7 @@ def update_question(
                 _cases_from_payload(payload, uuid.UUID(int=0), mode=execution.mode)
                 if cases_provided
                 else tuple(protected.list_cases(latest.question_version_id))
+                or (default_ai_case(latest.question_version_id),)
             )
             validate_case_executions(
                 effective_cases,
@@ -647,6 +694,7 @@ def update_question(
             payload=payload,
             cases=cases,
             cases_supplied=cases_provided,
+            grading_prompt_supplied=grading_prompt_supplied,
             inherited=inherited,
             now=now,
         )

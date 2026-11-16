@@ -93,15 +93,6 @@ export function canReviewQuarantine(state: SessionState): boolean {
 }
 
 /**
- * 题目质量视图入口（CHG-0015）。契约说它是"an aggregate a teacher reads to decide whether a
- * question is worth keeping"，但**没有**为这个端点单列 Authorization 段；B1 按教师侧处理，
- * 与同族的成绩证据视图（`canViewTeacherEvidence`）保持同一集合。
- */
-export function canViewQuestionQuality(state: SessionState): boolean {
-  return has(state, ["teacher", "admin"]);
-}
-
-/**
  * 证据包的 `view` 参数（CHG-0014）。
  *
  * 为什么不能省略它：契约给 `view` 声明了 `default: teacher`——学生若沿用默认值，就是以

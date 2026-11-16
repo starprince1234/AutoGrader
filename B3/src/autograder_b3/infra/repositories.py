@@ -38,6 +38,8 @@ from .models import (
     AIGenerationUsage,
     Assignment,
     AssignmentItem,
+    AssignmentSection,
+    AssignmentStudent,
     Blob,
     ConsumptionCounter,
     EventInbox,
@@ -526,6 +528,58 @@ class QuestionBankRepository:
         self.session.flush()
         return row
 
+    def replace_assignment_targets(
+        self,
+        *,
+        assignment_id: uuid.UUID,
+        section_ids: tuple[uuid.UUID, ...],
+        student_ids: tuple[uuid.UUID, ...],
+        now: datetime,
+    ) -> None:
+        """Write the assignment's target set (assignment_sections / assignment_students).
+
+        Replace-not-append: the target is one answer to "who is this for", so a re-declared
+        target must not leave the previous rows behind (that would silently widen the
+        audience). Zero rows is a meaningful value (whole course / everyone in the target
+        sections), so an empty tuple writes nothing rather than a sentinel row.
+        """
+        self.session.execute(
+            delete(AssignmentSection).where(AssignmentSection.assignment_id == assignment_id)
+        )
+        self.session.execute(
+            delete(AssignmentStudent).where(AssignmentStudent.assignment_id == assignment_id)
+        )
+        for section_id in section_ids:
+            self.session.add(
+                AssignmentSection(assignment_id=assignment_id, section_id=section_id, created_at=now)
+            )
+        for student_id in student_ids:
+            self.session.add(
+                AssignmentStudent(assignment_id=assignment_id, student_id=student_id, created_at=now)
+            )
+        self.session.flush()
+
+    def assignment_targets(
+        self, assignment_id: uuid.UUID
+    ) -> tuple[tuple[uuid.UUID, ...], tuple[uuid.UUID, ...]]:
+        """Return ``(section_ids, student_ids)`` in a stable order.
+
+        Order carries no meaning (it is a set), but sorting keeps responses and logs
+        comparable between runs. Empty tuples mean whole course / everyone in the target
+        sections.
+        """
+        sections = self.session.execute(
+            select(AssignmentSection.section_id)
+            .where(AssignmentSection.assignment_id == assignment_id)
+            .order_by(AssignmentSection.section_id)
+        ).scalars()
+        students = self.session.execute(
+            select(AssignmentStudent.student_id)
+            .where(AssignmentStudent.assignment_id == assignment_id)
+            .order_by(AssignmentStudent.student_id)
+        ).scalars()
+        return tuple(sections), tuple(students)
+
     def set_assignment_notification(
         self,
         assignment: Assignment,
@@ -799,22 +853,33 @@ class ProtectedContentRepository:
         language: str,
         body: str,
         now: datetime,
+        ordinal: int = 0,
+        label: str = "标准参考答案",
+        grading_prompt: str | None = None,
     ) -> ReferenceAnswerInternal:
         statement = (
             pg_insert(ReferenceAnswer)
             .values(
                 reference_answer_id=new_id(),
                 question_version_id=question_version_id,
+                ordinal=ordinal,
+                label=label,
                 language=language,
                 body=body,
+                grading_prompt=grading_prompt,
                 created_at=now,
             )
             .on_conflict_do_update(
                 index_elements=[
                     ReferenceAnswer.question_version_id,
-                    ReferenceAnswer.language,
+                    ReferenceAnswer.ordinal,
                 ],
-                set_={"body": body},
+                set_={
+                    "language": language,
+                    "label": label,
+                    "body": body,
+                    "grading_prompt": grading_prompt,
+                },
             )
             .returning(ReferenceAnswer.reference_answer_id)
         )
@@ -825,7 +890,53 @@ class ProtectedContentRepository:
             question_version_id=question_version_id,
             language=language,  # type: ignore[arg-type]
             body=body,
+            ordinal=ordinal,
+            label=label,
+            grading_prompt=grading_prompt,
         )
+
+    def replace_reference_answers(
+        self,
+        *,
+        question_version_id: uuid.UUID,
+        language: str,
+        items: Sequence[tuple[str, str]],
+        grading_prompt: str | None,
+        now: datetime,
+    ) -> list[ReferenceAnswerInternal]:
+        self.session.execute(
+            delete(ReferenceAnswer).where(
+                ReferenceAnswer.question_version_id == question_version_id
+            )
+        )
+        created: list[ReferenceAnswerInternal] = []
+        for ordinal, (label, body) in enumerate(items):
+            row_id = new_id()
+            self.session.add(
+                ReferenceAnswer(
+                    reference_answer_id=row_id,
+                    question_version_id=question_version_id,
+                    ordinal=ordinal,
+                    label=label,
+                    language=language,
+                    body=body,
+                    grading_prompt=grading_prompt,
+                    created_at=now,
+                )
+            )
+            created.append(
+                ReferenceAnswerInternal(
+                    reference_answer_id=row_id,
+                    question_version_id=question_version_id,
+                    language=language,  # type: ignore[arg-type]
+                    body=body,
+                    ordinal=ordinal,
+                    label=label,
+                    grading_prompt=grading_prompt,
+                )
+            )
+        self.session.flush()
+        return created
 
     def list_reference_answers(
         self, question_version_id: uuid.UUID
@@ -833,7 +944,7 @@ class ProtectedContentRepository:
         statement = (
             select(ReferenceAnswer)
             .where(ReferenceAnswer.question_version_id == question_version_id)
-            .order_by(ReferenceAnswer.language)
+            .order_by(ReferenceAnswer.ordinal, ReferenceAnswer.language)
         )
         return [
             ReferenceAnswerInternal(
@@ -841,6 +952,9 @@ class ProtectedContentRepository:
                 question_version_id=row.question_version_id,
                 language=row.language,  # type: ignore[arg-type]
                 body=row.body,
+                ordinal=row.ordinal,
+                label=row.label,
+                grading_prompt=row.grading_prompt,
             )
             for row in self.session.execute(statement).scalars()
         ]

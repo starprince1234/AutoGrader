@@ -1,18 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { t } from "../../i18n";
 import { isApiError } from "../../api/problem";
-import type { QuestionDraftGeneration, QuestionDraftProposal } from "../../api/types";
-import { formatDateTime } from "../../ui/format";
+import type { Language, QuestionDraftGeneration, QuestionDraftProposal } from "../../api/types";
 import {
   Banner,
   Field,
-  HintTooltip,
   Modal,
   Panel,
   StatusPill,
 } from "../../ui/components";
 import { SafeMarkdown } from "../questions/SafeMarkdown";
-import { fieldLabel, parseArgv, parseTags, type DraftForm } from "./draft";
+import { fieldLabel, parseTags, type DraftForm } from "./draft";
 import { courseLabel as formatCourseLabel } from "../../api/directory";
 import {
   useCreateGeneration,
@@ -39,6 +37,22 @@ const STATUS_TONE = { ready: "ok", needs_review: "warn", failed: "bad", unavaila
 
 /** 难度四档：简单 / 中等 / 较难 / 困难。顺序即下拉顺序，默认取「中等」。 */
 const DIFFICULTY_LEVELS = ["easy", "medium", "advanced", "hard"] as const;
+const LANGUAGES: readonly Language[] = ["python", "bash"];
+const REFERENCE_TIER_COUNTS = [1, 2, 3] as const;
+const OBJECTIVE_PRESETS = [
+  {
+    labelKey: "authoring.generation.examplePreset1Label",
+    textKey: "authoring.generation.examplePreset1Text",
+  },
+  {
+    labelKey: "authoring.generation.examplePreset2Label",
+    textKey: "authoring.generation.examplePreset2Text",
+  },
+  {
+    labelKey: "authoring.generation.examplePreset3Label",
+    textKey: "authoring.generation.examplePreset3Text",
+  },
+] as const;
 
 function statusText(generation: QuestionDraftGeneration): string {
   return t(`authoring.generation.status.${generation.status}`);
@@ -53,110 +67,66 @@ function ProposalPreview({
   onApply: () => void;
   applied: boolean;
 }) {
-  const cases = proposal.cases ?? [];
-  const fixtures = proposal.fixtures ?? [];
+  const referenceTiers =
+    (proposal.reference_answers ?? []).length > 0
+      ? (proposal.reference_answers ?? [])
+      : proposal.reference_answer
+        ? [{ label: t("authoring.referenceDefaultTier"), body: proposal.reference_answer }]
+        : [];
   return (
     <div className="stack" data-testid="generation-proposal">
       <div className="generation-preview__head">
         <h3>{t("authoring.generation.previewTitle")}</h3>
-        {/* 浅灰小字：说清"谁能看到"，替代原来与它重复的「学生看不到」胶囊。 */}
-        <span className="muted generation-preview__note" data-testid="generation-preview-note">
-          {t("authoring.generation.previewNote")}
-        </span>
       </div>
 
-      {proposal.stem_markdown.trim() === "" ? (
-        <p className="muted">{t("authoring.generation.emptyStem")}</p>
-      ) : (
-        <SafeMarkdown source={proposal.stem_markdown} testId="generation-preview-stem" />
-      )}
-
-      {/* 元信息：去掉项目符号，一行里按 · 分隔，降低视觉噪音。 */}
-      <div className="generation-facts" data-testid="generation-proposal-facts">
-        <span>
-          {t("authoring.title")}：{proposal.title.trim() === "" ? "—" : proposal.title}
-        </span>
-        <span>
-          {t("authoring.language")}：{t(`questions.language.${proposal.language}`)}
-        </span>
-        <span>
-          {t("authoring.adapterKind")}：{t(`questions.adapter.${proposal.adapter_kind}`)}
-        </span>
-        <span>
-          {t("authoring.tags")}：
-          {(proposal.tags ?? []).length === 0 ? "—" : (proposal.tags ?? []).join("、")}
-        </span>
-        {/* 用例条数直接露在明面上：生成时就带上了测试用例，不用展开受保护内容才知道。 */}
-        <span data-testid="generation-proposal-case-count">
-          {t("authoring.generation.cases", { count: cases.length })}
-        </span>
-        {proposal.adapter?.args?.length ? (
+      <section className="case-card stack" data-testid="generation-card-stem">
+        <h4>{t("authoring.generation.cardStemTitle")}</h4>
+        <div className="generation-facts" data-testid="generation-proposal-facts">
           <span>
-            {t("authoring.adapterArgs")}：
-            <span className="mono-id">{parseArgv(proposal.adapter.args.join(" ")).join(" ")}</span>
+            {t("authoring.title")}：{proposal.title.trim() === "" ? "—" : proposal.title}
           </span>
-        ) : null}
-      </div>
+          <span>
+            {t("authoring.language")}：{t(`questions.language.${proposal.language}`)}
+          </span>
+          <span>
+            {t("authoring.tags")}：
+            {(proposal.tags ?? []).length === 0 ? "—" : (proposal.tags ?? []).join("、")}
+          </span>
+          <span data-testid="generation-proposal-tier-count">
+            {t("authoring.referenceTiersTitle")}：{referenceTiers.length}
+          </span>
+        </div>
+        {proposal.stem_markdown.trim() === "" ? (
+          <p className="muted">{t("authoring.generation.emptyStem")}</p>
+        ) : (
+          <SafeMarkdown source={proposal.stem_markdown} testId="generation-preview-stem" />
+        )}
+      </section>
 
-      <details data-testid="generation-protected">
-        <summary>{t("authoring.generation.protectedSummary")}</summary>
-
-        <h3>{t("authoring.referenceAnswer")}</h3>
-        {proposal.reference_answer ? (
-          <pre data-testid="generation-reference">{proposal.reference_answer}</pre>
+      <section className="case-card stack" data-testid="generation-card-references">
+        <h4>{t("authoring.generation.cardReferencesTitle", { count: referenceTiers.length })}</h4>
+        {referenceTiers.length > 0 ? (
+          <div className="stack" data-testid="generation-reference">
+            {referenceTiers.map((tier, index) => (
+              <div className="stack" key={`${index}-${tier.label}`}>
+                <strong>{tier.label}</strong>
+                <pre className="preview-code">{tier.body}</pre>
+              </div>
+            ))}
+          </div>
         ) : (
           <p className="muted">{t("authoring.generation.noReference")}</p>
         )}
+      </section>
 
-        <h3>{t("authoring.generation.cases", { count: cases.length })}</h3>
-        {cases.length === 0 ? (
-          <p className="muted">{t("authoring.generation.noCases")}</p>
+      <section className="case-card stack" data-testid="generation-card-rubric">
+        <h4>{t("authoring.generation.cardRubricTitle")}</h4>
+        {proposal.grading_prompt ? (
+          <pre className="preview-prose" data-testid="generation-grading-prompt">{proposal.grading_prompt}</pre>
         ) : (
-          <ol data-testid="generation-cases">
-            {cases.map((item) => (
-              <li key={item.ordinal}>
-                <strong>{item.name.trim() === "" ? "—" : item.name}</strong>
-                {" · "}
-                {t("authoring.caseWeight")}{" "}
-                {item.weight === null || item.weight === undefined
-                  ? t("authoring.generation.noWeight")
-                  : item.weight}
-                <div className="muted">
-                  {item.stdin ? (
-                    <span>
-                      {t("authoring.generation.caseStdin")}: <code>{item.stdin}</code>
-                    </span>
-                  ) : null}
-                  {item.expected_stdout ? (
-                    <span>
-                      {t("authoring.generation.caseStdout")}: <code>{item.expected_stdout}</code>
-                    </span>
-                  ) : null}
-                </div>
-              </li>
-            ))}
-          </ol>
+          <p className="muted">{t("authoring.generation.noGradingPrompt")}</p>
         )}
-
-        {fixtures.length > 0 ? (
-          <>
-            <h3>{t("authoring.generation.fixtures")}</h3>
-            <ul data-testid="generation-fixtures">
-              {fixtures.map((item) => (
-                <li key={`${item.path}-${item.mount}`}>
-                  <code>{item.path}</code> ·{" "}
-                  {item.mount === "input"
-                    ? t("authoring.fixture.mountInput")
-                    : t("authoring.fixture.mountExpected")}
-                  <div className="muted">
-                    {t("authoring.generation.fixtureTextHint", { chars: item.content_text.length })}
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </>
-        ) : null}
-      </details>
+      </section>
 
       {proposal.notes ? <p className="muted">{proposal.notes}</p> : null}
 
@@ -164,13 +134,6 @@ function ProposalPreview({
         <button type="button" className="button" data-testid="generation-apply" onClick={onApply}>
           {applied ? t("authoring.generation.reapply") : t("authoring.generation.apply")}
         </button>
-        {/* 常驻说明改成悬浮提示：不点不看，页面上不多一行字。 */}
-        <HintTooltip
-          label={t("authoring.generation.hintLabel")}
-          testId="generation-hint-apply"
-        >
-          {t("authoring.generation.hintBody")}
-        </HintTooltip>
       </div>
     </div>
   );
@@ -203,18 +166,31 @@ export function GenerationPanel({
   const discard = useDiscardGeneration();
 
   const [objective, setObjective] = useState("");
+  const [language, setLanguage] = useState<Language>(form.language);
   // 难度是四档下拉，默认「中等」；选中的中文等级原样作为 `difficulty` 传给 AI，用来控制出题复杂度。
   const [difficulty, setDifficulty] = useState(() => t("authoring.generation.difficulty.medium"));
-  const [caseCount, setCaseCount] = useState("");
+  const [referenceTiersCount, setReferenceTiersCount] = useState<number>(2);
   const [constraints, setConstraints] = useState("");
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const [appliedId, setAppliedId] = useState<string | null>(null);
   const [discardedId, setDiscardedId] = useState<string | null>(null);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const appliedOnce = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!create.isPending) {
+      setElapsedSeconds(0);
+      return;
+    }
+    setElapsedSeconds(0);
+    const timer = window.setInterval(() => {
+      setElapsedSeconds((prev) => prev + 1);
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [create.isPending]);
 
   const objectiveLimit = capabilities.data?.learning_objective_max_chars ?? 0;
   const constraintsLimit = capabilities.data?.constraints_max_chars ?? 0;
-  const caseLimit = capabilities.data?.desired_case_count_max ?? 0;
   const providerAvailable = capabilities.data?.provider_status === "enabled";
   const forbidden =
     capabilities.isError && isApiError(capabilities.error) && capabilities.error.isForbidden;
@@ -271,23 +247,16 @@ export function GenerationPanel({
 
   const submit = () => {
     if (!courseId || !canGenerate) return;
-    // 老师没填用例数时给一个明确的默认值：不传的话模型常常一条用例都不给，
-    // 生成出来的草稿在「测试用例」这步就是空的（3.0 第 2 条）。
-    const desiredCases = caseCount.trim() === ""
-      ? 2
-      : /^\d+$/.test(caseCount.trim())
-        ? Math.max(1, Number.parseInt(caseCount.trim(), 10))
-        : null;
     create.mutate(
       {
         courseId,
         request: {
           learning_objective: objective,
-          language: form.language,
+          language,
           adapter_kind: form.adapterKind,
           difficulty,
           tags: parseTags(form.tags).tags,
-          desired_case_count: desiredCases,
+          desired_reference_tiers: referenceTiersCount,
           constraints: constraints.trim() === "" ? null : constraints,
         },
       },
@@ -300,6 +269,7 @@ export function GenerationPanel({
               appliedOnce.current = result.generation_id;
               setAppliedId(result.generation_id);
               onApply(result.proposal);
+              onApplied?.();
             }
           }
         },
@@ -311,18 +281,21 @@ export function GenerationPanel({
 
   return (
     <Panel title={t("authoring.generation.title")} testId="generation-panel">
-      {/* 一句话状态：不可用只影响按钮，不影响你继续手动填写。 */}
-      <div className="inline" data-testid="generation-status-line">
-        <StatusPill tone={pill.tone} testId="generation-pill">
-          {pill.label}
-        </StatusPill>
-        {capabilities.data?.requests_remaining === null ||
-        capabilities.data?.requests_remaining === undefined ? null : (
-          <span className="muted" data-testid="generation-budget">
-            {t("authoring.generation.budget", { remaining: capabilities.data.requests_remaining })}
-          </span>
-        )}
-      </div>
+      {!ready || (capabilities.data?.requests_remaining !== null && capabilities.data?.requests_remaining !== undefined) ? (
+        <div className="inline" data-testid="generation-status-line">
+          {!ready ? (
+            <StatusPill tone={pill.tone} testId="generation-pill">
+              {pill.label}
+            </StatusPill>
+          ) : null}
+          {capabilities.data?.requests_remaining === null ||
+          capabilities.data?.requests_remaining === undefined ? null : (
+            <span className="muted" data-testid="generation-budget">
+              {t("authoring.generation.budget", { remaining: capabilities.data.requests_remaining })}
+            </span>
+          )}
+        </div>
+      ) : null}
 
       {!courseId ? (
         <div data-testid="generation-no-course">
@@ -376,7 +349,34 @@ export function GenerationPanel({
           </p>
         ) : null}
 
+        <div className="inline" data-testid="generation-presets">
+          <span className="muted">{t("authoring.generation.examplePresetsLabel")}</span>
+          {OBJECTIVE_PRESETS.map((preset) => (
+            <button
+              key={preset.labelKey}
+              type="button"
+              className="button button--ghost"
+              onClick={() => setObjective(t(preset.textKey))}
+            >
+              {t(preset.labelKey)}
+            </button>
+          ))}
+        </div>
+
         <div className="form-grid">
+          <Field label={t("authoring.generation.language")} htmlFor="generation-language">
+            <Select
+              id="generation-language"
+              value={language}
+              onChange={(event) => setLanguage(event.target.value as Language)}
+            >
+              {LANGUAGES.map((lang) => (
+                <option key={lang} value={lang}>
+                  {t(`questions.language.${lang}`)}
+                </option>
+              ))}
+            </Select>
+          </Field>
           <Field label={t("authoring.generation.difficulty")} htmlFor="generation-difficulty">
             <Select
               id="generation-difficulty"
@@ -393,14 +393,21 @@ export function GenerationPanel({
               })}
             </Select>
           </Field>
-          <Field label={t("authoring.generation.caseCount")} htmlFor="generation-case-count">
-            <input
-              id="generation-case-count"
-              inputMode="numeric"
-              placeholder={caseLimit > 0 ? `1–${caseLimit}` : "2"}
-              value={caseCount}
-              onChange={(event) => setCaseCount(event.target.value)}
-            />
+          <Field
+            label={t("authoring.generation.referenceTiers")}
+            htmlFor="generation-reference-tiers"
+          >
+            <Select
+              id="generation-reference-tiers"
+              value={String(referenceTiersCount)}
+              onChange={(event) => setReferenceTiersCount(Number.parseInt(event.target.value, 10))}
+            >
+              {REFERENCE_TIER_COUNTS.map((count) => (
+                <option key={count} value={String(count)}>
+                  {t("authoring.generation.referenceTiersOption", { count })}
+                </option>
+              ))}
+            </Select>
           </Field>
         </div>
 
@@ -428,20 +435,47 @@ export function GenerationPanel({
           disabled={!canGenerate}
           onClick={submit}
         >
-          {create.isPending ? t("authoring.generation.generating") : t("authoring.generation.generate")}
+          {create.isPending
+            ? t("authoring.generation.generating")
+            : generation?.proposal
+              ? t("authoring.generation.regenerate")
+              : t("authoring.generation.generate")}
         </button>
-        <HintTooltip
-          label={t("authoring.generation.hintLabel")}
-          testId="generation-hint-generate"
-        >
-          {t("authoring.generation.hintBody")}
-        </HintTooltip>
         {missing === null ? null : (
           <span className="muted" data-testid="generation-reason">
             {missing}
           </span>
         )}
       </div>
+
+      {create.isPending ? (
+        <div className="case-card stack" data-testid="generation-progress" aria-live="polite">
+          <div className="inline page-head">
+            <strong>{t("authoring.generation.generating")}</strong>
+            <span className="muted page-head__end">
+              {t("authoring.generation.progressElapsed", { seconds: elapsedSeconds })}
+            </span>
+          </div>
+          <ol className="stack">
+            {[
+              { min: 0, key: "authoring.generation.progressStep1" as const },
+              { min: 1, key: "authoring.generation.progressStep2" as const },
+              { min: 4, key: "authoring.generation.progressStep3" as const },
+              { min: 10, key: "authoring.generation.progressStep4" as const },
+            ].map((stage, idx, all) => {
+              const nextMin = all[idx + 1]?.min ?? Number.POSITIVE_INFINITY;
+              const isDone = elapsedSeconds >= nextMin;
+              const isActive = elapsedSeconds >= stage.min && elapsedSeconds < nextMin;
+              return (
+                <li key={stage.key} className={isActive ? "" : "muted"}>
+                  {isDone ? "✓ " : isActive ? "● " : "○ "}
+                  {t(stage.key)}
+                </li>
+              );
+            })}
+          </ol>
+        </div>
+      ) : null}
 
       {generationError !== null && generationError !== undefined ? (
         isApiError(generationError) && generationError.status === 429 ? (
@@ -469,33 +503,13 @@ export function GenerationPanel({
 
       {generation ? (
         <div className="stack" data-testid="generation-result">
-          {/* 页面唯一的常驻全局提示；其余长提示要么变成 ⓘ，要么直接删掉。 */}
-          <Banner tone="success" testId="generation-global-notice">
-            {t("authoring.generation.globalNotice")}
-          </Banner>
-
-          <div className="inline">
-            {/* ready 的说明已经由上面那条横幅承担，这里只在"需要你补"或"没生成出来"时再给状态。 */}
-            {generation.status === "ready" ? null : (
+          {generation.status === "ready" ? null : (
+            <div className="inline">
               <StatusPill tone={STATUS_TONE[generation.status]} testId="generation-status">
                 {statusText(generation)}
               </StatusPill>
-            )}
-            {generation.created_at ? (
-              <span className="muted">
-                {t("authoring.generation.createdAt", {
-                  time: formatDateTime(generation.created_at, "—"),
-                })}
-              </span>
-            ) : null}
-            {generation.expires_at ? (
-              <span className="muted" data-testid="generation-expiry">
-                {t("authoring.generation.expiresAt", {
-                  time: formatDateTime(generation.expires_at, "—"),
-                })}
-              </span>
-            ) : null}
-          </div>
+            </div>
+          )}
 
           {generation.status !== "ready" ? (
             <Banner

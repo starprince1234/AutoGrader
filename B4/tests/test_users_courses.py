@@ -351,6 +351,8 @@ def test_user_listing_exposes_the_account_state_and_concurrency_stamp(
         "is_active",
         "updated_at",
         "created_at",
+        "registered_classes",
+        "course_bindings",
     }
 
     headers = sign_in_as("root").headers
@@ -533,10 +535,12 @@ def test_create_course_returns_the_stored_course(client, teacher, sign_in_as) ->
         "title",
         "updated_at",
         "section_count",
+        "section_codes",
     }
     assert body["course_code"] == "CS102"
     assert body["title"] == "Data Structures"
     assert body["section_count"] == 0
+    assert body["section_codes"] == []
     assert body["updated_at"]
 
 
@@ -997,3 +1001,29 @@ def test_courses_and_sections_rows_are_not_shared_across_modules(factory, engine
             select(courses.c.course_id)
         ).fetchall()
     assert len(public_tables) == 1
+
+
+def test_update_course_updates_title_and_course_code(client, teacher, sign_in_as) -> None:
+    headers = sign_in_as("teacher").headers
+    created = client.post(
+        "/api/v1/courses",
+        headers=headers,
+        json={"course_code": "CS101", "title": "Intro to CS"},
+    )
+    assert created.status_code == 201, created.text
+    course = created.json()
+
+    updated = client.patch(
+        f"/api/v1/courses/{course['course_id']}",
+        headers=headers,
+        json={
+            "title": "Intro to CS II",
+            "course_code": "CS102",
+            "expected_updated_at": course["updated_at"],
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    body = updated.json()
+    assert body["title"] == "Intro to CS II"
+    assert body["course_code"] == "CS102"
+    assert body["updated_at"] != course["updated_at"]

@@ -378,7 +378,7 @@ describe("作业详情页（教师）= 批改界面", () => {
     renderDetail();
 
     const notice = await screen.findByTestId("grading-truncated");
-    expect(notice).toHaveTextContent(`已达到自动翻页上限（${MAX_AUTO_PAGES} 页）`);
+    expect(notice).toHaveTextContent(`结果较多，仅展示前 ${MAX_AUTO_PAGES} 页`);
     expect(screen.queryByTestId("grading-completed-group")).toBeNull();
     expect(screen.queryByTestId("grading-pending-group")).toBeNull();
   });
@@ -407,6 +407,6 @@ describe("作业详情页（教师）= 批改界面", () => {
     expect(await screen.findByTestId("assignment-roster-summary-error")).toBeInTheDocument();
     expect(
       await screen.findByTestId("notification-not-scheduled"),
-    ).toHaveTextContent("通知未安排");
+    ).toHaveTextContent("通知尚未安排");
   });
 });
