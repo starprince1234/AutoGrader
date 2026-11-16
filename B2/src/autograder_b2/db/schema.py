@@ -16,7 +16,7 @@ SCHEMA = "b2"
 #: 本代码期望的迁移版本（必须与 `module.yaml: database.migration_head` 和 Alembic head 三者一致）。
 #: 用途：readyness 探测据此判断"库结构与代码是否匹配"——连接得上但版本落后同样是**不可用**，
 #: 否则 health 会谎报健康而受权读请求全线 500。三者一致性由 `tests/test_migrations.py` 断言。
-EXPECTED_SCHEMA_REVISION = "20261107_0022"
+EXPECTED_SCHEMA_REVISION = "20261107_0023"
 
 metadata = sa.MetaData(schema=SCHEMA)
 
@@ -125,6 +125,10 @@ intake_quarantines = sa.Table(
     sa.Column("held", sa.Boolean(), nullable=False, server_default=sa.text("false")),
     sa.Column("held_at", TIMESTAMP(timezone=True, precision=3), nullable=True),
     sa.Column("held_by", sa.Uuid(), nullable=True),
+    # 迁移 0023（0.38.0「打回」）：来件真实的 From 地址，是失败通知的唯一收件人。
+    # 历史行 NULL（那时没有这一列）；NULL 的行「打回」只能报 notification=unavailable，
+    # 不能改寄一个看起来合理的地址。
+    sa.Column("sender", sa.Text(), nullable=True),
 )
 
 artifact_gc_runs = sa.Table(

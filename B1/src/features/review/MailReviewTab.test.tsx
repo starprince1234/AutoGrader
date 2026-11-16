@@ -68,6 +68,7 @@ function routesFor(options: {
   enrollments?: ReturnType<typeof enrollmentPublic>[];
   resolveRespond?: () => Response;
   dismissRespond?: () => Response;
+  rejectRespond?: () => Response;
   courses?: ReturnType<typeof courseSummary>[];
 }): StubbedRoute[] {
   const rows = options.rows ?? [];
@@ -165,6 +166,23 @@ function routesFor(options: {
             resolved_by: UUID_D,
           }),
         ),
+    },
+    {
+      method: "POST",
+      path: `/api/v1/intake/quarantines/${UUID_C}/reject`,
+      respond: () =>
+        options.rejectRespond?.() ??
+        jsonResponse({
+          record: intakeQuarantineView({
+            intake_quarantine_id: UUID_C,
+            resolved: true,
+            resolution: "rejected",
+            resolved_at: "2026-09-15T09:00:00.000Z",
+            resolved_by: UUID_D,
+            sender: "sender@example.edu",
+          }),
+          notification: "queued",
+        }),
     },
   ];
 }
@@ -461,6 +479,93 @@ describe("P13-A 邮件提交标签", () => {
       expect(posted!.body).toEqual({ note: "附件是误报" });
     });
     expect(await screen.findByTestId("review-mail-resolved-ok")).toHaveTextContent("邮件已作废");
+  });
+
+  it("打回：确认前不 POST，确认后体只含 note，并说清通知已交给投递", async () => {
+    const user = userEvent.setup();
+    stub = installFetchStub(
+      routesFor({
+        rows: [
+          intakeQuarantineView({ intake_quarantine_id: UUID_C, sender: "sender@example.edu" }),
+        ],
+      }),
+    );
+    await signIn("teacher1", "pw");
+    renderWithProviders(<Harness initial={MAIL_PATH} />);
+
+    await user.click(await screen.findByTestId(`review-mail-reject-${UUID_C}`));
+    expect(screen.getByTestId("review-reject-sender")).toHaveTextContent("sender@example.edu");
+    await user.type(screen.getByTestId("review-reject-note"), "正文缺学号");
+    await user.click(screen.getByTestId("review-mail-reject-submit"));
+
+    expect(
+      stub!.requests.filter(
+        (item) => item.method === "POST" && item.url.pathname.includes("/reject"),
+      ),
+    ).toHaveLength(0);
+    await user.click(screen.getByTestId("review-mail-reject-confirm"));
+
+    await waitFor(() => {
+      const posted = stub!.requests.find(
+        (item) => item.method === "POST" && item.url.pathname.endsWith("/reject"),
+      );
+      expect(posted).toBeDefined();
+      expect(posted!.body).toEqual({ note: "正文缺学号" });
+    });
+    expect(await screen.findByTestId("review-mail-resolved-ok")).toHaveTextContent(
+      "已打回，失败通知已交给投递",
+    );
+  });
+
+  it("打回：通知没发出去时，提示不假装成功送达", async () => {
+    const user = userEvent.setup();
+    stub = installFetchStub(
+      routesFor({
+        rows: [intakeQuarantineView({ intake_quarantine_id: UUID_C, sender: null })],
+        rejectRespond: () =>
+          jsonResponse({
+            record: intakeQuarantineView({
+              intake_quarantine_id: UUID_C,
+              resolved: true,
+              resolution: "rejected",
+              resolved_at: "2026-09-15T09:00:00.000Z",
+              resolved_by: UUID_D,
+              sender: null,
+            }),
+            notification: "unavailable",
+          }),
+      }),
+    );
+    await signIn("teacher1", "pw");
+    renderWithProviders(<Harness initial={MAIL_PATH} />);
+
+    await user.click(await screen.findByTestId(`review-mail-reject-${UUID_C}`));
+    // 没有发件地址的行：界面上先说清"打回仍会记录，但不会发出通知"。
+    expect(screen.getByTestId("review-reject-sender")).toHaveTextContent("没有发件地址");
+    await user.click(screen.getByTestId("review-mail-reject-submit"));
+    await user.click(screen.getByTestId("review-mail-reject-confirm"));
+
+    expect(await screen.findByTestId("review-mail-resolved-ok")).toHaveTextContent(
+      "已打回，但通知没有发出去",
+    );
+  });
+
+  it("已打回记录显示「已打回」，且不再提供匹配/暂存/打回/作废", async () => {
+    const row = intakeQuarantineView({
+      intake_quarantine_id: UUID_C,
+      resolved: true,
+      resolution: "rejected",
+      resolved_at: "2026-09-15T09:00:00.000Z",
+      resolved_by: UUID_D,
+    });
+    stub = installFetchStub(routesFor({ rows: [row] }));
+    await signIn("teacher1", "pw");
+    renderWithProviders(<Harness initial={MAIL_PATH} />);
+
+    const table = await screen.findByTestId("review-mail-table");
+    expect(within(table).getByText("已打回")).toBeInTheDocument();
+    expect(within(table).queryByTestId(`review-mail-reject-${UUID_C}`)).toBeNull();
+    expect(within(table).queryByTestId(`review-mail-dismiss-${UUID_C}`)).toBeNull();
   });
 
   it("已处理记录显示结果与处理人/时间，且不再提供匹配/暂存/作废", async () => {

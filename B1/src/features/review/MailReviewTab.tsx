@@ -30,6 +30,7 @@ import {
   useCompleteQuarantine,
   useDismissQuarantine,
   useQuarantineMail,
+  useRejectQuarantine,
   useSetQuarantineHold,
 } from "./useReviewMail";
 import { isAttributableReason, REASON_CODES, reasonHint, reasonLabel } from "./reasonCodes";
@@ -162,6 +163,11 @@ export function MailReviewTab({
   const [dismissIssue, setDismissIssue] = useState<string | null>(null);
   const [dismissConfirming, setDismissConfirming] = useState(false);
   const dismiss = useDismissQuarantine();
+  const [rejectTarget, setRejectTarget] = useState<IntakeQuarantineView | null>(null);
+  const [rejectNote, setRejectNote] = useState("");
+  const [rejectIssue, setRejectIssue] = useState<string | null>(null);
+  const [rejectConfirming, setRejectConfirming] = useState(false);
+  const reject = useRejectQuarantine();
 
   // 匹配用户：目标课程先取记录 scope；管理员处置未关联行时才需要手动选课程。
   const matchCourseId =
@@ -317,6 +323,56 @@ export function MailReviewTab({
     );
   };
 
+  const openReject = (row: IntakeQuarantineView) => {
+    setSuccess(null);
+    setRejectTarget(row);
+    setRejectNote("");
+    setRejectIssue(null);
+    setRejectConfirming(false);
+    reject.reset();
+  };
+
+  const closeReject = () => {
+    setRejectTarget(null);
+    setRejectNote("");
+    setRejectIssue(null);
+    setRejectConfirming(false);
+    reject.reset();
+  };
+
+  const submitReject = () => {
+    if (rejectNote.length > 500) {
+      setRejectIssue(t("review.mail.issueNote"));
+      return;
+    }
+    setRejectIssue(null);
+    setRejectConfirming(true);
+  };
+
+  const confirmReject = () => {
+    if (!rejectTarget) return;
+    reject.mutate(
+      {
+        quarantineId: rejectTarget.intake_quarantine_id,
+        body: { note: rejectNote.trim() === "" ? null : rejectNote.trim() },
+      },
+      {
+        onSuccess: (result) => {
+          // 「已打回」与「通知没发出去」是两句话：处置已经生效，页面不能把它们合并。
+          setSuccess(
+            result.notification === "queued"
+              ? t("review.mail.rejectedOk")
+              : t("review.mail.rejectedOkNoNotice"),
+          );
+          closeReject();
+        },
+        onError: () => {
+          setRejectConfirming(false);
+        },
+      },
+    );
+  };
+
   const changeFilter = (next: {
     courseId?: string | null;
     sectionId?: string | null;
@@ -341,6 +397,7 @@ export function MailReviewTab({
     if (row.held) return t("review.mail.heldState");
     if (!row.resolved) return t("review.mail.unresolved");
     if (row.resolution === "dismissed") return t("review.mail.invalidatedState");
+    if (row.resolution === "rejected") return t("review.mail.rejectedState");
     if (row.resolution === "completed") return t("review.mail.completedState");
     if (row.resolution === "attributed") return t("review.mail.attributedState");
     // 0016 之前的历史行只有 `resolved=true`：如实显示"已处理"，不猜是哪一种。
@@ -587,7 +644,9 @@ export function MailReviewTab({
                             ? "warn"
                             : row.resolution === "dismissed"
                               ? "idle"
-                              : "ok"
+                              : row.resolution === "rejected"
+                                ? "warn"
+                                : "ok"
                       }
                     >
                       {resolutionText(row)}
@@ -619,6 +678,16 @@ export function MailReviewTab({
                         onClick={() => toggleHold(row)}
                       >
                         {row.held ? t("review.mail.resumeAction") : t("review.mail.holdAction")}
+                      </button>
+                    )}
+                    {row.resolved ? null : (
+                      <button
+                        type="button"
+                        className="button button--ghost"
+                        data-testid={`review-mail-reject-${row.intake_quarantine_id}`}
+                        onClick={() => openReject(row)}
+                      >
+                        {t("review.mail.rejectAction")}
                       </button>
                     )}
                     {row.resolved ? null : (
@@ -658,6 +727,10 @@ export function MailReviewTab({
             <p>
               {t("review.mail.mailbox")}：
               {detailTarget.mailbox === "" ? t("review.mail.notProvided") : detailTarget.mailbox}
+            </p>
+            <p data-testid="review-mail-detail-sender">
+              {t("review.mail.sender")}：
+              {detailTarget.sender ?? t("review.mail.notProvided")}
             </p>
             <p>
               {t("review.mail.reason")}：{reasonLabel(detailTarget.reason_code)}
@@ -950,6 +1023,103 @@ export function MailReviewTab({
                     {t("review.mail.dismissAction")}
                   </button>
                   <button type="button" className="button button--ghost" onClick={closeDismiss}>
+                    {t("common.cancel")}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </Modal>
+      ) : null}
+
+      {rejectTarget ? (
+        <Modal
+          title={t("review.mail.rejectTitle")}
+          testId="review-mail-reject-drawer"
+          onClose={closeReject}
+        >
+          <div className="stack">
+            <p className="muted">{t("review.mail.rejectHint")}</p>
+            <p className="muted" data-testid="review-mail-reject-target">
+              {reasonLabel(rejectTarget.reason_code)} ·{" "}
+              {formatDateTime(rejectTarget.recorded_at, t("common.none"))} ·{" "}
+              {scopeText(rejectTarget, courseMap, sectionMap)}
+            </p>
+            <p data-testid="review-reject-sender">
+              {rejectTarget.sender === null
+                ? t("review.mail.rejectNoSender")
+                : t("review.mail.rejectSender", { address: rejectTarget.sender })}
+            </p>
+            {rejectConfirming ? (
+              <>
+                <p>{t("review.mail.rejectConfirmText")}</p>
+                <div className="row-actions">
+                  <button
+                    type="button"
+                    className="button"
+                    data-testid="review-mail-reject-confirm"
+                    disabled={reject.isPending}
+                    onClick={confirmReject}
+                  >
+                    {reject.isPending
+                      ? t("review.mail.rejectPending")
+                      : t("review.mail.rejectConfirm")}
+                  </button>
+                  <button
+                    type="button"
+                    className="button button--ghost"
+                    onClick={() => setRejectConfirming(false)}
+                  >
+                    {t("common.cancel")}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <Field label={t("review.mail.rejectNote")} htmlFor="review-reject-note">
+                  <textarea
+                    id="review-reject-note"
+                    className="input"
+                    data-testid="review-reject-note"
+                    rows={3}
+                    maxLength={500}
+                    value={rejectNote}
+                    onChange={(event) => setRejectNote(event.target.value)}
+                  />
+                </Field>
+                <p className="muted">
+                  {t("review.mail.noteHint", { count: rejectNote.length })}
+                </p>
+                {rejectIssue ? (
+                  <Banner tone="error" testId="review-reject-issue">
+                    {rejectIssue}
+                  </Banner>
+                ) : null}
+                {isApiError(reject.error) && reject.error.isForbidden ? (
+                  <Banner tone="error" testId="review-reject-forbidden">
+                    {t("review.mail.resolveForbidden")}
+                  </Banner>
+                ) : null}
+                {isApiError(reject.error) && reject.error.isConflict ? (
+                  <Banner tone="warn" testId="review-reject-conflict">
+                    {t("review.mail.conflict")}
+                  </Banner>
+                ) : null}
+                {reject.isError &&
+                !(isApiError(reject.error) &&
+                  (reject.error.isForbidden || reject.error.isConflict)) ? (
+                  <ErrorState error={reject.error} testId="review-reject-error" />
+                ) : null}
+                <div className="row-actions">
+                  <button
+                    type="button"
+                    className="button"
+                    data-testid="review-mail-reject-submit"
+                    onClick={submitReject}
+                  >
+                    {t("review.mail.rejectAction")}
+                  </button>
+                  <button type="button" className="button button--ghost" onClick={closeReject}>
                     {t("common.cancel")}
                   </button>
                 </div>

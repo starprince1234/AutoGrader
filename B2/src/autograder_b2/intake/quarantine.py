@@ -93,6 +93,7 @@ from autograder_b2.auth.tokens import Principal
 from autograder_b2.db.schema import intake_quarantines
 from autograder_b2.intake.attachments import AttachmentRejected
 from autograder_b2.intake.imap import ImapProtocolError
+from autograder_b2.intake.receipt_mailer import send_submission_rejection_email
 from autograder_b2.integration.assignments import AssignmentUnavailable
 from autograder_b2.integration.b4_authorization import (
     AuthorizationUnavailable,
@@ -216,6 +217,18 @@ class IntakeQuarantineView:
     held: bool = False
     held_at: datetime | None = None
     held_by: str | None = None
+    #: 来件真实的 From 地址（打回通知的唯一收件人）；历史行 `None`。
+    sender: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class IntakeQuarantineRejection:
+    """`rejectIntakeQuarantine` 的响应：处置后的记录 + 那封失败通知有没有交出去。"""
+
+    view: IntakeQuarantineView
+    #: `queued`：通知已被交给投递；`unavailable`：处置已记录，但这封信没有发出去
+    #: （没有记录到来件地址，或本部署没有配置 SMTP）。它**不是**"还在发"。
+    notification: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,6 +266,19 @@ def quarantine_view_body(view: IntakeQuarantineView) -> dict[str, Any]:
         "held": view.held,
         "held_at": None if view.held_at is None else rfc3339_millis(view.held_at),
         "held_by": view.held_by,
+        "sender": view.sender,
+    }
+
+
+def quarantine_rejection_body(result: IntakeQuarantineRejection) -> dict[str, Any]:
+    """契约 `IntakeQuarantineRejection` 的 JSON 形状（`{record, notification}`，闭合 schema）。
+
+    记录是**嵌套**的而不是与 `notification` 平铺：`IntakeQuarantineView` 是
+    `additionalProperties: false`，用 `allOf` 加同级字段会让响应在自己的契约下非法。
+    """
+    return {
+        "record": quarantine_view_body(result.view),
+        "notification": result.notification,
     }
 
 
@@ -548,6 +574,7 @@ class IntakeQuarantineService:
                 intake_quarantines.c.uid,
                 intake_quarantines.c.message_id,
                 intake_quarantines.c.resolved_submission_id,
+                intake_quarantines.c.sender,
             )
             .where(intake_quarantines.c.intake_quarantine_id == identifier)
             .with_for_update()
@@ -678,6 +705,74 @@ class IntakeQuarantineService:
         assert updated is not None  # 同一事务内刚更新过这一行
         return _view_of(updated)
 
+
+    def reject(
+        self,
+        *,
+        principal: Principal,
+        intake_quarantine_id: str,
+        note: str | None = None,
+    ) -> IntakeQuarantineRejection:
+        """打回一条隔离记录：处置 + 向**原发件地址**发失败通知。
+
+        与 `dismiss` 的区别是"学生被告知了没有"：打回写 `resolution='rejected'`，并且在
+        处置**提交之后**尝试给这封邮件真实的 From 地址发一封"提交失败、请按格式重交"的通知。
+
+        **通知永远不决定结果**：处置是一条 `UPDATE`，已经提交；投递失败/未配置/没有地址都
+        只让响应说 `notification=unavailable`，既不回滚、也不变成 `500`。反过来理解
+        （"信没发出去，所以什么都没发生"）会让老师以为一条已决定的记录还是待处理。
+
+        收件人只可能是记录自己的 `sender`：不查学生、不从课程范围推导、不猜名单上的地址。
+
+        异常：`AuthorizationError` → 403；`QuarantineNotFoundError` → 404；
+        `QuarantineAlreadyResolvedError` → 409（**也不发第二封信**）；`QuarantineRequestError` → 422。
+        """
+        require_intake_quarantine_authority(principal)
+        canonical_note = validate_resolution_note(note)
+        try:
+            identifier = uuid.UUID(intake_quarantine_id)
+        except (AttributeError, TypeError, ValueError) as error:
+            raise QuarantineNotFoundError("malformed quarantine id") from error
+
+        with self._engine.begin() as connection:
+            row = self._lock_authorized_row(connection, principal, identifier)
+            if bool(row.resolved):
+                raise QuarantineAlreadyResolvedError(str(identifier))
+            connection.execute(
+                sa.update(intake_quarantines)
+                .where(
+                    sa.and_(
+                        intake_quarantines.c.intake_quarantine_id == identifier,
+                        # 与 dismiss 同一条兜底：即便锁语义退化，也不覆盖已有处置。
+                        intake_quarantines.c.resolved.is_(False),
+                    )
+                )
+                .values(
+                    resolved=True,
+                    # 打回不能留下学生：它与"已归属"必须是数据上可区分的两件事。
+                    resolved_student_id=None,
+                    resolution_note=canonical_note,
+                    resolution="rejected",
+                    resolved_at=datetime.now(UTC),
+                    resolved_by=uuid.UUID(principal.user_id),
+                    resolved_submission_id=None,
+                    held=False,
+                    held_at=None,
+                    held_by=None,
+                )
+            )
+            updated = connection.execute(
+                _select_view().where(intake_quarantines.c.intake_quarantine_id == identifier)
+            ).fetchone()
+        assert updated is not None  # 同一事务内刚更新过这一行
+        view = _view_of(updated)
+        # 事务已经提交：从这里往下的任何失败都只影响"信发没发出去"这一件事。
+        delivered = send_submission_rejection_email(
+            recipient_email=view.sender, note=canonical_note
+        )
+        return IntakeQuarantineRejection(
+            view=view, notification="queued" if delivered else "unavailable"
+        )
 
     def complete(
         self,
@@ -954,6 +1049,7 @@ def _select_view() -> sa.Select[Any]:
         intake_quarantines.c.held,
         intake_quarantines.c.held_at,
         intake_quarantines.c.held_by,
+        intake_quarantines.c.sender,
     )
 
 
@@ -1075,6 +1171,7 @@ def _view_of(row: Any) -> IntakeQuarantineView:
         held=bool(row.held),
         held_at=row.held_at,
         held_by=None if row.held_by is None else str(row.held_by),
+        sender=None if row.sender is None else str(row.sender),
     )
 
 
@@ -1090,6 +1187,7 @@ __all__ = [
     "MAX_LIMIT",
     "MAX_RESOLUTION_NOTE",
     "IntakeQuarantinePage",
+    "IntakeQuarantineRejection",
     "IntakeQuarantineService",
     "IntakeQuarantineView",
     "InvalidQuarantineCursorError",
@@ -1108,6 +1206,7 @@ __all__ = [
     "parse_resolved_filter",
     "parse_section_filter",
     "quarantine_page_body",
+    "quarantine_rejection_body",
     "quarantine_view_body",
     "validate_resolution_request",
 ]

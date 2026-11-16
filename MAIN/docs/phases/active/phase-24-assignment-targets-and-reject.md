@@ -145,10 +145,11 @@
    **已完成**(细节见 §5);验收测试已写,但只能在隔离 PostgreSQL 上跑。
 3. **B4 目标支持**:`validateCourseTargets`(目标 id 属于课程)+ 发布通知受众按目标收窄。
    **已完成**(契约随本批并入 `0.38.0`)。
-4. **B2 reject + 通知**(需要一支迁移 `20261107_0023`:`intake_quarantines.sender` + 放宽 decision
-   CHECK 以容纳 `rejected`;新增 operation + SMTP 发送 + 测试),以及三条提交路径的目标求交。
-   **未做**。
-5. **B1**:composer 目标选择;复核页成功/失败与打回;测试。**未做**。
+4. **B2 reject + 通知**:迁移 `20261107_0023`(`sender` 列 + 放宽 decision/audit CHECK 容纳
+   `rejected`)、`IntakeQuarantineRejection` 响应、SMTP 失败通知与测试。**已完成**(B2 路由测试里
+   的已知缺口随之清空)。三条提交路径的目标求交**仍未做**,留待下一批。
+5. **B1**:复核页「打回」按钮、确认/备注与 `queued|unavailable` 提示。**已完成**;
+   composer 的课序多选/指定学生**未做**。
 6. **验收矩阵**(远端 CI + 隔离 Linux / 真实 PostgreSQL):
    - 多课序/指定学生/草稿/跨课程/越权;
    - 一份多题作业的 未交/部分/全交/评测中/失败/重交;
@@ -184,15 +185,12 @@
 
 **未完成**(下一会话从这里继续,顺序即依赖):
 
-1. **B2 求交 + reject**:网页提交、邮件建码、邮件入库三条路径共用同一个
+1. **B2 求交**:网页提交、邮件建码、邮件入库三条路径共用同一个
    `audience ∩ B4 enrollment` 判定(课序 ⊆ `section_ids`,学生 ⊆ `student_ids`,
    两者皆空 = 全课程);落点在 `_require_assignment()` 之后的准入分支与
-   `email_verification` 建码处。同批做 reject:迁移 `20261107_0023`(`sender` 列 +
-   放宽 decision/audit CHECK 容纳 `rejected`)、`IntakeQuarantineView` 输出 `sender`、
-   处置 + SMTP 发信、响应 `{record, notification}`。**未做**。
-2. **B1**:composer 课序多选 + 指定学生(学生限定在所选课序);`AssignmentDetailPage` 展示
-   目标;复核页「打回」按钮、确认弹窗与 `queued|unavailable` 提示;`resolution=rejected`
-   的状态文案(「已打回」,不能继续复用「已作废」);测试。**未做**(界面文案已先折叠为「提交失败」)。
+   `email_verification` 建码处。**未做**(打回已单独做完,见 §3 第 4 条)。
+2. **B1 composer 目标选择**:课序多选 + 指定学生(学生限定在所选课序);
+   `AssignmentDetailPage` 展示目标;测试。**未做**(复核页的「打回」已完成)。
 3. **验收矩阵**(见 §3.6):全部**未执行**——本机无 `uv`/PostgreSQL/nsjail,
    只能在远端 CI 与隔离 Linux 上跑。
 

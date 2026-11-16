@@ -4,7 +4,9 @@ import type {
   CompleteIntakeQuarantineRequest,
   DismissIntakeQuarantineRequest,
   IntakeQuarantinePage,
+  IntakeQuarantineRejection,
   IntakeQuarantineView,
+  RejectIntakeQuarantineRequest,
   ResolveIntakeQuarantineRequest,
   SetIntakeQuarantineHoldRequest,
 } from "../../api/types";
@@ -141,6 +143,40 @@ export function useDismissQuarantine() {
         resolution: view.resolution,
       });
       return view;
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["review-quarantines"] });
+    },
+  });
+}
+
+/**
+ * 打回：处置 + 告诉发件人「这次提交失败」。
+ *
+ * 响应里 `notification` 只回答"这封信有没有交出去"：`queued` 是已交给投递，
+ * `unavailable` 是处置已记录但这封信没发出去（没有记录到来件地址，或部署没有 SMTP）。
+ * 两者都不是错误——打回本身已经成功，界面据实显示，不回滚、不重试。
+ */
+export function useRejectQuarantine() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      quarantineId: string;
+      body: RejectIntakeQuarantineRequest;
+    }): Promise<IntakeQuarantineRejection> => {
+      const requestId = newRequestId();
+      const result = await apiRequest<IntakeQuarantineRejection>(
+        `/api/v1/intake/quarantines/${encodeURIComponent(input.quarantineId)}/reject`,
+        { method: "POST", body: input.body, requestId },
+      );
+      log({
+        event: "intake_quarantine_rejected",
+        request_id: requestId,
+        intake_quarantine_id: input.quarantineId,
+        has_note: input.body.note !== null && input.body.note !== undefined,
+        notification: result.notification,
+      });
+      return result;
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["review-quarantines"] });

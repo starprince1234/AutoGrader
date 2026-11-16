@@ -58,20 +58,17 @@
 - **影响**：
   - **B3**：写路径按 `target` 写 `b3.assignment_sections`/`b3.assignment_students`（先删后插，0 行 =
     全课程），校验目标 ⊆ 课程；读模型输出 `target`；学生列表按目标收窄。
-  - **B2**：`_require_assignment()` 之后与 B4 名单求交（网页/建码/邮件三条路径共用）。
-    **「打回」未实现**：`rejectIntakeQuarantine`、`IntakeQuarantineView.sender` 与
-    `resolution=rejected` 目前只有契约——B2 没有对应路由与列，路由测试把它登记为唯一已知缺口。
+  - **B2**：`_require_assignment()` 之后与 B4 名单求交（网页/建码/邮件三条路径共用）；
+    打回（`resolution=rejected`）+ 向**原发件地址**发失败通知，响应如实说 `queued`/`unavailable`；
+    `IntakeQuarantineView` 输出 `sender`（历史行 `null`）。
   - **B4**：新增内部目标校验端点；发布通知的受众按目标收窄（与提交准入同一份过滤）。
-  - **B1**：契约类型重新生成；`AssignmentComposer` 的课序多选/指定学生与复核页「打回」按钮
-    **未实现**（本批不交付这两块界面）。
-- **未上线内容**：本批只交付契约与 B3/B4 的目标能力。B2 的「打回」处置与 `sender` 列
-  （迁移 `20261107_0023`）、B1 的目标选择与打回界面都还没有落地，缺口在 B2 路由测试的
-  `_PENDING_CONTRACT_PATHS` 里逐条列名，不会退化成"实现是契约的子集就算过"。
+  - **B1**：契约类型重新生成；复核页「打回」按钮、确认弹窗与 `queued|unavailable` 提示，
+    「已打回」与「已作废」分开显示。（`AssignmentComposer` 的课序多选/指定学生仍未做，属下一批。）
 - **签名与数据**：
   - B3 迁移 `20261108_0012`（`assignment_sections`/`assignment_students`，**不加**"至少一行"约束，
     0 行 = 全课程；历史作业不写行）。
-  - B2 迁移 `20261107_0023`（**尚未创建**）：计划给 `intake_quarantines` 加 `sender`，并放宽
-    `ck_intake_quarantines_decision` 与 `ck_intake_quarantines_decision_audit` 以容纳 `rejected`。
+  - B2 迁移 `20261107_0023`（`intake_quarantines` 增加 `sender`，历史行 `NULL`；放宽
+    `ck_intake_quarantines_decision` 与 `ck_intake_quarantines_decision_audit` 以容纳 `rejected`）。
 - **兼容性**：`AssignmentPublic.target` 是必填新增，属**有意破坏性变更**——B3 的新响应必须同时上线。
   `AssignmentInternal` 的两个新键是按名读取的附加事实，旧 B2 忽略它们即"全课程"，不会误收窄。
   不保留"课程级/目标级"两套并行语义，也不保留双写。

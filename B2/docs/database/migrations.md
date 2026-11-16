@@ -34,9 +34,10 @@
 | `20261029_0019` | 隔离区匹配用户、暂存与标记作废 | `intake_quarantines` 加 `resolved_submission_id`/`held`/`held_at`/`held_by`；`resolution` 允许 `completed`；加 `ck_intake_quarantines_hold`；重写 decision/audit 约束 |
 | `20261107_0020` | 一次性邮件核验码（设计 §4） | 新增 `email_verification_challenges`/`email_verifications`/`email_sender_bindings`/`intake_state` 四张表；同时把 0017/0018 遗留的时间列收窄到 `timestamptz(3)` |
 | `20261107_0021` | 作业维度接入提交（CHG-0032） | `submissions.assignment_id uuid NULL` + `ix_submissions_assignment_id`；**不回填**（历史行没有作业归属，不猜测） |
-| `20261107_0022` | 多题邮件提交（CHG-0032 / 设计 §6.2） | 核验码/邮件事实按作业绑定（`assignment_id`、`question_version_id` 放开 NOT NULL、`processed_at`）；新表 `email_verification_submissions`；放宽 `ck_email_checkpoints_outcome` 的 processed 分支；**当前 head** |
+| `20261107_0022` | 多题邮件提交（CHG-0032 / 设计 §6.2） | 核验码/邮件事实按作业绑定（`assignment_id`、`question_version_id` 放开 NOT NULL、`processed_at`）；新表 `email_verification_submissions`；放宽 `ck_email_checkpoints_outcome` 的 processed 分支 |
+| `20261107_0023` | 隔离区「打回」（契约 0.38.0） | `intake_quarantines.sender text NULL`（来件真实 From 地址，打回通知的唯一收件人；历史行 NULL）；重写 `ck_intake_quarantines_decision` / `ck_intake_quarantines_decision_audit` 以容纳 `resolution='rejected'`（与 `dismissed` 一样没有学生与提交，但必须带处置时间与操作人）；**当前 head** |
 
-- 当前 head = **`20261107_0022`**，三处一致：`module.yaml: database.migration_head`、
+- 当前 head = **`20261107_0023`**，三处一致：`module.yaml: database.migration_head`、
   `db/schema.py: EXPECTED_SCHEMA_REVISION`、Alembic 自身（由 `tests/test_migrations.py` 断言）。**注意**：
   `EXPECTED_SCHEMA_REVISION` 是 readiness 判据，因此**部署时必须先跑 `uv run alembic upgrade head`**——
   库停在上一个 revision 时评测/成绩/评语/隔离区路由会按设计返回 503

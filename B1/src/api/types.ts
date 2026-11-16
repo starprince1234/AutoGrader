@@ -337,6 +337,9 @@ export type ResolveIntakeQuarantineRequest =
   B2Operations["resolveIntakeQuarantine"]["requestBody"]["content"]["application/json"];
 export type DismissIntakeQuarantineRequest =
   B2Operations["dismissIntakeQuarantine"]["requestBody"]["content"]["application/json"];
+export type RejectIntakeQuarantineRequest =
+  B2Operations["rejectIntakeQuarantine"]["requestBody"]["content"]["application/json"];
+export type IntakeQuarantineRejection = B2Schemas["IntakeQuarantineRejection"];
 export type CompleteIntakeQuarantineRequest =
   B2Operations["completeIntakeQuarantine"]["requestBody"]["content"]["application/json"];
 export type SetIntakeQuarantineHoldRequest =

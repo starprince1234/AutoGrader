@@ -1428,6 +1428,7 @@ def test_uppercase_spelling_does_not_bypass_idempotency(
 QUARANTINES = "/api/v1/intake/quarantines"
 RESOLVE = "/api/v1/intake/quarantines/{quarantine}/resolve"
 DISMISS = "/api/v1/intake/quarantines/{quarantine}/dismiss"
+REJECT = "/api/v1/intake/quarantines/{quarantine}/reject"
 HOLD = "/api/v1/intake/quarantines/{quarantine}/hold"
 COMPLETE = "/api/v1/intake/quarantines/{quarantine}/complete"
 #: 人工复核选定的作业（隔离 complete 的请求体字段 `assignment_id`；题目由附件映射决定）。
@@ -1483,6 +1484,7 @@ def _seed_quarantine(
     scope_course_id: str | None = None,
     scope_section_id: str | None = None,
     subject: str | None = None,
+    sender: str | None = None,
 ) -> str:
     """用**生产写入路径**（`intake.imap.QuarantineStore`）落一条隔离记录，返回它的 id。
 
@@ -1506,6 +1508,7 @@ def _seed_quarantine(
             now=recorded_at or datetime.now(UTC),
             scope=scope,
             subject=subject,
+            sender=sender,
         )
 
 
@@ -1604,6 +1607,7 @@ def test_quarantine_list_exposes_what_the_email_path_recorded(
         "held",
         "held_at",
         "held_by",
+        "sender",
     }
     assert item["intake_quarantine_id"] == quarantine_id
     assert item["intake"] == "email"
@@ -1618,6 +1622,7 @@ def test_quarantine_list_exposes_what_the_email_path_recorded(
     assert item["resolved_at"] is None and item["resolved_by"] is None
     assert item["resolved_submission_id"] is None
     assert item["held"] is False and item["held_at"] is None and item["held_by"] is None
+    assert item["sender"] is None  # 没有写入发件地址的行：不知道，就不猜
     assert item["recorded_at"].endswith("Z")
     # scope 来自写入侧（匹配规则共识），读取侧只做映射：两个字段必须如实带出。
     assert item["scope_course_id"] == student[1]
@@ -1877,6 +1882,206 @@ def test_quarantine_dismiss_validates_the_body_and_the_identifier(
     missing = client.post(DISMISS.format(quarantine=str(uuid.uuid4())), json={}, headers=token)
     assert missing.status_code == 404, missing.text
     assert _resolved_state(engine, quarantine_id) == (False, None, None)
+
+
+def test_quarantine_reject_records_the_decision_and_reports_the_notice(
+    client: TestClient,
+    engine: Engine,
+    signer: _Signer,
+    student: tuple[str, str, str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """打回 = 处置 + 告知原发件人：处置落库、备注留痕，响应只说这封信交没交出去。"""
+    actor = str(uuid.uuid4())
+    token = _auth(
+        signer.token(
+            user_id=actor,
+            roles=("teacher",),
+            scope=[{"course_id": student[1], "section_id": student[2]}],
+        )
+    )
+    before = _evaluation_footprint(engine)
+    quarantine_id = _seed_quarantine(
+        engine,
+        scope_course_id=student[1],
+        scope_section_id=student[2],
+        sender="Sender@Example.EDU",
+    )
+    sent: list[tuple[str | None, str | None]] = []
+
+    def _fake_send(*, recipient_email: str | None, note: str | None = None) -> bool:
+        sent.append((recipient_email, note))
+        return True
+
+    monkeypatch.setattr(
+        "autograder_b2.intake.quarantine.send_submission_rejection_email", _fake_send
+    )
+
+    response = client.post(
+        REJECT.format(quarantine=quarantine_id),
+        json={"note": "附件名不符合要求"},
+        headers=token,
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert set(body) == {"record", "notification"}
+    assert body["notification"] == "queued"
+    record = body["record"]
+    assert record["resolution"] == "rejected"
+    assert record["resolved"] is True
+    assert record["resolved_student_id"] is None
+    assert record["resolved_submission_id"] is None
+    assert record["resolved_by"] == actor
+    assert record["resolved_at"] is not None and record["resolved_at"].endswith("Z")
+    assert record["resolution_note"] == "附件名不符合要求"
+    # 写入侧把 From 收敛成小写：通知只能发给这封邮件真实的地址。
+    assert record["sender"] == "sender@example.edu"
+    assert sent == [("sender@example.edu", "附件名不符合要求")]
+    assert _evaluation_footprint(engine) == before == (0, 0, 0), (
+        "打回不得产生提交、事件或评测运行"
+    )
+
+
+def test_quarantine_reject_reports_unavailable_without_a_usable_notice(
+    client: TestClient,
+    engine: Engine,
+    signer: _Signer,
+    student: tuple[str, str, str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """没有地址、或投递没交出去：处置照记，响应如实说 `unavailable`，**不是** 500。"""
+    token = _auth(_staff_token(signer, student))
+    scope = {"scope_course_id": student[1], "scope_section_id": student[2]}
+
+    no_sender = _seed_quarantine(engine, uid=1, **scope)
+    response = client.post(REJECT.format(quarantine=no_sender), json={}, headers=token)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["notification"] == "unavailable"
+    assert body["record"]["resolution"] == "rejected"
+    assert body["record"]["sender"] is None
+
+    transport_down = _seed_quarantine(engine, uid=2, sender="student@example.edu", **scope)
+    monkeypatch.setattr(
+        "autograder_b2.intake.quarantine.send_submission_rejection_email",
+        lambda **kwargs: False,
+    )
+    response = client.post(REJECT.format(quarantine=transport_down), json={}, headers=token)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["notification"] == "unavailable"
+    # 通知失败不回滚处置：老师看到的仍是一条已决定的记录。
+    assert body["record"]["resolution"] == "rejected"
+    assert body["record"]["resolved"] is True
+
+
+def test_quarantine_reject_is_conflict_after_any_decision_and_never_resends(
+    client: TestClient,
+    engine: Engine,
+    signer: _Signer,
+    student: tuple[str, str, str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """已处置（归属/作废/打回）之后再打回一律 409，且**不会**发第二封信。"""
+    token = _auth(_staff_token(signer, student))
+    scope = {"scope_course_id": student[1], "scope_section_id": student[2]}
+    calls: list[str | None] = []
+
+    def _fake_send(*, recipient_email: str | None, note: str | None = None) -> bool:
+        calls.append(recipient_email)
+        return True
+
+    monkeypatch.setattr(
+        "autograder_b2.intake.quarantine.send_submission_rejection_email", _fake_send
+    )
+
+    rejected = _seed_quarantine(engine, uid=1, sender="first@example.edu", **scope)
+    assert (
+        client.post(REJECT.format(quarantine=rejected), json={}, headers=token).status_code
+        == 200
+    )
+    second = client.post(REJECT.format(quarantine=rejected), json={}, headers=token)
+    assert second.status_code == 409, second.text
+    assert calls == ["first@example.edu"], "第二次调用不得再发一封信"
+
+    dismissed = _seed_quarantine(engine, reason_code="ambiguous_match", uid=2, **scope)
+    assert (
+        client.post(DISMISS.format(quarantine=dismissed), json={}, headers=token).status_code
+        == 200
+    )
+    assert (
+        client.post(REJECT.format(quarantine=dismissed), json={}, headers=token).status_code
+        == 409
+    )
+
+    attributed = _seed_quarantine(engine, uid=3, **scope)
+    assert (
+        client.post(
+            RESOLVE.format(quarantine=attributed),
+            json={"student_id": str(uuid.uuid4())},
+            headers=token,
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(REJECT.format(quarantine=attributed), json={}, headers=token).status_code
+        == 409
+    )
+    assert calls == ["first@example.edu"]
+
+
+def test_quarantine_reject_validates_body_scope_and_identifier(
+    client: TestClient,
+    engine: Engine,
+    signer: _Signer,
+    student: tuple[str, str, str, str],
+) -> None:
+    """体只允许 `note`（≤500）；越权行 403；非法/不存在的标识 404/422，且一个字段都不写。"""
+    quarantine_id = _seed_quarantine(
+        engine, scope_course_id=student[1], scope_section_id=student[2]
+    )
+    target = REJECT.format(quarantine=quarantine_id)
+    token = _auth(_staff_token(signer, student))
+
+    unknown = client.post(
+        target, json={"note": "x", "student_id": str(uuid.uuid4())}, headers=token
+    )
+    assert unknown.status_code == 422, unknown.text
+    too_long = client.post(target, json={"note": "x" * 501}, headers=token)
+    assert too_long.status_code == 422, too_long.text
+    malformed = client.post(
+        target, content=b"not json", headers={**token, "content-type": "application/json"}
+    )
+    assert malformed.status_code == 422, malformed.text
+    missing = client.post(
+        REJECT.format(quarantine=str(uuid.uuid4())), json={}, headers=token
+    )
+    assert missing.status_code == 404, missing.text
+    assert _resolved_state(engine, quarantine_id) == (False, None, None)
+
+    unscoped = _seed_quarantine(engine, uid=2)
+    foreign = _seed_quarantine(
+        engine,
+        reason_code="ambiguous_match",
+        uid=3,
+        scope_course_id=str(uuid.uuid4()),
+        scope_section_id=str(uuid.uuid4()),
+    )
+    for bad_token in (_foreign_token(signer), _scopeless_staff_token(signer)):
+        for row in (unscoped, foreign):
+            denied = client.post(
+                REJECT.format(quarantine=row), json={}, headers=_auth(bad_token)
+            )
+            assert denied.status_code == 403, (row, denied.text)
+    for row in (unscoped, foreign):
+        assert _resolved_state(engine, row) == (False, None, None)
+
+    admin = _auth(signer.token(user_id=str(uuid.uuid4()), roles=("admin",), scope=[]))
+    allowed = client.post(REJECT.format(quarantine=unscoped), json={}, headers=admin)
+    assert allowed.status_code == 200, allowed.text
+    assert allowed.json()["record"]["resolution"] == "rejected"
+    # 未关联行没有发件地址：处置成功，但通知只能如实报 unavailable。
+    assert allowed.json()["notification"] == "unavailable"
 
 
 def test_quarantine_resolve_reruns_the_checks_the_manual_path_must_not_skip(

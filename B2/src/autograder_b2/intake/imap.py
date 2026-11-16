@@ -438,12 +438,17 @@ class QuarantineStore:
         scope: ScopeContext | None = None,
         intake: str = "email",
         subject: str | None = None,
+        sender: str | None = None,
     ) -> str:
         """写一条隔离记录（在调用方事务内）。`detail` 已在调用方脱敏，这里只兜长度上限。
 
         `scope` 是**核验码挑战**（服务端签发事实）给出的课程/课序；`None` 表示这条来件
         没有任何可验证的课程/课序关联，之后只对平台管理员可见。两列由数据库 CHECK 约束成对。
+
+        `sender` 是这封邮件真实的 From 地址，按与提交绑定同一形态（去空白、小写）落库：
+        它是打回通知的唯一收件人，平台不得从邮箱、主题、scope 或学生名单里推出一个替代地址。
         """
+        sender_address = None if sender is None else (sender.strip().lower() or None)
         identifier = uuid.uuid4()
         connection.execute(
             sa.insert(intake_quarantines).values(
@@ -459,6 +464,7 @@ class QuarantineStore:
                 scope_course_id=None if scope is None else uuid.UUID(scope.course_id),
                 scope_section_id=None if scope is None else uuid.UUID(scope.section_id),
                 subject=subject,
+                sender=sender_address,
             )
         )
         return str(identifier)
@@ -844,6 +850,7 @@ class EmailIntakeService:
                 ),
                 subject=message.subject,
                 scope=self._scope_of(inspection),
+                sender=message.sender,
             )
 
         existing = self._checkpoints.lookup(
@@ -872,6 +879,7 @@ class EmailIntakeService:
                 rejection=rejected,
                 subject=message.subject,
                 scope=self._scope_of(inspection),
+                sender=message.sender,
             )
 
         # 设计 §6.4 第 10 步：没有核验码的邮件不再有"固定目标/匹配规则"可路由，可解释地隔离。
@@ -886,6 +894,7 @@ class EmailIntakeService:
                     " assignment workspace and put it in the message body"
                 ),
                 scope=None,
+                sender=message.sender,
             )
         return self._process_verification(
             uidvalidity=uidvalidity, uid=uid, message=message, accepted=accepted
@@ -954,7 +963,8 @@ class EmailIntakeService:
         )
         if isinstance(inspection, VerificationRejected):
             return self._quarantine_from_rejection(
-                uidvalidity=uidvalidity, uid=uid, message_id=message_id, rejected=inspection
+                uidvalidity=uidvalidity, uid=uid, message_id=message_id, rejected=inspection,
+                sender=message.sender,
             )
         scope = ScopeContext(
             course_id=inspection.course_id, section_id=inspection.section_id
@@ -977,7 +987,8 @@ class EmailIntakeService:
             )
             if isinstance(consumed, VerificationRejected):
                 return self._quarantine_from_rejection(
-                    uidvalidity=uidvalidity, uid=uid, message_id=message_id, rejected=consumed
+                    uidvalidity=uidvalidity, uid=uid, message_id=message_id, rejected=consumed,
+                sender=message.sender,
                 )
             resumed = consumed
         elif inspection.expired:
@@ -988,7 +999,8 @@ class EmailIntakeService:
             )
             if isinstance(consumed, VerificationRejected):
                 return self._quarantine_from_rejection(
-                    uidvalidity=uidvalidity, uid=uid, message_id=message_id, rejected=consumed
+                    uidvalidity=uidvalidity, uid=uid, message_id=message_id, rejected=consumed,
+                sender=message.sender,
                 )
             resumed = consumed
 
@@ -1007,13 +1019,15 @@ class EmailIntakeService:
                 reason_code=reason_code,
                 detail=detail,
                 scope=scope,
+                sender=message.sender,
             )
 
         loaded = self._load_audience(inspection)
         if isinstance(loaded, VerificationRejected):
             verification.record_rejection(inspection.challenge_id, loaded.reason_code)
             return self._quarantine_from_rejection(
-                uidvalidity=uidvalidity, uid=uid, message_id=message_id, rejected=loaded
+                uidvalidity=uidvalidity, uid=uid, message_id=message_id, rejected=loaded,
+                sender=message.sender,
             )
         audience, authoritative_section = loaded
         try:
@@ -1027,6 +1041,7 @@ class EmailIntakeService:
                 reason_code=ATTACHMENT_MAPPING_INVALID,
                 detail=rejected.detail,
                 scope=scope,
+                sender=message.sender,
             )
 
         if resumed is None:
@@ -1036,7 +1051,8 @@ class EmailIntakeService:
             )
             if isinstance(consumed, VerificationRejected):
                 return self._quarantine_from_rejection(
-                    uidvalidity=uidvalidity, uid=uid, message_id=message_id, rejected=consumed
+                    uidvalidity=uidvalidity, uid=uid, message_id=message_id, rejected=consumed,
+                sender=message.sender,
                 )
             resumed = consumed
         return self._persist_submissions(
@@ -1320,6 +1336,7 @@ class EmailIntakeService:
         uid: int,
         message_id: str,
         rejected: VerificationRejected,
+        sender: str | None = None,
     ) -> MessageOutcome:
         scope = (
             ScopeContext(course_id=rejected.course_id, section_id=rejected.section_id)
@@ -1333,6 +1350,7 @@ class EmailIntakeService:
             reason_code=rejected.reason_code,
             detail=rejected.detail,
             scope=scope,
+            sender=sender,
         )
 
     def _reject(
@@ -1344,6 +1362,7 @@ class EmailIntakeService:
         rejection: AttachmentRejected,
         subject: str | None = None,
         scope: ScopeContext | None = None,
+        sender: str | None = None,
     ) -> MessageOutcome:
         """安全/结构拒绝：隔离记录 + checkpoint 同事务，然后记一条结构化安全日志。"""
         outcome = self._record_outcome(
@@ -1355,6 +1374,7 @@ class EmailIntakeService:
             detail=rejection.detail,
             scope=scope,
             subject=subject,
+            sender=sender,
         )
         if outcome.status == "rejected":
             # 日志有意放在事务**之后**：日志说"已拒绝"时，隔离记录一定已经落库。
@@ -1379,6 +1399,7 @@ class EmailIntakeService:
         detail: str,
         scope: ScopeContext | None,
         subject: str | None = None,
+        sender: str | None = None,
     ) -> MessageOutcome:
         """无法唯一匹配：进隔离区、不产生提交、也**不因此**产生任何评测。"""
         outcome = self._record_outcome(
@@ -1390,6 +1411,7 @@ class EmailIntakeService:
             detail=detail,
             scope=scope,
             subject=subject,
+            sender=sender,
         )
         if outcome.status == "quarantined":
             logger.info(
@@ -1413,6 +1435,7 @@ class EmailIntakeService:
         detail: str,
         scope: ScopeContext | None = None,
         subject: str | None = None,
+        sender: str | None = None,
     ) -> MessageOutcome:
         mailbox = self._settings.mailbox
         now = utc_now()
@@ -1429,6 +1452,7 @@ class EmailIntakeService:
                     now=now,
                     scope=scope,
                     subject=subject,
+                    sender=sender,
                 )
                 self._checkpoints.record(
                     connection,

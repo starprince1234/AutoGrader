@@ -167,6 +167,86 @@ def build_submission_receipt_message(
     return msg
 
 
+def build_submission_rejection_message(
+    *,
+    settings: ReceiptSmtpSettings,
+    recipient_email: str,
+    note: str | None = None,
+) -> EmailMessage:
+    """构造"邮件提交失败（打回）"通知邮件。
+
+    只说**失败**与**怎么重交**，不写失败原因：原因码是教师复核的事实，学生拿不到动作，
+    清单式的原因只会让他去猜哪些能绕过（与 B1 学生端只显示「提交成功 / 提交失败」一致）。
+    """
+    lines = [
+        "您好：",
+        "",
+        "您发送的作业提交邮件未能通过核验，本次提交未成功。",
+        "",
+        "请回到 AutoGrader 的作业页面重新申请核验码，并按工作区给出的格式重新提交：",
+        "  - 正文五行：核验码 / 作业编号 / 课序 / 姓名 / 学号",
+        "  - 每题一个附件，文件名按题号为 N.txt",
+    ]
+    if note:
+        lines.extend(["", f"教师备注：{note}"])
+    lines.extend(
+        [
+            "",
+            "（本邮件由系统自动发送，请勿直接回复）",
+            "—— AutoGrader 作业评测平台",
+        ]
+    )
+
+    msg = EmailMessage()
+    msg["Subject"] = "【AutoGrader】作业邮件提交未通过"
+    msg["From"] = formataddr((settings.sender_name, settings.sender_address))
+    msg["To"] = recipient_email
+    msg.set_content("\n".join(lines))
+    return msg
+
+
+def send_submission_rejection_email(
+    *,
+    recipient_email: str | None,
+    note: str | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> bool:
+    """向**原发件地址**发送"提交失败"通知（best-effort，异常只记日志不抛出）。
+
+    返回 `False` 的两种情形都等于契约里的 `notification=unavailable`：没有记录到来件地址，
+    或本部署没有 SMTP 配置；投递失败同样只影响这一封信，不回滚已经记录的处置。
+    """
+    recipient = (recipient_email or "").strip()
+    if not recipient:
+        return False
+    settings = load_receipt_smtp_settings(environ)
+    if settings is None:
+        log_event(
+            logger,
+            "intake.rejection_email_skipped",
+            level=logging.INFO,
+            fields={"reason": "smtp_not_configured"},
+        )
+        return False
+
+    message = build_submission_rejection_message(
+        settings=settings, recipient_email=recipient, note=note
+    )
+    try:
+        deliver_smtp_message(settings, message)
+    except (smtplib.SMTPException, OSError, ssl.SSLError, ValueError) as error:
+        log_event(
+            logger,
+            "intake.rejection_email_failed",
+            level=logging.WARNING,
+            fields={"error_type": type(error).__name__},
+        )
+        return False
+
+    log_event(logger, "intake.rejection_email_sent", level=logging.INFO, fields={})
+    return True
+
+
 def send_submission_receipt_email(
     *,
     recipient_email: str,
@@ -232,7 +312,9 @@ def send_submission_receipt_email(
 __all__ = [
     "ReceiptSmtpSettings",
     "build_submission_receipt_message",
+    "build_submission_rejection_message",
     "deliver_smtp_message",
     "load_receipt_smtp_settings",
     "send_submission_receipt_email",
+    "send_submission_rejection_email",
 ]
