@@ -1,5 +1,5 @@
 import "./gradingLayout.css";
-import { useMemo, useState } from "react";
+import { useMemo, useState, useEffect } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { t } from "../../i18n";
 import { isApiError } from "../../api/problem";
@@ -15,7 +15,9 @@ import {
   PageTitle,
   Panel,
   Spinner,
+  Modal,
   StatusPill,
+  Table,
 } from "../../ui/components";
 import { SafeMarkdown } from "../questions/SafeMarkdown";
 import { useQuestionVersionRows } from "../questions/useQuestions";
@@ -35,6 +37,18 @@ import { useAssignmentNotifications } from "./useAssignmentNotifications";
 import { useRosterSummary } from "../../api/directory";
 import { useAssignment } from "./useAssignments";
 import { useAssignmentProgress, type StudentProgress } from "./useAssignmentProgress";
+import type { GradeRow } from "../../api/types";
+
+/** 状态枚举 → 文案键：模板字符串拼出来的键不受 `t()` 的类型约束，容易写错。 */
+const STATE_KEYS: Record<string, Parameters<typeof t>[0]> = {
+  received: "grades.state.received",
+  validated: "grades.state.validated",
+  queued: "grades.state.queued",
+  running: "grades.state.running",
+  completed: "grades.state.completed",
+  rejected: "grades.state.rejected",
+  failed: "grades.state.failed",
+};
 import {
   assignmentScorePercent,
   judgedTotal,
@@ -153,6 +167,10 @@ export function GradingPage({
   const [openGroup, setOpenGroup] = useState<"completed" | "pending" | null>("pending");
   /** 「一键提醒」浮窗：内容与原来的内嵌方框一致，只是改成按需弹出。 */
   const [reminderOpen, setReminderOpen] = useState(false);
+  // 「作答与测评」默认只列题目名；点开某题才展开题目与评测。历史的查看只影响这一题的面板。
+  const [expandedQuestion, setExpandedQuestion] = useState<string | null>(null);
+  const [historyQuestion, setHistoryQuestion] = useState<string | null>(null);
+  const [pickedRecord, setPickedRecord] = useState<GradeRow | null>(null);
 
   const versions = assignment?.question_version_ids ?? [];
   const currentVersionId =
@@ -175,6 +193,12 @@ export function GradingPage({
     studentId === null
       ? null
       : (progress.rows.find((row) => row.studentId === studentId) ?? null);
+
+  // 选中学生/题目后默认展开当前题：折叠只是让「多题作业」不一次铺满，不该多一次点击才能看答案。
+  useEffect(() => {
+    setExpandedQuestion(currentVersionId);
+    setPickedRecord(null);
+  }, [currentVersionId, selectedStudent?.studentId]);
 
   /** 选中状态写回 URL：刷新、复制链接、浏览器后退都回到同一处（只放对象 id）。 */
   const select = (nextVersion: string | null, nextStudent: string | null) => {
@@ -469,17 +493,138 @@ export function GradingPage({
                     </span>
                   </div>
 
-                  <QuestionAnswer
-                    student={selectedStudent}
-                    versionId={currentVersionId}
-                    versionTitle={
-                      currentRow?.question?.title ?? t("questions.titleUnavailable")
-                    }
-                    ordinal={
-                      versionRows.find((row) => row.questionVersionId === currentVersionId)
-                        ?.ordinal ?? 1
-                    }
-                  />
+                  {selectedStudent.questions.map((question) => {
+                    const ordinal =
+                      versionRows.find(
+                        (row) => row.questionVersionId === question.questionVersionId,
+                      )?.ordinal ?? 1;
+                    const title =
+                      versionRows.find(
+                        (row) => row.questionVersionId === question.questionVersionId,
+                      )?.question?.title ?? t("questions.titleUnavailable");
+                    const open = expandedQuestion === question.questionVersionId;
+                    const attempts = (progress.gradeRows ?? []).filter(
+                      (row) =>
+                        row.question_version_id === question.questionVersionId &&
+                        row.student_id !== null &&
+                        row.student_id === selectedStudent.studentId,
+                    );
+                    return (
+                      <div className="stack" key={question.questionVersionId}>
+                        <div className="inline">
+                          <button
+                            type="button"
+                            className="button button--ghost"
+                            data-testid={`grading-question-toggle-${question.questionVersionId}`}
+                            aria-expanded={open}
+                            onClick={() =>
+                              setExpandedQuestion(open ? null : question.questionVersionId)
+                            }
+                          >
+                            <span aria-hidden="true">{open ? "▾" : "▸"}</span> {ordinal}.{" "}
+                            {title}
+                          </button>
+                          <StatusPill tone={questionStateTone(question.state)}>
+                            {questionStateLabel(question.state)}
+                          </StatusPill>
+                          <button
+                            type="button"
+                            className="button button--ghost"
+                            data-testid={`grading-history-${question.questionVersionId}`}
+                            disabled={attempts.length === 0}
+                            onClick={() => setHistoryQuestion(question.questionVersionId)}
+                          >
+                            {t("grading.historyOpen", { count: attempts.length })}
+                          </button>
+                        </div>
+                        {open ? (
+                          <QuestionAnswer
+                            student={selectedStudent}
+                            versionId={question.questionVersionId}
+                            versionTitle={title}
+                            ordinal={ordinal}
+                            submissionOverride={
+                              pickedRecord !== null &&
+                              pickedRecord.question_version_id === question.questionVersionId
+                                ? pickedRecord
+                                : null
+                            }
+                          />
+                        ) : null}
+                        {historyQuestion === question.questionVersionId ? (
+                          <Modal
+                            title={t("grading.historyTitle")}
+                            testId="grading-history-modal"
+                            onClose={() => setHistoryQuestion(null)}
+                          >
+                            <div className="stack">
+                              {attempts.length === 0 ? (
+                                <p className="muted">{t("grading.historyEmpty")}</p>
+                              ) : (
+                                <Table<GradeRow>
+                                  testId="grading-history-table"
+                                  label={t("grading.historyTitle")}
+                                  rows={attempts}
+                                  getRowKey={(row) => row.submission_id}
+                                  columns={[
+                                    {
+                                      key: "submitted_at",
+                                      header: t("grades.submittedAt"),
+                                      render: (row) =>
+                                        formatDateTime(row.submitted_at, t("common.none")),
+                                    },
+                                    {
+                                      key: "state",
+                                      header: t("grades.state"),
+                                      render: (row) =>
+                                        t(STATE_KEYS[row.state] ?? "grades.state.completed"),
+                                    },
+                                    {
+                                      key: "score",
+                                      header: t("grades.scoreSlashMax"),
+                                      align: "right",
+                                      render: (row) =>
+                                        typeof row.score === "number"
+                                          ? `${row.score} / ${row.max_score ?? t("common.none")}`
+                                          : t("grades.unscored"),
+                                    },
+                                    {
+                                      key: "result",
+                                      header: t("grades.result"),
+                                      render: (row) =>
+                                        row.state === "completed"
+                                          ? row.is_pass === true
+                                            ? t("grades.pass")
+                                            : t("grades.fail")
+                                          : t("grades.notScored"),
+                                    },
+                                    {
+                                      key: "pick",
+                                      header: t("grades.colDetail"),
+                                      render: (row) => (
+                                        <button
+                                          type="button"
+                                          className="button button--ghost"
+                                          data-testid={`grading-history-pick-${row.submission_id}`}
+                                          onClick={() => {
+                                            setPickedRecord(row);
+                                            setExpandedQuestion(question.questionVersionId);
+                                            setHistoryQuestion(null);
+                                          }}
+                                        >
+                                          {t("grading.historyPick")}
+                                        </button>
+                                      ),
+                                    },
+                                  ]}
+                                />
+                              )}
+                            </div>
+                          </Modal>
+                        ) : null}
+                      </div>
+                    );
+                  })}
                 </div>
               </Panel>
             ) : (
@@ -595,15 +740,18 @@ function QuestionAnswer({
   versionId,
   versionTitle,
   ordinal,
+  submissionOverride = null,
 }: {
   student: StudentProgress;
   versionId: string | null;
   versionTitle: string;
   ordinal: number;
+  /** 查看历史记录时指定某一次提交；为空则显示该题最近一次。 */
+  submissionOverride?: GradeRow | null;
 }) {
   const question =
     student.questions.find((item) => item.questionVersionId === versionId) ?? null;
-  const submission = question?.submission ?? null;
+  const submission = submissionOverride ?? question?.submission ?? null;
   // 来源（网页 / 邮件）来自提交视图的 `intake`；它在作业内与成绩/答案一起展示，
   // 教师不需要再去邮箱里翻。
   const submissionView = useSubmissionView(submission?.submission_id ?? null);
