@@ -39,7 +39,6 @@ export type MailQueryFilter = {
   resolved: boolean | null;
   /** `null` = 不按暂存筛选；`true` 只看暂存，`false` 排除暂存。 */
   held?: boolean | null;
-  reasonCode: string | null;
   /** 起始游标（URL 可承载）；后续翻页不写回 URL。 */
   cursor: string | null;
   /** 页面大小；入口红点只需要 1 行。 */
@@ -69,7 +68,6 @@ export function useQuarantineMail(args: {
           // "全部"必须省略；`false` 不能省略（省略 = 不过滤）。
           resolved: filter.resolved === null ? undefined : filter.resolved,
           held: filter.held === null || filter.held === undefined ? undefined : filter.held,
-          reason_code: filter.reasonCode ?? undefined,
           limit: filter.limit ?? REVIEW_PAGE_SIZE,
           cursor: pageParam ?? undefined,
         },

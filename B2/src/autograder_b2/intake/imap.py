@@ -1129,6 +1129,14 @@ class EmailIntakeService:
         section = self._current_section(inspection)
         if isinstance(section, VerificationRejected):
             return section
+        # 作业目标：与网页/建码同一口径，两轴相交；不在目标里 = 可解释拒绝（隔离，不消费挑战）。
+        if not audience.admits(inspection.student_id, section):
+            return VerificationRejected(
+                "email_verification_rejected",
+                "the assignment's target does not include this student",
+                course_id=inspection.course_id,
+                section_id=section,
+            )
         return audience, section
 
     def _current_section(self, inspection: ChallengeInspection) -> str | VerificationRejected:

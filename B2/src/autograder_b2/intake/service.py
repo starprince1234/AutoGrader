@@ -296,6 +296,12 @@ class SubmissionIntakeService:
         identity["section_id"] = self._require_authoritative_section(principal, identity)
         audience = self._require_assignment(identity["assignment_id"])
         self._check_assignment_membership(audience, identity)
+        # 授权层：作业的**显式目标**（课序/点名）是当前名单上的过滤，与 B4 的 enrollment 求交。
+        # 不在目标里的学生与"没有归属"同义（403），不泄露作业是否存在以外的任何信息。
+        if not principal.is_admin and not audience.admits(
+            identity["student_id"], identity["section_id"]
+        ):
+            raise AuthorizationError("the student is not a target of this assignment")
         self._check_answer_file_name(audience, identity, prepared)
 
         pairs = tuple((item.path, item.content) for item in prepared)

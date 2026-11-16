@@ -1,5 +1,3 @@
-import { REASON_CODES, type ReasonCode } from "./reasonCodes";
-
 /**
  * P13 复核工作区的 URL 状态（`/review`）。
  *
@@ -7,8 +5,9 @@ import { REASON_CODES, type ReasonCode } from "./reasonCodes";
  * 把它放进组件文件会违反 `react-refresh/only-export-components`。
  *
  * 老师删掉了「题目质量」与「示例预览」之后，这里只剩**邮件隔离**的一组筛选：课程/课序、
- * 处理状态、原因、游标。多标签时代的 `tab`、`origin`、`question_id`、`demo`、`q`、`from`、
+ * 处理状态、游标。多标签时代的 `tab`、`origin`、`question_id`、`demo`、`q`、`from`、
  * `to` 与 `mail_*` / `quality_*` 暂存参数一并移除——URL 里再出现它们只会被丢弃。
+ * 原因码筛选同样移除：学生必须按工作区给出的格式提交，复核页不需要按"为什么被隔离"再分一层。
  *
  * 两条纪律：
  *
@@ -27,7 +26,6 @@ export type ReviewSearch = {
   section_id?: string;
   resolved?: "true" | "false" | "all";
   held?: "true" | "false";
-  reason_code?: string;
   cursor?: string;
 };
 
@@ -38,7 +36,6 @@ export type MailFilter = {
   resolved: boolean | null;
   /** 暂存筛选：`true` 只看暂存，`false` 排除暂存，`null` 不筛。 */
   held: boolean | null;
-  reasonCode: string | null;
   /** 起始游标：刷新时从该位置重开（追加不回写），而不是"已加载行数"。 */
   cursor: string | null;
 };
@@ -69,7 +66,7 @@ function boolValue(value: unknown): boolean | undefined {
 /**
  * 解析 URL 查询串。非法值一律**丢弃**（不是把它们原样发给服务端）：
  * - `resolved`/`held` 只接受契约能表达的三态/两态；
- * - `reason_code` 只接受契约 enum（未知值不成为筛选，也不成为可执行操作）。
+ * - 旧链接里的 `reason_code` 直接丢弃：复核页不再按原因筛选，服务端参数仍可省。
  */
 export function parseReviewSearch(search: Record<string, unknown>): ReviewSearch {
   const parsed: ReviewSearch = {};
@@ -85,10 +82,6 @@ export function parseReviewSearch(search: Record<string, unknown>): ReviewSearch
   }
   const held = boolValue(search.held);
   if (held !== undefined) parsed.held = held ? "true" : "false";
-  const reason = token(search.reason_code);
-  if (reason && (REASON_CODES as readonly string[]).includes(reason)) {
-    parsed.reason_code = reason as ReasonCode;
-  }
   const cursor = token(search.cursor);
   if (cursor) parsed.cursor = cursor;
   return parsed;
@@ -111,7 +104,6 @@ export function readMailFilter(search: ReviewSearch): MailFilter {
           : resolved === false
             ? false
             : null,
-    reasonCode: search.reason_code ?? null,
     cursor: search.cursor ?? null,
   };
 }
@@ -134,7 +126,6 @@ export function withMailFilter(
     section_id: filter.sectionId ?? undefined,
     resolved: resolvedValue(filter.resolved),
     held: heldValue(filter.held),
-    reason_code: filter.reasonCode ?? undefined,
   });
 }
 

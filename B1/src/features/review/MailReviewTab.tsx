@@ -33,7 +33,7 @@ import {
   useRejectQuarantine,
   useSetQuarantineHold,
 } from "./useReviewMail";
-import { isAttributableReason, REASON_CODES, reasonHint, reasonLabel } from "./reasonCodes";
+import { isAttributableReason } from "./reasonCodes";
 import {
   readMailFilter,
   withMailFilter,
@@ -109,14 +109,15 @@ export function MailReviewTab({
   );
   // staff 未带 P04 上下文时预选**第一门有权课程**；URL 指向无权课程时也回落到有权课程，
   // 而不是把无权 ID 发出去再显示 403（这样"不能选其他班级课程"在请求之前就成立）。
+  // 默认视图是"我有权限的**全部**课程"，而不是"第一门有权课程"：后者会让老师只看到一门课
+  // 的待处理记录，另一门课的隔离邮件（比如学生发错了格式的那些）明明有权也看不见。
+  // URL 指向无权课程时同样回落到"全部"——服务端仍按令牌作用域过滤，界面不发出无权 ID。
   const requestedCourseId = filter.courseId;
   const requestedAllowed =
     requestedCourseId !== null && (isAdmin || scopeCourseIds.has(requestedCourseId));
-  const effectiveCourseId = isAdmin
-    ? requestedCourseId
-    : requestedAllowed
-      ? requestedCourseId
-      : (courseOptions[0]?.course_id ?? null);
+  const effectiveCourseId = isAdmin ? requestedCourseId : (requestedAllowed ? requestedCourseId : null);
+  // 没有课程就没有课序：把 URL 里孤立的 section 丢掉，避免发出"只有 section 没有 course"的请求。
+  const effectiveSectionId = effectiveCourseId === null ? null : filter.sectionId;
   const sections = useSections(effectiveCourseId);
   const sectionOptions = useMemo<SectionOption[]>(() => {
     const fetched = sections.data ?? [];
@@ -138,10 +139,9 @@ export function MailReviewTab({
     enabled: listEnabled,
     filter: {
       courseId: effectiveCourseId,
-      sectionId: filter.sectionId,
+      sectionId: effectiveSectionId,
       resolved: filter.resolved,
       held: filter.held,
-      reasonCode: filter.reasonCode,
       cursor: filter.cursor,
     },
   });
@@ -378,15 +378,13 @@ export function MailReviewTab({
     sectionId?: string | null;
     resolved?: boolean | null;
     held?: boolean | null;
-    reasonCode?: string | null;
   }) => {
     onChange(
       withMailFilter(search, {
         courseId: next.courseId === undefined ? effectiveCourseId : next.courseId,
-        sectionId: next.sectionId === undefined ? filter.sectionId : next.sectionId,
+        sectionId: next.sectionId === undefined ? effectiveSectionId : next.sectionId,
         resolved: next.resolved === undefined ? filter.resolved : next.resolved,
         held: next.held === undefined ? filter.held : next.held,
-        reasonCode: next.reasonCode === undefined ? filter.reasonCode : next.reasonCode,
       }),
     );
   };
@@ -451,10 +449,7 @@ export function MailReviewTab({
                   changeFilter({ courseId: event.target.value || null, sectionId: null })
                 }
               >
-                {isAdmin ? <option value="">{t("review.mail.allCourses")}</option> : null}
-                {!isAdmin && courseOptions.length === 0 ? (
-                  <option value="">{t("review.mail.noCourse")}</option>
-                ) : null}
+                <option value="">{t("review.mail.allCourses")}</option>
                 {courseOptions.map((course) => (
                   <option key={course.course_id} value={course.course_id}>
                     {formatCourseLabel(course)}
@@ -467,7 +462,7 @@ export function MailReviewTab({
               <Select
                 id="review-mail-section"
                 data-testid="review-mail-section"
-                value={filter.sectionId ?? ""}
+                value={effectiveSectionId ?? ""}
                 disabled={effectiveCourseId === null}
                 onChange={(event) => changeFilter({ sectionId: event.target.value || null })}
               >
@@ -505,22 +500,6 @@ export function MailReviewTab({
                 <option value="held">{t("review.mail.heldFilter")}</option>
                 <option value="processed">{t("review.mail.processedFilter")}</option>
                 <option value="all">{t("review.mail.allStates")}</option>
-              </Select>
-            </Field>
-
-            <Field label={t("review.mail.reason")} htmlFor="review-mail-reason">
-              <Select
-                id="review-mail-reason"
-                data-testid="review-mail-reason"
-                value={filter.reasonCode ?? ""}
-                onChange={(event) => changeFilter({ reasonCode: event.target.value || null })}
-              >
-                <option value="">{t("review.mail.allReasons")}</option>
-                {REASON_CODES.map((code) => (
-                  <option key={code} value={code}>
-                    {reasonLabel(code)}
-                  </option>
-                ))}
               </Select>
             </Field>
           </div>
@@ -733,10 +712,6 @@ export function MailReviewTab({
               {detailTarget.sender ?? t("review.mail.notProvided")}
             </p>
             <p>
-              {t("review.mail.reason")}：{reasonLabel(detailTarget.reason_code)}
-            </p>
-            <p className="muted">{reasonHint(detailTarget.reason_code)}</p>
-            <p>
               {t("review.mail.state")}：
               {resolutionText(detailTarget)}
               {trailText(detailTarget) ? ` · ${trailText(detailTarget)}` : ""}
@@ -759,7 +734,6 @@ export function MailReviewTab({
           <div className="stack">
             <p className="muted">{t("review.mail.resolveScopeNote")}</p>
             <p className="muted" data-testid="review-mail-resolve-target">
-              {reasonLabel(resolveTarget.reason_code)} ·{" "}
               {formatDateTime(resolveTarget.recorded_at, t("common.none"))} ·{" "}
               {scopeText(resolveTarget, courseMap, sectionMap)}
             </p>
@@ -951,7 +925,6 @@ export function MailReviewTab({
           <div className="stack">
             <p className="muted">{t("review.mail.dismissHint")}</p>
             <p className="muted">
-              {reasonLabel(dismissTarget.reason_code)} ·{" "}
               {formatDateTime(dismissTarget.recorded_at, t("common.none"))} ·{" "}
               {scopeText(dismissTarget, courseMap, sectionMap)}
             </p>
@@ -1041,7 +1014,6 @@ export function MailReviewTab({
           <div className="stack">
             <p className="muted">{t("review.mail.rejectHint")}</p>
             <p className="muted" data-testid="review-mail-reject-target">
-              {reasonLabel(rejectTarget.reason_code)} ·{" "}
               {formatDateTime(rejectTarget.recorded_at, t("common.none"))} ·{" "}
               {scopeText(rejectTarget, courseMap, sectionMap)}
             </p>

@@ -189,6 +189,8 @@ def assignment_audience(
     status: str = "open",
     course_id: str = COURSE_ID,
     question_version_ids: Sequence[str] = (Q1, Q2),
+    section_ids: Sequence[str] = (),
+    student_ids: Sequence[str] = (),
 ) -> AssignmentAudience:
     return AssignmentAudience(
         assignment_id=ASSIGNMENT_ID,
@@ -196,6 +198,8 @@ def assignment_audience(
         title="unix homework",
         status=status,
         question_version_ids=tuple(question_version_ids),
+        section_ids=tuple(section_ids),
+        student_ids=tuple(student_ids),
     )
 
 
@@ -589,6 +593,25 @@ def test_challenge_audience_checks(harness: Harness) -> None:
     assert issued.assignment_id == ASSIGNMENT_ID
     row = only_row(harness.engine, email_verification_challenges)
     assert row["section_id"] == uuid.UUID(other_section)
+    assert table_count(harness.engine, email_verification_challenges) == 1
+
+
+def test_challenge_requires_the_student_to_be_a_target(harness: Harness) -> None:
+    """不在作业目标里的学生拿不到核验码（与网页提交同一口径；两轴取交集）。"""
+    other = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+    harness.assignments.audience = assignment_audience(student_ids=(other,))
+    with pytest.raises(AuthorizationError):
+        issue(harness)
+    harness.assignments.audience = assignment_audience(section_ids=(other,))
+    with pytest.raises(AuthorizationError):
+        issue(harness)
+    assert table_count(harness.engine, email_verification_challenges) == 0
+
+    harness.assignments.audience = assignment_audience(
+        section_ids=(SECTION_ID,), student_ids=(STUDENT_ID,)
+    )
+    issued = issue(harness)
+    assert issued.assignment_id == ASSIGNMENT_ID
     assert table_count(harness.engine, email_verification_challenges) == 1
 
 
@@ -1258,6 +1281,24 @@ def test_a_student_removed_from_the_course_cannot_submit_by_mail(harness: Harnes
     quarantine = only_row(harness.engine, intake_quarantines)
     assert quarantine["reason_code"] == "email_verification_rejected"
     assert "no longer enrolled" in quarantine["detail"]
+    assert table_count(harness.engine, submissions) == 0
+    assert table_count(harness.engine, email_verifications) == 0
+    assert only_row(harness.engine, email_verification_challenges)["consumed_at"] is None
+
+
+def test_a_student_outside_the_assignment_target_is_quarantined_by_mail(
+    harness: Harness,
+) -> None:
+    """作业后来改成只发给别人：邮件仍按"不在目标里"可解释隔离，且不消费挑战、不写提交。"""
+    issued = issue(harness)
+    harness.assignments.audience = assignment_audience(
+        student_ids=("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",)
+    )
+    report, _server = pull(harness, [verification_mail(issued.code)])
+    assert report.count("quarantined") == 1, report.outcomes
+    quarantine = only_row(harness.engine, intake_quarantines)
+    assert quarantine["reason_code"] == "email_verification_rejected"
+    assert "target" in quarantine["detail"]
     assert table_count(harness.engine, submissions) == 0
     assert table_count(harness.engine, email_verifications) == 0
     assert only_row(harness.engine, email_verification_challenges)["consumed_at"] is None

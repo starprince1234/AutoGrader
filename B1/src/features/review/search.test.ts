@@ -41,9 +41,9 @@ describe("复核工作区的 URL 状态", () => {
     });
   });
 
-  it("原因码只接受契约 enum（词表之外的取值不成为筛选）", () => {
-    expect(parseReviewSearch({ reason_code: "archive_bomb" }).reason_code).toBe("archive_bomb");
-    expect(parseReviewSearch({ reason_code: "not_a_reason" }).reason_code).toBeUndefined();
+  it("原因码筛选已移除：旧链接里的 reason_code 直接丢弃", () => {
+    expect(parseReviewSearch({ reason_code: "archive_bomb" })).toEqual({});
+    expect(parseReviewSearch({ reason_code: "not_a_reason" })).toEqual({});
   });
 
   it("resolved 的 URL 三态映射到请求语义", () => {
@@ -67,14 +67,12 @@ describe("复核工作区的 URL 状态", () => {
       sectionId: UUID_B,
       resolved: false,
       held: false,
-      reasonCode: "ambiguous_match",
     });
     expect(next).toEqual({
       course_id: UUID_A,
       section_id: UUID_B,
       resolved: "false",
       held: "false",
-      reason_code: "ambiguous_match",
     });
     expect(next.cursor).toBeUndefined();
   });
@@ -85,7 +83,6 @@ describe("复核工作区的 URL 状态", () => {
       sectionId: null,
       resolved: null,
       held: null,
-      reasonCode: null,
     });
     expect(next).toEqual({ resolved: "all" });
   });

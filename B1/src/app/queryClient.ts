@@ -114,7 +114,6 @@ export const queryKeys = {
       courseId: string | null;
       sectionId: string | null;
       resolved: boolean | null;
-      reasonCode: string | null;
       cursor: string | null;
     },
   ) => ["review-quarantines", identity, filter] as const,

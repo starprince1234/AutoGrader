@@ -228,11 +228,29 @@ describe("P13-A 邮件提交标签", () => {
     expect(request?.url.searchParams.get("course_id")).toBe(UUID_A);
     expect(request?.url.searchParams.get("section_id")).toBe(UUID_B);
     expect(request?.url.searchParams.get("limit")).toBe("50");
-    // 列表主列只说"提交失败"，不把 19 个原因码铺成一张表（原因在详情里用一句话解释）。
+    // 列表主列只说"提交失败"，不把内部原因码铺成一张表；原因筛选也整块移除。
     expect(
       within(screen.getByTestId("review-mail-table")).getAllByText("提交失败").length,
     ).toBeGreaterThan(0);
     expect(within(screen.getByTestId("review-mail-table")).queryByText(/未唯一匹配/)).toBeNull();
+    expect(screen.queryByTestId("review-mail-reason")).toBeNull();
+    expect(screen.queryByText("全部原因")).toBeNull();
+  });
+
+  it("老师未选课程时默认查有权限的全部课程，而不是只查第一门", async () => {
+    stub = installFetchStub(
+      routesFor({ rows: [intakeQuarantineView({ intake_quarantine_id: UUID_C })] }),
+    );
+    await signIn("teacher1", "pw");
+    renderWithProviders(<Harness initial={{}} />);
+
+    const course = await screen.findByTestId("review-mail-course");
+    // 「全部课程」不再只对管理员开放：staff 也需要看到自己所有课程里的隔离邮件。
+    expect(within(course).getByRole("option", { name: "全部课程" })).toBeInTheDocument();
+    await screen.findByTestId("review-mail-table");
+    const request = stub!.requests.find((item) => item.url.pathname === QUARANTINES);
+    expect(request).toBeDefined();
+    expect(request?.url.searchParams.get("course_id")).toBeNull();
   });
 
   it("403 显示权限说明而不是空列表", async () => {
@@ -276,7 +294,9 @@ describe("P13-A 邮件提交标签", () => {
     await user.click(await screen.findByTestId(`review-mail-detail-${UUID_C}`));
     const drawer = await screen.findByTestId("review-mail-detail-drawer");
     expect(within(drawer).getByText(/submissions@example\.edu/)).toBeInTheDocument();
-    expect(within(drawer).getByText(/发件邮箱对应不止一个学生/)).toBeInTheDocument();
+    // 原因码与它的解释都不再出现在页面上（复核只需要知道"这条能不能处理"）。
+    expect(within(drawer).queryByText(/发件邮箱对应不止一个学生/)).toBeNull();
+    expect(within(drawer).queryByText(/原因/)).toBeNull();
     expect(within(drawer).queryByText(/Message-ID/)).toBeNull();
     expect(within(drawer).queryByText(/UID/)).toBeNull();
     const before = stub!.requests.length;
@@ -298,7 +318,7 @@ describe("P13-A 邮件提交标签", () => {
     expect(screen.queryByTestId(`review-mail-resolve-${UUID_C}`)).toBeNull();
     expect(screen.getByTestId(`review-mail-dismiss-${UUID_C}`)).toBeInTheDocument();
     expect(screen.getByTestId(`review-mail-hold-${UUID_C}`)).toBeInTheDocument();
-    // 列表只写"提交失败"；为什么失败留到详情里用一句话解释。
+    // 列表只写"提交失败"，不展示原因码，也不提供必然 422 的按钮。
     expect(screen.getByTestId(`review-mail-detail-${UUID_C}`)).toBeInTheDocument();
   });
 

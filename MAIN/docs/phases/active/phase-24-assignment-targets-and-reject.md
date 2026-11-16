@@ -147,7 +147,9 @@
    **已完成**(契约随本批并入 `0.38.0`)。
 4. **B2 reject + 通知**:迁移 `20261107_0023`(`sender` 列 + 放宽 decision/audit CHECK 容纳
    `rejected`)、`IntakeQuarantineRejection` 响应、SMTP 失败通知与测试。**已完成**(B2 路由测试里
-   的已知缺口随之清空)。三条提交路径的目标求交**仍未做**,留待下一批。
+   的已知缺口随之清空)。
+   **三条提交路径的目标求交已完成**:`AssignmentAudience.admits()` 两轴相交,网页提交/建码/邮件
+   入库共用同一判定(不在目标里:网页与建码 403、邮件可解释隔离、人工补交 422)。
 5. **B1**:复核页「打回」按钮、确认/备注与 `queued|unavailable` 提示。**已完成**;
    composer 的课序多选/指定学生**未做**。
 6. **验收矩阵**(远端 CI + 隔离 Linux / 真实 PostgreSQL):
@@ -188,7 +190,7 @@
 1. **B2 求交**:网页提交、邮件建码、邮件入库三条路径共用同一个
    `audience ∩ B4 enrollment` 判定(课序 ⊆ `section_ids`,学生 ⊆ `student_ids`,
    两者皆空 = 全课程);落点在 `_require_assignment()` 之后的准入分支与
-   `email_verification` 建码处。**未做**(打回已单独做完,见 §3 第 4 条)。
+   `email_verification` 建码处。**已完成**(`AssignmentAudience.admits()`,打回见 §3 第 4 条)。
 2. **B1 composer 目标选择**:课序多选 + 指定学生(学生限定在所选课序);
    `AssignmentDetailPage` 展示目标;测试。**未做**(复核页的「打回」已完成)。
 3. **验收矩阵**(见 §3.6):全部**未执行**——本机无 `uv`/PostgreSQL/nsjail,
