@@ -474,6 +474,19 @@ def list_assignment_versions(
         return result, has_more
 
 
+def get_assignment_targets(
+    database: Database, *, assignment_id: uuid.UUID
+) -> tuple[tuple[uuid.UUID, ...], tuple[uuid.UUID, ...]]:
+    """该作业的目标课序与指定学生（v0.38.0，迁移 0012）。
+
+    空元组 = 全课程 / 目标课序全体；历史作业（从未选过目标）天然就是空元组，
+    因此不需要回填，也不能据此猜测归属。读取只按 assignment_id，不校验调用者——
+    授权由调用方（internal endpoint 的 serviceToken 与 public 读取路径）各自完成。
+    """
+    with database.protected_session() as session:
+        return QuestionBankRepository(session).assignment_targets(assignment_id)
+
+
 # --------------------------------------------------------------------------
 # notification hand-off
 # --------------------------------------------------------------------------
