@@ -28,10 +28,10 @@ import type { QuestionVersionRow } from "../questions/useQuestions";
  * 2. 附件映射：第 N 题 → `N.txt`（1 基题号，作业顺序）；附件由学生在自己的邮箱客户端添加。
  * 3. 收件邮箱：核验码签发响应带 `mailbox_address`（部署配置；未声明为 null），面板显示并支持复制，
  *    否则学生无法在平台内得知该发往哪里。
- * 4. 申请下方给一句结果提示：成功绿色「提交成功」，失败红色「提交失败：<短原因>」，
- *    pending 灰色；详细核验逻辑不在界面上铺开。
- * 5. 「我的邮件提交记录」：**一次申请核验码 = 一条记录**（服务端保存），显示申请时间、
- *    等待/成功/失败原因/已过期；关掉面板或刷新页面后仍能回看，工作区顶部也常驻最近一条状态。
+ * 4. 申请下方给一句结果提示：成功绿色「提交成功」，失败红色「提交失败」，pending 灰色；
+ *    学生端**不展示失败原因**（原因码留给教师复核），页面只回答"交上了没有"。
+ * 5. 「我的邮件提交记录」：**一次申请核验码 = 一条记录**（服务端保存），显示申请时间与
+ *    等待/成功/失败；关掉面板或刷新页面后仍能回看，工作区顶部也常驻最近一条状态。
  *
  * 状态轮询只在 `pending` 时进行；`received` 后按 `submissions[]` 提供逐题结果入口，
  * 并通知调用方刷新每题状态（成绩行是唯一权威状态来源）。
@@ -65,7 +65,7 @@ function SubmitHint({ status }: { status: EmailVerificationChallengeStatus }) {
       data-testid={testId}
       role={tone === "bad" ? "alert" : "status"}
     >
-      {emailHintText(status.state, status.reason_code)}
+      {emailHintText(status.state)}
     </p>
   );
 }
@@ -93,7 +93,7 @@ function EmailSubmissionRecordRow({
           className={`email-submit-hint email-submit-hint--${tone}`}
           data-testid={`email-record-state-${record.challenge_id}`}
         >
-          {emailHintText(record.state, record.reason_code)}
+          {emailHintText(record.state)}
         </span>
       </div>
       {record.submissions.length > 0 ? (

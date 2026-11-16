@@ -585,7 +585,7 @@ describe("学生作业工作区（CHG-0032）", () => {
     expect(screen.getByTestId("workspace-email-entry")).toBeInTheDocument();
   });
 
-  it("邮件核验被拒绝时显示红色失败提示与短原因（身份不符）", async () => {
+  it("邮件核验被拒绝时只显示「提交失败」，不把原因写到页面上", async () => {
     await openWorkspace({
       challengeStatus: () =>
         jsonResponse(
@@ -600,11 +600,11 @@ describe("学生作业工作区（CHG-0032）", () => {
     await user.click(await screen.findByTestId("email-issue-code"));
 
     expect(await screen.findByTestId("email-submit-failure")).toHaveTextContent(
-      "提交失败：正文信息与账号不符",
+      /^提交失败$/,
     );
   });
 
-  it("核验码过期时显示红色失败提示", async () => {
+  it("核验码过期时同样只写「提交失败」", async () => {
     await openWorkspace({
       challengeStatus: () =>
         jsonResponse(emailVerificationChallengeStatus({ state: "expired" })),
@@ -614,7 +614,7 @@ describe("学生作业工作区（CHG-0032）", () => {
     await user.click(await screen.findByTestId("email-issue-code"));
 
     expect(await screen.findByTestId("email-submit-failure")).toHaveTextContent(
-      "已过期：没有收到带此核验码的邮件",
+      /^提交失败$/,
     );
   });
 
@@ -637,9 +637,9 @@ describe("学生作业工作区（CHG-0032）", () => {
       );
     await openWorkspace({ emailRecords });
 
-    // 不打开面板也能在工作区顶部看到最近一次的结果与原因。
+    // 不打开面板也能在工作区顶部看到最近一次的结果；成功/失败之外不写原因。
     expect(await screen.findByTestId("workspace-email-status")).toHaveTextContent(
-      "提交失败：正文信息与账号不符",
+      /提交失败/,
     );
 
     const user = userEvent.setup();
@@ -648,10 +648,9 @@ describe("学生作业工作区（CHG-0032）", () => {
     const records = await within(panel).findByTestId("email-submission-records");
     expect(
       within(records).getByTestId(`email-record-state-${CHALLENGE}`),
-    ).toHaveTextContent("提交失败：正文信息与账号不符");
-    expect(
-      within(records).getByText(/已过期：没有收到带此核验码的邮件/),
-    ).toBeInTheDocument();
+    ).toHaveTextContent(/^提交失败$/);
+    // 被拒与过期在记录列表里都是同一条「提交失败」。
+    expect(within(records).getAllByText(/^提交失败$/)).toHaveLength(2);
     expect(within(records).getAllByText(/申请时间/)).toHaveLength(2);
   });
 

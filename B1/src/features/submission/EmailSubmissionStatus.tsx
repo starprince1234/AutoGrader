@@ -18,7 +18,7 @@ export function EmailSubmissionStatus({ assignmentId }: { assignmentId: string }
       className={`email-submit-hint email-submit-hint--${tone} workspace-email-status`}
       data-testid="workspace-email-status"
     >
-      {t("submit.email.statusPrefix")}：{emailHintText(latest.state, latest.reason_code)}
+      {t("submit.email.statusPrefix")}：{emailHintText(latest.state)}
     </span>
   );
 }

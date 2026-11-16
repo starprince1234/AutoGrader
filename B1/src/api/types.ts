@@ -400,9 +400,6 @@ export type EmailVerificationChallengeRequest =
 export type EmailVerificationChallengeStatus =
   B2Schemas["EmailVerificationChallengeStatus"];
 export type EmailVerificationState = EmailVerificationChallengeStatus["state"];
-export type EmailVerificationReasonCode = NonNullable<
-  EmailVerificationChallengeStatus["reason_code"]
->;
 export type EmailVerifiedSubmission = NonNullable<
   EmailVerificationChallengeStatus["submissions"]
 >[number];
