@@ -825,6 +825,11 @@ class IntakeQuarantineService:
         audience = self._load_audience(target)
         # 与网页/邮件入口同口径：这一行的课程/课序必须与 B4 的**当前**归属一致。
         authoritative_section = self._authoritative_section(target)
+        # 人工补交也不能绕开作业目标：点名的学生必须真的在目标里（422，可解释）。
+        if not audience.admits(target.student_id, authoritative_section):
+            raise QuarantineTargetMismatch(
+                "the chosen student is not a target of this assignment"
+            )
 
         try:
             raw = self._email.fetch_raw(uidvalidity=uidvalidity, uid=uid)

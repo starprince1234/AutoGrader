@@ -87,6 +87,24 @@ class AssignmentAudience:
             return self.question_version_ids[ordinal - 1]
         return None
 
+    def admits(self, student_id: object, section_id: object) -> bool:
+        """作业的显式目标是否包含这名学生（两轴**相交**，皆空 = 全课程）。
+
+        这是 B2 侧唯一的准入规则：``section_ids`` 非空时学生的**当前**课序必须在里面，
+        ``student_ids`` 非空时学生本人必须在里面，两轴同时生效（交集，不是并集）。
+        空元组表示"这一轴不筛"——历史作业与课程级作业就是两个空元组，因此不需要回填。
+
+        学生的当前课序由 B4 的权威授权给出（``section_id`` 是服务端事实），不是请求或邮件里
+        声称的值；``False`` 时调用方按"不在目标里"处理（网页/建码 403、邮件隔离、人工补交 422），
+        绝不把它折成"作业不存在"。
+        """
+        student = _canonical(student_id)
+        if not student:
+            return False
+        if self.student_ids and student not in self.student_ids:
+            return False
+        return not (self.section_ids and _canonical(section_id) not in self.section_ids)
+
 
 class AssignmentDirectory(Protocol):
     """Port: assignment lookup for admission decisions."""

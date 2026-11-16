@@ -70,6 +70,8 @@ class _AssignmentDirectory:
         question_version_id: str = "",
         question_version_ids: tuple[str, ...] | None = None,
         status: str = "open",
+        section_ids: tuple[str, ...] = (),
+        student_ids: tuple[str, ...] = (),
     ) -> None:
         questions = (
             question_version_ids
@@ -82,6 +84,8 @@ class _AssignmentDirectory:
             title="作业",
             status=status,
             question_version_ids=tuple(str(uuid.UUID(item)) for item in questions),
+            section_ids=tuple(str(uuid.UUID(item)) for item in section_ids),
+            student_ids=tuple(str(uuid.UUID(item)) for item in student_ids),
         )
 
     def get(self, assignment_id: str) -> AssignmentAudience | None:
@@ -1002,6 +1006,87 @@ def test_any_section_of_the_course_may_submit(
     assert _DIRECTORY.audiences[assignment].question_version_ids == (
         str(uuid.UUID(question_version_id)),
     )
+
+
+def test_student_outside_the_assignment_target_is_403(
+    client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
+) -> None:
+    """作业只点名了别的学生：本人不在目标里 → 403，一条提交都不写。"""
+    _, course_id, _section, question_version_id = student
+    assignment = str(uuid.uuid4())
+    payload = _envelope(student, assignment_id=assignment)
+    assert _DIRECTORY is not None
+    _DIRECTORY.register(
+        assignment,
+        course_id=course_id,
+        question_version_id=question_version_id,
+        student_ids=(str(uuid.uuid4()),),
+    )
+    response = _rejected(client, signer, student, payload)
+    assert response.status_code == 403, response.text
+    assert _counts(engine) == (0, 0, 0, 0)
+
+
+def test_section_outside_the_assignment_target_is_403(
+    client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
+) -> None:
+    """作业只发给**别的课序**：本人当前课序不在目标里 → 403。"""
+    _, course_id, _section, question_version_id = student
+    assignment = str(uuid.uuid4())
+    payload = _envelope(student, assignment_id=assignment)
+    assert _DIRECTORY is not None
+    _DIRECTORY.register(
+        assignment,
+        course_id=course_id,
+        question_version_id=question_version_id,
+        section_ids=(str(uuid.uuid4()),),
+    )
+    response = _rejected(client, signer, student, payload)
+    assert response.status_code == 403, response.text
+    assert _counts(engine) == (0, 0, 0, 0)
+
+
+def test_target_axes_intersect_rather_than_union(
+    client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
+) -> None:
+    """课序在目标里、但点名的是别人 → 仍然 403：两轴是**交集**，不是并集。"""
+    _, course_id, section_id, question_version_id = student
+    assignment = str(uuid.uuid4())
+    payload = _envelope(student, assignment_id=assignment)
+    assert _DIRECTORY is not None
+    _DIRECTORY.register(
+        assignment,
+        course_id=course_id,
+        question_version_id=question_version_id,
+        section_ids=(section_id,),
+        student_ids=(str(uuid.uuid4()),),
+    )
+    response = _rejected(client, signer, student, payload)
+    assert response.status_code == 403, response.text
+    assert _counts(engine) == (0, 0, 0, 0)
+
+
+def test_student_named_in_the_target_may_submit(
+    client: TestClient, engine: Engine, signer: _Signer, student: tuple[str, str, str, str]
+) -> None:
+    """点名到本人（且课序不设限）→ 202，提交行归属到该作业。"""
+    user_id, course_id, _section, question_version_id = student
+    assignment = str(uuid.uuid4())
+    payload = _envelope(student, assignment_id=assignment)
+    assert _DIRECTORY is not None
+    _DIRECTORY.register(
+        assignment,
+        course_id=course_id,
+        question_version_id=question_version_id,
+        student_ids=(user_id,),
+    )
+    response = client.post(ENDPOINT, json=payload, headers=_auth(_student_token(signer, student)))
+    assert response.status_code == 202, response.text
+    with engine.connect() as connection:
+        stored = connection.execute(
+            sa.select(submissions.c.assignment_id, submissions.c.student_id)
+        ).fetchall()
+    assert [(str(row[0]), str(row[1])) for row in stored] == [(assignment, user_id)]
 
 
 def test_student_not_currently_enrolled_is_403(

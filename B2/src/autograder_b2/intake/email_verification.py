@@ -393,6 +393,11 @@ class EmailVerificationService:
         audience = self._require_audience(canonical_assignment)
         if audience.course_id != canonical_course:
             raise AuthorizationError("the assignment belongs to another course")
+        # 作业目标：不在目标里的学生不能拿到核验码（与网页提交同一口径；管理员豁免）。
+        if not principal.is_admin and not audience.admits(
+            principal.user_id, authoritative_section
+        ):
+            raise AuthorizationError("the student is not a target of this assignment")
 
         now = self._now()
         expires_at = now + self._challenge_ttl
