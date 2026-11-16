@@ -397,3 +397,15 @@
 .email-submit-steps li + li {
   margin-top: 4px;
 }
+
+/* 工作区顶部常驻的最近一次邮件提交状态：与「邮件提交」按钮同一行。 */
+.workspace-email-status {
+  align-self: center;
+  margin-right: 10px;
+}
+
+/* 邮件提交记录：一次申请一个块，块之间用细分隔线。 */
+.email-record + .email-record {
+  border-top: 1px solid var(--color-border);
+  padding-top: 8px;
+}

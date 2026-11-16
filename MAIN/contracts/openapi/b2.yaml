@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AutoGrader B2 Evaluation API
-  version: 0.36.0
+  version: 0.37.0
   description: |
     Submission intake (API and email), content-addressed storage, static legality,
     security confirmation, sandboxed dynamic execution, explainable and replayable
@@ -1055,6 +1055,30 @@ paths:
         '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
 
   /api/v1/email-verification/challenges:
+    get:
+      operationId: listEmailVerificationChallenges
+      summary: List the caller's own e-mail submission records for one assignment
+      description: |
+        Every issued code is one **e-mail submission record**: applying for a code is what
+        creates the record, and the code (not the sender address) is the identity proof. A record
+        reports `pending` until a message carrying that code is read, `received` once the mapped
+        per-question submissions exist, `rejected` with a stable reason when the message was
+        refused, and `expired` when no code-bearing message arrived before `expires_at`.
+
+        Records are the caller's own rows only. The response never contains the code itself (the
+        database stores only its SHA-256), the sender address, or any message body.
+      tags: [submissions]
+      parameters:
+        - {name: assignment_id, in: query, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+      responses:
+        '200':
+          description: The caller's records for that assignment, newest first.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EmailVerificationChallengeRecordPage'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+        '503': {$ref: './common.yaml#/components/responses/ServiceUnavailable'}
     post:
       operationId: createEmailVerificationChallenge
       summary: Issue a one-time e-mail verification code for an assignment (student)
@@ -1063,11 +1087,11 @@ paths:
         student is authenticated; the code is returned **once**, bound to `(student, course,
         section, assignment)`, stored only as a SHA-256 digest, and expires after 30 minutes.
 
-        Why a code: a `From` header is forgeable, so matching on the sender address alone would
-        let anyone submit mail as another account. The code travels only through this
-        authenticated response and must appear in the message; the receiving intake then
-        requires the sending account to be the challenge owner. That is what makes the link
-        between a real message and a verified account email a fact rather than a guess.
+        The code is the identity proof: the challenge was issued to an authenticated student,
+        so a message carrying that code is attributed to that student. The sending address is
+        not required to be the account address (it is recorded for the e-mail-delivery
+        evaluation only), which keeps the flow usable from any mailbox without weakening the
+        one-time-code property.
 
         The message may carry **one `.txt` answer file per question**; the file name is the
         question's 1-based position in the assignment (`1.txt`, `2.txt`, ...). No fixed
@@ -1906,7 +1930,7 @@ components:
     EmailVerificationChallengeStatus:
       type: object
       description: |
-        Student-visible state of the ownership proof. `pending` means no message carrying this
+        Student-visible state of the one-time code. `pending` means no message carrying this
         code has been read yet; `received` means a real IMAP message was bound and the mapped
         per-question submissions were created; `rejected` carries a stable reason code; `expired`
         means the code can no longer bind a message. The response never echoes the code, the
@@ -1956,6 +1980,57 @@ components:
         assignment_id:
           anyOf: [{$ref: './common.yaml#/components/schemas/Uuid'}, {type: "null"}]
           description: "The assignment this challenge belongs to; null only for historical challenges issued before CHG-0032."
+      additionalProperties: false
+
+    EmailVerificationChallengeRecord:
+      type: object
+      description: |
+        One issued code = one e-mail submission record. The code itself is never returned here
+        (only its SHA-256 exists server-side). The record tells the student what happened to that
+        attempt: when it was requested, whether a message carrying the code was received, and if
+        the message failed, the stable reason code.
+      required: [challenge_id, assignment_id, state, created_at, expires_at, verified_at, reason_code, submissions]
+      properties:
+        challenge_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        assignment_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        state: {type: string, enum: [pending, received, rejected, expired]}
+        reason_code:
+          type: [string, "null"]
+          enum:
+            - subject_mismatch
+            - attachment_missing
+            - email_sender_mismatch
+            - email_verification_rejected
+            - email_verification_expired
+            - email_body_missing_field
+            - email_body_mismatch
+            - attachment_mapping_invalid
+            - intake_unavailable
+            - null
+          description: "Stable machine code; null unless state is rejected."
+        created_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+        expires_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+        verified_at:
+          anyOf: [{$ref: './common.yaml#/components/schemas/Timestamp'}, {type: "null"}]
+        submissions:
+          type: array
+          description: "The submissions a received message created, one per mapped question."
+          items:
+            type: object
+            required: [question_version_id, submission_id]
+            properties:
+              question_version_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+              submission_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+            additionalProperties: false
+      additionalProperties: false
+
+    EmailVerificationChallengeRecordPage:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/EmailVerificationChallengeRecord'}
       additionalProperties: false
 
     DraftAiAssistantRequest:

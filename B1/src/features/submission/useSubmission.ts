@@ -3,6 +3,7 @@ import { apiRequest } from "../../api/client";
 import type {
   DraftAiAssistantRequest,
   DraftAiAssistantResponse,
+  EmailVerificationChallengeRecordPage,
   SubmissionAccepted,
   SubmissionView,
 } from "../../api/types";
@@ -79,6 +80,31 @@ export function useSubmissionView(submissionId: string | null) {
       apiRequest<SubmissionView>(`/api/v1/submissions/${encodeURIComponent(submissionId as string)}`),
     // 提交视图会随评测推进而变化；这里只在打开页面时读一次，后续进度由 SSE 提供。
     staleTime: 0,
+  });
+}
+
+/**
+ * 学生自己的邮件提交记录（一次申请核验码 = 一条记录）。
+ *
+ * 记录由服务端保存，因此关掉面板、刷新页面后仍能看到“等待收件 / 提交成功 / 失败原因 /
+ * 已过期”。只要有 `pending` 记录就每 5 秒刷新，直到收到或过期。
+ */
+export function useEmailSubmissionRecords(assignmentId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.emailVerificationRecords(assignmentId ?? "none"),
+    enabled: assignmentId !== null,
+    queryFn: async (): Promise<EmailVerificationChallengeRecordPage> =>
+      apiRequest<EmailVerificationChallengeRecordPage>(
+        `/api/v1/email-verification/challenges?assignment_id=${encodeURIComponent(
+          assignmentId as string,
+        )}`,
+      ),
+    refetchInterval: (query) =>
+      ((query.state.data as EmailVerificationChallengeRecordPage | undefined)?.items ?? []).some(
+        (item) => item.state === "pending",
+      )
+        ? 5000
+        : false,
   });
 }
 

@@ -25,6 +25,8 @@ import {
   assignmentPublic,
   currentUser,
   emailVerificationChallenge,
+  emailVerificationChallengeRecord,
+  emailVerificationChallengeRecordPage,
   emailVerificationChallengeStatus,
   evaluationCommentary,
   gradePage,
@@ -85,6 +87,7 @@ function baseRoutes(options: {
   submit?: () => Response;
   events?: () => Response;
   challengeStatus?: () => Response;
+  emailRecords?: () => Response;
   submissionFiles?: Record<string, string>;
   aiAssistant?: () => Response;
   /** 覆盖 `GET /me` 的 memberships（默认本人在这门课里有一个有效选课）。 */
@@ -199,6 +202,13 @@ function baseRoutes(options: {
       method: "POST",
       path: "/api/v1/email-verification/challenges",
       respond: () => jsonResponse(emailVerificationChallenge({ challenge_id: CHALLENGE }), 201),
+    },
+    {
+      method: "GET",
+      path: "/api/v1/email-verification/challenges",
+      respond:
+        options.emailRecords ??
+        (() => jsonResponse(emailVerificationChallengeRecordPage([]))),
     },
     {
       path: `/api/v1/email-verification/challenges/${CHALLENGE}`,
@@ -543,7 +553,9 @@ describe("学生作业工作区（CHG-0032）", () => {
     expect(within(panel).getByTestId("email-copy-address")).toBeInTheDocument();
 
     const issueRequest = stub?.requests.find(
-      (request) => request.url.pathname === "/api/v1/email-verification/challenges",
+      (request) =>
+        request.method === "POST" &&
+        request.url.pathname === "/api/v1/email-verification/challenges",
     );
     expect(issueRequest?.body).toEqual({
       course_id: COURSE,
@@ -602,8 +614,45 @@ describe("学生作业工作区（CHG-0032）", () => {
     await user.click(await screen.findByTestId("email-issue-code"));
 
     expect(await screen.findByTestId("email-submit-failure")).toHaveTextContent(
-      "提交失败：核验码已过期",
+      "已过期：没有收到带此核验码的邮件",
     );
+  });
+
+  it("邮件提交记录：一次申请一条记录，工作区顶部常驻最近一次状态", async () => {
+    const emailRecords = () =>
+      jsonResponse(
+        emailVerificationChallengeRecordPage([
+          emailVerificationChallengeRecord({
+            challenge_id: CHALLENGE,
+            state: "rejected",
+            reason_code: "email_body_mismatch",
+            created_at: "2026-11-16T11:40:00.000Z",
+          }),
+          emailVerificationChallengeRecord({
+            challenge_id: "00000000-0000-4000-8000-0000000000ab",
+            state: "expired",
+            created_at: "2026-11-16T11:10:00.000Z",
+          }),
+        ]),
+      );
+    await openWorkspace({ emailRecords });
+
+    // 不打开面板也能在工作区顶部看到最近一次的结果与原因。
+    expect(await screen.findByTestId("workspace-email-status")).toHaveTextContent(
+      "提交失败：正文信息与账号不符",
+    );
+
+    const user = userEvent.setup();
+    await user.click(await screen.findByTestId("workspace-email-entry"));
+    const panel = await screen.findByTestId("email-submission-panel");
+    const records = await within(panel).findByTestId("email-submission-records");
+    expect(
+      within(records).getByTestId(`email-record-state-${CHALLENGE}`),
+    ).toHaveTextContent("提交失败：正文信息与账号不符");
+    expect(
+      within(records).getByText(/已过期：没有收到带此核验码的邮件/),
+    ).toBeInTheDocument();
+    expect(within(records).getAllByText(/申请时间/)).toHaveLength(2);
   });
 
   it("邮件/历史提交自动回填代码到编辑器，并在右下角呈现 AI 评价", async () => {

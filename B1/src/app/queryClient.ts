@@ -93,6 +93,9 @@ export const queryKeys = {
   /** 邮件核验码挑战状态（轮询）：按 challenge_id 缓存。 */
   emailVerificationChallenge: (challengeId: string) =>
     ["email-verification-challenge", challengeId] as const,
+  /** 学生自己的邮件提交记录：一次申请 = 一条记录（按申请时间倒序）。 */
+  emailVerificationRecords: (assignmentId: string) =>
+    ["email-verification-records", assignmentId] as const,
   evaluationReport: (runId: string, view: string) =>
     ["evaluation-report", runId, view] as const,
   /**

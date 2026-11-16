@@ -332,3 +332,14 @@ B2 侧的四条纪律（每条都有测试，见 [../testing/cases.md](../testin
 **配置**：B4 授权端点复用现有 `B2_IDENTITY_URL` / `B2_IDENTITY_AUTHORIZATION`（Bearer 服务令牌，
 与邮件身份目录同一份配置），**不新增凭据**。部署必须保证 API/worker 进程也能拿到这两项
 （不只是 mail 进程）；缺失时上述入口按 503 语义拒绝。
+
+## 邮件提交记录与核验码身份（契约 0.37.0）
+
+- **核验码即身份**：`POST /api/v1/email-verification/challenges` 签发的码对应学生；收件端只要求
+  码未消费/未过期，发件地址不参与归属（仅作为 `email_delivery` 评测的 sender 事实）。
+- **每次申请 = 一条提交记录**：新增 `GET /api/v1/email-verification/challenges?assignment_id=`
+  （本人）。记录含 `pending / received / rejected(reason) / expired`、申请/过期/确认时间与按题提交；
+  关掉面板或刷新页面后仍可回看。
+- **失败可见**：正文/映射失败直接写回挑战（学生记录可见）；附件闸门/结构失败只要能由正文核验码
+  唯一定位挑战，就写回通用 `email_verification_rejected` 并让隔离记录带上挑战的课程/课序
+  （教师复核可见）。没有码或码无法定位的邮件仍按无关联隔离处理。

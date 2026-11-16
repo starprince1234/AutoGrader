@@ -407,6 +407,13 @@ export type EmailVerifiedSubmission = NonNullable<
   EmailVerificationChallengeStatus["submissions"]
 >[number];
 
+/** 一条邮件提交记录：一次核验码申请 = 一条记录（`listEmailVerificationChallenges`）。 */
+export type EmailVerificationChallengeRecord =
+  B2Schemas["EmailVerificationChallengeRecord"];
+export type EmailVerificationChallengeRecordPage =
+  B2Schemas["EmailVerificationChallengeRecordPage"];
+export type EmailVerificationRecordState = EmailVerificationChallengeRecord["state"];
+
 /** 状态枚举直接取自契约，避免在组件里手写字符串字面量。 */
 export type SubmissionState = GradeRow["state"];
 export type EvaluationStage = EvaluationStreamFrame["stage"];

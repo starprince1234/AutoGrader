@@ -12,6 +12,19 @@
 
 ---
 
+## 0.37.0 — 核验码即学生身份：邮件提交记录列表
+
+- **类型**：最小新增（一个新 GET 路径 + 两个响应 schema；无删除、无回填）
+- **状态**：有效
+- **背景**：邮件提交此前要求发件地址等于账号绑定邮箱；发错邮箱的邮件会被静默拒绝（学生挑战一直 `pending`、教师复核也看不到未关联行），形成黑盒。用户要求改为“核验码对应学生”。
+- **变更**：
+  - 机制（实现层）：收件端只认正文里的核验码，码对应的挑战所有者就是学生；发件地址不再参与归属，仅作为 `email_delivery` 评测的 sender 事实记录。
+  - `openapi/b2.yaml` 新增 `GET /api/v1/email-verification/challenges?assignment_id=`（`listEmailVerificationChallenges`）：每次申请核验码即一条邮件提交记录，返回 `pending/received/rejected(reason)/expired`、申请/过期/确认时间与按题提交。
+  - 新增 `EmailVerificationChallengeRecord` / `EmailVerificationChallengeRecordPage`。
+- **动机**：学生能看见每一次邮件提交的结果与失败原因：申请即记录，收到后继续判定成功或失败原因，未收到则到期显示过期。
+
+---
+
 ## 0.36.0 — 邮件核验码签发响应暴露收件邮箱地址
 
 - **类型**：最小新增（一个必填响应字段；无删除、无回填）

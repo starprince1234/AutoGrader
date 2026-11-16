@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { apiRequest } from "../../api/client";
 import { describeApiError, isApiError } from "../../api/problem";
@@ -7,14 +7,15 @@ import type {
   AssignmentPublic,
   CurrentUser,
   EmailVerificationChallenge,
+  EmailVerificationChallengeRecord,
   EmailVerificationChallengeStatus,
-  EmailVerificationReasonCode,
 } from "../../api/types";
 import { queryKeys } from "../../app/queryClient";
 import { t } from "../../i18n";
 import { Banner, InlineLoader, Panel } from "../../ui/components";
 import { formatDateTime } from "../../ui/format";
-import { useSubmissionView } from "./useSubmission";
+import { useEmailSubmissionRecords, useSubmissionView } from "./useSubmission";
+import { emailHintText, emailHintTone } from "./emailLabels";
 import type { QuestionVersionRow } from "../questions/useQuestions";
 
 /**
@@ -29,6 +30,8 @@ import type { QuestionVersionRow } from "../questions/useQuestions";
  *    否则学生无法在平台内得知该发往哪里。
  * 4. 申请下方给一句结果提示：成功绿色「提交成功」，失败红色「提交失败：<短原因>」，
  *    pending 灰色；详细核验逻辑不在界面上铺开。
+ * 5. 「我的邮件提交记录」：**一次申请核验码 = 一条记录**（服务端保存），显示申请时间、
+ *    等待/成功/失败原因/已过期；关掉面板或刷新页面后仍能回看，工作区顶部也常驻最近一条状态。
  *
  * 状态轮询只在 `pending` 时进行；`received` 后按 `submissions[]` 提供逐题结果入口，
  * 并通知调用方刷新每题状态（成绩行是唯一权威状态来源）。
@@ -47,60 +50,73 @@ async function copyText(text: string): Promise<CopyState> {
   }
 }
 
-const REASON_KEYS = {
-  subject_mismatch: "submit.email.reason.subject_mismatch",
-  attachment_missing: "submit.email.reason.attachment_missing",
-  email_sender_mismatch: "submit.email.reason.email_sender_mismatch",
-  email_verification_rejected: "submit.email.reason.email_verification_rejected",
-  email_verification_expired: "submit.email.reason.email_verification_expired",
-  email_body_missing_field: "submit.email.reason.email_body_missing_field",
-  email_body_mismatch: "submit.email.reason.email_body_mismatch",
-  attachment_mapping_invalid: "submit.email.reason.attachment_mapping_invalid",
-  intake_unavailable: "submit.email.reason.intake_unavailable",
-} as const satisfies Record<EmailVerificationReasonCode, string>;
-
-/**
- * 申请下方的结果提示：成功绿色「提交成功」，失败红色「提交失败：短原因」，等待灰色。
- * 失败只给一句短的，具体核验逻辑不在界面上展开。
- */
+/** 状态短提示：成功绿色、失败红色、等待灰色；文案与记录列表/工作区顶部共用。 */
 function SubmitHint({ status }: { status: EmailVerificationChallengeStatus }) {
-  if (status.state === "received") {
-    return (
-      <p
-        className="email-submit-hint email-submit-hint--ok"
-        data-testid="email-submit-success"
-        role="status"
-      >
-        {t("submit.email.hint.success")}
-      </p>
-    );
-  }
-  if (status.state === "pending") {
-    return (
-      <p
-        className="email-submit-hint email-submit-hint--pending"
-        data-testid="email-submit-pending"
-      >
-        {t("submit.email.hint.pending")}
-      </p>
-    );
-  }
-  const reason =
-    status.state === "expired"
-      ? t("submit.email.hint.expired")
-      : status.reason_code
-        ? t("submit.email.hint.failure", {
-            reason: t(REASON_KEYS[status.reason_code]),
-          })
-        : t("submit.email.hint.failureGeneric");
+  const tone = emailHintTone(status.state);
+  const testId =
+    tone === "ok"
+      ? "email-submit-success"
+      : tone === "pending"
+        ? "email-submit-pending"
+        : "email-submit-failure";
   return (
     <p
-      className="email-submit-hint email-submit-hint--bad"
-      data-testid="email-submit-failure"
-      role="alert"
+      className={`email-submit-hint email-submit-hint--${tone}`}
+      data-testid={testId}
+      role={tone === "bad" ? "alert" : "status"}
     >
-      {reason}
+      {emailHintText(status.state, status.reason_code)}
     </p>
+  );
+}
+
+/** 一条邮件提交记录（一次核验码申请）的状态与逐题提交。 */
+function EmailSubmissionRecordRow({
+  record,
+  questionRows,
+}: {
+  record: EmailVerificationChallengeRecord;
+  questionRows: QuestionVersionRow[];
+}) {
+  const tone = emailHintTone(record.state);
+  return (
+    <div
+      className="email-record"
+      data-testid={`email-record-${record.challenge_id}`}
+    >
+      <div className="inline">
+        <span className="muted">
+          {t("submit.email.recordAppliedAt")}：
+          {formatDateTime(record.created_at, t("common.none"))}
+        </span>
+        <span
+          className={`email-submit-hint email-submit-hint--${tone}`}
+          data-testid={`email-record-state-${record.challenge_id}`}
+        >
+          {emailHintText(record.state, record.reason_code)}
+        </span>
+      </div>
+      {record.submissions.length > 0 ? (
+        <ul>
+          {record.submissions.map((item) => {
+            const row = questionRows.find(
+              (candidate) =>
+                candidate.questionVersionId === item.question_version_id,
+            );
+            return (
+              <EmailSubmissionResult
+                key={item.submission_id}
+                submissionId={item.submission_id}
+                title={t("submit.email.resultLine", {
+                  ordinal: row?.ordinal ?? "?",
+                  title: row?.question?.title ?? item.question_version_id,
+                })}
+              />
+            );
+          })}
+        </ul>
+      ) : null}
+    </div>
   );
 }
 
@@ -169,6 +185,8 @@ export function EmailSubmissionPanel({
   const [challenge, setChallenge] = useState<EmailVerificationChallenge | null>(null);
   const [copyState, setCopyState] = useState<CopyState>("idle");
   const [addressCopy, setAddressCopy] = useState<CopyState>("idle");
+  const queryClient = useQueryClient();
+  const records = useEmailSubmissionRecords(assignment.assignment_id);
   const [overrides, setOverrides] = useState<{
     code?: string;
     section?: string;
@@ -198,6 +216,10 @@ export function EmailSubmissionPanel({
       setCopyState("idle");
       setAddressCopy("idle");
       setOverrides((previous) => ({ ...previous, code: created.code }));
+      // 一次申请 = 一条记录：立刻刷新记录列表，学生能在“我的邮件提交记录”里看到它。
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.emailVerificationRecords(assignment.assignment_id),
+      });
     },
   });
 
@@ -220,6 +242,14 @@ export function EmailSubmissionPanel({
   useEffect(() => {
     if (received) onReceived();
   }, [received, onReceived]);
+
+  // 面板重新打开时挑战状态可能为空，但记录里已有成功项：同样刷新成绩/答案。
+  const recordsReceived = (records.data?.items ?? []).some(
+    (item) => item.state === "received",
+  );
+  useEffect(() => {
+    if (recordsReceived) onReceived();
+  }, [recordsReceived, onReceived]);
 
   const code = overrides.code ?? challenge?.code ?? "";
   const section = overrides.section ?? sectionLabel ?? "";
@@ -482,6 +512,32 @@ export function EmailSubmissionPanel({
             ) : null}
           </div>
         ) : null}
+
+        <Panel title={t("submit.email.recordsTitle")} testId="email-submission-records">
+          {records.isPending ? (
+            <p className="muted">
+              <InlineLoader />
+            </p>
+          ) : records.isError ? (
+            <Banner tone="error" testId="email-records-error">
+              {describeApiError(records.error)}
+            </Banner>
+          ) : (records.data?.items ?? []).length === 0 ? (
+            <p className="muted" data-testid="email-records-empty">
+              {t("submit.email.recordsEmpty")}
+            </p>
+          ) : (
+            <div className="stack">
+              {(records.data?.items ?? []).map((record) => (
+                <EmailSubmissionRecordRow
+                  key={record.challenge_id}
+                  record={record}
+                  questionRows={questionRows}
+                />
+              ))}
+            </div>
+          )}
+        </Panel>
       </div>
     </Panel>
   );

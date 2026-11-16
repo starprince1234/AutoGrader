@@ -799,7 +799,18 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * List the caller's own e-mail submission records for one assignment
+         * @description Every issued code is one **e-mail submission record**: applying for a code is what
+         *     creates the record, and the code (not the sender address) is the identity proof. A record
+         *     reports `pending` until a message carrying that code is read, `received` once the mapped
+         *     per-question submissions exist, `rejected` with a stable reason when the message was
+         *     refused, and `expired` when no code-bearing message arrived before `expires_at`.
+         *
+         *     Records are the caller's own rows only. The response never contains the code itself (the
+         *     database stores only its SHA-256), the sender address, or any message body.
+         */
+        get: operations["listEmailVerificationChallenges"];
         put?: never;
         /**
          * Issue a one-time e-mail verification code for an assignment (student)
@@ -807,11 +818,11 @@ export interface paths {
          *     student is authenticated; the code is returned **once**, bound to `(student, course,
          *     section, assignment)`, stored only as a SHA-256 digest, and expires after 30 minutes.
          *
-         *     Why a code: a `From` header is forgeable, so matching on the sender address alone would
-         *     let anyone submit mail as another account. The code travels only through this
-         *     authenticated response and must appear in the message; the receiving intake then
-         *     requires the sending account to be the challenge owner. That is what makes the link
-         *     between a real message and a verified account email a fact rather than a guess.
+         *     The code is the identity proof: the challenge was issued to an authenticated student,
+         *     so a message carrying that code is attributed to that student. The sending address is
+         *     not required to be the account address (it is recorded for the e-mail-delivery
+         *     evaluation only), which keeps the flow usable from any mailbox without weakening the
+         *     one-time-code property.
          *
          *     The message may carry **one `.txt` answer file per question**; the file name is the
          *     question's 1-based position in the assignment (`1.txt`, `2.txt`, ...). No fixed
@@ -1496,7 +1507,7 @@ export interface components {
             mailbox_address: string | null;
         };
         /**
-         * @description Student-visible state of the ownership proof. `pending` means no message carrying this
+         * @description Student-visible state of the one-time code. `pending` means no message carrying this
          *     code has been read yet; `received` means a real IMAP message was bound and the mapped
          *     per-question submissions were created; `rejected` carries a stable reason code; `expired`
          *     means the code can no longer bind a message. The response never echoes the code, the
@@ -1531,6 +1542,34 @@ export interface components {
             }[];
             /** @description The assignment this challenge belongs to; null only for historical challenges issued before CHG-0032. */
             assignment_id?: components["schemas"]["Uuid"] | null;
+        };
+        /**
+         * @description One issued code = one e-mail submission record. The code itself is never returned here
+         *     (only its SHA-256 exists server-side). The record tells the student what happened to that
+         *     attempt: when it was requested, whether a message carrying the code was received, and if
+         *     the message failed, the stable reason code.
+         */
+        EmailVerificationChallengeRecord: {
+            challenge_id: components["schemas"]["Uuid"];
+            assignment_id: components["schemas"]["Uuid"];
+            /** @enum {string} */
+            state: "pending" | "received" | "rejected" | "expired";
+            /**
+             * @description Stable machine code; null unless state is rejected.
+             * @enum {string|null}
+             */
+            reason_code: "subject_mismatch" | "attachment_missing" | "email_sender_mismatch" | "email_verification_rejected" | "email_verification_expired" | "email_body_missing_field" | "email_body_mismatch" | "attachment_mapping_invalid" | "intake_unavailable" | null;
+            created_at: components["schemas"]["Timestamp"];
+            expires_at: components["schemas"]["Timestamp"];
+            verified_at: components["schemas"]["Timestamp"] | null;
+            /** @description The submissions a received message created, one per mapped question. */
+            submissions: {
+                question_version_id: components["schemas"]["Uuid"];
+                submission_id: components["schemas"]["Uuid"];
+            }[];
+        };
+        EmailVerificationChallengeRecordPage: {
+            items: components["schemas"]["EmailVerificationChallengeRecord"][];
         };
         DraftAiAssistantRequest: {
             assignment_id: components["schemas"]["Uuid"];
@@ -2728,6 +2767,31 @@ export interface operations {
             401: components["responses"]["Unauthorized"];
             403: components["responses"]["Forbidden"];
             422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    listEmailVerificationChallenges: {
+        parameters: {
+            query: {
+                assignment_id: components["schemas"]["Uuid"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The caller's records for that assignment, newest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmailVerificationChallengeRecordPage"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            422: components["responses"]["UnprocessableEntity"];
+            503: components["responses"]["ServiceUnavailable"];
         };
     };
     createEmailVerificationChallenge: {

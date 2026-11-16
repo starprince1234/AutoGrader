@@ -984,10 +984,19 @@ def test_a_non_txt_attachment_is_rejected(harness: Harness) -> None:
     quarantine = only_row(harness.engine, intake_quarantines)
     assert quarantine["reason_code"] == "unsupported_attachment_type"
     assert "only .txt answer files are accepted" in quarantine["detail"]
-    # 附件不合格的邮件不消费挑战（学生改好附件后可用同一码重发）。
+    # 隔离记录带上挑战的课程/课序：教师能在复核里看到这条邮件。
+    assert quarantine["scope_course_id"] == uuid.UUID(COURSE_ID)
+    assert quarantine["scope_section_id"] == uuid.UUID(SECTION_ID)
+    # 附件不合格的邮件不消费挑战（学生改好附件后可用同一码重发），但失败原因要写进记录。
     challenge = only_row(harness.engine, email_verification_challenges)
     assert challenge["consumed_at"] is None
+    assert challenge["last_rejection_code"] == "email_verification_rejected"
     assert table_count(harness.engine, submissions) == 0
+    status = harness.verification.get_challenge_status(
+        student_principal(), issued.challenge_id
+    )
+    assert status.state == "rejected"
+    assert status.reason_code == "email_verification_rejected"
 
 
 def test_an_unknown_question_ordinal_is_quarantined_and_recorded_on_the_challenge(
@@ -1080,32 +1089,46 @@ def test_a_mismatched_assignment_number_is_quarantined(harness: Harness) -> None
     ] == EMAIL_BODY_MISMATCH
 
 
-def test_an_unregistered_sender_cannot_use_the_code(harness: Harness) -> None:
-    issued = issue(harness)
-    pull(harness, [verification_mail(issued.code, sender=UNKNOWN_SENDER)])
-    quarantine = only_row(harness.engine, intake_quarantines)
-    assert quarantine["reason_code"] == "email_verification_rejected"
-    assert table_count(harness.engine, submissions) == 0
-    assert table_count(harness.engine, email_verifications) == 0
-    assert only_row(harness.engine, email_verification_challenges)["consumed_at"] is None
-
-
-def test_a_code_owned_by_another_account_is_rejected_and_leaves_that_challenge_alone(
+def test_an_unregistered_sender_is_accepted_because_the_code_identifies_the_student(
     harness: Harness,
 ) -> None:
-    issued = issue(harness)  # 属于 STUDENT
-    pull(harness, [verification_mail(issued.code, sender=OTHER_SENDER)])
-    quarantine = only_row(harness.engine, intake_quarantines)
-    assert quarantine["reason_code"] == "email_verification_rejected"
-    assert table_count(harness.engine, submissions) == 0
-    challenge = only_row(harness.engine, email_verification_challenges)
-    # 不消费、也不在**别人**的挑战上记拒绝尝试。
-    assert challenge["consumed_at"] is None
-    assert challenge["attempts"] == 0
-    assert challenge["last_rejection_code"] is None
+    """核验码即身份：发件地址未注册也能提交，并归属到申请该码的学生。"""
+    initiated = issue(harness)
+    report, _server = pull(
+        harness, [verification_mail(initiated.code, sender=UNKNOWN_SENDER)]
+    )
+    assert report.count("processed") == 1, report.outcomes
+    assert table_count(harness.engine, intake_quarantines) == 0
+    assert table_count(harness.engine, submissions) == 1
+    verification = only_row(harness.engine, email_verifications)
+    assert str(verification["student_id"]) == STUDENT_ID
+    assert verification["sender"] == UNKNOWN_SENDER
+    assert only_row(harness.engine, email_verification_challenges)["consumed_at"] is not None
+    status = harness.verification.get_challenge_status(
+        student_principal(), initiated.challenge_id
+    )
+    assert status.state == "received"
 
 
-def test_a_different_sender_for_a_bound_scope_is_rejected(harness: Harness) -> None:
+def test_a_code_used_from_another_account_is_attributed_to_the_code_owner(
+    harness: Harness,
+) -> None:
+    initiated = issue(harness)  # 属于 STUDENT
+    report, _server = pull(
+        harness, [verification_mail(initiated.code, sender=OTHER_SENDER)]
+    )
+    assert report.count("processed") == 1, report.outcomes
+    assert table_count(harness.engine, intake_quarantines) == 0
+    assert table_count(harness.engine, submissions) == 1
+    verification = only_row(harness.engine, email_verifications)
+    assert str(verification["student_id"]) == STUDENT_ID
+    assert verification["sender"] == OTHER_SENDER
+    assert only_row(harness.engine, email_verification_challenges)["consumed_at"] is not None
+
+
+def test_a_different_sender_for_a_bound_scope_is_accepted_and_binding_stays_factual(
+    harness: Harness,
+) -> None:
     with harness.engine.begin() as connection:
         connection.execute(
             sa.insert(email_sender_bindings).values(
@@ -1117,25 +1140,15 @@ def test_a_different_sender_for_a_bound_scope_is_rejected(harness: Harness) -> N
                 bound_at=utc_now(),
             )
         )
-    issued = issue(harness)
-    pull(harness, [verification_mail(issued.code)])  # 发件人 SENDER != 已绑定地址
+    initiated = issue(harness)
+    report, _server = pull(harness, [verification_mail(initiated.code)])
 
-    quarantine = only_row(harness.engine, intake_quarantines)
-    assert quarantine["reason_code"] == "email_sender_mismatch"
-    assert table_count(harness.engine, submissions) == 0
-    assert table_count(harness.engine, email_verifications) == 0
-    challenge = only_row(harness.engine, email_verification_challenges)
-    assert challenge["last_rejection_code"] == "email_sender_mismatch"
-    assert challenge["attempts"] == 1
-    assert challenge["consumed_at"] is None
-    # 绑定不被后一封邮件改写。
+    assert report.count("processed") == 1, report.outcomes
+    assert table_count(harness.engine, intake_quarantines) == 0
+    assert table_count(harness.engine, submissions) == 1
+    assert only_row(harness.engine, email_verification_challenges)["consumed_at"] is not None
+    # 绑定只是 email_delivery 的 sender 事实，不参与准入，也不被后一封邮件改写。
     assert only_row(harness.engine, email_sender_bindings)["sender"] == "first@example.edu"
-
-    status = harness.verification.get_challenge_status(
-        student_principal(), issued.challenge_id
-    )
-    assert status.state == "rejected"
-    assert status.reason_code == "email_sender_mismatch"
 
 
 def test_an_expired_challenge_is_quarantined_with_the_expiry_reason(harness: Harness) -> None:
@@ -1517,6 +1530,85 @@ def test_create_challenge_endpoint_maps_assignment_states(
         api_client.post(endpoint, json=_challenge_payload(), headers=_auth(token)).status_code
         == 503
     )
+
+
+def test_list_endpoint_returns_one_record_per_application(
+    api_client: TestClient, harness: Harness
+) -> None:
+    first = issue(harness)
+    harness.clock.advance(timedelta(seconds=1))
+    second = issue(harness)
+    token = harness.signer.token(user_id=STUDENT_ID)
+    endpoint = "/api/v1/email-verification/challenges"
+    response = api_client.get(
+        endpoint,
+        params={"assignment_id": ASSIGNMENT_ID},
+        headers=_auth(token),
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert set(body) == {"items"}
+    assert [item["challenge_id"] for item in body["items"]] == [
+        second.challenge_id,
+        first.challenge_id,
+    ]
+    for record in body["items"]:
+        assert set(record) == {
+            "challenge_id",
+            "assignment_id",
+            "state",
+            "reason_code",
+            "created_at",
+            "expires_at",
+            "verified_at",
+            "submissions",
+        }
+        assert record["assignment_id"] == ASSIGNMENT_ID
+        assert record["state"] == "pending"
+        assert record["reason_code"] is None
+        assert record["verified_at"] is None
+        assert record["submissions"] == []
+        assert record["created_at"].endswith("Z")
+
+    # 列表是“调用者自己的记录”：别的账号查同一作业得到空列表。
+    other = harness.signer.token(user_id=OTHER_STUDENT_ID)
+    other_body = api_client.get(
+        endpoint,
+        params={"assignment_id": ASSIGNMENT_ID},
+        headers=_auth(other),
+    ).json()
+    assert other_body["items"] == []
+
+    # 未认证 401；缺 assignment_id / 非 UUID 422。
+    assert api_client.get(endpoint).status_code == 401
+    assert api_client.get(endpoint, headers=_auth(token)).status_code == 422
+    assert (
+        api_client.get(
+            endpoint,
+            params={"assignment_id": "not-a-uuid"},
+            headers=_auth(token),
+        ).status_code
+        == 422
+    )
+
+
+def test_list_records_reports_received_and_expired_outcomes(harness: Harness) -> None:
+    received = issue(harness)
+    expired = issue(harness)
+    pull(harness, [verification_mail(received.code)])
+    harness.clock.advance(CHALLENGE_TTL + timedelta(seconds=1))
+
+    records = harness.verification.list_challenges(student_principal(), ASSIGNMENT_ID)
+    by_id = {record.challenge_id: record for record in records}
+    assert len(records) == 2
+    received_record = by_id[received.challenge_id]
+    assert received_record.state == "received"
+    assert len(received_record.submissions) == 1
+    expired_record = by_id[expired.challenge_id]
+    assert expired_record.state == "expired"
+    assert expired_record.reason_code is None
+    assert expired_record.submissions == ()
+    assert received_record.created_at is not None
 
 
 def test_status_endpoint_is_owner_only_and_lists_per_question_submissions(

@@ -176,6 +176,52 @@ def build_router(service: EmailVerificationService | None) -> APIRouter:
             },
         )
 
+    @router.get("/api/v1/email-verification/challenges")
+    async def list_email_verification_challenges(request: Request) -> JSONResponse:
+        """学生自己的邮件提交记录列表：一次申请 = 一条记录（契约
+        `listEmailVerificationChallenges`）。只有本人可读；查询按申请时间倒序。"""
+        instance = request.url.path
+        if service is None or not service.available:
+            return _unavailable(
+                instance,
+                "email verification is not available: the mail intake is not configured",
+            )
+        try:
+            principal = service.authenticate(request.headers.get("authorization"))
+        except AuthenticationError:
+            return problem_response(UNAUTHORIZED, instance)
+
+        assignment_id = request.query_params.get("assignment_id")
+        if not assignment_id:
+            return _unprocessable(instance, "assignment_id is required")
+        try:
+            statuses = await run_in_threadpool(
+                service.list_challenges, principal, assignment_id
+            )
+        except AuthorizationError:
+            log_event(
+                logger,
+                "email_verification.challenge_rejected",
+                level=logging.WARNING,
+                fields={"outcome": "denied", "decision": "forbidden"},
+            )
+            return problem_response(FORBIDDEN, instance)
+        except ChallengeRequestError as error:
+            return _unprocessable(instance, str(error))
+        except SQLAlchemyError as error:
+            log_dependency_unavailable(
+                logger,
+                dependency="database",
+                error=error,
+                stage="email verification record list",
+            )
+            return problem_response(SERVICE_UNAVAILABLE, instance)
+
+        return JSONResponse(
+            status_code=200,
+            content={"items": [_record_body(status) for status in statuses]},
+        )
+
     @router.get("/api/v1/email-verification/challenges/{challenge_id}")
     async def get_email_verification_challenge_status(
         challenge_id: str, request: Request
@@ -223,6 +269,33 @@ def build_router(service: EmailVerificationService | None) -> APIRouter:
         return JSONResponse(status_code=200, content=_status_body(status))
 
     return router
+
+
+def _record_body(status: ChallengeStatus) -> dict[str, Any]:
+    """契约 `EmailVerificationChallengeRecord` 的 JSON 形状（一次申请 = 一条记录）。
+
+    不返回明文核验码（库里只有 SHA-256）；只返回状态、原因码、时间与按题提交。
+    """
+    return {
+        "challenge_id": status.challenge_id,
+        "assignment_id": status.assignment_id,
+        "state": status.state,
+        "reason_code": status.reason_code,
+        "created_at": (
+            None if status.created_at is None else rfc3339_millis(status.created_at)
+        ),
+        "expires_at": rfc3339_millis(status.expires_at),
+        "verified_at": (
+            None if status.verified_at is None else rfc3339_millis(status.verified_at)
+        ),
+        "submissions": [
+            {
+                "question_version_id": item.question_version_id,
+                "submission_id": item.submission_id,
+            }
+            for item in status.submissions
+        ],
+    }
 
 
 def _status_body(status: ChallengeStatus) -> dict[str, Any]:

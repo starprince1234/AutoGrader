@@ -160,34 +160,36 @@ nsjail 内以“用户命名空间内的 root”（宿主 uid 仍是服务账号
 参考答案检验：`email_delivery` 没有可执行程序，参考答案声明为一份受保护的「合成邮件回执 JSON」，
 经**同一个规则引擎**判定。这是参考解自检，不是生产邮件端到端验证；报告与文档必须如实区分。
 
-## 4. 邮件验证的所有权证明与一次性关联
+## 4. 核验码身份证明与一次性关联
 
 威胁模型：`From` 头可伪造，仅按发件地址匹配会让攻击者把提交冒充给任意账号；重放、跨用户认领与并发竞态也必须挡住。
 
 机制：
 
-1. **账号邮箱所有权**：账号邮箱在注册时已通过平台外发的一次性验证码证明归属（B4 现有注册流程），
-   本特性不新增“邮箱是否验证”的旁路；收发信身份查询走 B4 现有 internal 端点，提交/核验码/成绩的
-   当前**课程归属**走 `GET /api/v1/internal/users/{user_id}/authorization`（只返回 id，v0.32.0）。
+1. **账号与邮箱**：账号邮箱在注册时已通过平台外发的一次性验证码证明归属（B4 现有注册流程），
+   但邮件提交**不再要求**用该邮箱发送：**核验码本身就是身份凭证**。收发信身份查询与提交/核验码/成绩的
+   当前**课程归属**走 B4 现有 internal 端点（`GET /api/v1/internal/users/{user_id}/authorization`，只返回 id，v0.32.0）。
 2. **一次性核验码**：学生用已认证会话请求**一个作业**的核验码（随机高熵、只在响应中出现一次、库里只存 SHA-256），
    绑定 `(student_id, course_id, section_id, assignment_id)`，有效期 30 分钟（CHG-0032：核验码是作业维度，
    一封邮件可包含该作业多个题目的答案）。v0.32.0 起请求体里的 `section_id` **不被信任**：服务端按 B4
    当前有效归属取权威 course/section 绑定。
 3. **邮件必须携带核验码与作业定位信息**：正文必须包含标签行 `核验码`、`作业编号`、`课序`、`姓名`、`学号`；
-   `作业编号` 必须等于挑战绑定的 assignment id，`姓名`/`学号` 必须等于 B4 身份目录返回的账号事实
-   （`课序` 只要求非空，供人工核对）。**作业是课程级受众（v0.32.0）**：不再是“目标课序/目标学生名单”，
-   收件端按 B4 当前 enrollment 判定归属，移出课程即拒绝。收件端解析正文并按哈希查找挑战，校验未过期、
-   未消费、发送者账号 == 挑战所有者。校验通过后在**同一事务/行锁**中标记消费并写入
+   `作业编号` 必须等于挑战绑定的 assignment id；收件端按哈希查找挑战，校验未过期、未消费——
+   **码对应的挑战所有者就是学生，发件地址不参与归属**。`姓名`/`学号` 只在发件账号恰好是挑战所有者时
+   与 B4 身份目录核对，任意邮箱发送时由核验码证明身份（`课序` 只要求非空，供人工核对）。
+   **作业是课程级受众（v0.32.0）**：收件端按 B4 当前 enrollment 判定归属，移出课程即拒绝。
+   校验通过后在**同一事务/行锁**中标记消费并写入
    `email_verifications`（同时写入发件地址、主题、附件名、message-id、mailbox/uidvalidity/uid）。
-4. **首次发件地址绑定**：首次通过验证的邮件写入 `b2.email_sender_bindings(student_id, course_id, section_id, sender)`；
-   之后同一学生同一课程/课序的邮件必须使用同一地址，否则隔离（`email_sender_mismatch`）。
+4. **首次发件地址记录（不参与准入）**：首次通过验证的邮件写入 `b2.email_sender_bindings`，
+   仅作为 `email_delivery` 评测的 sender 事实；不再因发件地址不同而拒绝邮件。
 5. **邮件成为提交**：附件只接受 `.txt`，文件名为作业内 1 基题号（`1.txt`、`2.txt`…）；
    每个映射附件经现有 `SubmissionIntakeService.build_submission_envelope + persist` 创建**一题一条**提交，
    并在同一事务写入 `email_verification_submissions` 映射；全部成功后写 `processed_at` 与 checkpoint，
    评测由现有 worker 触发。允许部分题提交；未知题号/非 `.txt`/重复附件可解释拒绝。
-6. **失败反馈**：核验码端点提供状态查询（pending / received / rejected(reason) / expired / intake_unavailable），
-   `received` 带按题 `submissions[]`；学生能看到“邮件没到/被拒/依赖不可用”的区别。被拒邮件进入现有隔离区
-   并记录原因码，绝不冒充提交。
+6. **失败反馈与提交记录**：核验码端点提供状态查询（pending / received / rejected(reason) / expired / intake_unavailable），
+   `received` 带按题 `submissions[]`；学生能看到“邮件没到/被拒/依赖不可用”的区别。**一次申请核验码 = 一条
+   邮件提交记录**（`GET /api/v1/email-verification/challenges?assignment_id=`），关掉页面后仍能回看每次
+   申请的成败与失败原因；被拒邮件进入现有隔离区并记录原因码，绝不冒充提交。
 7. **依赖故障**：收件拉取循环写心跳（`b2.intake_state.last_successful_pull_at`）。评测发现验证记录缺失且心跳
    过期/未配置时判 `infrastructure_error`，不判学生失败。作业内部目录（B3 `assignment-audiences`）不可用时
    邮件整轮拉取失败重试，不隔离学生邮件。B4 authorization 不可达时，网页提交/核验码签发/成绩读取必须
@@ -202,6 +204,8 @@ nsjail 内以“用户命名空间内的 root”（宿主 uid 仍是服务账号
   `mailbox_address` 是部署配置的收件邮箱（公开地址，未声明为 `null`）：学生端据此显示该发往哪里，
   并把“附件在自己的邮箱客户端里添加”的步骤写进面板。
 - `GET /api/v1/email-verification/challenges/{challenge_id}`（学生）→ 状态、脱敏原因码与按题 `submissions[]`。
+- `GET /api/v1/email-verification/challenges?assignment_id=`（学生）→ 本人该作业的邮件提交记录列表
+  （一次申请一条；`pending/received/rejected(reason)/expired` + 申请/过期/确认时间 + 按题提交）。
 
 新增内部表（b2 schema，迁移）：`email_verification_challenges`、`email_verifications`、
 `email_verification_submissions`、`email_sender_bindings`、`intake_state`。

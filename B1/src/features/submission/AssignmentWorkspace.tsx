@@ -38,6 +38,7 @@ import { SafeMarkdown } from "../questions/SafeMarkdown";
 import { useQuestionAsset } from "../questions/useQuestionAsset";
 import { useQuestionVersionRows } from "../questions/useQuestions";
 import { EmailSubmissionPanel } from "./EmailSubmissionPanel";
+import { EmailSubmissionStatus } from "./EmailSubmissionStatus";
 import { clearDraft, loadDraft, saveDraft } from "./draft";
 import { ProgressPanel } from "./ProgressPanel";
 import { useEvaluationStream } from "./useEvaluationStream";
@@ -525,6 +526,8 @@ export function AssignmentWorkspace({
         </div>
 
         <div className="lc-topbar__actions">
+          {/* 最近一次邮件提交的状态常驻在这里：关掉邮件面板/刷新页面后仍然看得到成败与原因。 */}
+          <EmailSubmissionStatus assignmentId={assignment.assignment_id} />
           <button
             type="button"
             className="button button--ghost"

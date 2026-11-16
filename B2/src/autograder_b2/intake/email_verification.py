@@ -10,11 +10,12 @@
    一封邮件携带 N 个附件 → N 条提交）。明文只在签发响应里出现一次。
    v0.32.0 起课程级受众：`course_id` 必须与作业所属课程一致，`section_id` 取 B4 的**当前权威归属**
    （`integration.b4_authorization`），**忽略**请求里的 section——令牌 scope 只是签发时的快照。
-3. **邮件必须携带核验码**：收件端从正文里解析核验码 → 哈希 → 行锁查挑战 → 校验未消费/未过期/
-   所有者 == 发件账号 → 写 `email_verifications`（`processed_at=NULL`，题目映射在提交事务里
-   写入 `email_verification_submissions`）。
-4. **首次发件地址绑定**：同一学生同一课程/课序的首次通过验证的地址写入
-   `b2.email_sender_bindings`；之后必须一致，否则收件端隔离 `email_sender_mismatch`。
+3. **邮件必须携带核验码**：收件端从正文里解析核验码 → 哈希 → 行锁查挑战 → 校验未消费/未过期
+   → 写 `email_verifications`（`processed_at=NULL`，题目映射在提交事务里写入
+   `email_verification_submissions`）。**核验码就是身份凭证**：码对应的挑战所有者就是学生，
+   发件地址不参与归属。
+4. **首次发件地址记录（不参与准入）**：同一学生同一课程/课序的首次通过验证的地址写入
+   `b2.email_sender_bindings`，仅作为 `email_delivery` 评测的 sender 事实；不再据此拒绝其他地址。
 5. **失败反馈与依赖区分**：`get_challenge_status` 返回 pending/received/rejected(reason)/expired，
    并提供该邮件已生成的按题提交 `submissions[]`；收件依赖不可用（心跳过期/未配置）表达为
    `reason_code=intake_unavailable`——那是平台条件，绝不折算成学生答错。
@@ -23,7 +24,7 @@
 
 - `try_consume_received` 在**一个事务**里完成：`SELECT ... FOR UPDATE` 锁挑战行 → 校验 → 写
   `email_verifications`（`processed_at=NULL`）→ 标记挑战已消费（`consumed_at` +
-  `consumed_verification_id`）→ 首次插入发件绑定（`ON CONFLICT DO NOTHING` + 回读比对）。
+  `consumed_verification_id`）→ 记录首次发件绑定（`ON CONFLICT DO NOTHING` + 回读；仅事实，不拒绝）。
 - 调用方（`intake.imap`）随后对每个映射附件走**同一个** `SubmissionIntakeService.persist`，
   在 `on_persist` 钩子里写 `email_verification_submissions` 与 `intake_messages`；全部成功后再把
   `email_verifications.processed_at` 置为 now 并把 checkpoint 置 `processed`（`submission_id=NULL`：
@@ -219,6 +220,8 @@ class ChallengeStatus:
     submissions: tuple[ChallengeSubmission, ...] = ()
     #: 挑战绑定的作业；历史挑战（CHG-0032 之前签发）为 `None`。
     assignment_id: str | None = None
+    #: 申请核验码的时间（一次申请 = 一条邮件提交记录）。
+    created_at: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -500,6 +503,7 @@ class EmailVerificationService:
                     email_verifications.c.question_version_id,
                     email_verifications.c.submission_id,
                     email_verifications.c.processed_at,
+                    email_verification_challenges.c.created_at,
                 )
                 .select_from(
                     email_verification_challenges.outerjoin(
@@ -524,7 +528,19 @@ class EmailVerificationService:
                 legacy_question_version_id,
                 legacy_submission_id,
                 processed_at,
-            ) = (row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8], row[9])
+                challenge_created_at,
+            ) = (
+                row[1],
+                row[2],
+                row[3],
+                row[4],
+                row[5],
+                row[6],
+                row[7],
+                row[8],
+                row[9],
+                row[10],
+            )
             submissions = (
                 ()
                 if verification_id is None
@@ -573,6 +589,41 @@ class EmailVerificationService:
             verified_at=verified_at,
             submissions=submissions,
             assignment_id=None if assignment_id is None else str(assignment_id),
+            created_at=challenge_created_at,
+        )
+
+    #: 列表端点一次最多返回多少条记录（每次申请一行；记录量小，不提供游标）。
+    CHALLENGE_RECORD_LIMIT = 50
+
+    def list_challenges(
+        self, principal: Principal, assignment_id: object
+    ) -> tuple[ChallengeStatus, ...]:
+        """学生自己的邮件提交记录：**一次申请 = 一条记录**，按申请时间倒序。
+
+        只查询 `student_id == 调用者` 的挑战；每次申请无论成功、失败还是过期都会留下记录，
+        因此学生关掉页面/刷新后仍能看到每个核验码对应的结果。数据库故障原样上抛。
+        """
+        identifier = _canonical_uuid(assignment_id, "assignment_id")
+        require_submission_identity(principal, student_id=principal.user_id)
+        challenges = email_verification_challenges
+        with self._engine.connect() as connection:
+            challenge_ids = connection.execute(
+                sa.select(challenges.c.challenge_id)
+                .where(
+                    sa.and_(
+                        challenges.c.student_id == uuid.UUID(principal.user_id),
+                        challenges.c.assignment_id == uuid.UUID(identifier),
+                    )
+                )
+                .order_by(
+                    challenges.c.created_at.desc(),
+                    challenges.c.challenge_id.desc(),
+                )
+                .limit(self.CHALLENGE_RECORD_LIMIT)
+            ).scalars().all()
+        return tuple(
+            self.get_challenge_status(principal, str(challenge_id))
+            for challenge_id in challenge_ids
         )
 
     # --- IMAP：发件账号解析、只读检查与消费 ---------------------------------------
@@ -586,14 +637,12 @@ class EmailVerificationService:
     def inspect_challenge(
         self,
         codes: Sequence[str],
-        *,
-        matched_account: MatchedAccount | None,
     ) -> ChallengeInspection | VerificationRejected:
         """**只读**定位正文里的核验码对应的挑战（不消费、不写库）。
 
-        判定与 `try_consume_received` 的第一个事务段一致：码不存在 / 不属于发件账号 /
-        携带多个挑战的码都在这里返回可解释拒绝；已消费的挑战也返回（`consumed_at` 非空），
-        由调用方的 `try_consume_received` 区分幂等 resume 与"另一封邮件"。
+        核验码本身就是身份凭证：码对应的挑战所有者就是这封邮件的学生，**发件地址不参与归属**。
+        码不存在 / 一封邮件携带多个不同挑战的码 → 可解释拒绝；已消费的挑战也返回
+        （`consumed_at` 非空），由调用方的 `try_consume_received` 区分幂等 resume 与"另一封邮件"。
 
         数据库故障原样上抛。
         """
@@ -622,28 +671,12 @@ class EmailVerificationService:
                 "email_verification_rejected",
                 "no verification challenge matches the code in this message",
             )
-        owned = (
-            tuple(
-                row
-                for row in rows
-                if matched_account is not None
-                and _same_uuid(str(row[1]), matched_account.user_id)
-            )
-            if matched_account is not None
-            else ()
-        )
-        if not owned:
-            # 码可能属于另一个账号：**不**在那行上记拒绝（那是别人挑战的状态）。
-            return VerificationRejected(
-                "email_verification_rejected",
-                "the verification code does not belong to the sending account",
-            )
-        if len(owned) > 1:
+        if len(rows) > 1:
             return VerificationRejected(
                 "email_verification_rejected",
                 "the message carries verification codes issued for more than one challenge",
             )
-        row = owned[0]
+        row = rows[0]
         assignment_id = None if row[4] is None else str(row[4])
         if assignment_id is None:
             return VerificationRejected(
@@ -803,28 +836,13 @@ class EmailVerificationService:
                 "email_verification_rejected",
                 "no verification challenge matches the code in this message",
             )
-        owned = (
-            tuple(
-                row
-                for row in rows
-                if matched_account is not None
-                and _same_uuid(str(row[1]), matched_account.user_id)
-            )
-            if matched_account is not None
-            else ()
-        )
-        if not owned:
-            # 码可能属于另一个账号：**不**在那行上记拒绝（那是别人挑战的状态）。
-            return self._rejected(
-                "email_verification_rejected",
-                "the verification code does not belong to the sending account",
-            )
-        if len(owned) > 1:
+        if len(rows) > 1:
+            # 一封邮件混入多个不同挑战的码：无法判断归属，可解释拒绝（不消费任何挑战）。
             return self._rejected(
                 "email_verification_rejected",
                 "the message carries verification codes issued for more than one challenge",
             )
-        challenge = owned[0]
+        challenge = rows[0]
         challenge_id = challenge[0]
         course_id = str(challenge[2])
         section_id = str(challenge[3])
@@ -868,7 +886,15 @@ class EmailVerificationService:
                 section_id=section_id,
             )
         student_id = str(challenge[1])
-        bound_sender = self._effective_binding(
+        owner_account = (
+            matched_account
+            if matched_account is not None
+            and _same_uuid(student_id, matched_account.user_id)
+            else None
+        )
+        # 首次发件地址仍记录（email_delivery 评测的 sender 事实），但**不再据此拒绝邮件**：
+        # 核验码本身就是身份凭证，发件地址不参与归属。
+        self._effective_binding(
             connection,
             student_id=student_id,
             course_id=course_id,
@@ -876,14 +902,6 @@ class EmailVerificationService:
             sender=normalized_sender,
             now=now,
         )
-        if bound_sender is not None and bound_sender != normalized_sender:
-            self._record_rejection(connection, challenge_id, "email_sender_mismatch")
-            return self._rejected(
-                "email_sender_mismatch",
-                "the sender address does not match the first address bound for this course",
-                course_id=course_id,
-                section_id=section_id,
-            )
 
         names = (
             tuple(str(name) for name in attachment_names)
@@ -905,7 +923,7 @@ class EmailVerificationService:
                 sender=normalized_sender,
                 subject=message.subject,
                 student_number=(
-                    None if matched_account is None else matched_account.student_number
+                    None if owner_account is None else owner_account.student_number
                 ),
                 message_id=message.message_id,
                 mailbox=mailbox,
@@ -950,7 +968,7 @@ class EmailVerificationService:
             course_id=course_id,
             section_id=section_id,
             assignment_id=assignment_id,
-            student_number=None if matched_account is None else matched_account.student_number,
+            student_number=None if owner_account is None else owner_account.student_number,
             created_at=now,
             resumed=False,
         )
@@ -1084,9 +1102,9 @@ class EmailVerificationService:
     ) -> str | None:
         """读取/建立首次发件地址绑定；返回**当前生效**的地址（`None` 只在异常情况下出现）。
 
-        首次通过验证的地址用 `ON CONFLICT DO NOTHING` 插入，然后**回读**：并发下两个不同地址同时
-        首次投递时，只有先提交的那个成为绑定，后一个回读到不同地址 ⇒ 调用方按
-        `email_sender_mismatch` 拒绝（唯一约束 + 回读，而不是"先查后插"的竞态窗口）。
+        首次通过验证的地址用 `ON CONFLICT DO NOTHING` 插入，然后**回读**（唯一约束 + 回读，而不是
+        "先查后插"的竞态窗口）。自“核验码即身份”起，这里只记录事实、**不再据此拒绝**其他发件地址：
+        该事实仅供 `email_delivery` 评测的 sender 检查使用。
         """
         bindings = email_sender_bindings
         triple = sa.and_(

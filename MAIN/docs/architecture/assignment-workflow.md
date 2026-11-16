@@ -137,8 +137,11 @@
   4. 作业受众：作业存在/open/题目属于该作业（422/409 语义不变）；
   5. 答案文件 `N.txt` 规则不变。持久化使用权威 course/section/student。
 - 邮件核验挑战：请求保留 `{course_id, section_id, assignment_id}` 字段，但 `section_id` 被忽略，
-  挑战绑定权威 `(student, course, section, assignment)`；收件时再次按当前归属校验（被移出课程 →
+  挑战绑定权威 `(student, course, section, assignment)`；**核验码即身份**：收件只要求码有效，
+  发件地址不再要求等于账号邮箱；收件时再次按当前归属校验（被移出课程 →
   隔离为 `email_verification_rejected`；换课序 → 用当前权威 section 落库）。
+  每次申请形成一条可回看的邮件提交记录（`GET /api/v1/email-verification/challenges?assignment_id=`：
+  pending / received(reason null) / rejected(reason) / expired）。
 - 邮件入口沿用同一 `IntakeService.persist`；同一学生的网页与邮件提交在作业/题目/课程/课序上同口径。
 - 人工复核 `resolveQuarantine`：服务端校验作业的 course 与请求 course 一致，并用 B4 authorization
   校验/补全学生 section（不一致 → 422）。

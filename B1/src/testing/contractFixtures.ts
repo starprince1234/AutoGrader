@@ -16,6 +16,8 @@ import type {
   CoursePublic,
   CurrentUser,
   EmailVerificationChallenge,
+  EmailVerificationChallengeRecord,
+  EmailVerificationChallengeRecordPage,
   EmailVerificationChallengeStatus,
   EnrollmentPublic,
   EvaluationCommentary,
@@ -252,6 +254,29 @@ export function emailVerificationChallengeStatus(
     submissions: [],
     ...overrides,
   } as EmailVerificationChallengeStatus;
+}
+
+/** 一条邮件提交记录（`GET .../challenges?assignment_id=`）：一次申请 = 一条记录。 */
+export function emailVerificationChallengeRecord(
+  overrides?: Partial<EmailVerificationChallengeRecord>,
+): EmailVerificationChallengeRecord {
+  return {
+    challenge_id: UUID_A,
+    assignment_id: UUID_A,
+    state: "pending",
+    reason_code: null,
+    created_at: "2026-09-15T08:00:00.000Z",
+    expires_at: "2099-01-01T00:00:00.000Z",
+    verified_at: null,
+    submissions: [],
+    ...overrides,
+  } as EmailVerificationChallengeRecord;
+}
+
+export function emailVerificationChallengeRecordPage(
+  items: EmailVerificationChallengeRecord[] = [],
+): EmailVerificationChallengeRecordPage {
+  return { items } as EmailVerificationChallengeRecordPage;
 }
 
 export function assignmentPage(
