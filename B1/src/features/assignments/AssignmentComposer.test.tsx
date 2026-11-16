@@ -189,7 +189,7 @@ describe("新建作业（v0.32.0 课程级）", () => {
     expect(postRequests(stub)).toHaveLength(0);
     // 课程级说明在表单上可见：没有课序勾选、也没有指定学生。
     expect(screen.getByTestId("compose-course-wide-notice")).toHaveTextContent(
-      "发布后对本课程全部课序的学生生效",
+      "发布后本课程所有班级学生可见",
     );
     expect(screen.queryByTestId("compose-section-list")).toBeNull();
     expect(screen.queryByTestId("compose-student-fieldset")).toBeNull();

@@ -307,7 +307,7 @@ describe("学生作业工作区（CHG-0032）", () => {
     );
     expect(await screen.findByTestId("stem-markdown")).toHaveTextContent("第一题说明");
     expect(screen.getByTestId("workspace-file-mapping")).toHaveTextContent(
-      "你可以选择本地的 .txt 文件或者直接输入你的答案。",
+      "支持 .txt 文件或直接输入。",
     );
 
     await userEvent.setup().click(screen.getByTestId("workspace-question-2"));
@@ -315,7 +315,7 @@ describe("学生作业工作区（CHG-0032）", () => {
       expect(screen.getByTestId("stem-markdown")).toHaveTextContent("第二题说明"),
     );
     expect(screen.getByTestId("workspace-file-mapping")).toHaveTextContent(
-      "你可以选择本地的 .txt 文件或者直接输入你的答案。",
+      "支持 .txt 文件或直接输入。",
     );
   });
 
@@ -541,8 +541,10 @@ describe("学生作业工作区（CHG-0032）", () => {
       assignment_id: UUID_A,
     });
 
-    // 收到后：状态与逐题结果入口（带 assignment 的 submissions[]）。
-    expect(await within(panel).findByTestId("email-received-hint")).toBeInTheDocument();
+    // 收到后：申请下方绿色短提示 + 逐题结果入口（带 assignment 的 submissions[]）。
+    expect(await within(panel).findByTestId("email-submit-success")).toHaveTextContent(
+      "提交成功",
+    );
     await waitFor(() =>
       expect(within(panel).getByTestId("email-received-submissions")).toBeInTheDocument(),
     );
@@ -555,13 +557,13 @@ describe("学生作业工作区（CHG-0032）", () => {
     await openWorkspace({ memberships: [] });
 
     expect(await screen.findByTestId("workspace-scope-missing")).toHaveTextContent(
-      "不在该课程的有效名单中",
+      "你不在该课程名单中",
     );
     expect(screen.getByTestId("workspace-submit")).toBeDisabled();
     expect(screen.getByTestId("workspace-email-entry")).toBeInTheDocument();
   });
 
-  it("邮件核验被拒绝时显示原因码文案（身份不符）", async () => {
+  it("邮件核验被拒绝时显示红色失败提示与短原因（身份不符）", async () => {
     await openWorkspace({
       challengeStatus: () =>
         jsonResponse(
@@ -575,8 +577,22 @@ describe("学生作业工作区（CHG-0032）", () => {
     await user.click(await screen.findByTestId("workspace-email-entry"));
     await user.click(await screen.findByTestId("email-issue-code"));
 
-    expect(await screen.findByTestId("email-challenge-reason")).toHaveTextContent(
-      "邮件正文中的作业编号、姓名或学号与账号登记不一致",
+    expect(await screen.findByTestId("email-submit-failure")).toHaveTextContent(
+      "提交失败：正文信息与账号不符",
+    );
+  });
+
+  it("核验码过期时显示红色失败提示", async () => {
+    await openWorkspace({
+      challengeStatus: () =>
+        jsonResponse(emailVerificationChallengeStatus({ state: "expired" })),
+    });
+    const user = userEvent.setup();
+    await user.click(await screen.findByTestId("workspace-email-entry"));
+    await user.click(await screen.findByTestId("email-issue-code"));
+
+    expect(await screen.findByTestId("email-submit-failure")).toHaveTextContent(
+      "提交失败：核验码已过期",
     );
   });
 

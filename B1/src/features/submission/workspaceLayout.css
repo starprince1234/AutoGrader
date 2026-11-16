@@ -367,3 +367,21 @@
     min-height: 280px;
   }
 }
+
+/* 邮件提交结果：申请下方一句短反馈（成功绿 / 失败红 / 等待灰）。 */
+.email-submit-hint {
+  margin: 0;
+  font-size: 12.5px;
+}
+
+.email-submit-hint--ok {
+  color: var(--color-ok);
+}
+
+.email-submit-hint--bad {
+  color: var(--color-bad);
+}
+
+.email-submit-hint--pending {
+  color: var(--color-text-muted);
+}

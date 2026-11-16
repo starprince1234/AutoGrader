@@ -419,7 +419,6 @@ export function AssignmentComposer({
       {previewing ? (
         <Modal title={t("assignments.create.confirmTitle")} onClose={() => setPreviewing(false)}>
           <div className="stack" data-testid="assignment-compose-confirm">
-            <p>{t("assignments.create.confirmBody")}</p>
             <p className="muted" data-testid="compose-preview-audience-notice">
               {t("assignments.create.courseWideNotice")}
             </p>

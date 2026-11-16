@@ -245,7 +245,7 @@ describe("P13-A 邮件提交标签", () => {
     expect(await screen.findByTestId("review-mail-empty")).toHaveTextContent(
       "没有待处理记录。",
     );
-    expect(screen.getByText(/无法确认课程的邮件只有管理员能看到/)).toBeInTheDocument();
+    expect(screen.getByText(/无法确认课程的记录仅管理员可见/)).toBeInTheDocument();
   });
 
   it("详情只显示老师需要的信息，不堆 Message-ID/UID 等接口字段", async () => {

@@ -577,7 +577,7 @@ describe("作业中心（教师侧作业列表）", () => {
 
     await user.click(screen.getByTestId(`close-assignment-${UUID_A}`));
     const dialog = await screen.findByTestId("assignment-close-confirm");
-    expect(dialog).toHaveTextContent("结束后，学生将无法再提交");
+    expect(dialog).toHaveTextContent("结束后，学生不能再提交");
 
     await user.click(screen.getByTestId("assignment-close-confirm-button"));
 

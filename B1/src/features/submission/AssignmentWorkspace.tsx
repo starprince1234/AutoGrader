@@ -529,7 +529,6 @@ export function AssignmentWorkspace({
             type="button"
             className="button button--ghost"
             data-testid="workspace-email-entry"
-            title="支持按邮件模板与 N.txt 附件提交；成功解析后会发送确认邮件并自动同步填充至网页编辑器"
             onClick={() => setEmailOpen(true)}
           >
             {t("submit.email.entry")}

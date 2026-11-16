@@ -25,7 +25,8 @@ import type { QuestionVersionRow } from "../questions/useQuestions";
  *    姓名与学号来自 `GET /api/v1/me`（B2 会拿它们与身份库逐字比较，手输错一个字整封邮件就会
  *    被判为 `email_body_mismatch`）；课序取本人所在课序的显示名。
  * 2. 附件映射：第 N 题 → `N.txt`（1 基题号，作业顺序）。
- * 3. 状态：pending / received / rejected（逐原因码文案）/ expired / intake_unavailable。
+ * 3. 申请下方给一句结果提示：成功绿色「提交成功」，失败红色「提交失败：<短原因>」，
+ *    pending 灰色；详细核验逻辑不在界面上铺开。
  *
  * 状态轮询只在 `pending` 时进行；`received` 后按 `submissions[]` 提供逐题结果入口，
  * 并通知调用方刷新每题状态（成绩行是唯一权威状态来源）。
@@ -56,12 +57,50 @@ const REASON_KEYS = {
   intake_unavailable: "submit.email.reason.intake_unavailable",
 } as const satisfies Record<EmailVerificationReasonCode, string>;
 
-const STATE_KEYS = {
-  pending: "submit.email.state.pending",
-  received: "submit.email.state.received",
-  rejected: "submit.email.state.rejected",
-  expired: "submit.email.state.expired",
-} as const;
+/**
+ * 申请下方的结果提示：成功绿色「提交成功」，失败红色「提交失败：短原因」，等待灰色。
+ * 失败只给一句短的，具体核验逻辑不在界面上展开。
+ */
+function SubmitHint({ status }: { status: EmailVerificationChallengeStatus }) {
+  if (status.state === "received") {
+    return (
+      <p
+        className="email-submit-hint email-submit-hint--ok"
+        data-testid="email-submit-success"
+        role="status"
+      >
+        {t("submit.email.hint.success")}
+      </p>
+    );
+  }
+  if (status.state === "pending") {
+    return (
+      <p
+        className="email-submit-hint email-submit-hint--pending"
+        data-testid="email-submit-pending"
+      >
+        {t("submit.email.hint.pending")}
+      </p>
+    );
+  }
+  const reason =
+    status.state === "expired"
+      ? t("submit.email.hint.expired")
+      : status.reason_code
+        ? t("submit.email.hint.failure", {
+            reason: t(REASON_KEYS[status.reason_code]),
+          })
+        : t("submit.email.hint.failureGeneric");
+  return (
+    <p
+      className="email-submit-hint email-submit-hint--bad"
+      data-testid="email-submit-failure"
+      role="alert"
+    >
+      {reason}
+    </p>
+  );
+}
 
 /** 逐题结果：用提交视图把 `submissions[]` 推进到评测运行，再给出报告深链。 */
 function EmailSubmissionResult({
@@ -315,8 +354,6 @@ export function EmailSubmissionPanel({
           <p className="muted">{t("submit.email.mappingHint")}</p>
         </Panel>
 
-        <p className="muted">{t("submit.email.senderHint")}</p>
-
         <div className="inline">
           <button
             type="button"
@@ -356,6 +393,13 @@ export function EmailSubmissionPanel({
 
         {challenge ? (
           <div className="stack" data-testid="email-challenge">
+            {status.data ? (
+              <SubmitHint status={status.data} />
+            ) : (
+              <p className="muted">
+                <InlineLoader />
+              </p>
+            )}
             <p>
               {t("submit.email.code")}：
               <strong className="mono-id" data-testid="email-code">
@@ -366,30 +410,10 @@ export function EmailSubmissionPanel({
               {t("submit.email.expires")}：
               {formatDateTime(challenge.expires_at, t("common.none"))}
             </p>
-            {status.data ? (
-              <p data-testid="email-challenge-state">
-                <strong>{t(STATE_KEYS[status.data.state])}</strong>
-                {status.data.reason_code ? (
-                  <span data-testid="email-challenge-reason">
-                    {" · "}
-                    {t(REASON_KEYS[status.data.reason_code])}
-                  </span>
-                ) : null}
-              </p>
-            ) : (
-              <p className="muted">
-                <InlineLoader />
-              </p>
-            )}
             {status.isError ? (
               <Banner tone="error" testId="email-status-error">
                 {describeApiError(status.error)}
               </Banner>
-            ) : null}
-            {received ? (
-              <p className="muted" data-testid="email-received-hint">
-                {t("submit.email.receivedHint")}
-              </p>
             ) : null}
             {(status.data?.submissions ?? []).length > 0 ? (
               <div className="stack" data-testid="email-received-submissions">
