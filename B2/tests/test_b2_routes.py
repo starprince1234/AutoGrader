@@ -832,9 +832,14 @@ def _read_csv(payload: bytes) -> list[list[str]]:
 #:
 #: CHG-0014 与 CHG-0015 把四条路径写进契约（隔离区复核两条 + 申诉证据包一条 + 题目质量汇总一条），
 #: 它们曾长期留在这里，让"契约声明 vs 实现"的差距**显式且逐条列名**（这正是 CHG-0005 当年暴露的
-#: 那类缺口）。四条已于 2026-09-20 实现（见 `docs/phases/active/phase-05-quarantine-and-quality-surfaces.md`），
-#: 因此这个集合现在是**空集**——断言保留：差集一旦不为空（契约新增了没人实现的端点）立刻失败。
-_PENDING_CONTRACT_PATHS: set[str] = set()
+#: 那类缺口）。四条已于 2026-09-20 实现（见 `docs/phases/active/phase-05-quarantine-and-quality-surfaces.md`）。
+#:
+#: 现在只剩一条：契约 0.38.0 声明了 `rejectIntakeQuarantine`（隔离区「打回」），但 B2 侧还没有
+#: 实现——没有路由、没有 `sender` 列、没有迁移 `20261107_0023`。这是**已知缺口**而不是通过项：
+#: 实现之后必须把这一行删掉，差集一旦多出或少掉一条，这个用例立刻失败。
+_PENDING_CONTRACT_PATHS: set[str] = {
+    "/api/v1/intake/quarantines/{intake_quarantine_id}/reject",
+}
 
 
 def test_registered_paths_match_the_contract(module: B2Module, context: _Context) -> None:
