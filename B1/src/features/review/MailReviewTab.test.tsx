@@ -237,6 +237,22 @@ describe("P13-A 邮件提交标签", () => {
     expect(screen.queryByText("全部原因")).toBeNull();
   });
 
+  it("老师未选课程时默认查有权限的全部课程，而不是只查第一门", async () => {
+    stub = installFetchStub(
+      routesFor({ rows: [intakeQuarantineView({ intake_quarantine_id: UUID_C })] }),
+    );
+    await signIn("teacher1", "pw");
+    renderWithProviders(<Harness initial={{}} />);
+
+    const course = await screen.findByTestId("review-mail-course");
+    // 「全部课程」不再只对管理员开放：staff 也需要看到自己所有课程里的隔离邮件。
+    expect(within(course).getByRole("option", { name: "全部课程" })).toBeInTheDocument();
+    await screen.findByTestId("review-mail-table");
+    const request = stub!.requests.find((item) => item.url.pathname === QUARANTINES);
+    expect(request).toBeDefined();
+    expect(request?.url.searchParams.get("course_id")).toBeNull();
+  });
+
   it("403 显示权限说明而不是空列表", async () => {
     stub = installFetchStub(
       routesFor({
