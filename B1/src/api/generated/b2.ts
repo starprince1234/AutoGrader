@@ -442,6 +442,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/intake/quarantines/{intake_quarantine_id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                intake_quarantine_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reject a quarantined submission and tell the sender it failed ("打回")
+         * @description The teacher's judgement that the submission **failed**: the record is closed as
+         *     processed *and* the person who sent the message is told that their submission was not
+         *     accepted. The second half is the point -- a quarantined message produced no submission,
+         *     no score and no confirmation, so without an outbound notice the sender learns nothing
+         *     at all. That silence is what this operation removes.
+         *
+         *     Three properties are deliberate:
+         *
+         *     1. **The notice never decides the outcome.** The rejection is one `UPDATE` on the
+         *        locked row, committed on its own; the notice is attempted afterwards. A mail
+         *        transport that is missing, refuses or times out does **not** roll the rejection back
+         *        and does **not** become `500`: the response reports `notification=unavailable` and
+         *        the review screen says so in words ("recorded, no notice sent"). The opposite reading
+         *        ("the mail failed, so nothing happened") would leave the teacher believing a pending
+         *        row is already decided.
+         *     2. **The recipient is the message's original sender, never a name the platform
+         *        invented.** The notice goes to the address the message actually came from: no
+         *        student lookup, no derivation from the row's scope, no guess from the roster. A
+         *        record with no sender address on file is answered with `notification=unavailable`
+         *        rather than sent to somewhere plausible.
+         *     3. **The same one-shot rule as every other decision.** A row that is already
+         *        `attributed`, `completed`, `dismissed` or `rejected` returns `409`; the decision is
+         *        recorded once, which is also why a second call cannot send a second mail. Row
+         *        authorization is identical to the other intake operations (staff within the row's
+         *        token scope, administrators for any row), and the row is locked and re-authorized
+         *        before the state check, so a caller outside the scope cannot probe it.
+         *
+         *     The row moves to `resolution=rejected`, with `resolved_at`/`resolved_by` recorded and
+         *     the optional `note` stored in `resolution_note`. It is deliberately **not**
+         *     `dismissed`: "a reviewer discarded this row" and "the submission failed and the sender
+         *     was told" are two different decisions, and a review screen that collapsed both into
+         *     已作废 would lose the only evidence that a notice was, or was not, handed off. Neither
+         *     decision creates a submission or a score.
+         */
+        post: operations["rejectIntakeQuarantine"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/intake/quarantines/{intake_quarantine_id}/hold": {
         parameters: {
             query?: never;
@@ -1081,14 +1135,35 @@ export interface components {
              */
             subject: string | null;
             /**
+             * @description The address the message was **sent from**, recorded at intake time in the same
+             *     bounded, lowercased form B2 binds to a submission. It is the recipient of
+             *     `rejectIntakeQuarantine`'s failure notice, so a teacher confirming a rejection can
+             *     see who will be told before doing it, and a row with no recorded address explains an
+             *     `unavailable` notice instead of hiding it.
+             *
+             *     It is deliberately not derived from the mailbox, the subject, the row's scope or the
+             *     request: the sender is a header of the message that actually arrived, and a notice
+             *     addressed anywhere else would be a message to a stranger.
+             *
+             *     `null` for rows recorded before this field existed -- those cannot be notified, and
+             *     the contract says so rather than guessing an address.
+             */
+            sender: string | null;
+            /**
              * @description The human decision: `completed` (the original mail was re-read and turned into the
              *     chosen student's submission), `attributed` (legacy manual attribution that recorded a
-             *     student but did not create a submission), `dismissed` (marked invalid/作废), or `null`
-             *     for rows that are still pending/held or that were resolved before the trail existed.
-             *     `resolved` remains the boolean form so older filtered pages keep their meaning.
+             *     student but did not create a submission), `dismissed` (marked invalid/作废),
+             *     `rejected` (打回: the submission failed and the original sender was notified --
+             *     `rejectIntakeQuarantine`), or `null` for rows that are still pending/held or that were
+             *     resolved before the trail existed. `resolved` remains the boolean form so older
+             *     filtered pages keep their meaning.
+             *
+             *     `dismissed` and `rejected` are kept separate on purpose: the second one records that
+             *     an outbound notice was handed off, and a state that merged them could no longer say
+             *     whether the sender was told anything.
              * @enum {string|null}
              */
-            resolution: "attributed" | "completed" | "dismissed" | null;
+            resolution: "attributed" | "completed" | "dismissed" | "rejected" | null;
             /**
              * @description When the human decision was recorded (server clock). `null` for pending/held rows and
              *     for rows resolved before this field existed.
@@ -1114,6 +1189,34 @@ export interface components {
             held_at: components["schemas"]["Timestamp"] | null;
             /** @description Who put the row on hold; null unless `held=true`. */
             held_by: components["schemas"]["Uuid"] | null;
+        };
+        /**
+         * @description Result of `rejectIntakeQuarantine`: the record **after** the rejection, plus whether the
+         *     failure notice left the process.
+         *
+         *     The record is nested rather than spread beside `notification` on purpose.
+         *     `IntakeQuarantineView` is closed (`additionalProperties: false`), so an `allOf`
+         *     composition that added a sibling `notification` would be rejected by any strict
+         *     JSON-Schema validator -- the response would be invalid by its own contract, which is the
+         *     kind of spec-only shape this project refuses to ship. Nesting keeps the record's field
+         *     list in exactly one place and lets a client replace the row it already holds with the
+         *     one returned here.
+         */
+        IntakeQuarantineRejection: {
+            record: components["schemas"]["IntakeQuarantineView"];
+            /**
+             * @description `queued` -- a failure notice was accepted for delivery to the message's original
+             *     sender address. `unavailable` -- the rejection is recorded, but no notice was sent:
+             *     no sender address is on file for this message, or this deployment has no mail
+             *     transport configured.
+             *
+             *     It never means "still sending". What happens after hand-off (bounce, spam
+             *     rejection, delayed delivery) is the transport's fact, and reporting it here would
+             *     mean holding the teacher's request open for a remote queue -- so this field answers
+             *     one question only: did the platform manage to send anything at all?
+             * @enum {string}
+             */
+            notification: "queued" | "unavailable";
         };
         /**
          * @description A movable evidence bundle for one evaluation run (CHG-0014). Self-contained on purpose:
@@ -2350,6 +2453,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IntakeQuarantineView"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
+            409: components["responses"]["Conflict"];
+            422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    rejectIntakeQuarantine: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                intake_quarantine_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    /** @description Why this rejection, for the audit trail. */
+                    note?: string | null;
+                };
+            };
+        };
+        responses: {
+            /** @description Rejected; the record is marked processed and the notice is either queued or reported unavailable. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntakeQuarantineRejection"];
                 };
             };
             401: components["responses"]["Unauthorized"];

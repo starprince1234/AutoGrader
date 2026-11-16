@@ -1,12 +1,17 @@
-"""Course-level assignments and the publication-notification hand-off (v0.32.0).
+"""Assignments with an explicit target and the publication-notification hand-off (v0.38.0).
 
-These are the B3 acceptance cases for the assignment rework (design §3):
+These are the B3 acceptance cases for the assignment model:
 
-* an assignment belongs to one course and automatically covers **every** section, class and
-  student of it -- there is no hand-picked target list;
-* a student's access is decided from B4's **authoritative current** authorization, so every
-  section of the course sees the assignment, another course's student does not, and a
-  student removed from the course stops seeing it immediately;
+* an assignment belongs to one course and carries an explicit **target** -- target sections
+  and, inside them, named students; naming neither means the whole course, which is also what
+  every assignment created before the field existed means (no backfill);
+* a target id is checked against the identity/course module **before** the write: an id outside
+  the course is ``422`` (detail names it, nothing persisted), an absent course is ``404``, an
+  unconfigured validator is ``503``. Duplicates never reach that call at all;
+* the confirmed target is what gets stored and echoed, and it travels with the publication
+  hand-off so B4 narrows its roster snapshot with the same filter;
+* a student's access is still decided from B4's **authoritative current** authorization, so a
+  student of the course sees the assignment and another course's student does not;
 * the list's course filter is applied in SQL (a page is never shortened by a post-filter);
 * publishing hands the audience to B4: ``scheduled`` on success, ``unavailable`` on any
   failure (the assignment is not rolled back), and the teacher retry endpoint is idempotent
@@ -15,7 +20,7 @@ These are the B3 acceptance cases for the assignment rework (design §3):
   duplicate ids ``422``) and B2's internal audience endpoint still requires the service token.
 
 The database and the HTTP surface are real; only the identity/course module's *HTTP
-exchange* is replaced (``fake_b4`` serves the two internal operations through the
+exchange* is replaced (``fake_b4`` serves the three internal operations through the
 production clients).
 """
 
@@ -36,8 +41,11 @@ from .conftest import (
     COURSE_B,
     COURSE_D,
     COURSE_E,
+    SECTION_A,
+    SECTION_A2,
     SECTION_E,
     STUDENT_A,
+    STUDENT_B,
     draft_payload,
 )
 from .support import http_publish
@@ -120,6 +128,7 @@ def _create_assignment(
     version_ids,
     title: str = "Homework",
     due_at: str | None = None,
+    target: dict | None = None,
 ):
     body: dict = {
         "course_id": str(course_id),
@@ -128,7 +137,33 @@ def _create_assignment(
     }
     if due_at is not None:
         body["due_at"] = due_at
+    if target is not None:
+        body["target"] = target
     return client.post(ASSIGNMENTS, json=body, headers=auth_headers(token))
+
+
+def _target_sections(*section_ids) -> dict:
+    return {"section_ids": [str(item) for item in section_ids], "student_ids": []}
+
+
+def _target_students(*student_ids) -> dict:
+    return {"section_ids": [], "student_ids": [str(item) for item in student_ids]}
+
+
+def _target(sections=(), students=()) -> dict:
+    return {
+        "section_ids": [str(item) for item in sections],
+        "student_ids": [str(item) for item in students],
+    }
+
+
+def _target_calls(fake_b4) -> list[dict]:
+    """Every target-validation request the fake identity/course module received."""
+    return [
+        item
+        for item in fake_b4.requests
+        if item["url"].endswith("/api/v1/internal/course-targets/validate")
+    ]
 
 
 def _client_with(dependencies, **changes) -> TestClient:
@@ -147,10 +182,10 @@ def _listed_ids(client, auth_headers, token: str, **params) -> set[str]:
     return {item["assignment_id"] for item in response.json()["items"]}
 
 
-# --- creation: course-level shape ----------------------------------------
+# --- creation: whole-course shape ----------------------------------------
 
 
-def test_create_assignment_is_course_level_and_schedules_the_notification(
+def test_create_assignment_without_a_target_covers_the_whole_course(
     client, auth_headers, fake_b4, published_version
 ):
     response = _create_assignment(
@@ -169,17 +204,19 @@ def test_create_assignment_is_course_level_and_schedules_the_notification(
         "due_at",
         "question_version_ids",
         "notification_state",
+        "target",
         "created_at",
         "updated_at",
     }
     assert body["course_id"] == str(COURSE_A)
     assert body["question_version_ids"] == [published_version]
     assert body["status"] == "open"
-    # The hand-picked target model is gone, not deprecated: a leftover list would be a
-    # second answer to "who is this assignment for".
-    assert "section_ids" not in body
-    assert "student_ids" not in body
+    # Omitting the target means the whole course -- not "unknown", and not a missing field.
+    assert body["target"] == {"section_ids": [], "student_ids": []}
     assert body["notification_state"] == "scheduled"
+    # Nothing to confirm, so the validator is never asked: an empty target is a fact about
+    # the assignment, not about the roster.
+    assert _target_calls(fake_b4) == []
 
     sent = fake_b4.notifications[uuid.UUID(body["assignment_id"])]
     assert sent == {
@@ -188,10 +225,29 @@ def test_create_assignment_is_course_level_and_schedules_the_notification(
         "title": "Homework",
         "due_at": "2026-11-20T23:59:00.000Z",
         "published_at": CREATED_AT,
+        "section_ids": [],
+        "student_ids": [],
     }
-    post = next(item for item in fake_b4.requests if item["method"] == "POST")
-    assert post["url"].endswith("/api/v1/internal/assignment-notifications")
+    post = next(
+        item
+        for item in fake_b4.requests
+        if item["url"].endswith("/api/v1/internal/assignment-notifications")
+    )
     assert post["headers"]["authorization"] == "Bearer test-service-token"
+
+
+def test_an_explicitly_empty_target_is_the_same_whole_course(
+    client, auth_headers, fake_b4, published_version
+):
+    response = _create_assignment(
+        client,
+        auth_headers,
+        version_ids=(published_version,),
+        target=_target(),
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["target"] == {"section_ids": [], "student_ids": []}
+    assert _target_calls(fake_b4) == []
 
 
 def test_create_assignment_without_a_due_date_sends_no_deadline(
@@ -202,6 +258,160 @@ def test_create_assignment_without_a_due_date_sends_no_deadline(
     assert response.json()["due_at"] is None
     sent = fake_b4.notifications[uuid.UUID(response.json()["assignment_id"])]
     assert sent["due_at"] is None
+
+
+# --- creation: an explicit target ----------------------------------------
+
+
+def test_create_assignment_with_target_sections_confirms_and_stores_them(
+    client, auth_headers, fake_b4, service_headers, published_version
+):
+    response = _create_assignment(
+        client,
+        auth_headers,
+        version_ids=(published_version,),
+        target=_target_sections(SECTION_A2, SECTION_A),
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    # Echoed in sorted order: a target is a set, and the stored target is the confirmed one.
+    assert body["target"] == {
+        "section_ids": sorted([str(SECTION_A), str(SECTION_A2)]),
+        "student_ids": [],
+    }
+
+    calls = _target_calls(fake_b4)
+    assert len(calls) == 1
+    assert calls[0]["headers"]["authorization"] == "Bearer test-service-token"
+    assert calls[0]["body"] == {
+        "course_id": str(COURSE_A),
+        "section_ids": [str(SECTION_A2), str(SECTION_A)],
+        "student_ids": [],
+    }
+
+    # The hand-off carries the same ids, so B4 narrows with the assignment's own target.
+    sent = fake_b4.notifications[uuid.UUID(body["assignment_id"])]
+    assert sent["section_ids"] == sorted([str(SECTION_A), str(SECTION_A2)])
+    assert sent["student_ids"] == []
+
+    # And what was stored is what B2 reads for admission.
+    audience = client.get(
+        f"{INTERNAL_ASSIGNMENT}/{body['assignment_id']}", headers=service_headers
+    )
+    assert audience.status_code == 200, audience.text
+    assert audience.json()["section_ids"] == sorted([str(SECTION_A), str(SECTION_A2)])
+    assert audience.json()["student_ids"] == []
+
+
+def test_create_assignment_with_named_students_confirms_and_stores_them(
+    client, auth_headers, fake_b4, published_version
+):
+    response = _create_assignment(
+        client,
+        auth_headers,
+        version_ids=(published_version,),
+        target=_target(sections=(SECTION_A,), students=(STUDENT_B, STUDENT_A)),
+    )
+    assert response.status_code == 201, response.text
+    body = response.json()
+    assert body["target"]["student_ids"] == sorted([str(STUDENT_A), str(STUDENT_B)])
+    assert body["target"]["section_ids"] == [str(SECTION_A)]
+    sent = fake_b4.notifications[uuid.UUID(body["assignment_id"])]
+    assert sent["student_ids"] == sorted([str(STUDENT_A), str(STUDENT_B)])
+
+
+def test_a_target_section_of_another_course_is_unprocessable_and_writes_nothing(
+    client, auth_headers, fake_b4, published_version
+):
+    before = _listed_ids(client, auth_headers, "teacher-a", course_id=str(COURSE_A))
+    response = _create_assignment(
+        client,
+        auth_headers,
+        version_ids=(published_version,),
+        target=_target_sections(SECTION_E),
+    )
+    assert response.status_code == 422, response.text
+    detail = response.json()["detail"]
+    assert str(SECTION_E) in detail
+    assert response.json()["type"].endswith("/assignment-target-invalid")
+
+    # The check ran before the write: no assignment appeared, and no notification was sent.
+    after = _listed_ids(client, auth_headers, "teacher-a", course_id=str(COURSE_A))
+    assert after == before
+    assert fake_b4.notifications == {}
+
+
+def test_a_target_student_outside_the_course_is_unprocessable(
+    client, auth_headers, fake_b4, published_version
+):
+    before = _listed_ids(client, auth_headers, "teacher-a", course_id=str(COURSE_A))
+    response = _create_assignment(
+        client,
+        auth_headers,
+        version_ids=(published_version,),
+        target=_target_students(uuid.uuid4()),
+    )
+    assert response.status_code == 422, response.text
+    assert response.json()["type"].endswith("/assignment-target-invalid")
+    assert _listed_ids(client, auth_headers, "teacher-a", course_id=str(COURSE_A)) == before
+    assert fake_b4.notifications == {}
+
+
+def test_duplicate_target_ids_are_unprocessable_before_any_remote_call(
+    client, auth_headers, fake_b4, published_version
+):
+    response = _create_assignment(
+        client,
+        auth_headers,
+        version_ids=(published_version,),
+        target=_target_sections(SECTION_A, SECTION_A),
+    )
+    assert response.status_code == 422, response.text
+    # Shape is decided locally: a duplicate cannot become a second row in a composite key,
+    # so it is refused without asking B4 anything.
+    assert _target_calls(fake_b4) == []
+
+
+def test_a_target_without_the_identity_module_is_refused_with_503(
+    dependencies, auth_headers, published_version
+):
+    client = _client_with(dependencies, b4_targets=None)
+    response = _create_assignment(
+        client,
+        auth_headers,
+        version_ids=(published_version,),
+        target=_target_sections(SECTION_A),
+    )
+    assert response.status_code == 503, response.text
+    assert response.json()["type"].endswith("/target-validation-unavailable")
+
+
+def test_an_unreachable_target_validator_is_503_and_writes_nothing(
+    dependencies, auth_headers, published_version
+):
+    class _Down:
+        def __call__(self, request, timeout: float):  # noqa: ARG002 - the port's shape
+            raise OSError("connection refused")
+
+    from autograder_b3.integration.b4 import B4CourseTargetValidator
+
+    client = _client_with(
+        dependencies,
+        b4_targets=B4CourseTargetValidator(
+            base_url="http://identity.invalid",
+            service_token="test-service-token",
+            timeout_seconds=1.0,
+            opener=_Down(),
+        ),
+    )
+    response = _create_assignment(
+        client,
+        auth_headers,
+        version_ids=(published_version,),
+        target=_target_sections(SECTION_A),
+    )
+    assert response.status_code == 503, response.text
+    assert response.json()["type"].endswith("/target-validation-unavailable")
 
 
 def test_assignment_keeps_question_version_order(client, auth_headers):
@@ -530,6 +740,107 @@ def test_student_reads_fail_closed_when_the_directory_is_unusable(
     assert unconfigured.status_code == 503
 
 
+# --- reads: students are narrowed by the target --------------------------
+
+
+def test_a_student_in_a_target_section_sees_the_assignment(
+    client, auth_headers, published_version
+):
+    """STUDENT_A sits in SECTION_A (the fake directory's authoritative enrollment)."""
+    created = _create_assignment(
+        client,
+        auth_headers,
+        version_ids=(published_version,),
+        target=_target_sections(SECTION_A),
+    )
+    assert created.status_code == 201, created.text
+    assignment_id = created.json()["assignment_id"]
+    assert assignment_id in _listed_ids(client, auth_headers, "student-a")
+    assert _detail(client, auth_headers, "student-a", assignment_id).status_code == 200
+
+
+def test_a_student_outside_the_target_sections_does_not_see_the_assignment(
+    client, auth_headers, published_version
+):
+    """STUDENT_B sits in SECTION_A2, so a SECTION_A assignment is not theirs."""
+    created = _create_assignment(
+        client,
+        auth_headers,
+        version_ids=(published_version,),
+        target=_target_sections(SECTION_A),
+    )
+    assert created.status_code == 201, created.text
+    assignment_id = created.json()["assignment_id"]
+
+    assert assignment_id not in _listed_ids(client, auth_headers, "student-b")
+    denied = _detail(client, auth_headers, "student-b", assignment_id)
+    # 403 rather than 404: the student is enrolled in the course, so the row is not a secret --
+    # what refuses them is the target, and saying so is the honest answer.
+    assert denied.status_code == 403
+    assert denied.json()["type"].endswith("/forbidden")
+
+
+def test_a_named_student_sees_the_assignment_and_classmates_do_not(
+    client, auth_headers, published_version
+):
+    created = _create_assignment(
+        client,
+        auth_headers,
+        version_ids=(published_version,),
+        target=_target_students(STUDENT_A),
+    )
+    assert created.status_code == 201, created.text
+    assignment_id = created.json()["assignment_id"]
+
+    assert assignment_id in _listed_ids(client, auth_headers, "student-a")
+    assert assignment_id not in _listed_ids(client, auth_headers, "student-b")
+    assert _detail(client, auth_headers, "student-b", assignment_id).status_code == 403
+
+
+def test_a_student_sees_only_their_own_id_in_the_target(
+    client, auth_headers, published_version
+):
+    """The teacher reads the whole target; a classmate's id is not a student-visible fact."""
+    created = _create_assignment(
+        client,
+        auth_headers,
+        version_ids=(published_version,),
+        target=_target(sections=(SECTION_A, SECTION_A2), students=(STUDENT_A, STUDENT_B)),
+    )
+    assert created.status_code == 201, created.text
+    assignment_id = created.json()["assignment_id"]
+
+    teacher = _detail(client, auth_headers, "teacher-a", assignment_id)
+    assert teacher.status_code == 200, teacher.text
+    assert teacher.json()["target"]["student_ids"] == sorted([str(STUDENT_A), str(STUDENT_B)])
+
+    student = _detail(client, auth_headers, "student-a", assignment_id)
+    assert student.status_code == 200, student.text
+    assert student.json()["target"]["student_ids"] == [str(STUDENT_A)]
+    # Sections are course structure, not people: they stay whole for every reader.
+    assert student.json()["target"]["section_ids"] == sorted([str(SECTION_A), str(SECTION_A2)])
+
+    listed = client.get(
+        ASSIGNMENTS, params={"course_id": str(COURSE_A)}, headers=auth_headers("student-a")
+    )
+    assert listed.status_code == 200, listed.text
+    item = next(
+        row for row in listed.json()["items"] if row["assignment_id"] == assignment_id
+    )
+    assert item["target"]["student_ids"] == [str(STUDENT_A)]
+
+
+def test_a_whole_course_assignment_is_still_visible_to_every_section(
+    client, auth_headers, published_version
+):
+    """The regression that matters: no target must not mean "nobody"."""
+    created = _create_assignment(client, auth_headers, version_ids=(published_version,))
+    assert created.status_code == 201, created.text
+    assignment_id = created.json()["assignment_id"]
+    assert assignment_id in _listed_ids(client, auth_headers, "student-a")
+    assert assignment_id in _listed_ids(client, auth_headers, "student-b")
+
+
 # --- reads: teachers -----------------------------------------------------
 
 
@@ -539,8 +850,8 @@ def test_teacher_reads_assignments_within_the_token_course_scope(
     created = _create_assignment(client, auth_headers, version_ids=(published_version,))
     assignment_id = created.json()["assignment_id"]
 
-    # A section-scoped teacher token still grants the whole course: assignments are
-    # course-level now, so there is no target section to match against.
+    # A section-scoped teacher token still grants the whole course: the target narrows who
+    # the assignment is *for*, not what a teacher may read.
     assert _detail(client, auth_headers, "teacher-a", assignment_id).status_code == 200
     assert assignment_id in _listed_ids(client, auth_headers, "teacher-a")
 
@@ -550,6 +861,61 @@ def test_teacher_reads_assignments_within_the_token_course_scope(
     assert assignment_id not in _listed_ids(client, auth_headers, "teacher-b")
 
     assert assignment_id in _listed_ids(client, auth_headers, "teacher-wide")
+
+
+# --- reads: the target on every projection -------------------------------
+
+
+def test_detail_and_list_carry_the_stored_target(
+    client, auth_headers, published_version
+):
+    created = _create_assignment(
+        client,
+        auth_headers,
+        version_ids=(published_version,),
+        target=_target(sections=(SECTION_A, SECTION_A2), students=(STUDENT_A,)),
+        title="targeted",
+    )
+    assert created.status_code == 201, created.text
+    assignment_id = created.json()["assignment_id"]
+    expected = {
+        "section_ids": sorted([str(SECTION_A), str(SECTION_A2)]),
+        "student_ids": [str(STUDENT_A)],
+    }
+
+    detail = _detail(client, auth_headers, "teacher-a", assignment_id)
+    assert detail.status_code == 200, detail.text
+    assert detail.json()["target"] == expected
+
+    page = client.get(
+        ASSIGNMENTS,
+        params={"course_id": str(COURSE_A), "limit": 200},
+        headers=auth_headers("teacher-a"),
+    )
+    assert page.status_code == 200, page.text
+    listed = {
+        item["assignment_id"]: item["target"] for item in page.json()["items"]
+    }
+    assert listed[assignment_id] == expected
+
+
+def test_a_whole_course_assignment_reads_back_an_empty_target(
+    client, auth_headers, published_version
+):
+    """Historical rows are exactly this shape: no target rows, and no invented ids."""
+    created = _create_assignment(client, auth_headers, version_ids=(published_version,))
+    assert created.status_code == 201, created.text
+    assignment_id = created.json()["assignment_id"]
+
+    detail = _detail(client, auth_headers, "teacher-a", assignment_id)
+    assert detail.json()["target"] == {"section_ids": [], "student_ids": []}
+    page = client.get(
+        ASSIGNMENTS,
+        params={"course_id": str(COURSE_A), "limit": 200},
+        headers=auth_headers("teacher-a"),
+    )
+    listed = {item["assignment_id"]: item["target"] for item in page.json()["items"]}
+    assert listed[assignment_id] == {"section_ids": [], "student_ids": []}
 
 
 # --- list: paging and authentication -------------------------------------
@@ -664,11 +1030,52 @@ def test_internal_assignment_serves_the_audience_to_a_service(
     assert body["course_id"] == str(COURSE_A)
     assert body["status"] == "open"
     assert body["question_version_ids"] == [published_version]
+    # Who is enrolled is still not asserted here (B4 is the only authority for it), but the
+    # target is: B2 intersects it with that enrollment, and both empty means the whole course.
     assert body["section_ids"] == []
     assert body["student_ids"] == []
     # Timestamps are not needed for admission.
     assert "created_at" not in body
     assert "updated_at" not in body
+
+
+def test_internal_assignment_serves_a_narrowed_target(
+    client, service_headers, auth_headers, published_version
+):
+    created = _create_assignment(
+        client,
+        auth_headers,
+        version_ids=(published_version,),
+        target=_target(sections=(SECTION_A,), students=(STUDENT_A,)),
+    )
+    assert created.status_code == 201, created.text
+    assignment_id = created.json()["assignment_id"]
+
+    response = client.get(f"{INTERNAL_ASSIGNMENT}/{assignment_id}", headers=service_headers)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["section_ids"] == [str(SECTION_A)]
+    assert body["student_ids"] == [str(STUDENT_A)]
+
+
+def test_internal_assignment_target_matches_the_public_read(
+    client, service_headers, auth_headers, published_version
+):
+    created = _create_assignment(
+        client,
+        auth_headers,
+        version_ids=(published_version,),
+        target=_target_sections(SECTION_A2),
+    )
+    assignment_id = created.json()["assignment_id"]
+    audience = client.get(f"{INTERNAL_ASSIGNMENT}/{assignment_id}", headers=service_headers)
+    detail = _detail(client, auth_headers, "teacher-a", assignment_id)
+    assert audience.status_code == 200, audience.text
+    assert detail.status_code == 200, detail.text
+    # One stored target, two readers: a mismatch here would mean the teacher is shown one
+    # audience while B2 admits another.
+    assert audience.json()["section_ids"] == detail.json()["target"]["section_ids"]
+    assert audience.json()["student_ids"] == detail.json()["target"]["student_ids"]
 
 
 def test_internal_assignment_requires_the_service_token(

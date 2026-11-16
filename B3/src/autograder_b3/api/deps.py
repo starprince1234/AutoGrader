@@ -33,6 +33,8 @@ from ..integration.b4 import (
     AuthorizationDirectory,
     B4AssignmentNotifier,
     B4AuthorizationClient,
+    B4CourseTargetValidator,
+    CourseTargetValidator,
 )
 
 
@@ -52,6 +54,12 @@ class B3Dependencies:
     #: ``None`` means unconfigured: assignments are still created, and their
     #: ``notification_state`` is ``unavailable`` so a teacher can retry.
     b4_notifier: AssignmentNotifier | None = None
+    #: Authoritative check that an assignment target belongs to its course (identity/course
+    #: module, internal HTTP). ``None`` means unconfigured: a **targeted** assignment is refused
+    #: with ``503``, while an assignment for the whole course is still created -- "no narrowing"
+    #: needs no roster fact, so there is nothing to confirm. Storing an unverified target would
+    #: be a silent audience change, which is the one outcome nobody notices.
+    b4_targets: CourseTargetValidator | None = None
     clock: Callable[[], datetime] = field(
         default_factory=lambda: lambda: datetime.now(UTC)
     )
@@ -76,6 +84,7 @@ def build_dependencies(
     publisher: EventPublisher | None = None,
     b4_authorization: AuthorizationDirectory | None = None,
     b4_notifier: AssignmentNotifier | None = None,
+    b4_targets: CourseTargetValidator | None = None,
     clock: Callable[[], datetime] | None = None,
 ) -> B3Dependencies:
     resolved = settings or Settings.from_env()
@@ -98,6 +107,11 @@ def build_dependencies(
                 base_url=resolved.b4_base_url,
                 service_token=resolved.b4_service_token,
             )
+        if b4_targets is None:
+            b4_targets = B4CourseTargetValidator(
+                base_url=resolved.b4_base_url,
+                service_token=resolved.b4_service_token,
+            )
     return B3Dependencies(
         settings=resolved,
         database=database or Database(resolved),
@@ -114,6 +128,7 @@ def build_dependencies(
         publisher=publisher if publisher is not None else InMemoryEventPublisher(),
         b4_authorization=b4_authorization,
         b4_notifier=b4_notifier,
+        b4_targets=b4_targets,
         clock=clock or (lambda: datetime.now(UTC)),
     )
 
@@ -197,4 +212,7 @@ def describe_dependencies(dependencies: B3Dependencies) -> dict[str, Any]:
         else None,
         "service_token_configured": dependencies.service_verifier is not None,
         "publisher": type(dependencies.publisher).__name__ if dependencies.publisher else None,
+        # Whether a *targeted* assignment can be created at all: without this client the
+        # write is refused with 503 rather than stored unverified.
+        "target_validator_configured": dependencies.b4_targets is not None,
     }

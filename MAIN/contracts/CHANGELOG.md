@@ -12,6 +12,71 @@
 
 ---
 
+## 0.38.0 — 作业显式目标（`AssignmentTarget`）与邮件失败「打回」通知
+
+- **类型**：P2 语义回归 + 最小新增（作业目标从"课程级"改回显式课序/学生；新增一个端点与两个 schema；
+  `IntakeQuarantineView` 增加 `sender` 与枚举值 `rejected`；无字段删除、无历史回填）
+- **状态**：有效
+- **背景**：
+  1. v0.32.0 把作业改成"课程级"：`AssignmentPublic` 没有课序/学生字段，一门课的作业自动覆盖全部课序与
+     班级，老师无法只发给某几个课序或某几个学生。老师现在要求**显式目标**，不再用"课程级作业"冒充。
+  2. 复核页把邮件结果折叠成"提交成功 / 提交失败"之后，失败记录没有出口：老师只能把它标记作废，
+     而"要不要告诉发件人、发件人是否知道自己的提交失败了"，平台既没有动作，也没有记录。
+- **变更**：
+  - `openapi/b3.yaml`：新增 `AssignmentTarget`（`section_ids`/`student_ids`，两轴**相交**，皆空 = 全课程）；
+    `AssignmentPublic` 新增必填 `target`；新增 `CreateAssignmentRequest`（`target` 可选，省略 = 全课程）；
+    `AssignmentInternal` 新增 `section_ids`/`student_ids`（缺键 = 全课程，供 B2 与 B4 名单求交）。
+  - `openapi/b2.yaml`：新增 `POST /api/v1/intake/quarantines/{intake_quarantine_id}/reject`
+    （`rejectIntakeQuarantine`，可选 `note`，200 返回新 schema `IntakeQuarantineRejection`）；
+    `IntakeQuarantineView` 新增必填 `sender`（历史行为 `null`），`resolution` 枚举新增 `rejected`。
+  - `openapi/b4.yaml`：新增 `POST /api/v1/internal/course-targets/validate`
+    （`validateCourseTargets`，`CourseTargetValidationRequest` → `CourseTargetValidation`）：
+    目标 id 是否属于该课程是名单事实，只有 B4 能回答，必须在 B3 写作业**之前**问；
+    `AssignmentNotificationRequest` 增加可选 `section_ids`/`student_ids`，发布通知的受众
+    由"课程当前名单"改为"课程当前名单 ∩ 目标"，与提交准入用同一份过滤。
+  - 版本 `0.37.0 → 0.38.0`：`common.yaml`、`b2.yaml`、`b3.yaml`、`b4.yaml`、`b5.yaml` 与
+    `asyncapi/events.yaml` 同步。
+- **语义**：
+  - `target` 是**当前名单上的过滤，不是冻结快照**：读取/提交那一刻按 B4 的在读名单求值，退课即不再可见、
+    也不能提交；课序与学生两轴取交集，指定学生必须属于该课程。
+  - 越权目标由**服务端**拒绝（422），不做前端过滤：`section_id`/`student_id` 必须属于该课程；重复 id
+    同样 422（`uniqueItems`），不静默去重。
+  - 目标只在 `AssignmentInternal` 这一处穿过：B2 在网页提交、邮件建码、邮件入库三条路径上共用同一个
+    `audience ∩ B4 enrollment` 判定；B4 的发布/提醒受众用同一份交集，避免"通知发全班、提交只允许目标学生"。
+  - 目标 id 由 B4 判定（`validateCourseTargets`），不由 B3 猜：B3 只存目标，不持有名单。越权目标在
+    **写作业之前**被拒（422，`detail` 列出越界 id），不会出现"作业建好了、目标却是非法的"半截状态。
+  - 未提供 `target` 的作业（含全部历史作业）= 全课程，**不回填、不猜测**。
+  - `AssignmentPublic.target` **按角色投影**：教师看到存储的目标；学生看到的 `section_ids` 不变，
+    但 `student_ids` 只保留**自己**那一个（学生本来就必须在目标内才能读到该作业，否则 403）。
+    完整名单对学生的唯一增量是"同班被点名的同学 id"，那正是本模块一直挡在公开响应外的学生身份。
+  - 「打回」= 处置 + 向**原发件地址**发失败通知。通知失败不回滚处置、不返回 500：响应用
+    `notification` 字段如实说 `queued` / `unavailable`，页面据此写"已打回，但通知没发出去"。
+  - 打回记 `resolution=rejected`，与 `dismissed`（作废）分开：前者是"提交失败且已通知发件人"，合并会让
+    页面无法回答"学生被告知了吗"。已处置记录再次处置返回 409，第二次调用不会发第二封信。
+  - 发件地址是记录自己的事实（`sender`，历史行为 `null`），不从邮箱、主题、行级课程范围或请求推导；
+    没有地址的行打回后只能是 `unavailable`，而不是改寄一个"看起来合理"的地址。
+- **影响**：
+  - **B3**：写路径按 `target` 写 `b3.assignment_sections`/`b3.assignment_students`（先删后插，0 行 =
+    全课程），校验目标 ⊆ 课程；读模型输出 `target`；学生列表按目标收窄。
+  - **B2**：`_require_assignment()` 之后与 B4 名单求交（网页/建码/邮件三条路径共用）；reject 处置 + SMTP
+    发信；`IntakeQuarantineView` 输出 `sender`。
+  - **B4**：新增内部目标校验端点；发布通知的受众按目标收窄（与提交准入同一份过滤）。
+  - **B1**：`AssignmentComposer` 增加课序多选与指定学生、详情展示目标；复核页「打回」按钮与提示；
+    类型重新生成。
+- **签名与数据**：
+  - B3 迁移 `20261108_0012`（`assignment_sections`/`assignment_students`，**不加**"至少一行"约束，
+    0 行 = 全课程；历史作业不写行）。
+  - B2 迁移 `20261107_0023`（`intake_quarantines` 增加 `sender`，历史行 `NULL`；放宽
+    `ck_intake_quarantines_decision` 与 `ck_intake_quarantines_decision_audit` 以容纳 `rejected`）。
+- **兼容性**：`AssignmentPublic.target` 是必填新增，属**有意破坏性变更**——B3 的新响应必须同时上线。
+  `AssignmentInternal` 的两个新键是按名读取的附加事实，旧 B2 忽略它们即"全课程"，不会误收窄。
+  不保留"课程级/目标级"两套并行语义，也不保留双写。
+- **改号**：本节原按本地基线写作 0.35.0；合入时上游已发布 0.35.0 / 0.36.0 / 0.37.0，
+  故整批改号为 0.38.0，内容与摘要以本次重算为准。
+- **摘要**：见五份 `contracts.lock`（由 `contract_digest()` 计算，此处不复制）
+
+---
+
 ## 0.37.0 — 核验码即学生身份：邮件提交记录列表
 
 - **类型**：最小新增（一个新 GET 路径 + 两个响应 schema；无删除、无回填）
@@ -46,6 +111,8 @@
   - `UserSummary` 新增 `registered_classes` 与 `course_bindings`。
   - `PATCH /api/v1/users/{user_id}` 请求体新增可选 `student_number`。
   - `CurrentUser`（`GET /api/v1/me`）与 `POST /api/v1/auth/registrations` 响应新增 `registered_classes`。
+
+---
 
 ---
 

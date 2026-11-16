@@ -862,30 +862,42 @@ export interface paths {
         };
         /**
          * List assignments (作业集合) in the caller's course scope
-         * @description An assignment belongs to exactly one course and applies to **every** section (课序) and
-         *     class (班级) of that course (v0.32.0): there is no hand-picked target list left. The
-         *     audience is evaluated against the caller's current effective membership, read from B4
-         *     on each request, so a student added to a course after sign-in sees its assignments and
-         *     a student removed from a course stops seeing them without waiting for a token refresh.
+         * @description An assignment belongs to exactly one course and carries an explicit **target** (v0.38.0):
+         *     the sections (课序) it was given to and, inside those, the individually named students.
+         *     Both empty means the whole course, which is the shape of every assignment created
+         *     before the target existed -- those are not backfilled and not guessed at.
          *
-         *     Teachers see assignments in the courses they are staff on; students see assignments of
-         *     the courses they are currently enrolled in. The list is keyset-paginated by
-         *     `(created_at, assignment_id)`.
+         *     The target narrows *who it is for*, it never freezes a roster. The audience is still
+         *     evaluated against current effective membership, read from B4, so a student added to a
+         *     target section sees the assignment and a student who leaves stops seeing it without
+         *     waiting for a token refresh.
+         *
+         *     Teachers see assignments in the courses they are staff on; students see the assignments
+         *     of the courses they are currently enrolled in, narrowed by the target (a student outside
+         *     it does not see the assignment and cannot submit to it). The list is keyset-paginated
+         *     by `(created_at, assignment_id)`.
          */
         get: operations["listAssignments"];
         put?: never;
         /**
          * Create an assignment from published question versions
          * @description Only published versions of questions in `course_id` may be referenced; a draft
-         *     reference returns 409 and a question from another course is 404. The assignment is
-         *     course-scoped (v0.32.0): it automatically applies to every section and class of the
-         *     course, including sections/classes added later while the assignment is open. There is
-         *     no section or student target list any more.
+         *     reference returns 409 and a question from another course is 404.
          *
-         *     Publishing also schedules the publication notification to the course's current roster
-         *     (B4). The notification is a separate, idempotent step: its state is reported as
-         *     `notification_state` on the returned assignment, and a failure never rolls the
-         *     assignment back but is visible as `unavailable` and can be retried.
+         *     `target` names the assignment's audience (v0.38.0). Omitting it, or naming neither a
+         *     section nor a student, means the **whole course**: that is the shape of every
+         *     assignment created before the field existed, and it is also what "give it to the class"
+         *     means today. Naming `section_ids` narrows the audience to those sections; naming
+         *     `student_ids` narrows it further, inside the named sections when there are any. A
+         *     section id or a student id outside `course_id` is refused with `422` rather than
+         *     dropped: a target the server silently widened would hand the assignment to students the
+         *     teacher never named, and one it silently narrowed would hide it from a named student.
+         *
+         *     Publishing also schedules the publication notification to the **resolved audience**
+         *     (B4) -- the same set B2 admits submissions from, so "who was told" and "who may submit"
+         *     cannot drift apart. The notification is a separate, idempotent step: its state is
+         *     reported as `notification_state` on the returned assignment, and a failure never rolls
+         *     the assignment back but is visible as `unavailable` and can be retried.
          */
         post: operations["createAssignment"];
         delete?: never;
@@ -989,15 +1001,22 @@ export interface paths {
         };
         /**
          * Read an assignment's audience for submission admission (service-to-service)
-         * @description Consumed by B2 when accepting a web or mail submission (v0.32.0: course-level audience).
-         *     Being internal is not a substitute for authorization: the caller must present the
-         *     pre-shared `serviceToken`, not a student or teacher access token. The response carries
-         *     the assignment's course, status and ordered question list; **membership in the course**
-         *     is not asserted here because only B4 is authoritative for it -- B2 asks B4 for the
-         *     submitting student's current enrollment separately. A missing assignment is `404`;
-         *     missing/wrong credentials are `401`; a deployment with no service credential
-         *     configured refuses the endpoint with `503` instead of treating it as open (an
-         *     unconfigured internal channel must fail closed, not degrade).
+         * @description Consumed by B2 when accepting a web or mail submission. Being internal is not a
+         *     substitute for authorization: the caller must present the pre-shared `serviceToken`,
+         *     not a student or teacher access token.
+         *
+         *     The response carries the assignment's course, status, ordered question list and its
+         *     **target** (`section_ids`/`student_ids`, both empty meaning the whole course).
+         *     Membership in the course and in the sections is deliberately **not** asserted here
+         *     because only B4 is authoritative for it; B2 reads the submitting student's current
+         *     enrollment from B4 and intersects the two facts. That intersection is the single
+         *     admission decision shared by the web path, the mail verification-code path and the
+         *     mail intake path, so a target can never admit a web submission while refusing the same
+         *     student's mail.
+         *
+         *     A missing assignment is `404`; missing/wrong credentials are `401`; a deployment with
+         *     no service credential configured refuses the endpoint with `503` instead of treating it
+         *     as open (an unconfigured internal channel must fail closed, not degrade).
          */
         get: operations["getInternalAssignment"];
         put?: never;
@@ -1724,19 +1743,89 @@ export interface components {
             verified_at?: components["schemas"]["Timestamp"] | null;
         };
         /**
-         * @description A homework set that groups published question versions for exactly one course and
-         *     applies to every section (课序) and class (班级) of that course (v0.32.0). There is no
-         *     target list: the audience is "the course's current effective students", evaluated at
-         *     read/submission time. `question_version_ids` is in assignment order (item ordinal
-         *     0..n-1); answer files are named by 1-based position (`1.txt`, `2.txt`, ...).
-         *     `notification_state` reports the publication-notification hand-off:
-         *     `scheduled` (B4 received the audience), `unavailable` (it did not; retry is possible),
-         *     `pending` (never attempted, only transitional).
+         * @description Who an assignment is for (v0.38.0). The two axes are **intersected**, never unioned:
+         *
+         *     * `section_ids` non-empty -- only students in those sections (课序) are the audience;
+         *     * `student_ids` non-empty -- only those named students are, inside the named sections
+         *       when `section_ids` is non-empty, otherwise anywhere in the course;
+         *     * both empty -- the whole course. That is the state of every assignment created before
+         *       this field existed: no backfill, no inferred audience.
+         *
+         *     The target is a **filter over the current roster, not a frozen snapshot**. It is
+         *     resolved against live enrollment at read/submission time, so a student who leaves stops
+         *     matching and a student who joins a named section starts matching, exactly as the course
+         *     level audience always worked.
+         *
+         *     Ids must belong to the assignment's course; a target outside it is refused with `422`.
+         *     A target the server cannot validate is a target that hands work to the wrong people,
+         *     which is why this is a server-side refusal and not a client-side filter.
+         *
+         *     Both arrays are always present on a read (`[]` when that axis is not used). On a create
+         *     request the `target` object itself is optional, but once it is present both arrays are
+         *     required, so "no narrowing" is written explicitly as
+         *     `{"section_ids": [], "student_ids": []}` and cannot be confused with a half-specified
+         *     target. Duplicate ids are refused (`422`, `uniqueItems`) rather than collapsed: the id
+         *     set is a decision the caller made, and silently deduplicating it would hide a bug in
+         *     the caller's picker behind a successful write.
+         */
+        AssignmentTarget: {
+            /** @description Sections of the assignment's course. Empty means no section narrowing. */
+            section_ids: components["schemas"]["Uuid"][];
+            /**
+             * @description Named students. Empty means everyone in the named sections -- or the whole course
+             *     when no section is named.
+             */
+            student_ids: components["schemas"]["Uuid"][];
+        };
+        /**
+         * @description Body of `createAssignment`. Closed (`additionalProperties: false`), so an unrecognised
+         *     field is a `422` rather than a silently ignored one -- an assignment is handed to
+         *     students, and a write whose meaning the server only partly understood must not succeed.
+         */
+        CreateAssignmentRequest: {
+            course_id: components["schemas"]["Uuid"];
+            title: string;
+            due_at?: components["schemas"]["Timestamp"];
+            /** @description Assignment order: item ordinal equals array position (0-based). Answer files are named by 1-based position (`1.txt`, ...). */
+            question_version_ids: components["schemas"]["Uuid"][];
+            /**
+             * @description Optional. Omitted means the whole course, which is exactly what an all-empty
+             *     target means; the two forms are one behaviour, not two.
+             */
+            target?: components["schemas"]["AssignmentTarget"];
+        };
+        /**
+         * @description A homework set that groups published question versions for exactly one course, with an
+         *     explicit **target** (v0.38.0): the sections (课序) it was given to and, inside them, the
+         *     individually named students; both empty means the whole course, which is the shape of
+         *     every assignment created before the field existed. The target narrows who the audience
+         *     is, but the audience itself is still "current effective membership, narrowed by the
+         *     target", evaluated at read/submission time rather than frozen into the assignment.
+         *
+         *     `question_version_ids` is in assignment order (item ordinal 0..n-1); answer files are
+         *     named by 1-based position (`1.txt`, `2.txt`, ...). `notification_state` reports the
+         *     publication-notification hand-off of the resolved audience: `scheduled` (B4 received
+         *     the audience), `unavailable` (it did not; retry is possible), `pending` (never
+         *     attempted, only transitional).
          */
         AssignmentPublic: {
             assignment_id: components["schemas"]["Uuid"];
             course_id: components["schemas"]["Uuid"];
             title: string;
+            /**
+             * @description The target **as stored**, echoed on every read so a teacher can see what an
+             *     assignment was given to without reconstructing it from the notification audience.
+             *     Empty arrays mean the whole course; they never mean "unknown".
+             *
+             *     **Projected per role.** Staff read the target as it is stored. A student reads the
+             *     sections and, when the assignment names students, only their **own** id: they are
+             *     inside the audience by construction -- an assignment that excludes them is refused
+             *     rather than returned -- so the only thing the full list would add is the ids of
+             *     classmates, which is exactly the student identity this API keeps off public
+             *     surfaces. `section_ids` is not reduced, because a section is course structure rather
+             *     than a person.
+             */
+            target: components["schemas"]["AssignmentTarget"];
             /**
              * @description `open` accepts submissions. `closed` is a teacher's manual end
              *     (`POST /api/v1/assignments/{assignment_id}/close`) and refuses submissions.
@@ -1756,10 +1845,19 @@ export interface components {
         /**
          * @description The assignment facts served to B2 over the internal channel (serviceToken only). It is
          *     the minimum B2 needs to admit or refuse a submission: which course the assignment
-         *     belongs to, whether it is open, and the ordered question list. Course membership is
-         *     **not** asserted here -- B4 is the only authority for it, so B2 reads the submitting
-         *     student's current enrollment from B4 and combines the two facts. Timestamps are not
-         *     needed for admission and are therefore not exposed.
+         *     belongs to, whether it is open, the ordered question list, and the **target** the
+         *     audience must be narrowed by. Membership is **not** asserted here -- B4 is the only
+         *     authority for it, so B2 reads the submitting student's current enrollment from B4 and
+         *     combines the two facts (section must be in `section_ids` when those are named, student
+         *     must be in `student_ids` when those are named; both empty means the whole course).
+         *
+         *     The target travels here, and only here, because this is the one place B3 hands an
+         *     assignment to another module: a second channel would be a second admission rule. An
+         *     older B3 that omits the keys is read as "whole course" by B2, so the field is additive
+         *     on the wire; the *decision* is not, which is why the intersection lives in one function
+         *     that the web path, the mail verification-code path and the mail intake path all call.
+         *
+         *     Timestamps are not needed for admission and are therefore not exposed.
          */
         AssignmentInternal: {
             assignment_id: components["schemas"]["Uuid"];
@@ -1771,6 +1869,17 @@ export interface components {
              */
             status: "open" | "closed" | "archived";
             question_version_ids: components["schemas"]["Uuid"][];
+            /**
+             * @description Target sections. `[]` (or an omitted key) means the assignment is not narrowed by
+             *     section. B2 intersects this with the student's enrollment facts from B4; B3 never
+             *     asserts who is enrolled.
+             */
+            section_ids?: components["schemas"]["Uuid"][];
+            /**
+             * @description Named target students. `[]` (or an omitted key) means everyone in the target
+             *     sections, or the whole course when no section is named.
+             */
+            student_ids?: components["schemas"]["Uuid"][];
         };
         /**
          * @description Aggregate statistics derived solely from de-identified
@@ -3035,13 +3144,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": {
-                    course_id: components["schemas"]["Uuid"];
-                    title: string;
-                    due_at?: components["schemas"]["Timestamp"];
-                    /** @description Assignment order: item ordinal equals array position (0-based). Answer files are named by 1-based position (`1.txt`, ...). */
-                    question_version_ids: components["schemas"]["Uuid"][];
-                };
+                "application/json": components["schemas"]["CreateAssignmentRequest"];
             };
         };
         responses: {

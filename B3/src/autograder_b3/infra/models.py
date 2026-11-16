@@ -626,13 +626,17 @@ class ConsumptionCounter(Base):
 
 
 class Assignment(Base):
-    """A course-level homework set (v0.32.0).
+    """A homework set with an explicit target (v0.38.0).
 
-    One row per assignment: it belongs to exactly one course and automatically applies to
-    every section (课序), class (班级) and student of that course, including ones added
-    later while it is open. There is deliberately no target-section/student table any more:
-    the audience is computed from the identity/course module's live enrollments at read
-    and submission time, which is the only way "who is this for" cannot diverge.
+    One row per assignment: it belongs to exactly one course, and its audience is the course's
+    current students **narrowed by the target** in :class:`AssignmentSection` /
+    :class:`AssignmentStudent` (v0.38.0 restored them). No target rows means the whole course,
+    which is the shape of every assignment created before those tables existed -- so a
+    historical row needs no backfill and must never be read as "assigned to nobody".
+
+    The target is stored as ids only. The roster itself is never copied here: it is read from
+    the identity/course module's live enrollments at read and submission time, which is the
+    only way "who is this for" cannot silently diverge.
 
     ``notification_state`` records the publication-notification hand-off to B4:
     ``pending`` (never attempted), ``scheduled`` (B4 has the audience) or ``unavailable``

@@ -261,14 +261,34 @@ class QuestionStatisticsPublic(BaseModel):
     computed_at: datetime | None = None
 
 
-class AssignmentPublic(BaseModel):
-    """One course-level homework set (v0.32.0).
+class AssignmentTargetPublic(BaseModel):
+    """Who an assignment is for (``AssignmentTarget``, v0.38.0).
 
-    An assignment belongs to exactly one course and applies to **every** section (课序),
-    class (班级) and student of that course, including ones added later while it is open.
-    There is no target list: the audience is "the course's current effective students",
-    evaluated when someone reads or submits, and that evaluation is done against B4's live
-    enrollments rather than a hand-picked id set.
+    The two axes are intersected, never unioned: named sections narrow the audience to those
+    sections, named students narrow it further (inside the named sections when there are any).
+    Empty tuples mean the whole course -- the shape of every assignment created before the
+    field existed, and never "unknown".
+
+    It is a **filter over the current roster**, not a snapshot: it is resolved against live
+    enrollment when somebody reads or submits, so a student who leaves stops matching. That is
+    why this DTO carries ids only -- there is deliberately no stored name list here, which
+    would be the copy that silently goes stale.
+    """
+
+    model_config = _PUBLIC_CONFIG
+
+    section_ids: tuple[UUID, ...] = ()
+    student_ids: tuple[UUID, ...] = ()
+
+
+class AssignmentPublic(BaseModel):
+    """One homework set with an explicit target (v0.38.0).
+
+    An assignment belongs to exactly one course, and ``target`` says which sections of it --
+    and which named students inside them -- are the audience; both empty means the whole
+    course. The audience itself is still "current effective membership, narrowed by the
+    target", evaluated when someone reads or submits, rather than a roster frozen into the
+    assignment.
 
     ``question_version_ids`` is ordered: array position is the item ordinal, and answer
     files are named by the 1-based position (``1.txt``). ``notification_state`` reports the
@@ -287,6 +307,8 @@ class AssignmentPublic(BaseModel):
     due_at: datetime | None = None
     question_version_ids: tuple[UUID, ...] = ()
     notification_state: NotificationState
+    #: 必填而不是默认可空:序列化器漏填要让构造直接失败,而不是悄悄输出"没有目标"。
+    target: AssignmentTargetPublic
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
@@ -411,6 +433,7 @@ PUBLIC_DTO_TYPES: tuple[type[BaseModel], ...] = (
     QuestionVersionPublic,
     QuestionLearningContextPublic,
     QuestionStatisticsPublic,
+    AssignmentTargetPublic,
     AssignmentPublic,
     StemAssetUploadResult,
     FixtureUploadResult,

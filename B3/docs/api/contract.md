@@ -29,11 +29,11 @@
 | GET | `/api/v1/question-versions/{id}/evaluation-package` | **内部**：可执行输入（隐藏用例/适配器/比较策略/沙箱策略）。**草稿与已发布都服务**；包内**不含**参考解答（它有自己的通道） | 服务间认证 | 仅 B2 | 已成文；草稿可服务由 CHG-0028 成文 |
 | GET | `/api/v1/question-versions/{id}/reference-answer` | **内部**：该版本**声明语言**的参考解答正文 + 存证口径的 `content_digest`（`CHG-0019` 的必需输入） | 服务间认证 | 仅 B2；教师/学生一律 `403` | 已成文（CHG-0023） |
 | GET | `/api/v1/question-versions/{id}/learning-context` | **内部**：供 B2 生成学生学习提示的**公开题目上下文**（title/stem/language/tags/adapter_kind），独立 schema | 服务间认证 | 仅 B2 service identity；教师/学生 `403`；草稿 `409` | 已成文（0.18.0，AI-FLOW-01B） |
-| GET | `/api/v1/assignments` | assignment 列表（课程级；按读者可读课程在 SQL 过滤；真正 keyset 分页） | 是 | 教师：token 角色 + 课程 scope；学生：B4 权威 authorization 的当前选课课程 | 已成文（0.32.0） |
-| POST | `/api/v1/assignments` | 创建**课程级** assignment：`{course_id, title, due_at?, question_version_ids}`，自动覆盖该课程全部课序/班级/学生；只能引用该课程已发布版本（草稿 → `409`，跨课程 → `404`）；提交后同步投递通知（成功 `scheduled`、失败 `unavailable`，作业不回滚） | 是 | 教师/管理员，课程写权限 | 已成文（0.32.0） |
-| GET | `/api/v1/assignments/{assignment_id}` | 单个 assignment（含有序 `question_version_ids` 与 `notification_state`） | 是 | 同上（不可读 `403`，不存在 `404`） | 已成文（0.32.0） |
+| GET | `/api/v1/assignments` | assignment 列表（带显式目标；按读者可读课程在 SQL 过滤，学生**同时**按目标两轴在 SQL 过滤；真正 keyset 分页） | 是 | 教师：token 角色 + 课程 scope；学生：B4 权威 authorization 的当前选课课程 **∩** 作业目标 | 已成文（0.38.0） |
+| POST | `/api/v1/assignments` | 创建 assignment：`{course_id, title, due_at?, question_version_ids, target?}`；`target` = `{section_ids, student_ids}`，两轴**相交**，省略或皆空 = 全课程；只能引用该课程已发布版本（草稿 → `409`，跨课程 → `404`）；非空目标先交 B4 `validateCourseTargets` 确认再写（越权 id → `422`、课程不存在 → `404`、校验不可用 → `503`；重复 id 在本地 `422`，不发远端调用）；提交后同步投递通知（成功 `scheduled`、失败 `unavailable`，作业不回滚） | 是 | 教师/管理员，课程写权限 | 已成文（0.38.0） |
+| GET | `/api/v1/assignments/{assignment_id}` | 单个 assignment（含有序 `question_version_ids`、`target` 与 `notification_state`） | 是 | 同上（不可读 `403`，不存在 `404`） | 已成文（0.32.0；`target` 0.38.0） |
 | POST | `/api/v1/assignments/{assignment_id}/notifications` | 幂等**重试**发布通知（B4 侧按 assignment_id 幂等）；返回最新 `AssignmentPublic`；B4 明确 `404/409/422` 时映射同一状态码 | 是 | 教师/管理员 + 课程写权限 | 已成文（0.32.0） |
-| GET | `/api/v1/assignment-audiences/{assignment_id}` | **内部**：B2 受理提交所需的作业受众（`AssignmentInternal`，课程级：课程/状态/有序题目） | **服务间认证** | 仅服务；不存在 `404`，服务令牌未配置 `503` | 已成文（0.32.0） |
+| GET | `/api/v1/assignment-audiences/{assignment_id}` | **内部**：B2 受理提交所需的作业受众（`AssignmentInternal`：课程/状态/有序题目 + **目标** `section_ids`/`student_ids`；缺键或空数组 = 全课程，由 B2 与 B4 名单求交） | **服务间认证** | 仅服务；不存在 `404`，服务令牌未配置 `503` | 已成文（0.38.0） |
 
 > `module.yaml` 声明五个路由前缀：`/api/v1/questions`、`/api/v1/question-versions`、
 > `/api/v1/question-draft-generations`、`/api/v1/assignments`、`/api/v1/assignment-audiences`。
@@ -67,7 +67,7 @@
 ## 公开 DTO 的字段存在性（最高危约束）
 
 - 公开响应（`QuestionPublic` / `QuestionVersionPublic` / `QuestionStatistics` / `AssignmentPublic` / `ReferenceAttestationPublic` / 两个上传结果）**永不含**参考答案、隐藏用例、expected output、fixture 内容或内部存储路径。
-  `AssignmentPublic` 自 0.32.0 起是课程级形状：没有 `section_ids`/`student_ids` 目标列表，只有 `notification_state`（`pending`/`scheduled`/`unavailable`，表示**排期交接**而非投递）。受保护词表里的 `student_id` 仍不得出现在任何公开 DTO；白名单与"受保护键名抛错"机制原样生效。
+  `AssignmentPublic` 自 0.38.0 起带必填 `target`（`section_ids`/`student_ids`）：它是"这个作业发给谁"的**存储事实**，不是名单快照；`notification_state`（`pending`/`scheduled`/`unavailable`）仍只表示**排期交接**而非投递。受保护词表按**精确键名**判定，`student_id`（单数）仍不得出现在任何公开 DTO；`target.student_ids` 是**目标 id 列表**，由 `AssignmentTargetPublic` 显式声明，白名单与"受保护键名抛错"机制原样生效。
 - 出站唯一出口是 `api/serializers.py: serialize_public`：按 DTO 字段做白名单投影，并对任何受保护键名**抛错**（不静默丢弃）。
 - 端点的实现形状：`assignment` 的公开响应体由契约的 `AssignmentPublic` 定义，
   B2 的服务间读取由 `AssignmentInternal` 定义；两者同样受白名单与"键缺失"测试约束。
@@ -83,7 +83,7 @@
 ## 我消费的端点 / 事件
 
 - 事件：`autograder.v1.evaluation.completed`（B2 发布，去标识化，见 [events.md](events.md)）。
-- 依赖 B4：JWT/JWKS 本地验签（`GET /api/v1/auth/jwks`；非对称，仅存公钥）；`serviceToken` 的内部调用（`B3_B4_BASE_URL`/`B3_B4_SERVICE_TOKEN`）：`GET /api/v1/internal/users/{user_id}/authorization`（学生作业读授权，权威、实时）与 `POST /api/v1/internal/assignment-notifications`（作业发布通知交接，幂等）。**不读 `b4` schema**。
+- 依赖 B4：JWT/JWKS 本地验签（`GET /api/v1/auth/jwks`；非对称，仅存公钥）；`serviceToken` 的内部调用（`B3_B4_BASE_URL`/`B3_B4_SERVICE_TOKEN`）：`GET /api/v1/internal/users/{user_id}/authorization`（学生作业读授权，权威、实时）、`POST /api/v1/internal/course-targets/validate`（作业目标是否属于该课程，**写之前**问，v0.38.0）与 `POST /api/v1/internal/assignment-notifications`（作业发布通知交接，幂等，body 带目标）。**不读 `b4` schema**。
 - 依赖 B2：无（B3 不拉 B2 的 HTTP；只消费事件）。
 
 ## 权威链接
@@ -284,24 +284,30 @@
 | **路由顺序** | `/api/v1/questions/coverage` 是 `/questions/{question_id}` 的**同级字面段**，声明在参数化路由之前；被吞掉的表现是把 `coverage` 当 `question_id` 解析后返回校验错误，而不是聚合体。由结构断言（`router.routes` 的声明顺序）与行为断言（该路径确实走聚合、兄弟路由仍 404）双重固定 |
 | **聚合代价** | 两条语句：合计走 `count(*) FILTER`，逐标签走 `jsonb_array_elements_text` 展开后一次 `GROUP BY`。**不建预聚合表**（会引入需要维护的第二事实源）。注意 `ix_questions_tags` 这个 GIN 索引**不服务**集合返回函数展开——它服务的是 `listQuestions?tags=` 的 `jsonb @>` 谓词；实测 plan 与理由见 [Phase 07](../phases/active/phase-07-question-tag-coverage.md) §3 |
 
-## 课程级作业、受众与通知（契约 0.32.0）
+## 作业显式目标、受众与通知（契约 0.38.0）
 
-作业属于一门课程，并自动对该课程**全部课序（section）/班级（class）/学生**生效，包括作业发布后
-才建立或加入的课序、班级与选课。手选 `section_ids`/`student_ids` 模型已整体删除（迁移
-`20261108_0010` DROP `b3.assignment_sections`、`b3.assignment_students`）：目标列表不再只是
-"不用"，而是不可表达——否则它会成为"这个作业给谁"的第二个、会静默分叉的答案。
+作业属于一门课程，并携带**显式目标**（契约 `AssignmentTarget`）：`section_ids`（课序）与
+`student_ids`（点名到人的学生）。两轴**取交集**，不是并集：只给课序 = 这些课序的学生；再给
+`student_ids` = 在其中点名；两轴皆空 = 全课程，这也是 0.38.0 之前创建的全部历史作业的形状
+（**不回填、不猜测**）。0.32.0 的"课程级"模型已整体删除（`AssignmentPublic` 当时没有目标字段），
+`0008` 的"至少一行目标"写入约束也没有恢复（0 行 = 全课程）；迁移 `20261108_0012` 重建两张目标表。
+
+目标只存 id，**不存名单**：名单是 B4 的事实，读取/提交那一刻按 B4 的**当前**在读名单求值，因此
+目标是一条过滤条件而不是冻结快照——退课即不再可见、也不能提交，新加入目标课序的学生自动可见。
 
 | 事项 | 落地方式 |
 |---|---|
+| **目标语义** | `target` 在创建请求里**可选**；一旦出现，`section_ids`/`student_ids` 两个数组都必填（"不窄化"要显式写成两个空数组，不能与"只写了一半"混淆）。两个数组都是 `uniqueItems`：重复 id → `422`，**不静默去重**（id 集合是调用方做出的决定，去重会把选择器的缺陷藏在成功写入后面）。读取时两个数组**总是存在**（未使用的轴为 `[]`），值是按存储排好序的目标，永远不表示"未知"。 |
+| **目标校验** | 非空目标在**写任何行之前**交给 B4 `POST /api/v1/internal/course-targets/validate`（`serviceToken`）：B3 只存目标、不持有名单，"这些 id 是否属于这门课"只有 B4 能答。三种拒绝各自成立：`422 assignment-target-invalid`（课程存在但 id 不属于它，`detail` 点名越界 id，由 `TargetInvalid` 产生）、`404`（课程本身不存在）、`503 target-validation-unavailable`（校验未配置/不可达/超时/畸形响应 → **什么都不写**；把它读成"空目标"会静默把受众放大到全课程，见 `TargetValidationUnavailable`）。空目标不发起远端调用——"不窄化"是作业自身的事实，不需要名单。 |
 | **版本校验** | 版本不存在 → `404`；跨课程 → `404`（伪装不存在，不泄漏存在性）；非 published → `409 draft-assignment-reference`；`question_version_ids` 重复 → `422`（pydantic `uniqueItems`）。 |
-| **写事务** | `assignments`（课程级）+ `assignment_items`（ordinal = 数组位置）同一事务；没有目标表要写。`question_version_ids` **保持创建顺序**——每题 `.txt` 的 `N.txt` 映射依赖它。 |
-| **通知交接** | 事务提交后**同步**调用 B4 `POST /api/v1/internal/assignment-notifications`（`serviceToken`，body `{assignment_id, course_id, title, due_at?, published_at}`）；成功 → `notification_state='scheduled'`（`notification_scheduled_at` 记录时刻），任何失败（未配置/网络/5xx/B4 4xx）→ `'unavailable'`，**作业不回滚**，教师可 `POST /assignments/{id}/notifications` 幂等重试。`pending` 只表示"从未尝试"的初始值。该字段描述**排期交接**，不是投递；送达/跳过/失败的人级结果在 B4。 |
-| **通知重试** | 教师/管理员 + 课程写权限；B4 侧按 `assignment_id` 幂等（重复调用不重建受众、不重发）。B4 明确 `404/409/422` → 状态先落为 `unavailable`，再把该状态码映射为 B3 的同名响应；网络/5xx → `200` + `unavailable`（作业本身没问题，重试就是修复动作）。 |
-| **读授权（教师）** | 管理员/服务身份放行；教师/助教要求 token 角色 + **课程 scope**（`require_course_read`）。作业是课程级，section pair 的 token 也覆盖整门课；受众外 → `403`；资源不存在 → `404`（先存在性、后授权）。 |
-| **读授权（学生）** | token 角色必须含 `student`，但是否可读由 B4 `GET /api/v1/internal/users/{user_id}/authorization` 的**当前** `enrollments` 决定（每个请求实时查询）：课程在选课集合内 → 可读；否则 `403`。token 的 `scope` 只是签发时的快照，**不参与**学生判定——因此"注册后才加入课程"立即生效、"移出课程"立即失效。 |
-| **依赖不可用** | 学生读路径上 B4 authorization 未配置、非 200、网络错误、超时或响应畸形 → `503 authorization-unavailable`（`AssignmentTargetsUnavailable` 的同类语义），**不得**读成"没有选课"（`403`）或空列表。 |
-| **列表分页** | `cursor` 被真正解码使用；`course_id` 过滤保留、`section_id` 参数删除。学生的可读课程集合**在 SQL 里** `course_id IN (...)` 过滤，不能"取一页再过滤"（会让页变短且 cursor 跳过未展示的行）。未认证 → `401`。 |
-| **内部受众端点** | `GET /api/v1/assignment-audiences/{assignment_id}` 复用 `ServiceTokenVerifier`（`B3_SERVICE_TOKEN`）；响应 `AssignmentInternal` 只含受理所需字段（课程、状态、有序题目；无时间戳、无学生/名单）。选课归属不在这里断言——只有 B4 权威，B2 另行查询后合并。服务令牌未配置 → `503`（不降级为放行），缺失/错误用户凭据 → `401`/`403`，作业不存在 → `404`。 |
+| **写事务** | 先做**本地**版本校验（见上一行），再向 B4 确认目标（见"目标校验"行），最后开写事务：`assignments` + `assignment_items`（ordinal = 数组位置）在同一事务；目标非空时在同一事务里 `add_assignment_targets` **只插入** `b3.assignment_sections` / `b3.assignment_students`（0 行 = 全课程，没有哨兵行）。**不能"先删后插"**：迁移 `20261108_0012` 只给内部角色这两张表的 `SELECT, INSERT`（目标行随作业写一次，不原地编辑），`DELETE` 会被数据库拒绝。`question_version_ids` **保持创建顺序**——每题 `.txt` 的 `N.txt` 映射依赖它。 |
+| **通知交接** | 事务提交后**同步**调用 B4 `POST /api/v1/internal/assignment-notifications`（`serviceToken`，body `{assignment_id, course_id, title, due_at?, published_at, section_ids, student_ids}`）：受众 = B4 当前名单 **∩** 目标，与提交准入同一份过滤。成功 → `notification_state='scheduled'`（`notification_scheduled_at` 记录时刻），任何失败（未配置/网络/5xx/B4 4xx）→ `'unavailable'`，**作业不回滚**，教师可 `POST /assignments/{id}/notifications` 幂等重试。`pending` 只表示"从未尝试"的初始值。该字段描述**排期交接**，不是投递；送达/跳过/失败的人级结果在 B4。 |
+| **通知重试** | 教师/管理员 + 课程写权限；重试从库里读**已存**目标（`assignment_targets`）随交接再发，不从请求重新解析。B4 侧按 `assignment_id` 幂等（重复调用不重建受众、不重发）。B4 明确 `404/409/422` → 状态先落为 `unavailable`，再把该状态码映射为 B3 的同名响应；网络/5xx → `200` + `unavailable`（作业本身没问题，重试就是修复动作）。 |
+| **读授权（教师）** | 管理员/服务身份放行；教师/助教要求 token 角色 + **课程 scope**（`require_course_read`）。目标窄化的是"发给谁"，不是"教职员能读什么"：同课程教师仍读得到，section pair 的 token 也覆盖整门课；受众外 → `403`；资源不存在 → `404`（先存在性、后授权）。 |
+| **读授权（学生）** | token 角色必须含 `student`，但是否可读由 B4 `GET /api/v1/internal/users/{user_id}/authorization` 的**当前** `enrollments` 决定（每个请求实时查询），并在其上叠加目标：课程在选课集合内 **且** 命中目标（`student_ids` 非空则必须点名到本人；`section_ids` 非空则本人**该课程**的当前课序之一必须命中；两轴皆空 = 全课程放行）。不命中 → `403`，"目标不包含调用者"与"课程不在选课内"是两条拒绝理由。列表与详情用同一份判定（`ReaderScope` 同时携带课程集合、学生 id 与当前课序），不会一个显示、另一个打不开。token 的 `scope` 只是签发时的快照，**不参与**学生判定——因此"注册后才加入课程"立即生效、"移出课程"立即失效。 |
+| **依赖不可用** | 学生读路径上 B4 authorization 未配置、非 200、网络错误、超时或响应畸形 → `503 authorization-unavailable`（`AuthorizationUnavailable`），**不得**读成"没有选课"（`403`）或空列表；调用者 subject 不是可用账号 id → `403`（"没有 id"绝不能读成"不窄化"，那会放大受众）。 |
+| **列表分页** | `cursor` 被真正解码使用；`course_id` 过滤保留、`section_id` 参数删除。学生的可读课程集合**在 SQL 里** `course_id IN (...)` 过滤，目标两轴同样**下推成 SQL 谓词**（`NOT EXISTS ... OR EXISTS ...`），不能"取一页再过滤"（会让页变短且 cursor 跳过未展示的行）；整页的目标用两次分组读（`assignment_targets_bulk`）取回，不是每行两次。未认证 → `401`。 |
+| **内部受众端点** | `GET /api/v1/assignment-audiences/{assignment_id}` 复用 `ServiceTokenVerifier`（`B3_SERVICE_TOKEN`）；响应 `AssignmentInternal` 含受理所需字段（课程、状态、有序题目）**与目标** `section_ids`/`student_ids`（缺键或空数组 = 全课程）。选课归属不在这里断言——只有 B4 权威，B2 另行查询后求交；目标只在**这一条**通道上穿过，网页提交、邮件建码、邮件入库三条路径共用同一个"受众 ∩ B4 enrollment"判定。服务令牌未配置 → `503`（不降级为放行），缺失/错误用户凭据 → `401`/`403`，作业不存在 → `404`。 |
 
 ## 错误与关联约定（不可协商）
 

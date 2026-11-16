@@ -35,7 +35,9 @@ from autograder_b3.domain.versions import (
 from autograder_b3.dto.internal import PROTECTED_FIELD_NAMES, AssignmentCreateInputModel
 from autograder_b3.integration.b4 import (
     B4AssignmentNotifier,
+    ConfirmedTarget,
     NotificationUnavailable,
+    TargetRejected,
 )
 from autograder_b3.errors import (
     Conflict,
@@ -45,6 +47,8 @@ from autograder_b3.errors import (
     NotFound,
     ProtectedContentMissing,
     RevisionNoteMisuse,
+    TargetInvalid,
+    TargetValidationUnavailable,
 )
 
 from .conftest import COURSE_A, COURSE_B, draft_payload
@@ -520,7 +524,17 @@ class _RecordingNotifier:
     def __init__(self) -> None:
         self.calls: list[dict] = []
 
-    def notify(self, *, assignment_id, course_id, title, due_at, published_at) -> None:
+    def notify(
+        self,
+        *,
+        assignment_id,
+        course_id,
+        title,
+        due_at,
+        published_at,
+        section_ids=(),
+        student_ids=(),
+    ) -> None:
         self.calls.append(
             {
                 "assignment_id": assignment_id,
@@ -528,6 +542,8 @@ class _RecordingNotifier:
                 "title": title,
                 "due_at": due_at,
                 "published_at": published_at,
+                "section_ids": section_ids,
+                "student_ids": student_ids,
             }
         )
 
@@ -541,6 +557,127 @@ def _assignment_payload(version_id, **overrides) -> AssignmentCreateInputModel:
     }
     values.update(overrides)
     return AssignmentCreateInputModel(**values)
+
+
+class _AcceptingValidator:
+    """Confirms whatever it is asked, recording the call (stands in for B4's answer).
+
+    It echoes the ids it was handed, which is what the real endpoint does: the stored target
+    is the *confirmed* one, so a validator that reordered or dropped ids would be visible in
+    the assertion rather than hidden behind the request's spelling.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def validate_course_target(self, *, course_id, section_ids, student_ids):
+        self.calls.append(
+            {
+                "course_id": course_id,
+                "section_ids": section_ids,
+                "student_ids": student_ids,
+            }
+        )
+        return ConfirmedTarget(
+            section_ids=tuple(sorted(section_ids)),
+            student_ids=tuple(sorted(student_ids)),
+        )
+
+
+def test_create_assignment_stores_the_target_and_hands_it_over(database, settings):
+    from autograder_b3.infra.repositories import QuestionBankRepository
+
+    _question, published = create_published_question(database, settings, payload=draft_payload())
+    section_id = uuid.UUID("33333333-3333-4333-8333-3333333333a1")
+    student_id = uuid.UUID("66666666-6666-4666-8666-666666666661")
+    validator = _AcceptingValidator()
+    notifier = _RecordingNotifier()
+
+    view = create_assignment(
+        database,
+        principal=teacher_principal(),
+        payload=_assignment_payload(
+            published.question_version_id,
+            target={"section_ids": (section_id,), "student_ids": (student_id,)},
+        ),
+        notifier=notifier,
+        targets=validator,
+        now=PUBLISH_AT,
+    )
+    assert validator.calls == [
+        {
+            "course_id": COURSE_A,
+            "section_ids": (section_id,),
+            "student_ids": (student_id,),
+        }
+    ]
+    assert view.target == ((section_id,), (student_id,))
+    # What was stored is what a later read returns; the target is not echoed from the request.
+    with database.app_session() as session:
+        persisted = QuestionBankRepository(session).assignment_targets(
+            view.assignment.assignment_id
+        )
+    assert persisted == ((section_id,), (student_id,))
+    assert notifier.calls[0]["section_ids"] == (section_id,)
+    assert notifier.calls[0]["student_ids"] == (student_id,)
+
+
+def test_create_assignment_refuses_a_target_outside_the_course(database, settings):
+    """A refused target leaves no assignment and no hand-off behind."""
+    from autograder_b3.infra.repositories import QuestionBankRepository
+
+    _question, published = create_published_question(database, settings, payload=draft_payload())
+    section_id = uuid.UUID("33333333-3333-4333-8333-3333333333a2")
+
+    class RejectingValidator:
+        def validate_course_target(self, *, course_id, section_ids, student_ids):
+            raise TargetRejected(422, f"The target is not part of this course: {section_id}.")
+
+    with database.app_session() as session:
+        before = len(
+            QuestionBankRepository(session).list_assignments(
+                course_ids=None, course_id=COURSE_A, limit=500
+            )[0]
+        )
+
+    notifier = _RecordingNotifier()
+    with pytest.raises(TargetInvalid):
+        create_assignment(
+            database,
+            principal=teacher_principal(),
+            payload=_assignment_payload(
+                published.question_version_id,
+                target={"section_ids": (section_id,), "student_ids": ()},
+            ),
+            notifier=notifier,
+            targets=RejectingValidator(),
+            now=PUBLISH_AT,
+        )
+    assert notifier.calls == []
+    with database.app_session() as session:
+        after = len(
+            QuestionBankRepository(session).list_assignments(
+                course_ids=None, course_id=COURSE_A, limit=500
+            )[0]
+        )
+    assert after == before
+
+
+def test_create_assignment_without_a_validator_cannot_store_a_target(database, settings):
+    _question, published = create_published_question(database, settings, payload=draft_payload())
+    section_id = uuid.UUID("33333333-3333-4333-8333-3333333333a3")
+    with pytest.raises(TargetValidationUnavailable):
+        create_assignment(
+            database,
+            principal=teacher_principal(),
+            payload=_assignment_payload(
+                published.question_version_id,
+                target={"section_ids": (section_id,), "student_ids": ()},
+            ),
+            notifier=_RecordingNotifier(),
+            targets=None,
+            now=PUBLISH_AT,
+        )
 
 
 def test_assignment_accepts_only_published_versions(database, settings):
@@ -558,6 +695,7 @@ def test_assignment_accepts_only_published_versions(database, settings):
             principal=teacher_principal(),
             payload=_assignment_payload(draft_version.question_version_id),
             notifier=_RecordingNotifier(),
+            targets=None,
             now=PUBLISH_AT,
         )
 
@@ -571,12 +709,13 @@ def test_assignment_accepts_only_published_versions(database, settings):
             due_at=datetime(2026, 9, 20, tzinfo=UTC),
         ),
         notifier=notifier,
+        targets=None,
         now=PUBLISH_AT,
     )
     assert view.assignment.title == "week 1"
     assert view.question_version_ids == (published.question_version_id,)
-    # v0.32.0: the assignment is course-level, so there is no target list; the hand-off
-    # carries the course and the ordered question list, and success is recorded.
+    # No target named: the whole course. The hand-off carries the course, the ordered question
+    # list and the (empty) target, and success is recorded.
     assert view.assignment.notification_state == "scheduled"
     assert view.assignment.notification_scheduled_at == PUBLISH_AT
     assert notifier.calls == [
@@ -586,6 +725,8 @@ def test_assignment_accepts_only_published_versions(database, settings):
             "title": "week 1",
             "due_at": datetime(2026, 9, 20, tzinfo=UTC),
             "published_at": PUBLISH_AT,
+            "section_ids": (),
+            "student_ids": (),
         }
     ]
 
@@ -600,6 +741,7 @@ def test_assignment_referencing_another_course_is_not_found(database, settings):
                 version.question_version_id, course_id=COURSE_B, title="cross course"
             ),
             notifier=_RecordingNotifier(),
+            targets=None,
             now=PUBLISH_AT,
         )
 
@@ -622,6 +764,7 @@ def test_a_failed_notification_does_not_roll_the_assignment_back(database, setti
         principal=teacher_principal(),
         payload=_assignment_payload(published.question_version_id),
         notifier=broken,
+        targets=None,
         now=PUBLISH_AT,
     )
     assert view.assignment.notification_state == "unavailable"
@@ -642,6 +785,7 @@ def test_an_unconfigured_notifier_marks_the_assignment_unavailable(database, set
         principal=teacher_principal(),
         payload=_assignment_payload(published.question_version_id),
         notifier=None,
+        targets=None,
         now=PUBLISH_AT,
     )
     assert view.assignment.notification_state == "unavailable"
@@ -664,6 +808,7 @@ def test_notification_rejection_is_recorded_and_raised_on_retry(database, settin
         principal=teacher_principal(),
         payload=_assignment_payload(published.question_version_id),
         notifier=None,
+        targets=None,
         now=PUBLISH_AT,
     )
     with pytest.raises(Conflict):
@@ -672,6 +817,7 @@ def test_notification_rejection_is_recorded_and_raised_on_retry(database, settin
             principal=teacher_principal(),
             assignment_id=view.assignment.assignment_id,
             notifier=RejectingNotifier(),
+            targets=None,
             now=PUBLISH_AT,
         )
     with database.app_session() as session:
@@ -694,6 +840,7 @@ def test_a_transient_notification_failure_keeps_the_assignment_readable(database
         principal=teacher_principal(),
         payload=_assignment_payload(published.question_version_id),
         notifier=OutageNotifier(),
+        targets=None,
         now=PUBLISH_AT,
     )
     assert view.assignment.notification_state == "unavailable"

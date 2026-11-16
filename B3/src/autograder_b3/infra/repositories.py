@@ -20,7 +20,7 @@ from datetime import datetime
 from typing import Any
 from collections.abc import Iterable, Iterator, Sequence
 
-from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy import and_, delete, exists, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
@@ -491,12 +491,12 @@ class QuestionBankRepository:
         created_by: uuid.UUID | None,
         now: datetime,
     ) -> Assignment:
-        """Insert the course-level assignment row; its items follow in the same transaction.
+        """Insert the assignment row; its items (and target rows) follow in the same transaction.
 
-        The audience is not stored (v0.32.0): it is every current student of ``course_id``,
-        computed from the identity/course module at read time. The transaction that calls
-        this must add at least one ``assignment_items`` row before committing, because an
-        assignment without questions cannot be evaluated.
+        The audience is **not** stored here: only the target ids are, and the roster is read
+        from the identity/course module at read time. The transaction that calls this must add
+        at least one ``assignment_items`` row before committing, because an assignment without
+        questions cannot be evaluated.
         """
         row = Assignment(
             assignment_id=new_id(),
@@ -528,7 +528,7 @@ class QuestionBankRepository:
         self.session.flush()
         return row
 
-    def replace_assignment_targets(
+    def add_assignment_targets(
         self,
         *,
         assignment_id: uuid.UUID,
@@ -538,17 +538,18 @@ class QuestionBankRepository:
     ) -> None:
         """Write the assignment's target set (assignment_sections / assignment_students).
 
-        Replace-not-append: the target is one answer to "who is this for", so a re-declared
-        target must not leave the previous rows behind (that would silently widen the
-        audience). Zero rows is a meaningful value (whole course / everyone in the target
-        sections), so an empty tuple writes nothing rather than a sentinel row.
+        **Insert only**, and that is a privilege fact rather than a preference: migration
+        ``20261108_0012`` grants the internal role ``SELECT, INSERT`` on these two tables and
+        deliberately no ``DELETE``, because a target row is written once with its assignment and
+        never edited in place. A "replace" (delete-then-insert) here would be refused by the
+        database on the first targeted assignment, which is exactly the kind of failure a
+        least-privilege grant is supposed to produce instead of silently allowing.
+
+        Zero rows is a meaningful value (whole course / everyone in the target sections), so an
+        empty tuple writes nothing rather than a sentinel row. If an edit-the-target operation
+        is ever added, it needs its own migration with the matching grant -- not a quiet
+        widening of this one.
         """
-        self.session.execute(
-            delete(AssignmentSection).where(AssignmentSection.assignment_id == assignment_id)
-        )
-        self.session.execute(
-            delete(AssignmentStudent).where(AssignmentStudent.assignment_id == assignment_id)
-        )
         for section_id in section_ids:
             self.session.add(
                 AssignmentSection(assignment_id=assignment_id, section_id=section_id, created_at=now)
@@ -579,6 +580,46 @@ class QuestionBankRepository:
             .order_by(AssignmentStudent.student_id)
         ).scalars()
         return tuple(sections), tuple(students)
+
+    def assignment_targets_bulk(
+        self, assignment_ids: list[uuid.UUID]
+    ) -> dict[uuid.UUID, tuple[tuple[uuid.UUID, ...], tuple[uuid.UUID, ...]]]:
+        """The targets of several assignments in **two** queries, keyed by assignment id.
+
+        The list endpoint needs the target of every row on the page. Asking
+        :meth:`assignment_targets` per row would be one round trip per assignment, so a
+        200-row page would quietly become 400 statements; this does the same work in two
+        grouped reads.
+
+        An assignment with no rows is simply absent from the mapping -- the caller reads that
+        as "whole course", which is what an empty target means and what every assignment
+        created before the target existed is. Nothing is invented for a missing key.
+        """
+        if not assignment_ids:
+            return {}
+        section_rows = self.session.execute(
+            select(AssignmentSection.assignment_id, AssignmentSection.section_id)
+            .where(AssignmentSection.assignment_id.in_(assignment_ids))
+            .order_by(AssignmentSection.assignment_id, AssignmentSection.section_id)
+        ).all()
+        student_rows = self.session.execute(
+            select(AssignmentStudent.assignment_id, AssignmentStudent.student_id)
+            .where(AssignmentStudent.assignment_id.in_(assignment_ids))
+            .order_by(AssignmentStudent.assignment_id, AssignmentStudent.student_id)
+        ).all()
+        sections: dict[uuid.UUID, list[uuid.UUID]] = {}
+        students: dict[uuid.UUID, list[uuid.UUID]] = {}
+        for assignment_id, section_id in section_rows:
+            sections.setdefault(assignment_id, []).append(section_id)
+        for assignment_id, student_id in student_rows:
+            students.setdefault(assignment_id, []).append(student_id)
+        return {
+            assignment_id: (
+                tuple(sections.get(assignment_id, ())),
+                tuple(students.get(assignment_id, ())),
+            )
+            for assignment_id in set(sections) | set(students)
+        }
 
     def set_assignment_notification(
         self,
@@ -629,15 +670,24 @@ class QuestionBankRepository:
         course_id: uuid.UUID | None,
         limit: int,
         after: tuple[datetime, uuid.UUID] | None = None,
+        student_id: uuid.UUID | None = None,
+        student_sections: Iterable[uuid.UUID] | None = None,
     ) -> tuple[list[Assignment], bool]:
         """Keyset page of assignments, filtered **in SQL** by the caller's readable courses.
 
-        Since v0.32.0 an assignment is course-level, so the complete reader rule is "the
-        assignment's course is one of the courses this caller may read". Filtering has to
-        happen here rather than after the page is fetched: dropping rows afterwards would
-        return short pages and, worse, would make the keyset cursor point past rows that
-        were never served. ``None`` means "no restriction" (admin/service); an empty set
-        means "nothing is readable" and short-circuits.
+        The course rule is "the assignment's course is one of the courses this caller may
+        read". Filtering has to happen here rather than after the page is fetched: dropping
+        rows afterwards would return short pages and, worse, would make the keyset cursor point
+        past rows that were never served. ``None`` means "no restriction" (admin/service); an
+        empty set means "nothing is readable" and short-circuits.
+
+        ``student_id`` adds the **target** rule for a student reader (v0.38.0): an assignment
+        with no target rows is for the whole course, one with target sections must include one
+        of ``student_sections``, and one with named students must name this student. Both axes
+        are "empty means no narrowing", so the predicate is a pair of ``NOT EXISTS ... OR
+        EXISTS ...`` clauses -- and it lives in SQL for the same reason the course filter does:
+        a student who may not read an assignment must not receive a page slot for it, or the
+        cursor would step over rows nobody served.
         """
         statement = select(Assignment)
         if course_ids is not None:
@@ -647,6 +697,35 @@ class QuestionBankRepository:
             statement = statement.where(Assignment.course_id.in_(scoped))
         if course_id is not None:
             statement = statement.where(Assignment.course_id == course_id)
+        if student_id is not None:
+            no_section_target = ~exists(
+                select(AssignmentSection.assignment_id).where(
+                    AssignmentSection.assignment_id == Assignment.assignment_id
+                )
+            )
+            in_target_section = exists(
+                select(AssignmentSection.assignment_id).where(
+                    AssignmentSection.assignment_id == Assignment.assignment_id,
+                    AssignmentSection.section_id.in_(list(student_sections or ())),
+                )
+            )
+            no_student_target = ~exists(
+                select(AssignmentStudent.assignment_id).where(
+                    AssignmentStudent.assignment_id == Assignment.assignment_id
+                )
+            )
+            named_for_caller = exists(
+                select(AssignmentStudent.assignment_id).where(
+                    AssignmentStudent.assignment_id == Assignment.assignment_id,
+                    AssignmentStudent.student_id == student_id,
+                )
+            )
+            statement = statement.where(
+                and_(
+                    or_(no_section_target, in_target_section),
+                    or_(no_student_target, named_for_caller),
+                )
+            )
         if after is not None:
             created_at, assignment_id = after
             statement = statement.where(

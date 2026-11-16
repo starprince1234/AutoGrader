@@ -1870,9 +1870,8 @@ def test_assignment_create_and_list(client, auth_headers, published_question):
     assert response.status_code == 201, response.text
     body = response.json()
     assert body["question_version_ids"] == [version["question_version_id"]]
-    # v0.32.0: course-level assignment, no target lists, and a notification hand-off state.
-    assert "section_ids" not in body
-    assert "student_ids" not in body
+    # v0.38.0: the target is an explicit field, and omitting it means the whole course.
+    assert body["target"] == {"section_ids": [], "student_ids": []}
     assert body["notification_state"] == "scheduled"
     assert collect_keys(body) & PROTECTED_KEYS == set()
 

@@ -318,13 +318,13 @@ def test_constraint_names_follow_the_convention(owner_engine):
         assert name.startswith(prefix), f"{name} should start with {prefix}"
 
 
-def test_course_level_assignments_replace_the_target_tables(owner_engine):
-    """Migration 0010: the hand-picked target model is gone; the hand-off state is in.
+def test_assignments_carry_a_target_and_no_section_column(owner_engine):
+    """Migrations 0010 + 0012: the target lives in its own tables, never on ``assignments``.
 
-    v0.32.0 makes an assignment course-level: keeping ``assignment_sections`` /
-    ``assignment_students`` would leave a second answer to "who is this for", and keeping
-    ``assignments.section_id`` would leave a third. The notification columns are the only
-    new state -- delivery lives in B4.
+    v0.38.0 restores ``assignment_sections`` / ``assignment_students`` (v0.32.0 dropped them),
+    with the target kept **out** of the assignment row: ``assignments.section_id`` must stay
+    gone, because a column would be a second answer to "who is this for". Zero target rows is
+    the whole course, so no "at least one section" rule is restored either.
     """
     with owner_engine.connect() as connection:
         tables = set(
@@ -359,6 +359,15 @@ def test_course_level_assignments_replace_the_target_tables(owner_engine):
                 text("SELECT indexname FROM pg_indexes WHERE schemaname = 'b3'")
             ).scalars()
         )
+        target_constraints = set(
+            connection.execute(
+                text(
+                    "SELECT conname FROM pg_constraint "
+                    "WHERE connamespace = 'b3'::regnamespace AND conrelid IN ("
+                    "'b3.assignment_sections'::regclass, 'b3.assignment_students'::regclass)"
+                )
+            ).scalars()
+        )
     assert {"assignment_sections", "assignment_students"} <= tables
     assert "section_id" not in columns
     assert columns["notification_state"] == ("text", "NO", "'pending'::text")
@@ -368,6 +377,12 @@ def test_course_level_assignments_replace_the_target_tables(owner_engine):
         None,
     )
     assert constraints == {"ck_assignments_notification_state"}
+    # The target tables exist and are reachable by their own primary keys / foreign keys; the
+    # absence of an "at least one section" CHECK is the v0.38.0 rule, not an omission.
+    assert "pk_assignment_sections" in target_constraints
+    assert "pk_assignment_students" in target_constraints
+    assert "ix_assignment_sections_section_id" in indexes
+    assert "ix_assignment_students_student_id" in indexes
     assert "ix_assignments_course_id" in indexes
 
 

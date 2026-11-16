@@ -299,14 +299,45 @@ class AuthoringAssistanceRequestModel(BaseModel):
     notes: str | None = Field(default=None, max_length=1000)
 
 
-class AssignmentCreateInputModel(BaseModel):
-    """The contract's ``CreateAssignment`` body (v0.32.0).
+class AssignmentTargetInputModel(BaseModel):
+    """The contract's ``AssignmentTarget`` body (v0.38.0).
 
-    An assignment is **course-level**: it belongs to exactly one course and automatically
-    applies to every section (课序), class (班级) and student of that course, including the
-    ones added later while it is open. The body therefore carries no target ids at all --
-    a hand-picked section/student list would be a second, silently diverging answer to
-    "who is this assignment for".
+    Who an assignment is for: sections of the course and, inside them, named students. The
+    axes are **intersected**, and both empty means the whole course -- which is also the shape
+    of every assignment created before the field existed, so "no narrowing" is a real value
+    rather than an absent one.
+
+    Both arrays are required: the contract declares them required, and a half-specified target
+    ("sections but no student axis") would leave the caller's intent to be guessed. Duplicates
+    are refused (``422``) rather than collapsed -- the two columns are a composite primary key,
+    so a duplicate is not a harmless repetition but a write that would fail halfway.
+    """
+
+    model_config = _STRICT
+
+    section_ids: tuple[UUID, ...]
+    student_ids: tuple[UUID, ...]
+
+    @field_validator("section_ids", "student_ids")
+    @classmethod
+    def _unique(cls, value: tuple[UUID, ...]) -> tuple[UUID, ...]:
+        if len(set(value)) != len(value):
+            raise ValueError("a target must not repeat an id")
+        return value
+
+
+class AssignmentCreateInputModel(BaseModel):
+    """The contract's ``CreateAssignmentRequest`` body (v0.38.0).
+
+    An assignment belongs to exactly one course and carries an explicit **target**: target
+    sections and, inside them, named students. Omitting ``target`` (or naming neither a
+    section nor a student) means the whole course, which is what every assignment created
+    before the field existed means and needs no backfill.
+
+    The target ids are **not** checked here: whether a section or a student belongs to
+    ``course_id`` is a roster fact owned by the identity/course module, so it is asked there
+    before anything is written (``domain.assignments.create_assignment``). This model only
+    guarantees the shape -- ids are UUIDs, arrays are unique, nothing is silently dropped.
 
     ``question_version_ids`` stays ordered (item ordinal = array position, answer files are
     named by the 1-based position) and is a **set on the wire**: the contract declares
@@ -320,6 +351,7 @@ class AssignmentCreateInputModel(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     due_at: datetime | None = None
     question_version_ids: tuple[UUID, ...] = Field(min_length=1, max_length=50)
+    target: AssignmentTargetInputModel | None = None
 
     @field_validator("question_version_ids")
     @classmethod
@@ -773,11 +805,12 @@ class FixtureContentBundle:
 class AssignmentAudience:
     """The assignment audience served to the evaluation/submission module (serviceToken).
 
-    Since v0.32.0 an assignment is **course-level**, so "who is it for" is exactly
-    "everyone currently enrolled in ``course_id``". That membership is deliberately **not**
-    asserted here: only B4 is authoritative for a student's current enrollment, and B2 asks
-    B4 separately when admitting a submission. This response is the minimum B2 needs from
-    B3: identity, status and the ordered question list. Timestamps are not needed for
+    "Who is it for" is the course's current students **narrowed by the assignment's target**:
+    the sections it was given to and, inside them, the individually named students. Both empty
+    means the whole course. Membership itself is deliberately **not** asserted here -- only B4
+    is authoritative for a student's current enrollment, and B2 intersects that answer with
+    these ids when admitting a submission. This response is the minimum B2 needs from B3:
+    identity, status, the ordered question list and the target. Timestamps are not needed for
     admission, so they are not exposed -- unlike the public
     :class:`~autograder_b3.dto.public.AssignmentPublic`, which renders them.
     """

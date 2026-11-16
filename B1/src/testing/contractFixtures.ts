@@ -89,8 +89,8 @@ export function coursePage(courses: CoursePublic[], nextCursor: string | null = 
 }
 
 /**
- * 作业（`AssignmentPublic`，v0.32.0）：**课程级**——属于一门课程并自动覆盖该课程全部
- * 课序与班级，没有 `section_ids`/`student_ids`。`notification_state` 是发布通知的调度状态
+ * 作业（`AssignmentPublic`，v0.38.0）：属于一门课程并带**显式目标**——目标课序与指定学生，
+ * 两者皆空 = 全课程（历史作业就是这个形态）。`notification_state` 是发布通知的调度状态
  * （不是投递结果，投递结果见 `assignmentNotificationSummary`）。
  */
 export function assignmentPublic(overrides?: Partial<AssignmentPublic>): AssignmentPublic {
@@ -102,6 +102,7 @@ export function assignmentPublic(overrides?: Partial<AssignmentPublic>): Assignm
     due_at: "2026-10-01T15:59:00.000Z",
     question_version_ids: [UUID_C],
     notification_state: "scheduled",
+    target: { section_ids: [], student_ids: [] },
     created_at: "2026-09-15T07:00:00.000Z",
     updated_at: "2026-09-15T07:00:00.000Z",
     ...overrides,

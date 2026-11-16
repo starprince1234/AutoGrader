@@ -5,7 +5,7 @@ that forgets a check is a hole that no signature change reveals, while a missing
 changes the signature. Denials are therefore uniform, and there is exactly one place to
 audit.
 
-Two capabilities live here (v0.32.0):
+The identity and authorization capabilities live here since v0.32.0:
 
 * **identity lookup by e-mail** -- B2's mail intake attributes an inbound message to an
   account. That is a question an enumeration attack wants to ask, which is why it is
@@ -15,9 +15,16 @@ Two capabilities live here (v0.32.0):
   they ask this endpoint at request time. The response is ids only: roles, course grants and
   (course, section, class) enrollments. No name, e-mail or student number travels here.
 
+`POST /course-targets/validate` (v0.38.0) is the third: B3 owns an assignment's
+**target** (target sections and named students) but not the roster, so it asks B4 whether
+those ids belong to the course *before* writing the assignment. The answer echoes the
+confirmed ids sorted; nothing is copied, because a target stays a filter evaluated against
+the current roster.
+
 `POST /assignment-notifications` is called by B3 when an assignment is published; it records
-who must be notified and with which status. Delivery is performed by the B4 sender process,
-so this endpoint never sends mail and never reports a scheduled message as delivered.
+who must be notified and with which status, narrowed by that same target. Delivery is
+performed by the B4 sender process, so this endpoint never sends mail and never reports a
+scheduled message as delivered.
 """
 
 from __future__ import annotations
@@ -33,7 +40,7 @@ from sqlalchemy import Connection, func, select
 
 from ..api.dependencies import B4State, Dependencies
 from ..api.problem import ProblemRoute
-from ..classes import authorization_for_user
+from ..classes import authorization_for_user, validate_course_target
 from ..db.tables import users
 from ..errors import conflict, not_found, unauthenticated, unprocessable
 from ..notifications import materialise
@@ -52,6 +59,43 @@ class AssignmentNotificationRequest(BaseModel):
     title: str = Field(min_length=1, max_length=200)
     due_at: dt.datetime | None = None
     published_at: dt.datetime
+    #: The assignment's target (v0.38.0). Empty means "not narrowed on that axis": the whole
+    #: course when both are empty. B4 narrows its own roster with these ids and never trusts
+    #: a resolved student list from B3 -- that list would be a second roster copy that drifts.
+    section_ids: tuple[uuid.UUID, ...] = ()
+    student_ids: tuple[uuid.UUID, ...] = ()
+
+
+class CourseTargetValidationRequest(BaseModel):
+    """One assignment target to confirm against a course before B3 stores it (v0.38.0).
+
+    Both arrays are optional and default to empty: "not narrowed on that axis" is a real
+    target, and a body naming neither a section nor a student (the whole course) is valid.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    course_id: uuid.UUID
+    section_ids: tuple[uuid.UUID, ...] = ()
+    student_ids: tuple[uuid.UUID, ...] = ()
+
+
+def _reject_repeated_target_ids(values: tuple[uuid.UUID, ...], *, axis: str) -> None:
+    """Refuse a repeated id instead of silently collapsing it.
+
+    The contract declares `uniqueItems`, so duplicates are already invalid; dropping them
+    silently would let a client that sent one believe it targeted something it did not.
+    """
+    seen: set[uuid.UUID] = set()
+    repeated: set[str] = set()
+    for value in values:
+        if value in seen:
+            repeated.add(str(value))
+        seen.add(value)
+    if repeated:
+        raise unprocessable(
+            f"The target repeats an id in {axis}: " + ", ".join(sorted(repeated)) + "."
+        )
 
 
 def build_internal_router(state: B4State, dependencies: Dependencies) -> APIRouter:
@@ -113,6 +157,40 @@ def build_internal_router(state: B4State, dependencies: Dependencies) -> APIRout
         )
         return document
 
+    @router.post("/api/v1/internal/course-targets/validate")
+    def validate_course_targets(
+        payload: CourseTargetValidationRequest,
+        _caller: None = Depends(require_service_token),
+        connection: Connection = Depends(dependencies.connection),
+    ) -> dict[str, object]:
+        """Confirm an assignment's target against the course's current roster.
+
+        B3 asks this **before** it writes the assignment: sections and enrollments are B4's
+        facts, so an id B3 cannot check must not end up stored as an audience. Nothing is
+        copied or frozen here -- the target stays a filter, evaluated again on every read and
+        on the notification hand-off -- and an entirely empty target is valid: it means the
+        whole course, which is what every assignment created before the field existed has.
+        """
+        _reject_repeated_target_ids(payload.section_ids, axis="section_ids")
+        _reject_repeated_target_ids(payload.student_ids, axis="student_ids")
+        confirmed = validate_course_target(
+            connection,
+            course_id=payload.course_id,
+            section_ids=payload.section_ids,
+            student_ids=payload.student_ids,
+        )
+        logger.info(
+            "internal.course_target_validated",
+            extra={
+                "event": "internal.course_target_validated",
+                # Ids and counts only: no name, address or student number travels here.
+                "course_id": str(payload.course_id),
+                "section_count": len(payload.section_ids),
+                "student_count": len(payload.student_ids),
+            },
+        )
+        return confirmed
+
     @router.post("/api/v1/internal/assignment-notifications")
     def create_assignment_notifications(
         payload: AssignmentNotificationRequest,
@@ -121,10 +199,18 @@ def build_internal_router(state: B4State, dependencies: Dependencies) -> APIRout
     ) -> dict[str, object]:
         """Materialise the recipient snapshot for one published assignment.
 
+        The audience is the course's current active roster narrowed by the assignment's
+        target (`section_ids` / `student_ids`, intersected). An id no current roster row
+        matches is simply not a recipient: B3 has the target confirmed by
+        `validateCourseTargets` before publishing, so refusing it again here, in a different
+        vocabulary, would turn one mistake into two failures.
+
         Idempotent by `assignment_id`: a retry (transient failure, B3 retry, duplicate
         delivery) returns the existing summary with `200` and never creates a second
-        audience. A different course for an existing assignment id is an inconsistency and
-        is refused with `409` instead of silently rewriting the campaign.
+        audience -- the target is a publication-time snapshot, so a later call with a
+        different target cannot rewrite who was told. A different course for an existing
+        assignment id is an inconsistency and is refused with `409` instead of silently
+        rewriting the campaign.
         """
         if payload.published_at.tzinfo is None:
             # `materialise` re-checks this as `422`; the early branch keeps the failure next
@@ -142,6 +228,8 @@ def build_internal_router(state: B4State, dependencies: Dependencies) -> APIRout
             title=payload.title,
             due_at=payload.due_at,
             published_at=payload.published_at,
+            section_ids=payload.section_ids,
+            student_ids=payload.student_ids,
             now=_now(),
         )
         response.status_code = 201 if result.created else 200

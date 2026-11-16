@@ -111,11 +111,18 @@ sequenceDiagram
 - 校验统一入口：`compile/manifest.py: validate_adapter_manifest`——拒绝绝对路径、`..`、盘符、shell 字符串、工作区外加载、越界枚举、重复 fixture 声明。
 - **实现**：`compile/manifest.py`、`compile/validation.py`、`compile/adapters.py`、`compile/registry.py`；冻结签名见 [../collaboration/frozen-interfaces.md](../collaboration/frozen-interfaces.md) §3。
 
-## 5. 课程级作业与通知交接（v0.32.0）
+## 5. 作业显式目标与通知交接（v0.38.0）
 
-作业是**课程级**对象：属于一门课程，自动覆盖该课程全部课序/班级/学生，包含发布后新增的课序、
-班级与选课。它是 `assignments` + `assignment_items` 两张表；目标列表（section/student）与
-`assignments.section_id` 都已删除，"这个作业给谁"只有一个答案——课程当前有效学生。
+作业属于一门课程，并携带**显式目标**（契约 `AssignmentTarget`）：`section_ids`（课序）与
+`student_ids`（点名学生），两轴**相交**，皆空 = 全课程。目标只存 id；名单仍是 B4 的实时事实，
+读取/提交时按**当前**在读名单求值（退课即失效、新加入即可见），所以它是过滤条件而不是快照。
+
+落库是 `assignments` + `assignment_items` + 两张目标表：`AssignmentSection` / `AssignmentStudent`
+（迁移 `20261108_0012` 重建；复合主键 `(assignment_id, section_id)` / `(assignment_id, student_id)`，
+各自带 `ix_*_section_id` / `ix_*_student_id`）。**0 行 = 全课程**：`0012` 刻意**没有**恢复 `0008` 的
+"至少一行"写入约束（那条规则表达不了"历史作业，没人选过目标"），也**不**回填历史行——读取路径把
+"没有行"读成"不窄化"，永不读成"发给零个人"。学生收窄名单同理：没有行 = 目标课序里的全部学生，
+两轴都没有行 = 课程当前有效学生。
 
 ```mermaid
 stateDiagram-v2
@@ -136,8 +143,12 @@ stateDiagram-v2
 - **失败不回滚**：作业已发布是事实；通知交接是提交后的独立步骤，失败只把状态记为
   `unavailable`。伪造 `scheduled` 被明确禁止——它必须只表示 B4 确认过。
 - **读授权**：教师走 token 角色 + 课程 scope；学生走 B4 `/api/v1/internal/users/{user_id}/authorization`
-  的**当前** `enrollments`（每请求实时查询），课程命中才可读，否则 `403`。B4 不可达 → `503`，
-  不得降级成"没有选课"或空列表。列表的课程集合下推到 SQL。
-- **实现**：`domain/assignments.py`、`integration/b4.py`、`api/router.py`、`infra/models.py`；
-  迁移 `20261108_0010`。**测试**：`tests/test_assignments_api.py`、`tests/test_b4_client.py`、
-  `tests/test_versions.py`（assignment 段）。
+  的**当前** `enrollments`（每请求实时查询），课程命中 **且** 命中目标才可读：`student_ids` 非空则必须
+  点名到本人，`section_ids` 非空则本人该课程的当前课序之一必须命中，两轴皆空 = 全课程。B4 不可达 → `503`，
+  不得降级成"没有选课"或空列表。列表的课程集合与目标两轴都下推到 SQL。
+- **实现**：`domain/assignments.py`（`_confirm_target` / `_reader_scope` / `_target_admits_student`、
+  `ReaderScope`）、`infra/repositories.py`（`add_assignment_targets`（只插入）/ `assignment_targets` /
+  `assignment_targets_bulk`）、`infra/models.py`、`api/router.py`、`api/deps.py`（`b4_targets`）、
+  `integration/b4.py`；迁移 `20261108_0012`。**测试**：`tests/test_assignments_api.py`（目标创建/校验/
+  读回/学生收窄/内部受众）、`tests/test_versions.py`（域层存储与拒绝）、`tests/test_b4_client.py`
+  （B4 客户端形状与失败分类）。

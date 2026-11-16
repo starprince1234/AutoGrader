@@ -233,14 +233,14 @@
 - **结果**：通过。
 - 备注：契约未声明 `DELETE` 操作，删除由领域函数 + 数据库触发器保证；B3 对已发布版本**一律**拒绝删除（B3 无法知道 B2 是否引用过，读 `b2` 被禁止——拒绝是唯一安全解）。
 
-**验收 3-20-6（课程级作业、实时受众与发布通知）**
+**验收 3-20-6（作业显式目标、实时受众与发布通知）**
 
-- Given：课程 C 有多个课序/班级与在册学生；另有课程 D 的学生 S_D；C 的学生 S_C 的登录 token 在其被加入课程前签发。
-- When：创建作业（只给 `course_id`/`title`/`due_at?`/`question_version_ids`）；S_C 与 D 的学生分别列表/详情；把 S_C 移出课程（权威 authorization 返回空）后重试；B4 通知端点成功/不可用/拒绝分别验证。
-- Then：创建成功并同步交接通知，响应含 `notification_state`（成功 `scheduled`；B4 未配置/不可达/4xx/5xx → `unavailable`，作业**仍创建成功**）；课程 C 全部课序/班级学生（含加入前签发的 token）都能 list+detail，课程 D 学生 list 不含且 detail `403`，移出课程后立即 `403`/空列表；列表的课程集合在 SQL 过滤；B4 authorization 不可达 → `503`（不得当 `403`/空列表）；重试幂等并返回最新状态，B4 明确 `404/409/422` 映射同一状态码。
-- 失败判定：作业仍需手选课序/学生；学生可见性来自 token scope 快照；通知失败回滚作业或伪报 `scheduled`；B4 不可达被当成"无权限/空列表"。
-- **验证**：`tests/test_assignments_api.py`（课程级创建/课内全部课序可见/他课学生 `403`/移出课程立即失效/列表 SQL 下推/通知 `scheduled`/`unavailable`/重试与状态码映射/内部受众端点）、`tests/test_b4_client.py`（authorization 与通知客户端的请求形状与失败分类）、`tests/test_versions.py`（通知失败不回滚作业）、`tests/test_migrations.py`（迁移 0010 删除目标表、通知状态 CHECK 与权限）。
-- **结果**：实现完成；本机只做了静态检查（`uv run ruff check src tests`），数据库用例未在本机运行，待 CI 的 PostgreSQL 与 Lead 的 `pytest` 验证后再判定通过。
+- Given：课程 C 有课序 A / A2 与在册学生 S_A（课序 A）、S_B（课序 A2）；另有课程 D 的学生 S_D，以及一个不属于 C 的课序 id 与学生 id；C 的学生 S_C 的登录 token 在其被加入课程前签发。
+- When：分别创建只给 `course_id`/`title`/`due_at?`/`question_version_ids` 的作业、只点名课序的作业、课序 + 点名的作业；用越界课序/学生、重复 id、未配置的 B4 目标校验分别重试；S_A 与未点名同学分别列表/详情；把 S_C 移出课程（权威 authorization 返回空）后重试；B4 通知端点成功/不可用/拒绝分别验证。
+- Then：创建成功，响应**回读存储的目标**（排序后的 id 集合，不是请求回显），未提供 `target` 与显式两个空数组都读回空目标；越界目标 `422 assignment-target-invalid`（`detail` 点名越界 id）且**不写任何行、不发通知**；重复 id `422` 且**不发起远端调用**；目标校验不可用 `503 target-validation-unavailable` 且不写；学生只有命中目标才 list+detail 可见（课程内但目标外 `403`，课程外 `403`，移出课程后立即 `403`/空列表），全课程作业（0 行目标）对每个课序的当前学生可见，含加入前签发的 token；列表的课程集合**与目标两轴**都在 SQL 过滤；B4 authorization 不可达 → `503`（不得当 `403`/空列表）；通知交接请求体带同一份 `section_ids`/`student_ids`，`notification_state` 成功 `scheduled`、B4 未配置/不可达/4xx/5xx → `unavailable` 且作业**仍创建成功**；重试幂等并返回最新状态，B4 明确 `404/409/422` 映射同一状态码；内部受众端点返回的目标与公开详情一致。
+- 失败判定：作业仍需前端过滤目标（服务端接受越界 id）；重复 id 被静默去重；目标校验不可用被读成"全课程"；学生可见性来自 token scope 快照，或列表与详情对同一作业给出两种判定；通知受众是全班而提交准入只到目标学生；通知失败回滚作业或伪报 `scheduled`；B4 不可达被当成"无权限/空列表"。
+- **验证**：`tests/test_assignments_api.py`（`test_create_assignment_with_target_sections_confirms_and_stores_them`、`test_create_assignment_with_named_students_confirms_and_stores_them`、`test_create_assignment_without_a_target_covers_the_whole_course`、`test_an_explicitly_empty_target_is_the_same_whole_course`、`test_a_target_section_of_another_course_is_unprocessable_and_writes_nothing`、`test_a_target_student_outside_the_course_is_unprocessable`、`test_duplicate_target_ids_are_unprocessable_before_any_remote_call`、`test_a_target_without_the_identity_module_is_refused_with_503`、`test_an_unreachable_target_validator_is_503_and_writes_nothing`、`test_a_student_in_a_target_section_sees_the_assignment`、`test_a_student_outside_the_target_sections_does_not_see_the_assignment`、`test_a_named_student_sees_the_assignment_and_classmates_do_not`、`test_a_whole_course_assignment_is_still_visible_to_every_section`、`test_detail_and_list_carry_the_stored_target`、`test_internal_assignment_serves_a_narrowed_target`、`test_internal_assignment_target_matches_the_public_read`）、`tests/test_versions.py`（`test_create_assignment_stores_the_target_and_hands_it_over`、`test_create_assignment_refuses_a_target_outside_the_course`、`test_create_assignment_without_a_validator_cannot_store_a_target`、`test_a_failed_notification_does_not_roll_the_assignment_back`）、`tests/test_b4_client.py`（authorization 与通知客户端的请求形状与失败分类）、`tests/conftest.py`（`FakeB4Service` 应答 `course-targets/validate` 的三种结果：回显、`422` 点名、`404` 课程不存在）。
+- **结果**：实现与用例已写；本机没有 `uv`/PostgreSQL，**pytest 与 ruff 都没有运行**，数据库行为与契约一致性待 CI（真实 PostgreSQL + Python 依赖）验证后再判定是否通过。
 
 ---
 

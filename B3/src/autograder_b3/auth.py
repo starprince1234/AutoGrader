@@ -46,8 +46,8 @@ class Principal:
     course_ids: frozenset[UUID] = frozenset()
     #: Section ids carried by the token's ``scope`` claim. Kept parsed because the claim
     #: shape is B4's and a malformed one must still be rejected; no B3 authorization decision
-    #: uses it any more -- assignments are course-level and student reads use B4's live
-    #: authorization, never this snapshot (v0.32.0).
+    #: uses it: a staff grant on one section covers the whole course, and student reads use
+    #: B4's live authorization rather than this snapshot.
     section_ids: frozenset[UUID] = frozenset()
     is_service: bool = False
     token_id: str | None = None
@@ -259,10 +259,10 @@ def _parse_scope(raw: Any) -> tuple[frozenset[UUID], frozenset[UUID]]:
     """Parse the token's ``scope`` claim into ``(course_ids, section_ids)``.
 
     The claim shape is B4's (a list of ``{course_id, section_id?}`` entries); a malformed one
-    is rejected rather than ignored. Only ``course_ids`` is used for authorization now --
-    assignments are course-level, so a section-scoped grant covers the whole course -- but
-    the section ids stay parsed because the claim is the issuer's and an unparseable value
-    must not silently become "no scope".
+    is rejected rather than ignored. Only ``course_ids`` is used for authorization: a staff
+    grant on one section authorizes the whole course (an assignment's **target** narrows who
+    it is for, not what a teacher may read), but the section ids stay parsed because the claim
+    is the issuer's and an unparseable value must not silently become "no scope".
     """
     course_ids: set[UUID] = set()
     section_ids: set[UUID] = set()

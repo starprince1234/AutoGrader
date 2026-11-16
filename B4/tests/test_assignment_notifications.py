@@ -91,6 +91,8 @@ def _materialise(
     title: str = "第一次作业",
     due_at: datetime | None = None,
     published_at: datetime = PUBLISHED_AT,
+    section_ids: tuple[uuid.UUID, ...] | None = None,
+    student_ids: tuple[uuid.UUID, ...] | None = None,
 ):
     payload: dict[str, object] = {
         "assignment_id": str(assignment_id),
@@ -99,6 +101,12 @@ def _materialise(
         "due_at": _iso(due_at) if due_at is not None else None,
         "published_at": _iso(published_at),
     }
+    # `None` omits the key (the pre-v0.38.0 shape); a tuple -- including `()` -- sends it, so
+    # "absent" and "explicitly empty" can be told apart where that matters.
+    if section_ids is not None:
+        payload["section_ids"] = [str(value) for value in section_ids]
+    if student_ids is not None:
+        payload["student_ids"] = [str(value) for value in student_ids]
     return client.post(
         "/api/v1/internal/assignment-notifications",
         headers=_service_headers(),
@@ -1024,3 +1032,173 @@ def test_ops_notifications_dispatches_reminder_with_note_to_reminder_mailer(
     assert len(sent_messages) == 1
     assert sent_messages[0][0] == "assignment.reminder.sent"
     assert "周五前补交" in sent_messages[0][1]
+
+# ----------------------------------------------------------------- assignment targets
+
+
+@pytest.fixture
+def targeted_audience(factory):
+    """Two sections with two reachable students each, so the two target axes differ.
+
+    Every student here has an account *and* an address, which is what makes a count assertion
+    mean "the target selected these people" rather than "some of them could not be mailed".
+    """
+    teacher = factory.user(username="owner", password=PASSWORD, roles=("teacher",))
+    course_id = factory.course(code="CS201", title="编译原理", created_by=teacher)
+    factory.grant(user_id=teacher, course_id=course_id, role="teacher")
+    section_one = factory.section(course_id=course_id, code="01", term="2026F")
+    section_two = factory.section(course_id=course_id, code="02", term="2026F")
+    students: dict[int, uuid.UUID] = {}
+    for index in (1, 2, 3, 4):
+        account = factory.user(
+            username=f"targeted{index}",
+            password=PASSWORD,
+            roles=("student",),
+            display_name=f"学生{index}",
+            student_number=f"20240000010{index}",
+            email=f"targeted{index}@example.edu.cn",
+        )
+        factory.enrollment(
+            section_id=section_one if index <= 2 else section_two,
+            student_number=f"20240000010{index}",
+            display_name=f"学生{index}",
+            user_id=account,
+        )
+        students[index] = account
+    return {
+        "teacher": teacher,
+        "course_id": course_id,
+        "section_one": section_one,
+        "section_two": section_two,
+        "students": students,
+    }
+
+
+def _delivery_numbers(engine, assignment_id: uuid.UUID) -> set[str]:
+    """The student numbers of one assignment's materialised recipients."""
+    with engine.connect() as connection:
+        rows = connection.execute(
+            select(deliveries.c.student_number)
+            .select_from(
+                deliveries.join(
+                    campaigns,
+                    deliveries.c.notification_id == campaigns.c.notification_id,
+                )
+            )
+            .where(campaigns.c.assignment_id == assignment_id)
+        ).fetchall()
+    return {str(row[0]) for row in rows}
+
+
+def test_a_section_target_notifies_only_that_section(client, targeted_audience, engine) -> None:
+    assignment_id = uuid.uuid4()
+    response = _materialise(
+        client,
+        targeted_audience["course_id"],
+        assignment_id=assignment_id,
+        section_ids=(targeted_audience["section_one"],),
+    )
+    assert response.status_code == 201, response.text
+    summary = response.json()
+    assert summary["recipient_total"] == 2
+    assert summary["pending_count"] == 2
+    assert summary["skipped_unbound_count"] == 0
+    assert _delivery_numbers(engine, assignment_id) == {"202400000101", "202400000102"}
+    assert _delivery_count(engine, assignment_id) == 2
+
+
+def test_the_student_axis_intersects_the_section_axis(client, targeted_audience, engine) -> None:
+    students = targeted_audience["students"]
+
+    intersected = uuid.uuid4()
+    response = _materialise(
+        client,
+        targeted_audience["course_id"],
+        assignment_id=intersected,
+        section_ids=(targeted_audience["section_one"],),
+        # 学生3 属于课序 02: 两轴相交, 他不是收件人
+        student_ids=(students[1], students[3]),
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["recipient_total"] == 1
+    assert _delivery_numbers(engine, intersected) == {"202400000101"}
+
+    # Without a section the student axis alone is the audience, wherever they sit.
+    only_students = uuid.uuid4()
+    response = _materialise(
+        client,
+        targeted_audience["course_id"],
+        assignment_id=only_students,
+        student_ids=(students[1], students[3]),
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["recipient_total"] == 2
+    assert _delivery_numbers(engine, only_students) == {"202400000101", "202400000103"}
+
+
+def test_an_id_that_matches_no_roster_row_is_not_a_recipient_and_not_an_error(
+    client, targeted_audience, engine
+) -> None:
+    assignment_id = uuid.uuid4()
+    response = _materialise(
+        client,
+        targeted_audience["course_id"],
+        assignment_id=assignment_id,
+        section_ids=(uuid.uuid4(),),
+        student_ids=(uuid.uuid4(),),
+    )
+    # B3 has the target confirmed by `validateCourseTargets` before publishing; refusing an
+    # unknown id a second time at delivery would turn one mistake into two failures.
+    assert response.status_code == 201, response.text
+    assert response.json()["recipient_total"] == 0
+    assert _delivery_numbers(engine, assignment_id) == set()
+    assert _delivery_count(engine, assignment_id) == 0
+
+
+def test_an_explicitly_empty_target_notifies_the_whole_course(
+    client, targeted_audience, engine
+) -> None:
+    assignment_id = uuid.uuid4()
+    response = _materialise(
+        client,
+        targeted_audience["course_id"],
+        assignment_id=assignment_id,
+        section_ids=(),
+        student_ids=(),
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["recipient_total"] == 4
+    assert _delivery_numbers(engine, assignment_id) == {
+        "202400000101",
+        "202400000102",
+        "202400000103",
+        "202400000104",
+    }
+
+
+def test_a_repeated_publication_keeps_the_audience_of_the_first_call(
+    client, targeted_audience, engine
+) -> None:
+    assignment_id = uuid.uuid4()
+    first = _materialise(
+        client,
+        targeted_audience["course_id"],
+        assignment_id=assignment_id,
+        section_ids=(targeted_audience["section_one"],),
+    )
+    assert first.status_code == 201, first.text
+    created_at = first.json()["created_at"]
+
+    # A retry naming a different target must not rewrite who was told: the audience is the
+    # publication-time snapshot, and the idempotent branch returns it unchanged.
+    repeated = _materialise(
+        client,
+        targeted_audience["course_id"],
+        assignment_id=assignment_id,
+        section_ids=(targeted_audience["section_two"],),
+    )
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["created_at"] == created_at
+    assert repeated.json()["recipient_total"] == 2
+    assert _delivery_numbers(engine, assignment_id) == {"202400000101", "202400000102"}
+    assert _delivery_count(engine, assignment_id) == 2

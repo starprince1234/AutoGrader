@@ -22,7 +22,7 @@ from typing import Annotated
 from fastapi import APIRouter, Query, Request, Response
 from fastapi.responses import JSONResponse
 
-from ..auth import require_authenticated, require_service
+from ..auth import WRITE_ROLES, Principal, require_authenticated, require_service
 from ..domain import (
     AssignmentView,
     archive_version,
@@ -34,7 +34,6 @@ from ..domain import (
     discard_generation,
     generation_capabilities,
     get_assignment_detail,
-    get_assignment_targets,
     get_question,
     get_version,
     list_assignment_versions,
@@ -983,9 +982,44 @@ def reference_answer_endpoint(request: Request, question_version_id: uuid.UUID) 
 # --------------------------------------------------------------------------
 
 
-def _assignment_public(view: AssignmentView) -> AssignmentPublic:
-    """Project one assignment view; the ordered question list is passed explicitly."""
-    return assignment_to_public(view.assignment, list(view.question_version_ids))
+def _assignment_public(view: AssignmentView, *, reader: Principal | None) -> AssignmentPublic:
+    """Project one assignment view for the caller who is reading it.
+
+    The ordered question list and the target are passed explicitly because both live in
+    separate tables and are already loaded by the domain: a response must never show an empty
+    target because a second query forgot it.
+
+    The target is projected **per role**: staff see it as stored, while a student sees the
+    sections and, if the assignment names students, only their own id. A student is inside the
+    audience by construction (an assignment that excludes them is refused outright), so the
+    only thing the full list would add is the ids of classmates -- which is exactly the
+    student identity this module keeps out of public surfaces.
+    """
+    section_ids, student_ids = view.target
+    if _is_student_reader(reader):
+        own = _principal_uuid(reader)
+        student_ids = tuple(item for item in student_ids if item == own)
+    return assignment_to_public(
+        view.assignment, list(view.question_version_ids), (section_ids, student_ids)
+    )
+
+
+def _is_student_reader(reader: Principal | None) -> bool:
+    """A student -- not staff, not a service caller (those two read the whole target)."""
+    return (
+        reader is not None
+        and not reader.is_service
+        and not reader.is_admin
+        and not reader.has_role(*WRITE_ROLES)
+        and reader.has_role("student")
+    )
+
+
+def _principal_uuid(reader: Principal | None) -> uuid.UUID | None:
+    try:
+        return uuid.UUID(reader.subject) if reader is not None else None
+    except (ValueError, AttributeError, TypeError):
+        return None
 
 
 @router.get("/api/v1/assignments")
@@ -997,12 +1031,14 @@ def list_assignments_endpoint(
 ) -> dict:
     """Page of assignments the caller may read, keyset-paginated by ``(created_at, id)``.
 
-    An assignment is course-level (v0.32.0), so the reader filter is a course set: the
-    teacher's token scope, or -- for a student -- B4's live enrollments, applied **in SQL**
-    so a page is never shortened by a post-filter. The cursor is decoded here and passed
-    down: a list that accepted ``cursor`` and then ignored it would return the first page on
-    every request while advertising a ``next_cursor``, a silent infinite loop for a paging
-    client.
+    An assignment carries a target (v0.38.0), but the *reader* filter is still a course set:
+    the teacher's token scope, or -- for a student -- B4's live enrollments, applied **in SQL**
+    so a page is never shortened by a post-filter. The target of every row on the page is read
+    in two grouped queries (``assignment_targets_bulk``) rather than two per row.
+
+    The cursor is decoded here and passed down: a list that accepted ``cursor`` and then
+    ignored it would return the first page on every request while advertising a
+    ``next_cursor``, a silent infinite loop for a paging client.
     """
     context = _context(request)
     dependencies = _dependencies(request)
@@ -1016,7 +1052,7 @@ def list_assignments_endpoint(
         directory=dependencies.b4_authorization,
         after=after,
     )
-    items = [serialize_public(_assignment_public(view)) for view in views]
+    items = [serialize_public(_assignment_public(view, reader=context.principal)) for view in views]
     next_cursor = None
     if has_more and views:
         last = views[-1].assignment
@@ -1033,12 +1069,17 @@ def list_assignments_endpoint(
 
 @router.post("/api/v1/assignments", status_code=201)
 def create_assignment_endpoint(request: Request, payload: AssignmentCreateInputModel) -> dict:
-    """Create a course-level assignment from published versions of that course's questions.
+    """Create an assignment from published versions of that course's questions, with a target.
 
-    The assignment applies to every section/class/student of the course. Publishing also
-    hands the audience to B4; that hand-off is a separate idempotent step after the write
-    commits, so a B4 failure never rolls the assignment back -- it shows up as
-    ``notification_state = unavailable`` on the returned body, and a teacher can retry.
+    ``payload.target`` names the sections (and, inside them, the students) the assignment is
+    for; omitting it means the whole course. The target is confirmed by the identity/course
+    module **before** anything is written: a section or student outside the course is ``422``
+    there, and an unconfigured validator is ``503`` rather than a stored, unverified audience.
+
+    Publishing also hands the audience to B4, target included; that hand-off is a separate
+    idempotent step after the write commits, so a B4 failure never rolls the assignment back --
+    it shows up as ``notification_state = unavailable`` on the returned body, and a teacher can
+    retry.
     """
     context = _context(request)
     dependencies = _dependencies(request)
@@ -1047,6 +1088,7 @@ def create_assignment_endpoint(request: Request, payload: AssignmentCreateInputM
         principal=context.principal,
         payload=payload,
         notifier=dependencies.b4_notifier,
+        targets=dependencies.b4_targets,
         now=dependencies.now,
     )
     log_event(
@@ -1055,9 +1097,11 @@ def create_assignment_endpoint(request: Request, payload: AssignmentCreateInputM
         request_id=context.request_id,
         assignment_id=str(view.assignment.assignment_id),
         course_id=str(view.assignment.course_id),
+        target_section_count=len(view.section_ids),
+        target_student_count=len(view.student_ids),
         status_code=201,
     )
-    return serialize_public(_assignment_public(view))
+    return serialize_public(_assignment_public(view, reader=context.principal))
 
 
 @router.get("/api/v1/assignments/{assignment_id}")
@@ -1071,7 +1115,7 @@ def get_assignment_endpoint(request: Request, assignment_id: uuid.UUID) -> dict:
         assignment_id=assignment_id,
         directory=dependencies.b4_authorization,
     )
-    return serialize_public(_assignment_public(view))
+    return serialize_public(_assignment_public(view, reader=context.principal))
 
 
 @router.post("/api/v1/assignments/{assignment_id}/notifications")
@@ -1108,7 +1152,7 @@ def schedule_assignment_notifications_endpoint(
         course_id=str(view.assignment.course_id),
         status_code=200,
     )
-    return serialize_public(_assignment_public(view))
+    return serialize_public(_assignment_public(view, reader=context.principal))
 
 
 @router.post("/api/v1/assignments/{assignment_id}/close")
@@ -1136,7 +1180,7 @@ def close_assignment_endpoint(request: Request, assignment_id: uuid.UUID) -> dic
         course_id=str(view.assignment.course_id),
         status_code=200,
     )
-    return serialize_public(_assignment_public(view))
+    return serialize_public(_assignment_public(view, reader=context.principal))
 
 
 @router.get("/api/v1/assignment-audiences/{assignment_id}")
@@ -1151,9 +1195,12 @@ def get_internal_assignment_endpoint(request: Request, assignment_id: uuid.UUID)
       the service token learns nothing about which ids exist.
 
     The response is the internal DTO's own wire form (like the reference-answer channel);
-    it deliberately omits timestamps and never carries a student/roster fact -- since
-    v0.32.0 the audience is course-level and only B4 is authoritative for current
-    enrollment, so B2 combines this answer with its own B4 query.
+    it deliberately omits timestamps and never carries a student/roster fact -- only B4 is
+    authoritative for current enrollment, so B2 combines this answer (course, status, ordered
+    question list and the assignment's **target**) with its own B4 query. The target travels
+    here and nowhere else: a second admission channel would be a second admission rule, and a
+    target that admitted a web submission while refusing the same student's mail is exactly
+    what this single path exists to prevent.
     """
     dependencies = _dependencies(request)
     if dependencies.service_verifier is None:
@@ -1168,18 +1215,16 @@ def get_internal_assignment_endpoint(request: Request, assignment_id: uuid.UUID)
         assignment_id=assignment_id,
         directory=dependencies.b4_authorization,
     )
-    # 目标课序/指定学生：空元组 = 全课程（历史作业）。B2 会用它与 B4 的在读名单求交。
-    section_ids, student_ids = get_assignment_targets(
-        dependencies.database, assignment_id=assignment_id
-    )
+    # 目标课序/指定学生由读模型一并带出（空元组 = 全课程，历史作业就是这样）。
+    # B2 用它和 B4 的在读名单求交；这里不再单独查一次，避免"详情已读、目标又是另一次读"。
     internal = AssignmentAudience(
         assignment_id=view.assignment.assignment_id,
         course_id=view.assignment.course_id,
         title=view.assignment.title,
         status=view.assignment.status,
         question_version_ids=view.question_version_ids,
-        section_ids=section_ids,
-        student_ids=student_ids,
+        section_ids=view.section_ids,
+        student_ids=view.student_ids,
     )
     log_event(
         get_logger("api.internal"),
@@ -1187,6 +1232,8 @@ def get_internal_assignment_endpoint(request: Request, assignment_id: uuid.UUID)
         request_id=context.request_id,
         assignment_id=str(assignment_id),
         attempt_count=len(view.question_version_ids),
+        target_section_count=len(view.section_ids),
+        target_student_count=len(view.student_ids),
         status_code=200,
     )
     return internal.to_wire()

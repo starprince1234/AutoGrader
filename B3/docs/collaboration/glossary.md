@@ -9,7 +9,8 @@ B3 专有术语。全局标识 / 时间 / 作用域规则见 `../../../MAIN/docs
 | 参考答案（reference answer） | 受保护内容，仅内部角色可读；按契约**没有任何出站路径**（package schema 与公开 DTO 均无该字段），用途是发布完整性校验 |
 | 隐藏用例（hidden case） | 受保护的测试用例（含期望输出），`visible_to_student` 默认为 `false` |
 | expected output | 用例期望输出（`expected_stdout`/`expected_stderr`/`expected_exit_code`），受保护，永不出现在公开面 |
-| assignment | **课程级**作业（题目 × 课程），只可引用该课程已发布版本；自动覆盖该课程全部课序/班级/学生，没有手选目标列表（v0.32.0） |
+| assignment | 作业（题目 × 课程），携带**显式目标**：`section_ids`（课序）与 `student_ids`（点名学生），两轴**相交**，皆空 = 全课程；只可引用该课程已发布版本。目标只存 id、按 B4 当前名单实时求值，是过滤条件而非冻结快照（v0.38.0） |
+| 作业目标（assignment target） | `AssignmentTarget.section_ids` / `student_ids`。非空目标在写作业**之前**由 B4 `validateCourseTargets` 确认为该课程的一部分（越权/重复 id `422`、课程不存在 `404`、校验不可用 `503`）；0 行 = 全课程，历史作业不回填 |
 | notification_state | 作业发布通知的**排期交接**状态：`pending`（从未尝试）/`scheduled`（B4 已接收受众）/`unavailable`（失败，可重试）。不是投递状态 |
 | evaluation package | 题目版本编译出的不可变产物，B2 runner 直接消费；含 adapter、测试输入、比较规则、fixture 引用、内容摘要 |
 | package 编译（package compilation） | 题目版本 → 不可变 package 的**确定性纯函数**过程，绑定 `package_digest`；唯一入口 `compile_evaluation_package` |

@@ -192,6 +192,17 @@ ENROLLMENTS: dict[uuid.UUID, tuple[uuid.UUID, uuid.UUID, uuid.UUID]] = {
     STUDENT_C: (COURSE_B, SECTION_B, CLASS_B),
 }
 
+#: ``section_id -> course_id``: the sections the fake identity/course module knows about. It
+#: starts as "every section some enrolled student sits in" -- the same rows ENROLLMENTS
+#: describes -- and a test may add an **empty** section to prove that a target section is
+#: validated against the course rather than against who happens to be enrolled in it.
+SECTIONS: dict[uuid.UUID, uuid.UUID] = {
+    SECTION_A: COURSE_A,
+    SECTION_A2: COURSE_A,
+    SECTION_B: COURSE_B,
+    SECTION_E: COURSE_E,
+}
+
 
 @pytest.fixture
 def tokens() -> dict[str, dict]:
@@ -299,19 +310,21 @@ class _FakeResponse:
 
 
 class FakeB4Service:
-    """In-process stand-in for B4's two internal operations.
+    """In-process stand-in for B4's three internal operations.
 
     Served through the **real** HTTP clients (they are built with ``opener=self``), so the
     documented URLs, headers, bodies and the production failure classification are
     exercised. Mutable state lets a test change the authoritative answer between requests:
-    ``enrollments`` is the current membership, ``notification_status`` makes B4 reject one
-    hand-off, and every received request is recorded in ``requests`` for assertions.
+    ``enrollments`` is the current membership, ``sections`` is the section→course fact the
+    target validator needs, ``notification_status`` makes B4 reject one hand-off, and every
+    received request is recorded in ``requests`` for assertions.
     """
 
     def __init__(self) -> None:
         self.enrollments: dict[uuid.UUID, tuple[uuid.UUID, uuid.UUID, uuid.UUID]] = dict(
             ENROLLMENTS
         )
+        self.sections: dict[uuid.UUID, uuid.UUID] = dict(SECTIONS)
         self.course_grants: dict[uuid.UUID, set[uuid.UUID]] = {}
         self.notifications: dict[uuid.UUID, dict] = {}
         #: Per-assignment status overrides plus the default for assignments a test has not
@@ -341,6 +354,50 @@ class FakeB4Service:
             ),
         }
 
+    def _validate_target(self, body: dict):
+        """Answer ``validateCourseTargets`` from the mutable roster facts.
+
+        Same three statements as the real endpoint: unknown course is ``404``, an id outside
+        the course is ``422`` with a detail naming it, everything matched is echoed sorted.
+        """
+        course_id = uuid.UUID(body["course_id"])
+        course_exists = any(course == course_id for course in self.sections.values()) or any(
+            enrollment[0] == course_id for enrollment in self.enrollments.values()
+        )
+        if not course_exists:
+            return _FakeResponse({"detail": "The course does not exist."}, status=404)
+        unknown_sections = [
+            section
+            for section in (uuid.UUID(item) for item in body.get("section_ids", []))
+            if self.sections.get(section) != course_id
+        ]
+        unknown_students = [
+            student
+            for student in (uuid.UUID(item) for item in body.get("student_ids", []))
+            if self.enrollments.get(student, (None,))[0] != course_id
+        ]
+        if unknown_sections or unknown_students:
+            parts = []
+            if unknown_sections:
+                parts.append(
+                    "section(s) " + ", ".join(sorted(str(item) for item in unknown_sections))
+                )
+            if unknown_students:
+                parts.append(
+                    "student(s) " + ", ".join(sorted(str(item) for item in unknown_students))
+                )
+            return _FakeResponse(
+                {"detail": "The target is not part of this course: " + "; ".join(parts) + "."},
+                status=422,
+            )
+        return _FakeResponse(
+            {
+                "course_id": str(course_id),
+                "section_ids": sorted(str(item) for item in body.get("section_ids", [])),
+                "student_ids": sorted(str(item) for item in body.get("student_ids", [])),
+            }
+        )
+
     def __call__(self, request, timeout: float):
         method = request.get_method()
         url = request.full_url
@@ -359,6 +416,8 @@ class FakeB4Service:
                 url.split("/api/v1/internal/users/")[1].split("/authorization")[0]
             )
             return _FakeResponse(self.authorization_answer(user_id))
+        if method == "POST" and url.endswith("/api/v1/internal/course-targets/validate"):
+            return self._validate_target(body)
         if method == "POST" and url.endswith("/api/v1/internal/assignment-notifications"):
             assignment_id = uuid.UUID(body["assignment_id"])
             self.notifications[assignment_id] = body
@@ -405,7 +464,28 @@ def b4_notifier(fake_b4: FakeB4Service):
 
 
 @pytest.fixture
-def dependencies(settings, database, verifier, publisher, clock, b4_authorization, b4_notifier):
+def b4_targets(fake_b4: FakeB4Service):
+    from autograder_b3.integration.b4 import B4CourseTargetValidator
+
+    return B4CourseTargetValidator(
+        base_url="http://identity.invalid",
+        service_token="test-service-token",
+        timeout_seconds=1.0,
+        opener=fake_b4,
+    )
+
+
+@pytest.fixture
+def dependencies(
+    settings,
+    database,
+    verifier,
+    publisher,
+    clock,
+    b4_authorization,
+    b4_notifier,
+    b4_targets,
+):
     from autograder_b3.api.deps import B3Dependencies
     from autograder_b3.auth import ServiceTokenVerifier
 
@@ -417,6 +497,7 @@ def dependencies(settings, database, verifier, publisher, clock, b4_authorizatio
         publisher=publisher,
         b4_authorization=b4_authorization,
         b4_notifier=b4_notifier,
+        b4_targets=b4_targets,
         clock=clock,
     )
 

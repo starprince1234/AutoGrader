@@ -222,13 +222,24 @@ def materialise(
     title: str,
     due_at: datetime | None,
     published_at: datetime,
+    section_ids: tuple[uuid.UUID, ...] = (),
+    student_ids: tuple[uuid.UUID, ...] = (),
     now: datetime | None = None,
 ) -> Materialised:
     """Create the recipient snapshot for one published assignment (idempotent).
 
-    Repeating the call returns the existing summary and an empty `created=False`: the
-    audience is captured at publication time, so a later roster change does not silently
-    turn an earlier notification into a different one.
+    `section_ids` / `student_ids` are the assignment's **target** (v0.38.0): the audience is
+    the course's current active roster narrowed by it, which is the same filter the
+    submission path applies -- "who was told" and "who may submit" must not come out as two
+    different sets. The two axes intersect (a named student outside the named sections is not
+    a recipient), an empty axis means "not narrowed on that axis", and an id no current
+    roster row matches is simply not a recipient rather than a `422`: B3 has the target
+    confirmed before publishing, so refusing it again at delivery time would turn one mistake
+    into two failures.
+
+    Repeating the call returns the existing summary and `created=False`: the audience is
+    captured at publication time, so a later roster change -- or a retry naming a different
+    target -- does not silently turn an earlier notification into a different one.
     """
     moment = now or utcnow()
     clean_title = title.strip()
@@ -256,6 +267,17 @@ def materialise(
         if course is None:
             raise not_found("The course does not exist.")
 
+        # `is_active` and the student-number ordering are deliberately unchanged: the target
+        # only narrows *which* roster rows are recipients, never when somebody counts as one.
+        roster_filters = [
+            enrollments.c.course_id == course_id,
+            enrollments.c.is_active.is_(True),
+        ]
+        if section_ids:
+            roster_filters.append(enrollments.c.section_id.in_(section_ids))
+        if student_ids:
+            roster_filters.append(enrollments.c.user_id.in_(student_ids))
+
         rows = connection.execute(
             select(
                 enrollments.c.enrollment_id,
@@ -270,12 +292,7 @@ def materialise(
             .select_from(
                 enrollments.outerjoin(users, enrollments.c.user_id == users.c.user_id)
             )
-            .where(
-                and_(
-                    enrollments.c.course_id == course_id,
-                    enrollments.c.is_active.is_(True),
-                )
-            )
+            .where(and_(*roster_filters))
             .order_by(enrollments.c.student_number)
         ).fetchall()
 

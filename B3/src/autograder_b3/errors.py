@@ -119,6 +119,20 @@ class AuthorizationUnavailable(ServiceUnavailable):
     slug = "authorization-unavailable"
 
 
+class TargetValidationUnavailable(ServiceUnavailable):
+    """The assignment target could not be checked, so nothing was written.
+
+    An assignment's target names sections and students of one course, and only the
+    identity/course module can say whether those ids belong to it. When that call is
+    unconfigured, unreachable, times out or answers a malformed body, the write is refused
+    with ``503`` instead of storing an unverified audience: storing it either hands the
+    assignment to students the teacher never named or hides it from a named one, and neither
+    is visible afterwards. Same rule the student-read path already follows.
+    """
+
+    slug = "target-validation-unavailable"
+
+
 class TooManyRequests(B3Error):
     """A configured budget for a paid operation is exhausted (AI-FLOW-01A).
 
@@ -253,6 +267,19 @@ class TagInvalid(UnprocessableEntity):
     """
 
     slug = "tag-invalid"
+
+
+class TargetInvalid(UnprocessableEntity):
+    """An assignment target names a section or a student that is not part of the course.
+
+    ``422`` rather than ``404``: the assignment body is well formed, and the course exists;
+    what is wrong is a value inside it. The detail names the offending ids because they came
+    from the caller -- and because a client that silently dropped them would hide a picker
+    bug behind a successful write. Nothing is persisted before this check passes, so a
+    refused target leaves no half-created assignment behind.
+    """
+
+    slug = "assignment-target-invalid"
 
 
 class StemInvalid(UnprocessableEntity):

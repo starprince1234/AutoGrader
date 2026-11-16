@@ -27,6 +27,7 @@ from ..assistance import AssistanceResult
 from ..dto.internal import PROTECTED_FIELD_NAMES, ExecutionMode
 from ..dto.public import (
     AssignmentPublic,
+    AssignmentTargetPublic,
     AuthoringAssistancePublic,
     AuthoringProvenancePublic,
     AuthoringSuggestionPublic,
@@ -300,14 +301,22 @@ def authoring_assistance_to_public(
     )
 
 
-def assignment_to_public(row: Any, version_ids: list[UUID]) -> AssignmentPublic:
-    """Project one course-level assignment (v0.32.0).
+def assignment_to_public(
+    row: Any,
+    version_ids: list[UUID],
+    target: tuple[tuple[UUID, ...], tuple[UUID, ...]] = ((), ()),
+) -> AssignmentPublic:
+    """Project one assignment (v0.38.0).
 
-    The ordered question list is passed in because it is a separate table; it is *not* read
-    off ``row``. ``notification_state`` is a column on the row and is copied verbatim --
-    the serializer never infers "scheduled" from the presence of a due date or anything
-    else, because that field must mean "B4 acknowledged the hand-off" and nothing weaker.
+    The ordered question list and the target are passed in because both live in separate
+    tables; neither is read off ``row``. ``target`` is ``(section_ids, student_ids)`` as
+    stored -- empty tuples mean the whole course, so the response never has to spell
+    "unassigned" as some third value. ``notification_state`` is a column on the row and is
+    copied verbatim: the serializer never infers "scheduled" from the presence of a due date
+    or anything else, because that field must mean "B4 acknowledged the hand-off" and nothing
+    weaker.
     """
+    section_ids, student_ids = target
     return AssignmentPublic(
         assignment_id=row.assignment_id,
         course_id=row.course_id,
@@ -316,6 +325,9 @@ def assignment_to_public(row: Any, version_ids: list[UUID]) -> AssignmentPublic:
         due_at=row.due_at,
         question_version_ids=tuple(version_ids),
         notification_state=row.notification_state,
+        target=AssignmentTargetPublic(
+            section_ids=tuple(section_ids), student_ids=tuple(student_ids)
+        ),
         created_at=row.created_at,
         updated_at=row.updated_at,
     )

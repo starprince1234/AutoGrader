@@ -23,7 +23,7 @@
 | 7. 邮件只收 `.txt`、按题号映射 | `intake/attachments.py`:`ALLOWED_ATTACHMENT_EXTENSIONS = {".txt"}`;正文要求课序/姓名/学号/作业编号;一次性核验码绑定 `(student, course, section, assignment)` | 已存在 |
 | 8. 邮件与网页同一套提交 | `intake/service.py` 走同一个 `persist()` 与同一个 worker;`assignment_id` 必填;From 需要一次性核验码,不信任头部 | 已存在 |
 | 9. 工作区有在途修改 | `git status` 干净,`HEAD = 62f9e65`,`origin/main` 同步 | 无需保留 |
-| 10. 契约/锁/迁移 | 当前契约 `0.34.0`;五份 `contracts.lock` 一致 | 本批要升版 |
+| 10. 契约/锁/迁移 | 契约已升到 `0.38.0`,五份 `contracts.lock` 一致(见 §5) | 契约部分已完成 |
 
 **所以真正缺的只有两件事**:作业的**显式目标**,以及复核页的**打回 + 通知**。
 其余是"核对 + 补测试",不是重写。
@@ -40,16 +40,25 @@
 - `student_ids` 必须属于该课程(服务端校验),否则 422;`section_ids` 必须属于该课程,
   否则 422。**越权的目标直接拒绝,不是前端过滤。**
 
-### 2.2 契约(`MAIN/contracts`)
+### 2.2 契约(`MAIN/contracts`)**已完成**
 
-- `b3.yaml`:`AssignmentTarget`(`section_ids: Uuid[]`、`student_ids: Uuid[]`,`additionalProperties: false`),
-  `AssignmentPublic.target`(required)、`CreateAssignmentRequest.target`(optional,
-  省略 = 全课程),`AssignmentAudience` 保持"解析后的学生 id 列表"不变(B2 只消费它)。
-- `b2.yaml`:新增 `POST /api/v1/intake/quarantines/{id}/reject`,请求 `{note?}`,
-  响应沿用 `IntakeQuarantineView` 加一个 `notification`(`queued|unavailable`),
-  语义:打回 + 向**原发件地址**发失败通知;失败不影响打回本身,响应里如实说"通知没发出去"。
-- 版本 `0.34.0 → 0.35.0`;`CHANGELOG.md` 追加;五份 `contracts.lock` 用
-  `contract_digest()`(**机器计算**,不许手填)重算。
+- `b3.yaml`:`AssignmentTarget`(`section_ids: Uuid[]`、`student_ids: Uuid[]`,两个数组必填、
+  `uniqueItems: true`、`additionalProperties: false`;两轴**相交**,皆空 = 全课程),
+  `AssignmentPublic.target`(required)、`CreateAssignmentRequest.target`(optional,省略 = 全课程)。
+  内部 schema 叫 `AssignmentInternal`(B3 侧 DTO 是 `AssignmentAudience`),它新增
+  `section_ids`/`student_ids`(缺键 = 全课程),由 B2 与 B4 名单求交——见 §2.4.1。
+- `b2.yaml`:新增 `POST /api/v1/intake/quarantines/{id}/reject`(`rejectIntakeQuarantine`),请求
+  `{note?}`,响应 `IntakeQuarantineRejection` = `{record, notification}`(`notification`:
+  `queued|unavailable`);语义:打回 + 向**原发件地址**发失败通知,失败不影响打回本身。
+  - 响应是**嵌套**的而不是把 `notification` 摊在 `IntakeQuarantineView` 同级:`IntakeQuarantineView`
+    是 `additionalProperties: false` 的闭合 schema,用 `allOf` 加同级字段会被任何严格 JSON-Schema
+    校验判成非法响应(先前的写法就是这种只有 spec 才成立的形状)。
+  - `IntakeQuarantineView` 新增必填 `sender`(`anyOf[string, null]`,历史行 `null`)与枚举值
+    `rejected`。原来文档里"发件地址在隔离视图里是必填"的假设是错的:该视图此前**没有**发件人字段,
+    隔离表也不存发件人,所以这条要连带补一列(B2 迁移 `20261107_0023`)。
+- 版本 `0.37.0 → 0.38.0`(本地原定 0.35.0,合入时上游已占用 0.35.0/0.36.0/0.37.0);`CHANGELOG.md` 追加;五份 `contracts.lock` 用
+  `contract_digest()`(**机器计算**,不许手填)重算。五份 `module.yaml` 与四个 `plugin.py`
+  的 `contract_version` 同步(否则 `check_manifests` 会在下一次集成时报出来)。
 
 ### 2.3 数据(B3,`b3` schema,迁移)
 
@@ -59,7 +68,14 @@
 
 ### 2.4 下游
 
-- **B4**:投递仍按"受众"走,只是受众来源改为 B3 解析后的列表(B4 不解析目标)。
+- **B4**:原计划是"投递仍按受众走，B4 不解析目标"。实现时发现这做不到:B3 不持有名单,
+  把目标解析成收件人列表需要 B4 的数据;B3 若自己存一份名单副本,那份副本就是会漂移的那份。
+  因此改成 **B4 解析目标**:
+  - 新增内部端点 `POST /api/v1/internal/course-targets/validate`(目标 id 属于课程,B3 在
+    写作业**之前**调用,越权 422 / 课程不存在 404);
+  - `POST /internal/assignment-notifications` 的请求体带上 `section_ids`/`student_ids`,
+    B4 用同一份过滤收窄自己的名单快照。
+  这样"谁能提交"和"通知发给谁"用的是同一个判定,不需要 B3 维护第二份名单。
 - **B2**:`_require_assignment()` 已经拿 B3 的 audience;目标变化后**无需改调用点**,
   但要在 `email_verification` 建码时校验 `section_id` 属于目标,否则拒绝(422)。
 
@@ -89,8 +105,14 @@
 - 未处理记录给「打回」按钮:确认弹窗(备注可选)→ `POST .../reject` → 记录变已处理,
   响应里 `notification=queued` 时提示"已通知发件邮箱";`unavailable` 时明确"记录已打回,
   通知没发出去"。
-- **不发信的情况**:管理员/教师无该课程权限(服务端 403);发件地址为空(记录不带邮箱,
-  该字段在隔离视图里是必填,所以实际不会出现)。
+- **不发信的情况**:管理员/教师无该课程权限(服务端 403,记录也不处置);记录没有可用的发件地址
+  (`sender` 为 `null`,历史行就是这样)。**先前这里写的"发件地址在隔离视图里是必填,所以实际不会出现"
+  是错的**:该视图此前没有发件人字段,隔离表也不存发件人;契约 `0.38.0` 补了 `sender`,
+  B2 迁移 `20261107_0023` 补了列(历史行保持 `NULL`,不回填、不从邮箱头猜)。
+- 「打回」在数据里记 `resolution=rejected`(**不是** `dismissed`):作废是"复核者丢弃了这一行",
+  打回是"提交失败且已通知发件人",合并会让复核页再也答不出"学生被告知了吗"。因此 B2 需要放宽
+  `ck_intake_quarantines_decision` 与 `ck_intake_quarantines_decision_audit` 两支 CHECK
+  (同一支迁移 `20261107_0023`),这一条与 §3 里原来的"迁移不需要"相反。
 
 ### 2.6 这个目标模型以前有过,后来被删掉了(重要)
 
@@ -115,14 +137,19 @@
 
 ## 3. 实施顺序(每步都能单独验证)
 
-1. **契约 + 锁**(MAIN):`b3.yaml` 目标、`b2.yaml` reject、`0.35.0`、CHANGELOG、五份锁。
-   - 验证:`contract_digest()` 重算后与锁一致;`openapi-typescript` 生成物 `--check` 通过。
+1. **契约 + 锁**(MAIN):`b3.yaml` 目标、`b2.yaml` reject、`0.38.0`、CHANGELOG、五份锁。
+   **已完成**(细节见 §2.2 与 §5)。
+   - 验证:`contract_digest()` 重算后与锁一致(已做);`openapi-typescript` 生成物 `--check`
+     通过(已做);`python -m autograder_host.checks`(本机无 `pyyaml`,未做)。
 2. **B3 目标模型**(迁移 + domain + API + pytest):创建/读取/受众解析/越权 422。
-   - 验证:隔离 PostgreSQL 上跑 B3 测试;历史作业(无 target)仍解析为全课程。
-3. **B2 reject + 通知**(迁移不需要:处置字段已有;新增 operation + SMTP 发送 + 测试)。
-   - 验证:隔离 Linux 上跑 B2 测试;通知失败时响应是 `unavailable` 而不是 500。
-4. **B1**:重新生成类型;composer 目标选择;复核页成功/失败与打回;测试。
-5. **验收矩阵**(远端 CI + 隔离 Linux / 真实 PostgreSQL):
+   **已完成**(细节见 §5);验收测试已写,但只能在隔离 PostgreSQL 上跑。
+3. **B4 目标支持**:`validateCourseTargets`(目标 id 属于课程)+ 发布通知受众按目标收窄。
+   **已完成**(契约随本批并入 `0.38.0`)。
+4. **B2 reject + 通知**(需要一支迁移 `20261107_0023`:`intake_quarantines.sender` + 放宽 decision
+   CHECK 以容纳 `rejected`;新增 operation + SMTP 发送 + 测试),以及三条提交路径的目标求交。
+   **未做**。
+5. **B1**:composer 目标选择;复核页成功/失败与打回;测试。**未做**。
+6. **验收矩阵**(远端 CI + 隔离 Linux / 真实 PostgreSQL):
    - 多课序/指定学生/草稿/跨课程/越权;
    - 一份多题作业的 未交/部分/全交/评测中/失败/重交;
    - 两个作业复用同一题目版本,互不串联;
@@ -150,30 +177,49 @@
 | B3 内部接口 | `AssignmentAudience` 输出 `section_ids/student_ids` | `8a8e3d6` `8c0a896` |
 | B2 解析 | `AssignmentAudience` 读入目标(缺键 = 全课程) | `8a23d4c` |
 | B1 复核 | 列表列改为「提交结果 / 提交失败」 | `d52cf2c` |
+| 契约 | `0.38.0`:`AssignmentTarget`/`CreateAssignmentRequest`/`AssignmentPublic.target`/`AssignmentInternal` 目标字段、`validateCourseTargets`、`AssignmentNotificationRequest` 目标字段、`rejectIntakeQuarantine`、`IntakeQuarantineRejection`、`sender`、`rejected`;CHANGELOG;五份锁重算;五份 `module.yaml`+四个 `plugin.py` 同步;B1 生成类型重生成 | `feat/phase-24-targets` |
+| B3 写路径 | `create_assignment` 先本地版本校验再向 B4 确认目标,写 `assignment_sections/students`;`AssignmentView.target`;列表批量读目标;`AssignmentPublic.target` 按角色投影 | `feat/phase-24-targets` |
+| B3 读路径 | 学生列表在 SQL 里按目标收窄(`NOT EXISTS/EXISTS` 两轴),详情按目标判 `403`;内部受众端点直接复用读模型 | `feat/phase-24-targets` |
+| B4 目标支持 | `classes.validate_course_target` + `POST /internal/course-targets/validate`;`materialise` 按目标收窄收件人 | `feat/phase-24-targets` |
 
 **未完成**(下一会话从这里继续,顺序即依赖):
 
-1. **B2 求交**:网页提交、邮件建码、邮件入库三条路径共用同一个
+1. **B2 求交 + reject**:网页提交、邮件建码、邮件入库三条路径共用同一个
    `audience ∩ B4 enrollment` 判定(课序 ⊆ `section_ids`,学生 ⊆ `student_ids`,
    两者皆空 = 全课程);落点在 `_require_assignment()` 之后的准入分支与
-   `email_verification` 建码处。**未做**。
-2. **B4 投递**:发布/提醒的受众改用同一份交集,避免"通知发全班、提交只允许目标"。
-   **未做**。
-3. **契约 0.35.0**:`b3.yaml` 加 `AssignmentTarget`、`AssignmentPublic.target`(required)、
-   `CreateAssignmentRequest.target`(optional)、内部 `AssignmentAudience` 目标字段;
-   版本与 CHANGELOG 同步;五份 `contracts.lock` 用复刻的 `contract_digest()`
-   (排序相对路径 + `\0` + 字节的 SHA-256)重算。**未做**——因此 B2/B3 现在输出的是
-   契约里还不存在的字段,`api:check` / 契约校验会在下一次集成时报出来,**必须先补契约**。
-4. **B3 写路径**:创建作业时写目标(校验"目标 ⊆ 课程",越权 422),`AssignmentView` 带
-   `target`,列表/详情输出;`AssignmentDetailPage` 展示。**未做**。
-5. **B1 composer**:课序多选 + 指定学生(学生限定在所选课序);生成类型重新生成。
-   **未做**。
-6. **打回 + 通知**:`b2.yaml` 新 `POST /api/v1/intake/quarantines/{id}/reject`;
-   B2 处置 + SMTP 发信给原发件地址,响应 `queued|unavailable`;B1 按钮与提示。
-   **未做**(界面文案已先折叠为「提交失败」)。
-7. **验收矩阵**(见 §3.5):全部**未执行**——本机无 `uv`/PostgreSQL/nsjail,
+   `email_verification` 建码处。同批做 reject:迁移 `20261107_0023`(`sender` 列 +
+   放宽 decision/audit CHECK 容纳 `rejected`)、`IntakeQuarantineView` 输出 `sender`、
+   处置 + SMTP 发信、响应 `{record, notification}`。**未做**。
+2. **B1**:composer 课序多选 + 指定学生(学生限定在所选课序);`AssignmentDetailPage` 展示
+   目标;复核页「打回」按钮、确认弹窗与 `queued|unavailable` 提示;`resolution=rejected`
+   的状态文案(「已打回」,不能继续复用「已作废」);测试。**未做**(界面文案已先折叠为「提交失败」)。
+3. **验收矩阵**(见 §3.6):全部**未执行**——本机无 `uv`/PostgreSQL/nsjail,
    只能在远端 CI 与隔离 Linux 上跑。
 
-**已知风险**:第 3 条(契约)未补之前,内部受众响应多出两个键虽然对 B2 兼容,
-但契约校验会判为"契约外字段";补契约是下一会话的**第一步**。
+**本轮已验证**:五份 `contracts.lock` 与 `MAIN/contracts` 的机器摘要一致
+(复刻 `contract_digest()` 的算法:按 posix 相对路径排序 + `\0` + 字节);
+`openapi-typescript` 生成物与契约一致(`api:check` 等价脚本通过);
+五份 OpenAPI 文档用 Redocly core 做过结构校验(`struct`/未解析 `$ref`/`operationId` 唯一)通过;
+`B1` 的 `tsc -b` 与 `src/features/assignments` 的 51 个 Vitest 通过;
+`B3`/`B4` 改动过的 Python 文件全部 `compileall` 通过。
+**未验证**:`uv run ruff`、B3/B4 的 pytest(需要真实 PostgreSQL)、`python -m autograder_host.checks`
+(本机无 `uv`、无带 `pyyaml`+`jsonschema` 的解释器),以及任何数据库行为。新写的 test 只能算
+"写好了、没跑过"。
+
+**本轮顺手修掉的三处既有缺陷**:
+
+1. `B3/module.yaml` 的 `migration_head` 仍是 `20261108_0011`,而 Alembic head 已是 `0012`
+   (上一批加了迁移没同步描述符)。已改为 `20261108_0012`,否则 `checks.py` 的本地一致性检查会失败。
+2. `B3/tests/test_migrations.py::test_course_level_assignments_replace_the_target_tables`
+   断言两张目标表**不存在**——与迁移 `0012` 相反,是上一批漏改的。已改成
+   `test_assignments_carry_a_target_and_no_section_column`(存在、复合主键、索引在、
+   `assignments.section_id` 仍不存在)。
+3. **权限事实**:迁移 `0012` 只给内部角色 `assignment_sections`/`assignment_students` 的
+   `SELECT, INSERT`(目标行随作业写一次,不原地编辑),而"先删后插"需要 `DELETE`——
+   带目标的创建会被数据库拒绝。已把写路径改成 `add_assignment_targets`(**只插入**),
+   不新增授权;将来若真有"改目标"的写入口,必须连同它的授权一起进新迁移。
+
+**文档**:`B3/docs` 的 9 个文件已按目标模型更新(端点表、模型、schema、迁移、术语、
+验收 3-20-6、traceability、README、scope),`MAIN/docs/architecture/assignment-workflow.md`
+顶部加了"已被 0.38.0 取代"的说明(其余部分保留为 v0.32.0 设计记录)。
 

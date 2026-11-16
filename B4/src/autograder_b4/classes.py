@@ -123,6 +123,86 @@ def class_in_course(connection: Connection, *, course_id: uuid.UUID, class_id: u
     return row
 
 
+# -------------------------------------------------------------- assignment targets
+def validate_course_target(
+    connection: Connection,
+    *,
+    course_id: uuid.UUID,
+    section_ids: tuple[uuid.UUID, ...] = (),
+    student_ids: tuple[uuid.UUID, ...] = (),
+) -> dict[str, object]:
+    """Confirm that an assignment target really belongs to one course (v0.38.0).
+
+    B3 owns assignments but not the roster, so "is this section / this student part of this
+    course" is a question only B4 can answer. B3 asks it **before** the assignment is
+    written, which is why an id that does not belong here is refused instead of being stored
+    and silently widening (or hiding) the audience afterwards.
+
+    The target is a *filter*, not a snapshot: nothing is copied or frozen. A section must
+    exist in `sections` under this course, and a student must have an **active** enrollment
+    in it; an empty axis means "not narrowed", and an entirely empty target is the whole
+    course (which is valid -- it is the shape of every assignment created before the field
+    existed). Ids outside the course are named in the refusal, section and student lists
+    separately, so the caller can point at the picker mistake instead of guessing.
+    """
+    course = connection.execute(
+        select(courses.c.course_id).where(courses.c.course_id == course_id)
+    ).fetchone()
+    if course is None:
+        raise not_found("The course does not exist.")
+
+    # Keying by the string form both removes a repeated id (a target is a set) and gives the
+    # stable order the contract echoes: sorted ids, never the request's spelling.
+    sections_wanted = {str(value): value for value in section_ids}
+    missing_sections: list[str] = []
+    if sections_wanted:
+        found_sections = {
+            str(row[0])
+            for row in connection.execute(
+                select(sections.c.section_id).where(
+                    and_(
+                        sections.c.course_id == course_id,
+                        sections.c.section_id.in_(list(sections_wanted.values())),
+                    )
+                )
+            ).fetchall()
+        }
+        missing_sections = sorted(set(sections_wanted) - found_sections)
+
+    students_wanted = {str(value): value for value in student_ids}
+    missing_students: list[str] = []
+    if students_wanted:
+        found_students = {
+            str(row[0])
+            for row in connection.execute(
+                select(enrollments.c.user_id).where(
+                    and_(
+                        enrollments.c.course_id == course_id,
+                        enrollments.c.is_active.is_(True),
+                        enrollments.c.user_id.in_(list(students_wanted.values())),
+                    )
+                )
+            ).fetchall()
+        }
+        missing_students = sorted(set(students_wanted) - found_students)
+
+    if missing_sections or missing_students:
+        named: list[str] = []
+        if missing_sections:
+            named.append("section(s) " + ", ".join(missing_sections))
+        if missing_students:
+            named.append("student(s) " + ", ".join(missing_students))
+        raise unprocessable(
+            "The target is not part of this course: " + "; ".join(named) + "."
+        )
+
+    return {
+        "course_id": str(course_id),
+        "section_ids": sorted(sections_wanted),
+        "student_ids": sorted(students_wanted),
+    }
+
+
 # ------------------------------------------------------------------ roster validation
 def active_enrollment_conflicts(
     connection: Connection, *, course_id: uuid.UUID, student_numbers: list[str]

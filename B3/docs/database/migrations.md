@@ -28,8 +28,10 @@
 | `20261107_0008` | **作业目标模型**（`CHG-0032`）：`assignments.section_id` 及 `ix_assignments_section_id` 删除；新增 `assignment_sections` / `assignment_students`（复合主键、各自 `ix_*_section_id` / `ix_*_student_id`、命名 FK），普通角色只读、内部角色可插入 | `20261107_0007` |
 | `20261108_0009` | **移除每题邮件附件模板的存量数据**（`CHG-0032`）：从 `question_versions.execution_manifest` 删除已由契约删除的 `email.required_attachment_template`；只重写声明，不重算 `content_digest`（派生摘要由部署后的一次性核对刷新，见生产手册） | `20261107_0008` |
 | `20261108_0010` | **课程级作业**（v0.32.0）：DROP `assignment_sections` / `assignment_students`（手选目标模型整体删除）；`assignments` 增加 `notification_state`（text NOT NULL DEFAULT `pending`，CHECK）与 `notification_scheduled_at`（timestamptz NULL），记录发布通知交接状态 | `20261108_0009` |
+| `20261108_0011` | **作业可手动结束**（v0.33.0）：只重写 CHECK 约束 `ck_assignments_status` 为 `open`/`closed`/`archived`；`closed` 是真实的提交准入变更（B2 只受理 `open`），不加列（`updated_at` 已记录何时改动） | `20261108_0010` |
+| `20261108_0012` | **作业目标回归**（v0.38.0）：重建 `assignment_sections` / `assignment_students`（复合主键、`ix_*_section_id` / `ix_*_student_id`、命名 FK、普通角色只读、内部角色可插入）；**不加**"至少一行"约束——0 行 = 全课程，历史作业不写行、不回填 | `20261108_0011` |
 
-- 当前 head：`20261108_0010`，与 `module.yaml: database.migration_head` **一致**（`tests/test_migrations.py::test_module_yaml_head_matches_alembic_head` 断言；MAIN 的 `checks.py` 亦独立校验）。
+- 当前 head：`20261108_0012`；`module.yaml: database.migration_head` 必须与 Alembic head 同一个值（`tests/test_migrations.py::test_module_yaml_head_matches_alembic_head` 断言；MAIN 的 `checks.py` 亦独立校验）。
   该断言此前还钉死了字面量 `"20260915_0003"`，于是下一个合法迁移必然让它失败，而它并未因此多证明任何东西；已改为只断言 `declared == head`（与 `test_contracts_lock_is_not_hand_edited` 同一处理）。
   设计文档把本迁移写成 `20261108_0009`，但该 revision id 已被上一条邮件模板迁移占用，Alembic revision 必须唯一，因此实际编号为 `20261108_0010`。
 - 一致性要求：每新增迁移后，`module.yaml` 的 `migration_head` 与 Alembic head 必须一致（`RQ-B-4-30` 验收 3）。
@@ -71,6 +73,19 @@ schema 形状因此可逆；**数据不可逆**：课程级作业没有可回填
 指向没人选过的班级。该迁移因此先删除 `assignment_items` 与 `assignments` 行再恢复旧形状，
 回滚到本 revision 以下仅限 dev，不得对需要保留的数据执行。docstring 同样写明了这一点。
 
+## `20261108_0011` 的回滚语义（有损，dev-only）
+
+`downgrade` 先把 `closed` 的作业改回 `open`（旧 CHECK 只认两个值，重开是唯一能表达的映射，
+删行则会丢掉已发布作业），再把 `ck_assignments_status` 收窄回 `open`/`archived`。回滚后这些作业
+重新接受提交，因此只限 dev；迁移 docstring 同样写明了这一点。
+
+## `20261108_0012` 的回滚语义（有损，dev-only）
+
+`downgrade` 直接 DROP `assignment_sections` / `assignment_students`，回到 0.32.0 的课程级形状：
+schema 形状可逆，**数据不可逆**——目标按定义没有地方放。它**不**删除 `assignments` 行（作业本身
+仍然有效），也**不**恢复 `0008` 的"至少一行"写入约束：0 行就是"全课程"这个合法值，因此升降级来回
+不会给历史作业造出目标行，也不会把作业读成"发给零个人"。
+
 ## 生成与执行命令
 
 ```powershell
@@ -98,7 +113,7 @@ uv run alembic downgrade -1
 1. **schema 与业务表分离**：`0001` 只建 schema；`0002` 建全部业务表（题目族 / 受保护内容 / fixture / 作业 / 事件 / 统计）；`0003` 只加"凭证 + 消费可见性"这一件事所需的表、列、约束与索引。
 2. **不可变约束落到数据库**：`question_versions` 触发器拒绝已发布内容原地改写、拒绝非草稿删除、只允许 `published → archived` 状态迁移；`reference_answers`/`test_suites`/`test_cases`/`fixtures` 触发器在其所属版本非草稿时拒绝一切写操作。统一使用 SQLSTATE `23001`，API 层映射为 `409`。
    - `0003` 新增列 `revision_note`/`revision_diff` **不加入**触发器的不可变字段清单：它们是"为什么有第二版"的元数据，不是版本内容；`content_digest` 仍在清单内，所以发布后内容摘要不可被改写。
-3. **级联**：草稿删除沿 `question_versions → reference_answers / test_suites → test_cases / fixtures` 级联；`assignment_items` 保持 RESTRICT（已发布版本本就不可删）；`reference_attestations` 随版本 `ON DELETE CASCADE`（版本不存在时凭证无意义）。
+3. **级联**：草稿删除沿 `question_versions → reference_answers / test_suites → test_cases / fixtures` 级联；`assignment_items` 保持 RESTRICT（已发布版本本就不可删）；两张目标表同样不级联（`0012` 的降级整表删除，不做行级级联）；`reference_attestations` 随版本 `ON DELETE CASCADE`（版本不存在时凭证无意义）。
 4. **受保护内容独立权限**：`REVOKE ALL` 五个受保护表，普通角色只能通过服务间 package 端点间接取得评测所需内容。
    - `reference_attestations` **刻意不列入受保护表**：它只有摘要与计数，没有它所描述的内容；普通角色可 `SELECT`，只有内部角色可写（写它需要读受保护内容来重算摘要）。
    - `consumption_counters` 由消费器（普通角色）读写。

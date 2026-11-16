@@ -379,6 +379,47 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/internal/course-targets/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Confirm that an assignment target belongs to one course (internal)
+         * @description B3 owns assignments and stores an assignment's **target** (target sections and named
+         *     students), but it does not own the roster: `b4.sections` and `b4.enrollments` are B4's
+         *     facts. So "do these ids actually belong to this course" is asked here, **before** the
+         *     assignment row is written, and a target that cannot be confirmed is refused with `422`
+         *     instead of being stored and silently widened.
+         *
+         *     Three properties are deliberate:
+         *
+         *     1. **A target is a filter, not a snapshot.** Sections are checked against the course
+         *        they belong to, students against an *active enrollment* in that course. Nothing is
+         *        copied by this call and nothing is frozen, so a student who leaves later stops
+         *        matching -- exactly how the course-level audience behaved before the target existed.
+         *     2. **The refusal names what was wrong.** The `422`'s `detail` lists the offending ids.
+         *        They came from the caller, so echoing them leaks nothing, and a client that silently
+         *        dropped them would hide a picker bug behind a successful write.
+         *     3. **Empty means the whole course, and is not an error.** A body naming neither a
+         *        section nor a student is valid and is echoed back unchanged: "no narrowing" is a real
+         *        target (it is the shape of every assignment created before the field existed).
+         *
+         *     `404` means the course itself does not exist -- a different statement from "the course
+         *     exists and these ids are not part of it". The response echoes the confirmed ids in a
+         *     stable order so the caller writes down exactly what was checked.
+         */
+        post: operations["validateCourseTargets"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/internal/assignment-notifications": {
         parameters: {
             query?: never;
@@ -397,10 +438,11 @@ export interface paths {
          *     (`python -m autograder_b4.ops.notifications`), which is why this endpoint only records
          *     what must be sent and every recipient's status.
          *
-         *     The audience is the course's current active roster. Unregistered students, students
-         *     whose account has no e-mail address, and deactivated accounts are recorded with
-         *     distinct skipped statuses and reason codes; "no notification" is therefore never
-         *     reported as "delivered".
+         *     The audience is the course's current active roster **narrowed by the assignment's
+         *     target** (v0.38.0), which is the same set the submission path admits. Unregistered
+         *     students, students whose account has no e-mail address, and deactivated accounts are
+         *     recorded with distinct skipped statuses and reason codes; "no notification" is
+         *     therefore never reported as "delivered".
          */
         post: operations["createAssignmentNotifications"];
         delete?: never;
@@ -1137,9 +1179,20 @@ export interface components {
             }[];
         };
         /**
-         * @description What B3 hands to B4 when an assignment is published. B4 snapshots the course roster
-         *     into recipients; the assignment facts are copied only for the message body (B4 does
-         *     not own assignments and cannot read B3's schema).
+         * @description What B3 hands to B4 when an assignment is published. B4 narrows the course's current
+         *     active roster by the assignment's **target** and snapshots the result into recipients;
+         *     the assignment facts are copied only for the message body (B4 does not own assignments
+         *     and cannot read B3's schema).
+         *
+         *     The target travels as data rather than as a resolved student list because B3 does not
+         *     hold the roster: resolving it there would need a second roster copy, and that copy
+         *     would be the one that drifts. Narrowing here applies the same filter the submission
+         *     admission path applies, so "who was told" and "who may submit" cannot come out as two
+         *     different sets.
+         *
+         *     An id that no current roster row matches is simply not a recipient: B3 has the target
+         *     confirmed by `validateCourseTargets` before publishing, so a second refusal in a
+         *     different vocabulary at delivery time would turn one mistake into two failures.
          */
         AssignmentNotificationRequest: {
             assignment_id: components["schemas"]["Uuid"];
@@ -1147,6 +1200,33 @@ export interface components {
             title: string;
             due_at?: components["schemas"]["Timestamp"] | null;
             published_at: components["schemas"]["Timestamp"];
+            /** @description Target sections. Empty or omitted means no section narrowing, i.e. the whole course. */
+            section_ids?: components["schemas"]["Uuid"][];
+            /**
+             * @description Named target students. Empty or omitted means everyone in the target sections, or
+             *     the whole course when no section is named.
+             */
+            student_ids?: components["schemas"]["Uuid"][];
+        };
+        /**
+         * @description One assignment target to check against a course. Both arrays are optional and default to
+         *     empty, which means "not narrowed on that axis" -- the same reading `AssignmentTarget` in
+         *     `b3.yaml` has.
+         */
+        CourseTargetValidationRequest: {
+            course_id: components["schemas"]["Uuid"];
+            section_ids?: components["schemas"]["Uuid"][];
+            student_ids?: components["schemas"]["Uuid"][];
+        };
+        /**
+         * @description The target B4 confirmed, echoed with the ids sorted. Sorted rather than in request order
+         *     on purpose: a target is a set, and returning it in the order it arrived would invite a
+         *     caller to treat that order as meaningful.
+         */
+        CourseTargetValidation: {
+            course_id: components["schemas"]["Uuid"];
+            section_ids: components["schemas"]["Uuid"][];
+            student_ids: components["schemas"]["Uuid"][];
         };
         /**
          * @description A one-click reminder to the students who have not submitted yet. The recipient set is
@@ -2080,6 +2160,33 @@ export interface operations {
             };
             401: components["responses"]["Unauthorized"];
             404: components["responses"]["NotFound"];
+        };
+    };
+    validateCourseTargets: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CourseTargetValidationRequest"];
+            };
+        };
+        responses: {
+            /** @description Every named section and student belongs to the course. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CourseTargetValidation"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+            422: components["responses"]["UnprocessableEntity"];
         };
     };
     createAssignmentNotifications: {
