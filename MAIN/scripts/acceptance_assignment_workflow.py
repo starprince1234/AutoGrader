@@ -1349,12 +1349,23 @@ def create_published_version(
                     "expect_exit_code": 0,
                     "comparison": {"stdout": "exact", "stderr": "ignored"},
                 },
+                # 发布门禁（per_case）要求恰好 1 个公开示例 + 10 个隐藏用例。
                 "cases": [
                     {
-                        "name": "case-1",
+                        "name": "public-example",
                         "ordinal": 0,
+                        "visible_to_student": True,
                         "expected_stdout": f"{expected_stdout}\n",
-                    }
+                    },
+                    *[
+                        {
+                            "name": f"hidden-{index}",
+                            "ordinal": index,
+                            "visible_to_student": False,
+                            "expected_stdout": f"{expected_stdout}\n",
+                        }
+                        for index in range(1, 11)
+                    ],
                 ],
             },
         ),
@@ -1386,8 +1397,9 @@ def create_published_version(
             body={
                 "content_digest": digest,
                 "verifier": "acceptance-fixture",
-                "cases_total": 1,
-                "cases_passed": 1,
+                # 存证必须描述这一版真实的用例数：1 公开 + 10 隐藏 = 11。
+                "cases_total": 11,
+                "cases_passed": 11,
             },
         ),
         (201,),
