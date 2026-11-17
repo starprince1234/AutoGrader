@@ -792,6 +792,8 @@ export const messages = {
 "authoring.image.typeRejected": "不支持这种图片格式，请用 {types}。",
 "authoring.image.tooLarge": "图片最大 {max} MB。",
 "authoring.image.publishedFrozen": "已发布的版本不能再改图片，请先另存为新版本。",
+"authoring.image.inserted": "已插入 {count} 张图片",
+"authoring.image.remove": "删除最后插入的图片",
 
     // ------------------------------------------------- 夹具上传（RQ-B-3-50）
 "authoring.fixture.title": "题目用到的文件",

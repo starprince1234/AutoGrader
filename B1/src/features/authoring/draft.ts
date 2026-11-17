@@ -1385,6 +1385,21 @@ export function insertIntoStem(stem: string, snippet: string): string {
 }
 
 /**
+ * 从题干里移除一张**已经插入的**图片，只删这一处，不动其他内容。
+ *
+ * 选错图时老师需要的正是这件事：把刚插进去的那一行 Markdown 去掉，再重新选。
+ * 找不到时原样返回（老师可能已经手动删掉了），不报错、不猜测别的位置。
+ */
+export function removeFromStem(stem: string, snippet: string): string {
+  const index = stem.indexOf(snippet);
+  if (index === -1) return stem;
+  const before = stem.slice(0, index).replace(/\s+$/, "");
+  const after = stem.slice(index + snippet.length).replace(/^\s+/, "");
+  const joined = [before, after].filter((part) => part !== "").join("\n\n");
+  return joined === "" ? "" : `${joined}\n`;
+}
+
+/**
  * 表单是否相对"载入时的快照"有未保存的编辑。
  *
  * 存在的理由只有一个：AI 候选（以及任何编辑）**不会**被自动持久化，刷新恢复的是服务端原始候选，

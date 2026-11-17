@@ -35,6 +35,7 @@ import {
   insertIntoStem,
   isDirty,
   parseTags,
+  removeFromStem,
   syncPrimaryReference,
   type DraftForm,
   type DraftIssue,
@@ -593,6 +594,9 @@ export function AuthoringPage({
                 ensureQuestionId={ensureQuestionIdForUpload}
                 onInsert={(snippet) =>
                   setForm({ ...form, stemMarkdown: insertIntoStem(form.stemMarkdown, snippet) })
+                }
+                onRemove={(snippet) =>
+                  setForm({ ...form, stemMarkdown: removeFromStem(form.stemMarkdown, snippet) })
                 }
               />
 

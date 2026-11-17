@@ -29,11 +29,14 @@ import { useUploadQuestionAsset } from "./useAuthoring";
 export function ImageUploader({
   questionId,
   onInsert,
+  onRemove,
   ensureQuestionId,
   frozen = false,
 }: {
   questionId: string | null;
   onInsert: (snippet: string) => void;
+  /** 删除一张**已插入**的图片（老师选错图时用）：父页面负责把它从题干里去掉。 */
+  onRemove?: (snippet: string) => void;
   /** 还没有题目 id 时向父页面要一个（父页面会存一份最小草稿）；返回 `null` 表示没拿到。 */
   ensureQuestionId?: () => Promise<string | null>;
   /** 已发布版本：内容冻结，服务端会 409。 */
@@ -44,6 +47,8 @@ export function ImageUploader({
   const [alt, setAlt] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [preparing, setPreparing] = useState(false);
+  //: 本次会话里**插入过**的图片 Markdown（后进先出）：选错时允许逐张撤销。
+  const [inserted, setInserted] = useState<string[]>([]);
 
   const pick = async (file: File | undefined) => {
     setError(null);
@@ -86,7 +91,13 @@ export function ImageUploader({
       },
       {
         onSuccess: (asset) => {
-          onInsert(assetMarkdown(targetId as string, asset.asset_id, alt.trim() || asset.asset_id));
+          const snippet = assetMarkdown(
+            targetId as string,
+            asset.asset_id,
+            alt.trim() || asset.asset_id,
+          );
+          onInsert(snippet);
+          setInserted((previous) => [...previous, snippet]);
           setAlt("");
           if (inputRef.current) inputRef.current.value = "";
         },
@@ -138,6 +149,31 @@ export function ImageUploader({
         {busy ? <span className="muted">{t("authoring.image.uploading")}</span> : null}
       </div>
       <p className="muted">{t("authoring.image.hint")}</p>
+      {inserted.length > 0 ? (
+        <div className="inline" data-testid="image-inserted">
+          <span className="muted">
+            {t("authoring.image.inserted", { count: inserted.length })}
+          </span>
+          {/*
+            选错图时唯一的出口：把刚插进题干的那一行 Markdown 去掉，然后可以重新选。
+            删除只影响题干里的这一处引用，不碰其他内容；已发布版本整体冻结，按钮随之禁用。
+          */}
+          <button
+            type="button"
+            className="button button--ghost"
+            data-testid="image-remove"
+            disabled={frozen}
+            onClick={() => {
+              const snippet = inserted[inserted.length - 1];
+              onRemove?.(snippet);
+              setInserted((previous) => previous.slice(0, -1));
+              if (inputRef.current) inputRef.current.value = "";
+            }}
+          >
+            {t("authoring.image.remove")}
+          </button>
+        </div>
+      ) : null}
       {frozen ? (
         <Banner tone="info" testId="image-disabled">
           {t("authoring.image.publishedFrozen")}

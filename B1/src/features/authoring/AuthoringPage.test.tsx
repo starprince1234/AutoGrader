@@ -603,6 +603,14 @@ describe("新建题目（POST /api/v1/questions）", () => {
       const stem = screen.getByLabelText("题干") as HTMLTextAreaElement;
       expect(stem.value).toContain(`/api/v1/questions/${UUID_A}/assets/${UUID_C}`);
     });
+
+    // 选错图：删除按钮把刚插入的那一行 Markdown 去掉，按钮随之消失（可以重新选）。
+    await user.click(screen.getByTestId("image-remove"));
+    await waitFor(() => {
+      const stem = screen.getByLabelText("题干") as HTMLTextAreaElement;
+      expect(stem.value).not.toContain(`/api/v1/questions/${UUID_A}/assets/${UUID_C}`);
+    });
+    expect(screen.queryByTestId("image-remove")).toBeNull();
   });
 
   it("校验失败的原因拼成一句话，不会出现「。；」连在一起", async () => {
