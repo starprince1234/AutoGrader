@@ -137,24 +137,6 @@ export function GradesPage({
     return map;
   }, [questionOptions.options]);
 
-  const selectedCourse = courseOptions.find(
-    (course) => course.course_id === effectiveCourseId,
-  );
-  const scopeSummary = t("grades.summaryScope", {
-    course: selectedCourse ? formatCourseLabel(selectedCourse) : t("grades.scopeAllCourses"),
-    section: sectionId
-      ? (sections.data?.find((option) => option.sectionId === sectionId)?.label ??
-        shortenId(sectionId))
-      : t("grades.scopeAllSections"),
-    question: questionVersionId
-      ? (questionLabels.get(questionVersionId) ?? t("grades.questionUnavailable"))
-      : t("grades.scopeAllQuestions"),
-    time:
-      fromInput === "" && toInput === ""
-        ? t("grades.scopeAllTime")
-        : `${fromInput || t("grades.scopeUndecided")} — ${toInput || t("grades.scopeUndecided")}`,
-  });
-
   useEffect(() => {
     setDrilldownRunId(initialRunId);
   }, [initialRunId]);
@@ -592,25 +574,30 @@ export function GradesPage({
         </Banner>
       ) : (
         <>
-          <p className="muted" data-testid="summary-scope">
-            {scopeSummary}
-          </p>
-          <ul>
-            <li data-testid="summary-completed">
-              {t("grades.summaryCompleted")}：{completedCount}
-            </li>
-            <li data-testid="summary-unfinished">
-              {t("grades.unfinished")}：{unfinishedCount}
-            </li>
-            <li>
-              {t("grades.summaryAverage")}：
-              {summary.averageScore === null ? t("grades.notScored") : summary.averageScore}
-            </li>
-            <li>
-              {t("grades.summaryPassRate")}：
-              {summary.passRate === null ? t("grades.notScored") : `${Math.round(summary.passRate * 100)}%`}
-            </li>
-          </ul>
+          <dl className="summary-cards" data-testid="grades-summary-cards">
+            <div className="summary-card" data-testid="summary-completed">
+              <dt>{t("grades.summaryCompleted")}</dt>
+              <dd>{t("grades.summaryPeople", { count: completedCount })}</dd>
+            </div>
+            <div className="summary-card" data-testid="summary-unfinished">
+              <dt>{t("grades.unfinished")}</dt>
+              <dd>{t("grades.summaryPeople", { count: unfinishedCount })}</dd>
+            </div>
+            <div className="summary-card" data-testid="summary-average">
+              <dt>{t("grades.summaryAverage")}</dt>
+              <dd>
+                {summary.averageScore === null ? t("grades.notScored") : summary.averageScore}
+              </dd>
+            </div>
+            <div className="summary-card" data-testid="summary-pass-rate">
+              <dt>{t("grades.summaryPassRate")}</dt>
+              <dd>
+                {summary.passRate === null
+                  ? t("grades.notScored")
+                  : `${Math.round(summary.passRate * 100)}%`}
+              </dd>
+            </div>
+          </dl>
           {displayRows.length > 0 ? (
             <>
               <GradesChart buckets={buckets} loader={chartLoader} />

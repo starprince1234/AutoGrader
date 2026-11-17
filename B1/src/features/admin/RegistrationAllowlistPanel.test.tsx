@@ -21,7 +21,7 @@ import { RegistrationAllowlistPanel } from "./RegistrationAllowlistPanel";
  * - 「添加名单」直接开文件选择器，选中即上传（没有中转确认）；
  * - 班级列表显示文件名派生的班级名与人数；
  * - 展开后才读该班学生，且学生行可以单个删除；
- * - 删除班级是整体删除（连带名单行），界面上有明确文案。
+ * - 删除班级/学生都先弹确认框，确认后才发 DELETE（取消不发请求）。
  */
 
 let stub: FetchStub | null = null;
@@ -111,6 +111,12 @@ async function openPanel() {
   return screen.findByTestId("allowlist-panel");
 }
 
+function deleteRequests(fragment: string) {
+  return (stub?.requests ?? []).filter(
+    (request) => request.method === "DELETE" && request.url.pathname.includes(fragment),
+  );
+}
+
 describe("注册名单面板", () => {
   it("列出导入的班级：班级名来自文件名，显示人数", async () => {
     await openPanel();
@@ -164,33 +170,64 @@ describe("注册名单面板", () => {
     expect(within(entries).getByText("李四")).toBeInTheDocument();
   });
 
-  it("学生行右侧的删除按钮发 DELETE，删的是这一个学生", async () => {
+  it("删除学生必须先确认；确认后才发 DELETE", async () => {
     await openPanel();
     await userEvent.click(await screen.findByTestId(`allowlist-expand-${BATCH}`));
     await screen.findByTestId(`allowlist-entries-${BATCH}`);
     await userEvent.click(screen.getByTestId(`allowlist-delete-entry-${ENTRY_A}`));
+
+    const modal = await screen.findByTestId("allowlist-delete-entry-modal");
+    expect(modal).toHaveTextContent("黄俊杰");
+    expect(modal).toHaveTextContent("2024141460192");
+    // 打开确认框不是删除。
+    expect(deleteRequests("/entries/")).toHaveLength(0);
+
+    await userEvent.click(within(modal).getByTestId("allowlist-delete-entry-confirm"));
     await waitFor(() => {
-      const deleted = stub?.requests.some(
-        (request) =>
-          request.method === "DELETE" &&
-          request.url.pathname === `/api/v1/registration-allowlists/entries/${ENTRY_A}`,
-      );
-      expect(deleted).toBe(true);
+      expect(deleteRequests("/entries/")).toHaveLength(1);
     });
   });
 
-  it("删除班级发 DELETE /batches/{id} 并提示已删除", async () => {
+  it("取消删除学生不发任何 DELETE", async () => {
+    await openPanel();
+    await userEvent.click(await screen.findByTestId(`allowlist-expand-${BATCH}`));
+    await screen.findByTestId(`allowlist-entries-${BATCH}`);
+    await userEvent.click(screen.getByTestId(`allowlist-delete-entry-${ENTRY_A}`));
+    await userEvent.click(
+      within(await screen.findByTestId("allowlist-delete-entry-modal")).getByTestId(
+        "allowlist-delete-entry-cancel",
+      ),
+    );
+    expect(screen.queryByTestId("allowlist-delete-entry-modal")).toBeNull();
+    expect(deleteRequests("/entries/")).toHaveLength(0);
+  });
+
+  it("删除班级必须先确认；确认后才发 DELETE 并提示已删除", async () => {
     await openPanel();
     await userEvent.click(await screen.findByTestId(`allowlist-delete-${BATCH}`));
+
+    const modal = await screen.findByTestId("allowlist-delete-class-modal");
+    expect(modal).toHaveTextContent("软工01班");
+    expect(modal).toHaveTextContent("2 名学生");
+    expect(deleteRequests("/batches/")).toHaveLength(0);
+
+    await userEvent.click(within(modal).getByTestId("allowlist-delete-class-confirm"));
     await waitFor(() => {
-      const deleted = stub?.requests.some(
-        (request) =>
-          request.method === "DELETE" &&
-          request.url.pathname === `/api/v1/registration-allowlists/batches/${BATCH}`,
-      );
-      expect(deleted).toBe(true);
+      expect(deleteRequests("/batches/")).toHaveLength(1);
     });
     expect(await screen.findByTestId("allowlist-notice")).toHaveTextContent("已删除班级");
+  });
+
+  it("取消删除班级不发任何 DELETE", async () => {
+    await openPanel();
+    await userEvent.click(await screen.findByTestId(`allowlist-delete-${BATCH}`));
+    await userEvent.click(
+      within(await screen.findByTestId("allowlist-delete-class-modal")).getByTestId(
+        "allowlist-delete-class-cancel",
+      ),
+    );
+    expect(screen.queryByTestId("allowlist-delete-class-modal")).toBeNull();
+    expect(deleteRequests("/batches/")).toHaveLength(0);
   });
 
   it("学生读取失败时显示错误，而不是空的名单", async () => {
