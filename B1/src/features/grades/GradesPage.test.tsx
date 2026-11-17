@@ -256,10 +256,15 @@ describe("成绩查询（RQ-B-1-30）", () => {
       within(unfinishedRow).getByText(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/),
     ).toBeInTheDocument();
 
-    expect(await screen.findByTestId("summary-completed")).toHaveTextContent("已完成：1");
-    expect(screen.getByTestId("summary-unfinished")).toHaveTextContent("未完成：2");
-    expect(screen.queryByTestId("summary-scope-notice")).toBeNull();
-    expect(screen.getByText(/平均分：90/)).toBeInTheDocument();
+    const cards = await screen.findByTestId("grades-summary-cards");
+    expect(within(cards).getByTestId("summary-completed")).toHaveTextContent("已完成");
+    expect(within(cards).getByTestId("summary-completed")).toHaveTextContent("1 人");
+    expect(within(cards).getByTestId("summary-unfinished")).toHaveTextContent("2 人");
+    // 旧版把"范围：课程 / 课序 / 题目 / 时间"直接铺在页面上；现在筛选条件就在上方。
+    expect(screen.queryByTestId("summary-scope")).toBeNull();
+    expect(within(cards).getByTestId("summary-average")).toHaveTextContent("平均分");
+    expect(within(cards).getByTestId("summary-average")).toHaveTextContent("90");
+    expect(within(cards).getByTestId("summary-pass-rate")).toHaveTextContent("通过率");
     expect(screen.queryByTestId("unfinished-notice")).toBeNull();
     stub.restore();
   });

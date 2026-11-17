@@ -2090,3 +2090,66 @@ describe("另存为新版本：课程是下拉选择器", () => {
     expect(request.url.searchParams.get("course_id")).toBe(UUID_C);
   });
 });
+
+describe("另存为新版本：题目标题可以换行、可以定位光标", () => {
+  it("标题是同一个可换行文本域，长标题完整保留，换行折成空格", async () => {
+    stub = installFetchStub(
+      baseRoutes([
+        {
+          path: `/api/v1/questions/${QUESTION_ID}`,
+          method: "GET",
+          respond: () => jsonResponse(publishedQuestion()),
+        },
+        {
+          path: `/api/v1/question-versions/${UUID_A}`,
+          method: "GET",
+          respond: () =>
+            jsonResponse(
+              questionVersionPublic({
+                question_version_id: UUID_A,
+                version: 2,
+                status: "published",
+                content_digest: SHA_A,
+              }),
+            ),
+        },
+        {
+          path: `/api/v1/question-versions/${UUID_A}/draft-content`,
+          method: "GET",
+          respond: () =>
+            jsonResponse({
+              reference_answer: "print(1)",
+              reference_answers: [],
+              grading_prompt: null,
+              cases: [],
+            }),
+        },
+      ]),
+    );
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(QUESTION_ID);
+
+    // 与新建题目共用同一个控件：会折行的文本域，而不是单行 input / 只读覆盖层。
+    const title = (await screen.findByTestId("authoring-title")) as HTMLTextAreaElement;
+    expect(title.tagName).toBe("TEXTAREA");
+    expect(title.readOnly).toBe(false);
+    expect(title.className).toContain("title-input");
+
+    // 长标题（一整句作业要求）能完整保留，不被截断。
+    // 原题内容异步回来后才填进标题，先等它落定。
+    await waitFor(() => expect(title.value).not.toBe(""));
+    const before = title.value;
+    const longTitle = "使用 shell 脚本编程计算并打印 2 至 100 内的非素数";
+    await user.type(title, longTitle);
+    expect(title.value).toBe(before + longTitle);
+
+    // 光标可以自由定位（方向键/Home/End 的前提是控件不是只读覆盖层）。
+    title.setSelectionRange(3, 3);
+    expect(title.selectionStart).toBe(3);
+
+    // 换行折成空格：标题仍是单行语义，粘贴多行不会带进换行。
+    await user.type(title, "{enter}继续");
+    expect(title.value).toBe(`${before}${longTitle} 继续`);
+  });
+});

@@ -2,8 +2,10 @@ import { useRef, useState, type ChangeEvent } from "react";
 import { t } from "../../i18n";
 import { describeApiError } from "../../api/problem";
 import { formatDateTime } from "../../ui/format";
-import { Banner, EmptyState, ErrorState, Panel, Spinner } from "../../ui/components";
+import { Banner, EmptyState, ErrorState, Modal, Panel, Spinner } from "../../ui/components";
 import {
+  type AllowlistBatch,
+  type AllowlistEntry,
   useAddAllowlistBatch,
   useAllowlistBatches,
   useAllowlistEntries,
@@ -29,6 +31,7 @@ export function RegistrationAllowlistPanel() {
   const [expanded, setExpanded] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
+  const [pendingBatch, setPendingBatch] = useState<AllowlistBatch | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const items = batches.data?.items ?? [];
@@ -139,17 +142,11 @@ export function RegistrationAllowlistPanel() {
                     type="button"
                     className="button button--ghost allowlist-batch__delete"
                     data-testid={`allowlist-delete-${batch.batch_id}`}
+                    disabled={deleteBatch.isPending}
                     onClick={() => {
                       setError(null);
-                      deleteBatch.mutate(batch.batch_id, {
-                        onSuccess: () => {
-                          if (expanded === batch.batch_id) {
-                            setExpanded(null);
-                          }
-                          setNotice(t("allowlist.deleted", { name: batch.class_name }));
-                        },
-                        onError: (failure) => setError(failure),
-                      });
+                      deleteBatch.reset();
+                      setPendingBatch(batch);
                     }}
                   >
                     {t("allowlist.deleteClass")}
@@ -161,6 +158,62 @@ export function RegistrationAllowlistPanel() {
           </ul>
         )}
       </Panel>
+
+      {pendingBatch ? (
+        <Modal
+          title={t("allowlist.deleteClassTitle")}
+          testId="allowlist-delete-class-modal"
+          onClose={() => {
+            if (!deleteBatch.isPending) setPendingBatch(null);
+          }}
+        >
+          <div className="stack">
+            <p>
+              {t("allowlist.deleteClassBody", {
+                name: pendingBatch.class_name,
+                count: pendingBatch.row_count,
+              })}
+            </p>
+            {deleteBatch.isError ? (
+              <Banner tone="error" testId="allowlist-delete-class-error">
+                {describeApiError(deleteBatch.error)}
+              </Banner>
+            ) : null}
+            <div className="inline">
+              <button
+                type="button"
+                className="button button--danger"
+                data-testid="allowlist-delete-class-confirm"
+                disabled={deleteBatch.isPending}
+                onClick={() => {
+                  deleteBatch.mutate(pendingBatch.batch_id, {
+                    onSuccess: () => {
+                      if (expanded === pendingBatch.batch_id) {
+                        setExpanded(null);
+                      }
+                      setNotice(t("allowlist.deleted", { name: pendingBatch.class_name }));
+                      setPendingBatch(null);
+                    },
+                  });
+                }}
+              >
+                {deleteBatch.isPending
+                  ? t("allowlist.deleting")
+                  : t("allowlist.deleteClassConfirm")}
+              </button>
+              <button
+                type="button"
+                className="button button--ghost"
+                data-testid="allowlist-delete-class-cancel"
+                disabled={deleteBatch.isPending}
+                onClick={() => setPendingBatch(null)}
+              >
+                {t("common.cancel")}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
     </div>
   );
 }
@@ -168,6 +221,7 @@ export function RegistrationAllowlistPanel() {
 function BatchEntries({ batchId }: { batchId: string }) {
   const entries = useAllowlistEntries(batchId);
   const removeEntry = useDeleteAllowlistEntry(batchId);
+  const [pendingEntry, setPendingEntry] = useState<AllowlistEntry | null>(null);
 
   if (entries.isPending) {
     return <Spinner />;
@@ -180,28 +234,88 @@ function BatchEntries({ batchId }: { batchId: string }) {
     return <p className="muted">{t("allowlist.noStudents")}</p>;
   }
   return (
-    <ul className="allowlist-entries" data-testid={`allowlist-entries-${batchId}`}>
-      {rows.map((entry) => (
-        <li key={entry.entry_id} className="allowlist-entry" data-testid={`allowlist-entry-${entry.entry_id}`}>
-          <span className="allowlist-entry__name">{entry.display_name}</span>
-          <span className="mono-id allowlist-entry__number">{entry.student_number}</span>
-          <button
-            type="button"
-            className="button button--ghost allowlist-entry__delete"
-            aria-label={t("allowlist.deleteStudent", { name: entry.display_name })}
-            title={t("allowlist.deleteStudent", { name: entry.display_name })}
-            data-testid={`allowlist-delete-entry-${entry.entry_id}`}
-            onClick={() => removeEntry.mutate(entry.entry_id)}
+    <>
+      <ul className="allowlist-entries" data-testid={`allowlist-entries-${batchId}`}>
+        {rows.map((entry) => (
+          <li
+            key={entry.entry_id}
+            className="allowlist-entry"
+            data-testid={`allowlist-entry-${entry.entry_id}`}
           >
-            <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
-              <path
-                d="M9 3h6l1 2h4v2H4V5h4l1-2zm-3 6h12l-1 12H7L6 9zm3 2v8h2v-8H9zm4 0v8h2v-8h-2z"
-                fill="currentColor"
-              />
-            </svg>
-          </button>
-        </li>
-      ))}
-    </ul>
+            <span className="allowlist-entry__name">{entry.display_name}</span>
+            <span className="mono-id allowlist-entry__number">{entry.student_number}</span>
+            <button
+              type="button"
+              className="button button--ghost allowlist-entry__delete"
+              aria-label={t("allowlist.deleteStudent", { name: entry.display_name })}
+              title={t("allowlist.deleteStudent", { name: entry.display_name })}
+              data-testid={`allowlist-delete-entry-${entry.entry_id}`}
+              disabled={removeEntry.isPending}
+              onClick={() => {
+                removeEntry.reset();
+                setPendingEntry(entry);
+              }}
+            >
+              <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true" focusable="false">
+                <path
+                  d="M9 3h6l1 2h4v2H4V5h4l1-2zm-3 6h12l-1 12H7L6 9zm3 2v8h2v-8H9zm4 0v8h2v-8h-2z"
+                  fill="currentColor"
+                />
+              </svg>
+            </button>
+          </li>
+        ))}
+      </ul>
+
+      {pendingEntry ? (
+        <Modal
+          title={t("allowlist.deleteStudentTitle")}
+          testId="allowlist-delete-entry-modal"
+          onClose={() => {
+            if (!removeEntry.isPending) setPendingEntry(null);
+          }}
+        >
+          <div className="stack">
+            <p>
+              {t("allowlist.deleteStudentBody", {
+                name: pendingEntry.display_name,
+                number: pendingEntry.student_number,
+              })}
+            </p>
+            {removeEntry.isError ? (
+              <Banner tone="error" testId="allowlist-delete-entry-error">
+                {describeApiError(removeEntry.error)}
+              </Banner>
+            ) : null}
+            <div className="inline">
+              <button
+                type="button"
+                className="button button--danger"
+                data-testid="allowlist-delete-entry-confirm"
+                disabled={removeEntry.isPending}
+                onClick={() => {
+                  removeEntry.mutate(pendingEntry.entry_id, {
+                    onSuccess: () => setPendingEntry(null),
+                  });
+                }}
+              >
+                {removeEntry.isPending
+                  ? t("allowlist.deleting")
+                  : t("allowlist.deleteStudentConfirm")}
+              </button>
+              <button
+                type="button"
+                className="button button--ghost"
+                data-testid="allowlist-delete-entry-cancel"
+                disabled={removeEntry.isPending}
+                onClick={() => setPendingEntry(null)}
+              >
+                {t("common.cancel")}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
+    </>
   );
 }

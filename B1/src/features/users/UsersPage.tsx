@@ -182,29 +182,17 @@ export function UsersPage({
       header: t("users.classesAndCourses"),
       render: (row: UserSummary) => {
         const regClasses = row.registered_classes ?? [];
-        const bindings = row.course_bindings ?? [];
-        if (regClasses.length === 0 && bindings.length === 0) {
+        if (regClasses.length === 0) {
           return <span className="muted">{t("common.none")}</span>;
         }
         return (
-          <div className="stack" data-testid={`user-classes-${row.user_id}`}>
-            {regClasses.length > 0 ? (
-              <span className="inline">
-                {regClasses.map((name) => (
-                  <StatusPill key={name} tone="ok">
-                    {name}
-                  </StatusPill>
-                ))}
-              </span>
-            ) : null}
-            {bindings.length > 0 ? (
-              <span className="muted">
-                {bindings
-                  .map((b) => `${b.course_title} · ${b.section_code} · ${b.class_name}`)
-                  .join("；")}
-              </span>
-            ) : null}
-          </div>
+          <span className="inline" data-testid={`user-classes-${row.user_id}`}>
+            {regClasses.map((name) => (
+              <StatusPill key={name} tone="ok">
+                {name}
+              </StatusPill>
+            ))}
+          </span>
         );
       },
     },

@@ -65,7 +65,8 @@ import { useQuestionVersionRows } from "../questions/useQuestions";
  * 4. **学生只看本人**：没有班级/姓名/导出入口；表格列与教师不同，且不显示任何他人数据。
  *
  * `initialRunId` 来自 URL（P10 的"查看本次结果"）：打开对应 report；关闭时清掉 URL。
- * 该状态同时作为 `evaluation_run_id` 查询参数，让表格范围与"正在看的这一次"一致。
+ * 它**只决定打开哪一份报告**，不再参与列表筛选——否则打开详情会把明细表收窄成一行，
+ * 页面高度骤减、滚动被夹回顶部（B1 上报的滚动 bug）。
  */
 
 const STATE_TONE: Record<GradeRow["state"], "ok" | "warn" | "bad" | "idle"> = {
@@ -137,24 +138,6 @@ export function GradesPage({
     return map;
   }, [questionOptions.options]);
 
-  const selectedCourse = courseOptions.find(
-    (course) => course.course_id === effectiveCourseId,
-  );
-  const scopeSummary = t("grades.summaryScope", {
-    course: selectedCourse ? formatCourseLabel(selectedCourse) : t("grades.scopeAllCourses"),
-    section: sectionId
-      ? (sections.data?.find((option) => option.sectionId === sectionId)?.label ??
-        shortenId(sectionId))
-      : t("grades.scopeAllSections"),
-    question: questionVersionId
-      ? (questionLabels.get(questionVersionId) ?? t("grades.questionUnavailable"))
-      : t("grades.scopeAllQuestions"),
-    time:
-      fromInput === "" && toInput === ""
-        ? t("grades.scopeAllTime")
-        : `${fromInput || t("grades.scopeUndecided")} — ${toInput || t("grades.scopeUndecided")}`,
-  });
-
   useEffect(() => {
     setDrilldownRunId(initialRunId);
   }, [initialRunId]);
@@ -174,9 +157,12 @@ export function GradesPage({
       questionVersionId: questionVersionId === "" ? null : questionVersionId,
       fromUtc: fromUtc === "" ? null : fromUtc,
       toUtc: toUtc === "" ? null : toUtc,
-      evaluationRunId: activeRunId,
+      // **不把"正在看的这一次"塞进列表筛选**：那会让打开详情时整张明细表被收窄成一行，
+      // 页面高度骤减、滚动被夹回顶部（用户报的"点查看详细就跳回最上方"）。
+      // 详情本身按 `runId` 单独取报告，列表保持用户当前的筛选范围不变。
+      evaluationRunId: null,
     }),
-    [effectiveCourseId, sectionId, questionVersionId, fromUtc, toUtc, activeRunId],
+    [effectiveCourseId, sectionId, questionVersionId, fromUtc, toUtc],
   );
 
   const grades = useGrades(filter, { enabled: timeProblem === null });
@@ -592,25 +578,30 @@ export function GradesPage({
         </Banner>
       ) : (
         <>
-          <p className="muted" data-testid="summary-scope">
-            {scopeSummary}
-          </p>
-          <ul>
-            <li data-testid="summary-completed">
-              {t("grades.summaryCompleted")}：{completedCount}
-            </li>
-            <li data-testid="summary-unfinished">
-              {t("grades.unfinished")}：{unfinishedCount}
-            </li>
-            <li>
-              {t("grades.summaryAverage")}：
-              {summary.averageScore === null ? t("grades.notScored") : summary.averageScore}
-            </li>
-            <li>
-              {t("grades.summaryPassRate")}：
-              {summary.passRate === null ? t("grades.notScored") : `${Math.round(summary.passRate * 100)}%`}
-            </li>
-          </ul>
+          <dl className="summary-cards" data-testid="grades-summary-cards">
+            <div className="summary-card" data-testid="summary-completed">
+              <dt>{t("grades.summaryCompleted")}</dt>
+              <dd>{t("grades.summaryPeople", { count: completedCount })}</dd>
+            </div>
+            <div className="summary-card" data-testid="summary-unfinished">
+              <dt>{t("grades.unfinished")}</dt>
+              <dd>{t("grades.summaryPeople", { count: unfinishedCount })}</dd>
+            </div>
+            <div className="summary-card" data-testid="summary-average">
+              <dt>{t("grades.summaryAverage")}</dt>
+              <dd>
+                {summary.averageScore === null ? t("grades.notScored") : summary.averageScore}
+              </dd>
+            </div>
+            <div className="summary-card" data-testid="summary-pass-rate">
+              <dt>{t("grades.summaryPassRate")}</dt>
+              <dd>
+                {summary.passRate === null
+                  ? t("grades.notScored")
+                  : `${Math.round(summary.passRate * 100)}%`}
+              </dd>
+            </div>
+          </dl>
           {displayRows.length > 0 ? (
             <>
               <GradesChart buckets={buckets} loader={chartLoader} />

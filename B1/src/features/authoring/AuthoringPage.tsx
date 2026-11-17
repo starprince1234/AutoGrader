@@ -493,11 +493,23 @@ export function AuthoringPage({
                   </Select>
                 </Field>
                 <Field label={t("authoring.title")} htmlFor="authoring-title">
-                  <input
+                  {/* 标题常常是一整句作业要求，单行输入框只能横向滚动、看不到全貌，而且在
+                      「另存为新版本」时连光标都很难定位。这里用**同一个**可换行文本域：
+                      长标题自动折行、方向键/Home/End 正常，两种流程共用一套行为。
+                      换行符在 onChange 里折成空格（标题仍是单行语义，粘贴多行不会带进换行）。 */}
+                  <textarea
                     id="authoring-title"
+                    className="title-input"
+                    data-testid="authoring-title"
+                    rows={2}
                     value={form.title}
                     maxLength={TITLE_MAX_LENGTH}
-                    onChange={(event) => setForm({ ...form, title: event.target.value })}
+                    onChange={(event) =>
+                      setForm({
+                        ...form,
+                        title: event.target.value.replace(/[\r\n]+/g, " "),
+                      })
+                    }
                   />
                 </Field>
                 <Field label={t("authoring.language")} htmlFor="authoring-language">

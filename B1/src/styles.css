@@ -2859,6 +2859,18 @@ samp {
 
 /* ---------------------------------------------------------------- 编辑器 */
 
+/* 题目标题：一整句作业要求也要能看全，所以它是一个会折行的文本域（与 textarea 同一套基线样式），
+   高度随 rows 起步，可手动拉高；方向键、Home/End、选区都按原生行为工作。 */
+.title-input {
+  min-height: 40px;
+  line-height: 1.45;
+  resize: vertical;
+}
+.title-input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-soft, rgba(99, 102, 241, 0.18));
+}
 .editor {
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-md);
@@ -2909,6 +2921,37 @@ samp {
   /* ECharts 画布在容器尺寸变化后由组件显式 resize；再兜一层裁剪，避免 resize 的那一帧
      把页面撑出横向滚动。 */
   overflow: hidden;
+}
+
+/* 班级汇总：四项指标用卡片呈现，不再把"范围: a / b / c / d"和圆点列表直接铺在页面上。 */
+.summary-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.summary-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-2);
+}
+
+.summary-card dt {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.summary-card dd {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
 }
 
 /* ------------------------------------------------------------ 事实列表 */
