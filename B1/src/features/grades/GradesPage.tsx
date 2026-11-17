@@ -65,7 +65,8 @@ import { useQuestionVersionRows } from "../questions/useQuestions";
  * 4. **学生只看本人**：没有班级/姓名/导出入口；表格列与教师不同，且不显示任何他人数据。
  *
  * `initialRunId` 来自 URL（P10 的"查看本次结果"）：打开对应 report；关闭时清掉 URL。
- * 该状态同时作为 `evaluation_run_id` 查询参数，让表格范围与"正在看的这一次"一致。
+ * 它**只决定打开哪一份报告**，不再参与列表筛选——否则打开详情会把明细表收窄成一行，
+ * 页面高度骤减、滚动被夹回顶部（B1 上报的滚动 bug）。
  */
 
 const STATE_TONE: Record<GradeRow["state"], "ok" | "warn" | "bad" | "idle"> = {
@@ -156,9 +157,12 @@ export function GradesPage({
       questionVersionId: questionVersionId === "" ? null : questionVersionId,
       fromUtc: fromUtc === "" ? null : fromUtc,
       toUtc: toUtc === "" ? null : toUtc,
-      evaluationRunId: activeRunId,
+      // **不把"正在看的这一次"塞进列表筛选**：那会让打开详情时整张明细表被收窄成一行，
+      // 页面高度骤减、滚动被夹回顶部（用户报的"点查看详细就跳回最上方"）。
+      // 详情本身按 `runId` 单独取报告，列表保持用户当前的筛选范围不变。
+      evaluationRunId: null,
     }),
-    [effectiveCourseId, sectionId, questionVersionId, fromUtc, toUtc, activeRunId],
+    [effectiveCourseId, sectionId, questionVersionId, fromUtc, toUtc],
   );
 
   const grades = useGrades(filter, { enabled: timeProblem === null });
