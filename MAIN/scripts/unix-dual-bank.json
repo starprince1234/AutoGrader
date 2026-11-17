@@ -1,0 +1,3182 @@
+[
+  {
+    "title": "统计输入的行数",
+    "stem_markdown": "# 统计输入的行数\n\n从标准输入读到文件结束，输出总行数（包括空行），只输出数字。\n\n- 输入：\n  ```\n  a\n  b\n  c\n  ```\n- 输出：`3`",
+    "language": "bash",
+    "tags": [
+      "unix",
+      "linux-basic",
+      "text-stats"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "wc -l",
+        "body": "wc -l | tr -d ' '\n"
+      },
+      {
+        "label": "awk 计数",
+        "body": "awk 'END { print NR }'\n"
+      }
+    ],
+    "reference_answer": "wc -l | tr -d ' '\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：脚本在 10 个隐藏用例上的通过率；输出多一个空格、少一个换行、带提示文字都按未通过计。\n2. AI 轨：从命令选择、管道组合、边界处理（空输入、单行、末尾无换行）三方面给 0~100 分。\n   - 本题重点：用管道把输入处理成规定格式\n扣分项：把某个输入的答案写死、用 `echo` 直接打印结果、依赖交互式命令，AI 轨最高 40 分。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "a\nb\nc\n",
+        "args": [],
+        "expected_stdout": "3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a\n",
+        "args": [],
+        "expected_stdout": "1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\n",
+        "args": [],
+        "expected_stdout": "1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1\n2\n3\n4\n5\n",
+        "args": [],
+        "expected_stdout": "5\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\n\n\n",
+        "args": [],
+        "expected_stdout": "3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "x\ny\n",
+        "args": [],
+        "expected_stdout": "2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "one line\n",
+        "args": [],
+        "expected_stdout": "1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a\n\nb\n",
+        "args": [],
+        "expected_stdout": "3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "aa\nbb\ncc\ndd\n",
+        "args": [],
+        "expected_stdout": "4\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "z\n",
+        "args": [],
+        "expected_stdout": "1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "p\nq\nr\ns\nt\nu\n",
+        "args": [],
+        "expected_stdout": "6\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "给每行加行号",
+    "stem_markdown": "# 给每行加行号\n\n从标准输入读入若干行，按 `行号<TAB>内容` 输出，行号从 1 开始。\n\n- 输入：\n  ```\n  alpha\n  beta\n  ```\n- 输出（TAB 分隔）：\n  ```\n  1\talpha\n  2\tbeta\n  ```",
+    "language": "bash",
+    "tags": [
+      "unix",
+      "linux-basic",
+      "text-format"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "awk printf",
+        "body": "awk '{ printf \"%d\\t%s\\n\", NR, $0 }'\n"
+      },
+      {
+        "label": "awk 拼接",
+        "body": "awk '{ print NR \"\\t\" $0 }'\n"
+      }
+    ],
+    "reference_answer": "awk '{ printf \"%d\\t%s\\n\", NR, $0 }'\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：脚本在 10 个隐藏用例上的通过率；输出多一个空格、少一个换行、带提示文字都按未通过计。\n2. AI 轨：从命令选择、管道组合、边界处理（空输入、单行、末尾无换行）三方面给 0~100 分。\n   - 本题重点：用管道把输入处理成规定格式\n扣分项：把某个输入的答案写死、用 `echo` 直接打印结果、依赖交互式命令，AI 轨最高 40 分。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "alpha\nbeta\n",
+        "args": [],
+        "expected_stdout": "1\talpha\n2\tbeta\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a\n",
+        "args": [],
+        "expected_stdout": "1\ta\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\n",
+        "args": [],
+        "expected_stdout": "1\t\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "x\ny\nz\n",
+        "args": [],
+        "expected_stdout": "1\tx\n2\ty\n3\tz\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\n\n",
+        "args": [],
+        "expected_stdout": "1\t\n2\t\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "hello world\nfoo bar\n",
+        "args": [],
+        "expected_stdout": "1\thello world\n2\tfoo bar\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1\n2\n3\n",
+        "args": [],
+        "expected_stdout": "1\t1\n2\t2\n3\t3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "last\n",
+        "args": [],
+        "expected_stdout": "1\tlast\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "m\nn\no\np\n",
+        "args": [],
+        "expected_stdout": "1\tm\n2\tn\n3\to\n4\tp\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "single\n",
+        "args": [],
+        "expected_stdout": "1\tsingle\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "aa\nbb\ncc\ndd\nee\n",
+        "args": [],
+        "expected_stdout": "1\taa\n2\tbb\n3\tcc\n4\tdd\n5\tee\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "把输入转成大写",
+    "stem_markdown": "# 把输入转成大写\n\n从标准输入读入文本，把所有小写字母转成大写后原样输出（每行保持）。\n\n- 输入：`hello World`\n- 输出：`HELLO WORLD`",
+    "language": "bash",
+    "tags": [
+      "unix",
+      "linux-basic",
+      "text-transform"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "tr",
+        "body": "tr '[:lower:]' '[:upper:]'\n"
+      },
+      {
+        "label": "awk toupper",
+        "body": "awk '{ print toupper($0) }'\n"
+      }
+    ],
+    "reference_answer": "tr '[:lower:]' '[:upper:]'\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：脚本在 10 个隐藏用例上的通过率；输出多一个空格、少一个换行、带提示文字都按未通过计。\n2. AI 轨：从命令选择、管道组合、边界处理（空输入、单行、末尾无换行）三方面给 0~100 分。\n   - 本题重点：用管道把输入处理成规定格式\n扣分项：把某个输入的答案写死、用 `echo` 直接打印结果、依赖交互式命令，AI 轨最高 40 分。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "hello World\n",
+        "args": [],
+        "expected_stdout": "HELLO WORLD\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "abc\n",
+        "args": [],
+        "expected_stdout": "ABC\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "already UPPER\n",
+        "args": [],
+        "expected_stdout": "ALREADY UPPER\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "mixed 123 Case\n",
+        "args": [],
+        "expected_stdout": "MIXED 123 CASE\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a\n",
+        "args": [],
+        "expected_stdout": "A\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "x y z\n",
+        "args": [],
+        "expected_stdout": "X Y Z\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\n",
+        "args": [],
+        "expected_stdout": "\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "中文abc\n",
+        "args": [],
+        "expected_stdout": "中文ABC\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "q\n",
+        "args": [],
+        "expected_stdout": "Q\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "one\ntwo\n",
+        "args": [],
+        "expected_stdout": "ONE\nTWO\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "tab\there\n",
+        "args": [],
+        "expected_stdout": "TAB\tHERE\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "删除空行",
+    "stem_markdown": "# 删除空行\n\n从标准输入读入文本，去掉所有空行（只含换行的行），其余行原样输出。\n\n- 输入：\n  ```\n  a\n\n  b\n  ```\n- 输出：\n  ```\n  a\n  b\n  ```",
+    "language": "bash",
+    "tags": [
+      "unix",
+      "linux-basic",
+      "text-filter"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "grep 非空行",
+        "body": "grep -v '^$' || true\n"
+      },
+      {
+        "label": "awk length",
+        "body": "awk 'length($0) > 0'\n"
+      }
+    ],
+    "reference_answer": "grep -v '^$' || true\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：脚本在 10 个隐藏用例上的通过率；输出多一个空格、少一个换行、带提示文字都按未通过计。\n2. AI 轨：从命令选择、管道组合、边界处理（空输入、单行、末尾无换行）三方面给 0~100 分。\n   - 本题重点：用管道把输入处理成规定格式\n扣分项：把某个输入的答案写死、用 `echo` 直接打印结果、依赖交互式命令，AI 轨最高 40 分。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "a\n\nb\n",
+        "args": [],
+        "expected_stdout": "a\nb\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a\nb\n",
+        "args": [],
+        "expected_stdout": "a\nb\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\n",
+        "args": [],
+        "expected_stdout": "",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\n\n\nx\n",
+        "args": [],
+        "expected_stdout": "x\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "one\n\n\ntwo\n",
+        "args": [],
+        "expected_stdout": "one\ntwo\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "  \nkeep\n",
+        "args": [],
+        "expected_stdout": "  \nkeep\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a\n",
+        "args": [],
+        "expected_stdout": "a\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "x\n\ny\n\nz\n",
+        "args": [],
+        "expected_stdout": "x\ny\nz\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1\n\n2\n",
+        "args": [],
+        "expected_stdout": "1\n2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\n",
+        "args": [],
+        "expected_stdout": "",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "p\nq\n\nr\n",
+        "args": [],
+        "expected_stdout": "p\nq\nr\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "排序并去重",
+    "stem_markdown": "# 排序并去重\n\n读入若干行（每行一个单词），按字典序升序输出去重后的结果，每行一个。\n\n- 输入：\n  ```\n  banana\n  apple\n  banana\n  ```\n- 输出：\n  ```\n  apple\n  banana\n  ```",
+    "language": "bash",
+    "tags": [
+      "unix",
+      "linux-basic",
+      "text-sort"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "sort -u",
+        "body": "sort -u\n"
+      },
+      {
+        "label": "sort | uniq",
+        "body": "sort | uniq\n"
+      }
+    ],
+    "reference_answer": "sort -u\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：脚本在 10 个隐藏用例上的通过率；输出多一个空格、少一个换行、带提示文字都按未通过计。\n2. AI 轨：从命令选择、管道组合、边界处理（空输入、单行、末尾无换行）三方面给 0~100 分。\n   - 本题重点：用管道把输入处理成规定格式\n扣分项：把某个输入的答案写死、用 `echo` 直接打印结果、依赖交互式命令，AI 轨最高 40 分。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "banana\napple\nbanana\n",
+        "args": [],
+        "expected_stdout": "apple\nbanana\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "b\na\nc\n",
+        "args": [],
+        "expected_stdout": "a\nb\nc\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "x\n",
+        "args": [],
+        "expected_stdout": "x\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\n",
+        "args": [],
+        "expected_stdout": "\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a\na\na\n",
+        "args": [],
+        "expected_stdout": "a\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "z\ny\nx\n",
+        "args": [],
+        "expected_stdout": "x\ny\nz\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "cat\ndog\ncat\ndog\n",
+        "args": [],
+        "expected_stdout": "cat\ndog\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1\n2\n1\n",
+        "args": [],
+        "expected_stdout": "1\n2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "m\nn\no\n",
+        "args": [],
+        "expected_stdout": "m\nn\no\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "one\ntwo\nthree\n",
+        "args": [],
+        "expected_stdout": "one\nthree\ntwo\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "q\np\no\nn\n",
+        "args": [],
+        "expected_stdout": "n\no\np\nq\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "求整数的和",
+    "stem_markdown": "# 求整数的和\n\n读入若干行，每行一个整数，输出它们的总和。\n\n- 输入：\n  ```\n  1\n  2\n  3\n  ```\n- 输出：`6`",
+    "language": "bash",
+    "tags": [
+      "unix",
+      "linux-basic",
+      "awk-arithmetic"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "awk 累加",
+        "body": "awk '{ total += $1 } END { print total + 0 }'\n"
+      },
+      {
+        "label": "paste+bc 风格",
+        "body": "awk '{ total += $1 } END { printf \"%d\\n\", total }'\n"
+      }
+    ],
+    "reference_answer": "awk '{ total += $1 } END { print total + 0 }'\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：脚本在 10 个隐藏用例上的通过率；输出多一个空格、少一个换行、带提示文字都按未通过计。\n2. AI 轨：从命令选择、管道组合、边界处理（空输入、单行、末尾无换行）三方面给 0~100 分。\n   - 本题重点：用管道把输入处理成规定格式\n扣分项：把某个输入的答案写死、用 `echo` 直接打印结果、依赖交互式命令，AI 轨最高 40 分。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "1\n2\n3\n",
+        "args": [],
+        "expected_stdout": "6\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "0\n",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "5\n",
+        "args": [],
+        "expected_stdout": "5\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "-1\n1\n",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "10\n20\n30\n",
+        "args": [],
+        "expected_stdout": "60\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "100\n",
+        "args": [],
+        "expected_stdout": "100\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "7\n8\n9\n",
+        "args": [],
+        "expected_stdout": "24\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "-5\n-5\n",
+        "args": [],
+        "expected_stdout": "-10\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1\n",
+        "args": [],
+        "expected_stdout": "1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2\n2\n2\n",
+        "args": [],
+        "expected_stdout": "6\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "42\n",
+        "args": [],
+        "expected_stdout": "42\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "求平均值（保留两位小数）",
+    "stem_markdown": "# 求平均值\n\n读入若干行，每行一个整数，输出平均值，保留两位小数。\n\n- 输入：\n  ```\n  1\n  2\n  3\n  ```\n- 输出：`2.00`",
+    "language": "bash",
+    "tags": [
+      "unix",
+      "linux-basic",
+      "awk-arithmetic"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "awk printf",
+        "body": "awk '{ sum += $1 } END { printf \"%.2f\\n\", sum / NR }'\n"
+      },
+      {
+        "label": "awk 分行计算",
+        "body": "awk 'BEGIN { s = 0; n = 0 } { s += $1; n += 1 } END { printf \"%.2f\\n\", s / n }'\n"
+      }
+    ],
+    "reference_answer": "awk '{ sum += $1 } END { printf \"%.2f\\n\", sum / NR }'\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：脚本在 10 个隐藏用例上的通过率；输出多一个空格、少一个换行、带提示文字都按未通过计。\n2. AI 轨：从命令选择、管道组合、边界处理（空输入、单行、末尾无换行）三方面给 0~100 分。\n   - 本题重点：用管道把输入处理成规定格式\n扣分项：把某个输入的答案写死、用 `echo` 直接打印结果、依赖交互式命令，AI 轨最高 40 分。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "1\n2\n3\n",
+        "args": [],
+        "expected_stdout": "2.00\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "5\n",
+        "args": [],
+        "expected_stdout": "5.00\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "0\n",
+        "args": [],
+        "expected_stdout": "0.00\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "10\n20\n",
+        "args": [],
+        "expected_stdout": "15.00\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1\n2\n",
+        "args": [],
+        "expected_stdout": "1.50\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "7\n8\n9\n",
+        "args": [],
+        "expected_stdout": "8.00\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "-2\n2\n",
+        "args": [],
+        "expected_stdout": "0.00\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "100\n",
+        "args": [],
+        "expected_stdout": "100.00\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1\n1\n1\n1\n",
+        "args": [],
+        "expected_stdout": "1.00\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "3\n4\n",
+        "args": [],
+        "expected_stdout": "3.50\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "9\n",
+        "args": [],
+        "expected_stdout": "9.00\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "找出最大的整数",
+    "stem_markdown": "# 找出最大的整数\n\n读入若干行，每行一个整数，输出其中最大的那个。\n\n- 输入：\n  ```\n  3\n  9\n  2\n  ```\n- 输出：`9`",
+    "language": "bash",
+    "tags": [
+      "unix",
+      "linux-basic",
+      "awk-arithmetic"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "awk 比较",
+        "body": "awk 'NR == 1 || $1 > best { best = $1 } END { print best }'\n"
+      },
+      {
+        "label": "sort 取末行",
+        "body": "sort -n | tail -n 1\n"
+      }
+    ],
+    "reference_answer": "awk 'NR == 1 || $1 > best { best = $1 } END { print best }'\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：脚本在 10 个隐藏用例上的通过率；输出多一个空格、少一个换行、带提示文字都按未通过计。\n2. AI 轨：从命令选择、管道组合、边界处理（空输入、单行、末尾无换行）三方面给 0~100 分。\n   - 本题重点：用管道把输入处理成规定格式\n扣分项：把某个输入的答案写死、用 `echo` 直接打印结果、依赖交互式命令，AI 轨最高 40 分。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "3\n9\n2\n",
+        "args": [],
+        "expected_stdout": "9\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "5\n",
+        "args": [],
+        "expected_stdout": "5\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "-1\n-5\n",
+        "args": [],
+        "expected_stdout": "-1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "0\n0\n0\n",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "100\n99\n",
+        "args": [],
+        "expected_stdout": "100\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1\n2\n3\n4\n5\n",
+        "args": [],
+        "expected_stdout": "5\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "-3\n7\n",
+        "args": [],
+        "expected_stdout": "7\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "42\n",
+        "args": [],
+        "expected_stdout": "42\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "8\n8\n8\n",
+        "args": [],
+        "expected_stdout": "8\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "11\n2\n",
+        "args": [],
+        "expected_stdout": "11\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "6\n",
+        "args": [],
+        "expected_stdout": "6\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "统计包含指定单词的行数",
+    "stem_markdown": "# 统计包含指定单词的行数\n\n读入若干行文本，输出包含单词 `error`（小写、整行中出现即可）的行数。\n\n- 输入：\n  ```\n  error: disk full\n  ok\n  ```\n- 输出：`1`",
+    "language": "bash",
+    "tags": [
+      "unix",
+      "linux-basic",
+      "grep"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "grep -c",
+        "body": "grep -c 'error' || true\n"
+      },
+      {
+        "label": "awk 计数",
+        "body": "awk '/error/ { n += 1 } END { print n + 0 }'\n"
+      }
+    ],
+    "reference_answer": "grep -c 'error' || true\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：脚本在 10 个隐藏用例上的通过率；输出多一个空格、少一个换行、带提示文字都按未通过计。\n2. AI 轨：从命令选择、管道组合、边界处理（空输入、单行、末尾无换行）三方面给 0~100 分。\n   - 本题重点：用管道把输入处理成规定格式\n扣分项：把某个输入的答案写死、用 `echo` 直接打印结果、依赖交互式命令，AI 轨最高 40 分。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "error: disk full\nok\n",
+        "args": [],
+        "expected_stdout": "1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "ok\n",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\n",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "error\nerror\nerror\n",
+        "args": [],
+        "expected_stdout": "3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "Error\n",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "an error occurred\nfine\n",
+        "args": [],
+        "expected_stdout": "1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "x\nerror y\n",
+        "args": [],
+        "expected_stdout": "1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "error\n",
+        "args": [],
+        "expected_stdout": "1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "ok ok\n",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "errors happen\nerror\n",
+        "args": [],
+        "expected_stdout": "2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "no match here\n",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "输出每行的第一个字段",
+    "stem_markdown": "# 输出每行的第一个字段\n\n读入若干行，每行由空格分隔若干字段，输出每行的第一个字段，一行一个。\n\n- 输入：\n  ```\n  alice 90\n  bob 85\n  ```\n- 输出：\n  ```\n  alice\n  bob\n  ```",
+    "language": "bash",
+    "tags": [
+      "unix",
+      "linux-basic",
+      "awk-fields"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "awk 打印 $1",
+        "body": "awk '{ print $1 }'\n"
+      },
+      {
+        "label": "cut 按空格",
+        "body": "awk '{ printf \"%s\\n\", $1 }'\n"
+      }
+    ],
+    "reference_answer": "awk '{ print $1 }'\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：脚本在 10 个隐藏用例上的通过率；输出多一个空格、少一个换行、带提示文字都按未通过计。\n2. AI 轨：从命令选择、管道组合、边界处理（空输入、单行、末尾无换行）三方面给 0~100 分。\n   - 本题重点：用管道把输入处理成规定格式\n扣分项：把某个输入的答案写死、用 `echo` 直接打印结果、依赖交互式命令，AI 轨最高 40 分。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "alice 90\nbob 85\n",
+        "args": [],
+        "expected_stdout": "alice\nbob\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "x\n",
+        "args": [],
+        "expected_stdout": "x\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\n",
+        "args": [],
+        "expected_stdout": "\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a b c\nd e f\n",
+        "args": [],
+        "expected_stdout": "a\nd\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "  leading two\n",
+        "args": [],
+        "expected_stdout": "leading\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1 2\n3 4\n",
+        "args": [],
+        "expected_stdout": "1\n3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "only\n",
+        "args": [],
+        "expected_stdout": "only\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "tab\tsep\n",
+        "args": [],
+        "expected_stdout": "tab\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "p q\nr s\nt u\n",
+        "args": [],
+        "expected_stdout": "p\nr\nt\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "z 0\n",
+        "args": [],
+        "expected_stdout": "z\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "m n o\n",
+        "args": [],
+        "expected_stdout": "m\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "求第二列数字之和",
+    "stem_markdown": "# 求第二列数字之和\n\n读入若干行，每行两个字段（名称 数字），输出第二列的总和。\n\n- 输入：\n  ```\n  a 10\n  b 20\n  ```\n- 输出：`30`",
+    "language": "bash",
+    "tags": [
+      "unix",
+      "linux-basic",
+      "awk-fields"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "awk 求和",
+        "body": "awk '{ total += $2 } END { print total + 0 }'\n"
+      },
+      {
+        "label": "awk 显式格式",
+        "body": "awk '{ total += $2 } END { printf \"%d\\n\", total }'\n"
+      }
+    ],
+    "reference_answer": "awk '{ total += $2 } END { print total + 0 }'\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：脚本在 10 个隐藏用例上的通过率；输出多一个空格、少一个换行、带提示文字都按未通过计。\n2. AI 轨：从命令选择、管道组合、边界处理（空输入、单行、末尾无换行）三方面给 0~100 分。\n   - 本题重点：用管道把输入处理成规定格式\n扣分项：把某个输入的答案写死、用 `echo` 直接打印结果、依赖交互式命令，AI 轨最高 40 分。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "a 10\nb 20\n",
+        "args": [],
+        "expected_stdout": "30\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "x 5\n",
+        "args": [],
+        "expected_stdout": "5\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\n",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "p 1\nq 2\nr 3\n",
+        "args": [],
+        "expected_stdout": "6\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "m 100\n",
+        "args": [],
+        "expected_stdout": "100\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "k 0\n",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a 7\nb 8\nc 9\n",
+        "args": [],
+        "expected_stdout": "24\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "one 2\ntwo 3\n",
+        "args": [],
+        "expected_stdout": "5\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "z 50\n",
+        "args": [],
+        "expected_stdout": "50\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "n -1\nm 1\n",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "q 4\n",
+        "args": [],
+        "expected_stdout": "4\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "输出每行的字符数",
+    "stem_markdown": "# 输出每行的字符数\n\n读入若干行，输出每行的字符数（不含换行符），一行一个。\n\n- 输入：\n  ```\n  abc\n  de\n  ```\n- 输出：\n  ```\n  3\n  2\n  ```",
+    "language": "bash",
+    "tags": [
+      "unix",
+      "linux-basic",
+      "awk-fields"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "awk length",
+        "body": "awk '{ print length($0) }'\n"
+      },
+      {
+        "label": "wc -L 逐行",
+        "body": "awk '{ printf \"%d\\n\", length($0) }'\n"
+      }
+    ],
+    "reference_answer": "awk '{ print length($0) }'\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：脚本在 10 个隐藏用例上的通过率；输出多一个空格、少一个换行、带提示文字都按未通过计。\n2. AI 轨：从命令选择、管道组合、边界处理（空输入、单行、末尾无换行）三方面给 0~100 分。\n   - 本题重点：用管道把输入处理成规定格式\n扣分项：把某个输入的答案写死、用 `echo` 直接打印结果、依赖交互式命令，AI 轨最高 40 分。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "abc\nde\n",
+        "args": [],
+        "expected_stdout": "3\n2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a\n",
+        "args": [],
+        "expected_stdout": "1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\n",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "hello world\n",
+        "args": [],
+        "expected_stdout": "11\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "12345\n",
+        "args": [],
+        "expected_stdout": "5\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "x\ny\nz\n",
+        "args": [],
+        "expected_stdout": "1\n1\n1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "  spaces  \n",
+        "args": [],
+        "expected_stdout": "10\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "q\n",
+        "args": [],
+        "expected_stdout": "1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "long line here\n",
+        "args": [],
+        "expected_stdout": "14\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "ab\ncd\nef\n",
+        "args": [],
+        "expected_stdout": "2\n2\n2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "z z z\n",
+        "args": [],
+        "expected_stdout": "5\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "筛选长度超过 5 的行",
+    "stem_markdown": "# 筛选长度超过 5 的行\n\n读入若干行，只输出长度大于 5 的行（保持原顺序）。\n\n- 输入：\n  ```\n  abc\n  abcdefg\n  ```\n- 输出：`abcdefg`",
+    "language": "bash",
+    "tags": [
+      "unix",
+      "linux-basic",
+      "text-filter"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "awk length 判断",
+        "body": "awk 'length($0) > 5'\n"
+      },
+      {
+        "label": "grep 正则",
+        "body": "grep -E '^.{6,}$' || true\n"
+      }
+    ],
+    "reference_answer": "awk 'length($0) > 5'\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：脚本在 10 个隐藏用例上的通过率；输出多一个空格、少一个换行、带提示文字都按未通过计。\n2. AI 轨：从命令选择、管道组合、边界处理（空输入、单行、末尾无换行）三方面给 0~100 分。\n   - 本题重点：用管道把输入处理成规定格式\n扣分项：把某个输入的答案写死、用 `echo` 直接打印结果、依赖交互式命令，AI 轨最高 40 分。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "abc\nabcdefg\n",
+        "args": [],
+        "expected_stdout": "abcdefg\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "abcdef\n",
+        "args": [],
+        "expected_stdout": "abcdef\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\n",
+        "args": [],
+        "expected_stdout": "",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "123456\n1\n",
+        "args": [],
+        "expected_stdout": "123456\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "hello world\nhi\n",
+        "args": [],
+        "expected_stdout": "hello world\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "aaaaaa\nbbbbb\n",
+        "args": [],
+        "expected_stdout": "aaaaaa\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "x\ny\nz\n",
+        "args": [],
+        "expected_stdout": "",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "sixchr\n",
+        "args": [],
+        "expected_stdout": "sixchr\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "sevens7\n",
+        "args": [],
+        "expected_stdout": "sevens7\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "nope\n",
+        "args": [],
+        "expected_stdout": "",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "lastline\n",
+        "args": [],
+        "expected_stdout": "lastline\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "把 cat 替换成 dog",
+    "stem_markdown": "# 把 cat 替换成 dog\n\n读入若干行，把每行中出现的所有 `cat` 替换为 `dog` 后输出。\n\n- 输入：`the cat sat`\n- 输出：`the dog sat`",
+    "language": "bash",
+    "tags": [
+      "unix",
+      "linux-basic",
+      "sed"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "sed 全局替换",
+        "body": "sed 's/cat/dog/g'\n"
+      },
+      {
+        "label": "awk gsub",
+        "body": "awk '{ gsub(/cat/, \"dog\"); print }'\n"
+      }
+    ],
+    "reference_answer": "sed 's/cat/dog/g'\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：脚本在 10 个隐藏用例上的通过率；输出多一个空格、少一个换行、带提示文字都按未通过计。\n2. AI 轨：从命令选择、管道组合、边界处理（空输入、单行、末尾无换行）三方面给 0~100 分。\n   - 本题重点：用管道把输入处理成规定格式\n扣分项：把某个输入的答案写死、用 `echo` 直接打印结果、依赖交互式命令，AI 轨最高 40 分。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "the cat sat\n",
+        "args": [],
+        "expected_stdout": "the dog sat\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "cat cat\n",
+        "args": [],
+        "expected_stdout": "dog dog\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "no match\n",
+        "args": [],
+        "expected_stdout": "no match\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\n",
+        "args": [],
+        "expected_stdout": "\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "concat\n",
+        "args": [],
+        "expected_stdout": "condog\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "cat\n",
+        "args": [],
+        "expected_stdout": "dog\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a cat and a cat\n",
+        "args": [],
+        "expected_stdout": "a dog and a dog\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "CAT\n",
+        "args": [],
+        "expected_stdout": "CAT\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "scatter\n",
+        "args": [],
+        "expected_stdout": "sdogter\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "cat. cat!\n",
+        "args": [],
+        "expected_stdout": "dog. dog!\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "x\n",
+        "args": [],
+        "expected_stdout": "x\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "统计单词个数",
+    "stem_markdown": "# 统计单词个数\n\n读入若干行文本，输出其中单词的总数（以空白分隔）。\n\n- 输入：`one two three`\n- 输出：`3`",
+    "language": "bash",
+    "tags": [
+      "unix",
+      "linux-basic",
+      "text-stats"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "wc -w",
+        "body": "wc -w | tr -d ' '\n"
+      },
+      {
+        "label": "awk NF 累加",
+        "body": "awk '{ total += NF } END { print total + 0 }'\n"
+      }
+    ],
+    "reference_answer": "wc -w | tr -d ' '\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：脚本在 10 个隐藏用例上的通过率；输出多一个空格、少一个换行、带提示文字都按未通过计。\n2. AI 轨：从命令选择、管道组合、边界处理（空输入、单行、末尾无换行）三方面给 0~100 分。\n   - 本题重点：用管道把输入处理成规定格式\n扣分项：把某个输入的答案写死、用 `echo` 直接打印结果、依赖交互式命令，AI 轨最高 40 分。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "one two three\n",
+        "args": [],
+        "expected_stdout": "3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "single\n",
+        "args": [],
+        "expected_stdout": "1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\n",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a b\nc d\n",
+        "args": [],
+        "expected_stdout": "4\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "   \n",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "hello world\nfoo\n",
+        "args": [],
+        "expected_stdout": "3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1 2 3 4\n",
+        "args": [],
+        "expected_stdout": "4\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "x\n",
+        "args": [],
+        "expected_stdout": "1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "aa bb cc dd ee\n",
+        "args": [],
+        "expected_stdout": "5\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "  spaced   out  \n",
+        "args": [],
+        "expected_stdout": "2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "last\n",
+        "args": [],
+        "expected_stdout": "1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "按行逆序输出",
+    "stem_markdown": "# 按行逆序输出\n\n读入若干行，把行序倒过来输出（每行内容不变）。\n\n- 输入：\n  ```\n  first\n  second\n  ```\n- 输出：\n  ```\n  second\n  first\n  ```",
+    "language": "bash",
+    "tags": [
+      "unix",
+      "linux-basic",
+      "text-transform"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "tac",
+        "body": "tac\n"
+      },
+      {
+        "label": "sed 倒序",
+        "body": "sed '1!G;h;$!d'\n"
+      }
+    ],
+    "reference_answer": "tac\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：脚本在 10 个隐藏用例上的通过率；输出多一个空格、少一个换行、带提示文字都按未通过计。\n2. AI 轨：从命令选择、管道组合、边界处理（空输入、单行、末尾无换行）三方面给 0~100 分。\n   - 本题重点：用管道把输入处理成规定格式\n扣分项：把某个输入的答案写死、用 `echo` 直接打印结果、依赖交互式命令，AI 轨最高 40 分。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "first\nsecond\n",
+        "args": [],
+        "expected_stdout": "second\nfirst\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a\n",
+        "args": [],
+        "expected_stdout": "a\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\n",
+        "args": [],
+        "expected_stdout": "\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1\n2\n3\n",
+        "args": [],
+        "expected_stdout": "3\n2\n1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "x\ny\nz\n",
+        "args": [],
+        "expected_stdout": "z\ny\nx\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\n\n",
+        "args": [],
+        "expected_stdout": "\n\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "last\n",
+        "args": [],
+        "expected_stdout": "last\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "p\nq\nr\ns\n",
+        "args": [],
+        "expected_stdout": "s\nr\nq\np\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "only\n",
+        "args": [],
+        "expected_stdout": "only\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a\nb\nc\nd\ne\n",
+        "args": [],
+        "expected_stdout": "e\nd\nc\nb\na\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "m\n",
+        "args": [],
+        "expected_stdout": "m\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "逆序并加行号",
+    "stem_markdown": "# 逆序并加行号\n\n读入若干行，先按行逆序，再从 1 开始加行号输出，格式 `行号<TAB>内容`。\n\n- 输入：\n  ```\n  a\n  b\n  ```\n- 输出（TAB 分隔）：\n  ```\n  1\tb\n  2\ta\n  ```",
+    "language": "bash",
+    "tags": [
+      "unix",
+      "linux-basic",
+      "pipeline"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "awk 倒序编号",
+        "body": "awk '{ lines[NR] = $0 } END { for (i = NR; i >= 1; i--) printf \"%d\\t%s\\n\", NR - i + 1, lines[i] }'\n"
+      },
+      {
+        "label": "awk 倒序编号",
+        "body": "awk '{ lines[NR] = $0 } END { for (i = NR; i >= 1; i--) printf \"%d\\t%s\\n\", NR - i + 1, lines[i] }'\n"
+      }
+    ],
+    "reference_answer": "awk '{ lines[NR] = $0 } END { for (i = NR; i >= 1; i--) printf \"%d\\t%s\\n\", NR - i + 1, lines[i] }'\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：脚本在 10 个隐藏用例上的通过率；输出多一个空格、少一个换行、带提示文字都按未通过计。\n2. AI 轨：从命令选择、管道组合、边界处理（空输入、单行、末尾无换行）三方面给 0~100 分。\n   - 本题重点：用管道把输入处理成规定格式\n扣分项：把某个输入的答案写死、用 `echo` 直接打印结果、依赖交互式命令，AI 轨最高 40 分。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "a\nb\n",
+        "args": [],
+        "expected_stdout": "1\tb\n2\ta\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "one\n",
+        "args": [],
+        "expected_stdout": "1\tone\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\n",
+        "args": [],
+        "expected_stdout": "1\t\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "x\ny\nz\n",
+        "args": [],
+        "expected_stdout": "1\tz\n2\ty\n3\tx\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1\n2\n3\n4\n",
+        "args": [],
+        "expected_stdout": "1\t4\n2\t3\n3\t2\n4\t1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "p\nq\n",
+        "args": [],
+        "expected_stdout": "1\tq\n2\tp\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "last\nfirst\n",
+        "args": [],
+        "expected_stdout": "1\tfirst\n2\tlast\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "aa\nbb\ncc\n",
+        "args": [],
+        "expected_stdout": "1\tcc\n2\tbb\n3\taa\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "single\n",
+        "args": [],
+        "expected_stdout": "1\tsingle\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "m\nn\no\n",
+        "args": [],
+        "expected_stdout": "1\to\n2\tn\n3\tm\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "z\n",
+        "args": [],
+        "expected_stdout": "1\tz\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "求奇数之和",
+    "stem_markdown": "# 求奇数之和\n\n读入若干行，每行一个整数，输出其中所有奇数的和（没有奇数输出 0）。\n\n- 输入：\n  ```\n  1\n  2\n  3\n  ```\n- 输出：`4`",
+    "language": "bash",
+    "tags": [
+      "unix",
+      "linux-basic",
+      "awk-arithmetic"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "awk 取模",
+        "body": "awk '$1 % 2 != 0 { total += $1 } END { print total + 0 }'\n"
+      },
+      {
+        "label": "awk 显式判断",
+        "body": "awk '{ if ($1 % 2 == 1 || $1 % 2 == -1) total += $1 } END { printf \"%d\\n\", total + 0 }'\n"
+      }
+    ],
+    "reference_answer": "awk '$1 % 2 != 0 { total += $1 } END { print total + 0 }'\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：脚本在 10 个隐藏用例上的通过率；输出多一个空格、少一个换行、带提示文字都按未通过计。\n2. AI 轨：从命令选择、管道组合、边界处理（空输入、单行、末尾无换行）三方面给 0~100 分。\n   - 本题重点：用管道把输入处理成规定格式\n扣分项：把某个输入的答案写死、用 `echo` 直接打印结果、依赖交互式命令，AI 轨最高 40 分。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "1\n2\n3\n",
+        "args": [],
+        "expected_stdout": "4\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2\n4\n",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\n",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "5\n",
+        "args": [],
+        "expected_stdout": "5\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1\n3\n5\n",
+        "args": [],
+        "expected_stdout": "9\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "-1\n-2\n",
+        "args": [],
+        "expected_stdout": "-1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "0\n",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "7\n8\n9\n",
+        "args": [],
+        "expected_stdout": "16\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "11\n13\n",
+        "args": [],
+        "expected_stdout": "24\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "10\n",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "3\n",
+        "args": [],
+        "expected_stdout": "3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "输出最高分的学生",
+    "stem_markdown": "# 输出最高分的学生\n\n读入若干行，每行 `姓名 分数`，输出分数最高的那一行（原样，姓名在前）。\n若有多行并列最高，输出**最先出现**的那一行。\n\n- 输入：\n  ```\n  alice 90\n  bob 95\n  ```\n- 输出：`bob 95`",
+    "language": "bash",
+    "tags": [
+      "unix",
+      "linux-basic",
+      "awk-fields"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "awk 记录整行",
+        "body": "awk 'NR == 1 || $2 > best { best = $2; line = $0 } END { print line }'\n"
+      },
+      {
+        "label": "稳定排序取首行",
+        "body": "sort -s -k2,2nr | head -n 1\n"
+      }
+    ],
+    "reference_answer": "awk 'NR == 1 || $2 > best { best = $2; line = $0 } END { print line }'\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：脚本在 10 个隐藏用例上的通过率；输出多一个空格、少一个换行、带提示文字都按未通过计。\n2. AI 轨：从命令选择、管道组合、边界处理（空输入、单行、末尾无换行）三方面给 0~100 分。\n   - 本题重点：用管道把输入处理成规定格式\n扣分项：把某个输入的答案写死、用 `echo` 直接打印结果、依赖交互式命令，AI 轨最高 40 分。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "alice 90\nbob 95\n",
+        "args": [],
+        "expected_stdout": "bob 95\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "solo 1\n",
+        "args": [],
+        "expected_stdout": "solo 1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "q 3\nr 4\n",
+        "args": [],
+        "expected_stdout": "r 4\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a 10\nb 5\n",
+        "args": [],
+        "expected_stdout": "a 10\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "x 100\ny 99\n",
+        "args": [],
+        "expected_stdout": "x 100\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "m 60\nn 60\n",
+        "args": [],
+        "expected_stdout": "m 60\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "p 0\n",
+        "args": [],
+        "expected_stdout": "p 0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "k 7\nl 8\nm 9\n",
+        "args": [],
+        "expected_stdout": "m 9\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "one 42\n",
+        "args": [],
+        "expected_stdout": "one 42\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "z 1\ny 2\n",
+        "args": [],
+        "expected_stdout": "y 2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "q 88\n",
+        "args": [],
+        "expected_stdout": "q 88\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "把所有行拼成一行",
+    "stem_markdown": "# 把所有行拼成一行\n\n读入若干行，用单个空格把它们连成一行输出（末尾不留空格）。\n\n- 输入：\n  ```\n  a\n  b\n  c\n  ```\n- 输出：`a b c`",
+    "language": "bash",
+    "tags": [
+      "unix",
+      "linux-basic",
+      "pipeline"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "sed 逐行累积",
+        "body": "sed ':a;N;$!ba;s/\\n/ /g'\n"
+      },
+      {
+        "label": "awk 逐行打印",
+        "body": "awk 'NR > 1 { printf \" \" } { printf \"%s\", $0 } END { printf \"\\n\" }'\n"
+      }
+    ],
+    "reference_answer": "sed ':a;N;$!ba;s/\\n/ /g'\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：脚本在 10 个隐藏用例上的通过率；输出多一个空格、少一个换行、带提示文字都按未通过计。\n2. AI 轨：从命令选择、管道组合、边界处理（空输入、单行、末尾无换行）三方面给 0~100 分。\n   - 本题重点：用管道把输入处理成规定格式\n扣分项：把某个输入的答案写死、用 `echo` 直接打印结果、依赖交互式命令，AI 轨最高 40 分。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "a\nb\nc\n",
+        "args": [],
+        "expected_stdout": "a b c\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "one\n",
+        "args": [],
+        "expected_stdout": "one\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "alpha\nbeta\ngamma\n",
+        "args": [],
+        "expected_stdout": "alpha beta gamma\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1\n2\n",
+        "args": [],
+        "expected_stdout": "1 2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "x\ny\n",
+        "args": [],
+        "expected_stdout": "x y\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "aa\nbb\ncc\n",
+        "args": [],
+        "expected_stdout": "aa bb cc\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "single\n",
+        "args": [],
+        "expected_stdout": "single\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "p\nq\nr\ns\n",
+        "args": [],
+        "expected_stdout": "p q r s\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "m\nn\n",
+        "args": [],
+        "expected_stdout": "m n\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "z\n",
+        "args": [],
+        "expected_stdout": "z\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a\nb\n",
+        "args": [],
+        "expected_stdout": "a b\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  }
+]
