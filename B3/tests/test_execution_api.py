@@ -333,7 +333,8 @@ def test_uploading_a_fixture_refreshes_the_content_digest(client):
     after = _version_digest(client, version_id)
     assert after != before
     # The digest the API serves now is the one the recorder recomputes and accepts.
-    http_attestation(client, uuid.UUID(version_id), cases=2)
+    # `draft_payload(kind="file")` 是 1 公开 + 10 隐藏共 11 个用例：存证数量必须与之一致。
+    http_attestation(client, uuid.UUID(version_id), cases=11)
 
 
 def test_fixture_contents_is_service_only(client):

@@ -798,11 +798,16 @@ paths:
         Publication validates completeness: a non-empty stem with reachable assets, a
         reference answer, a valid adapter declaration and an explicit comparison policy.
 
-        **Case set (hard rule, dual-track scoring).** A version is publishable only with
-        exactly **one public example case** (`visible_to_student: true`, shown in the stem
-        so a student can read the input/output format) plus exactly **ten hidden
-        evaluation cases** (`visible_to_student: false`), and every hidden case must declare
-        an `expected_stdout` or `expected_stderr`. Anything else is refused with `422`
+        **Case set (hard rule, dual-track scoring).** For `execution.mode=per_case` -- the
+        stdin/stdout questions the dual-track score is computed from -- a version is
+        publishable only with exactly **one public example case**
+        (`visible_to_student: true`, shown in the stem so a student can read the
+        input/output format) plus exactly **ten hidden evaluation cases**
+        (`visible_to_student: false`), and every hidden case must declare an
+        `expected_stdout` or `expected_stderr`. The other modes are exempt because their
+        cases assert output segments (`single_run`), real SSH facts (`ssh_session`) or
+        received-message facts (`email_delivery`), where "ten hidden inputs" is not a
+        meaningful shape. Anything else is refused with `422`
         (`adapter-manifest-invalid`), naming the counts actually supplied. The rule is
         enforced in B3, not merely suggested in the authoring UI: a version whose hidden
         cases cannot be scored deterministically must not reach a student, because the

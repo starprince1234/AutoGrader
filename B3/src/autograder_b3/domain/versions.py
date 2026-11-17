@@ -128,9 +128,17 @@ def publish_version(
         # 双轨评分的题必须"1 个公开示例用例 + 10 个隐藏评测用例"：公开用例只向学生展示
         # 输入输出格式，隐藏用例才是评分的依据。数量不符或隐藏用例缺期望输出一律拒发，
         # 这样"AI 逻辑评分"的旧式单用例题目无法再混进发布门禁。
+        #
+        # 只约束 `per_case`：`single_run`（输出分段）、`ssh_session`（真实 ssh 事实）、
+        # `email_delivery`（真实邮件事实）的用例语义与"10 个隐藏输入"无关，套用同一数量规则
+        # 会让这些模式根本无法发布，而双轨题库本身只出 stdin/stdout 题。
+        execution = content.execution
+        execution_mode = getattr(execution, "mode", "per_case") if execution is not None else "per_case"
         public_cases = [case for case in cases if case.visible_to_student]
         hidden_cases = [case for case in cases if not case.visible_to_student]
-        if len(public_cases) != 1 or len(hidden_cases) != 10:
+        if execution_mode == "per_case" and (
+            len(public_cases) != 1 or len(hidden_cases) != 10
+        ):
             raise ManifestInvalid(
                 "publish rejected: exactly one public example case and ten hidden "
                 "evaluation cases are required "
@@ -142,7 +150,7 @@ def publish_version(
             for case in hidden_cases
             if case.expected_stdout is None and case.expected_stderr is None
         ]
-        if hidden_without_expected:
+        if execution_mode == "per_case" and hidden_without_expected:
             raise ManifestInvalid(
                 "publish rejected: every hidden case must declare an expected output; "
                 "missing on: " + ", ".join(hidden_without_expected),

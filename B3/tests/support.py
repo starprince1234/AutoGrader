@@ -221,7 +221,8 @@ def http_publish(
     client,
     question_version_id: uuid.UUID,
     *,
-    cases: int = 2,
+    # 默认候选与 draft_payload() 的 1 公开 + 10 隐藏一致；对齐 2 会让存证数量对不上。
+    cases: int = 11,
     headers: dict[str, str] | None = None,
 ):
     """Record an attestation, then publish - the two steps a real caller performs."""
