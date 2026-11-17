@@ -1,0 +1,3182 @@
+[
+  {
+    "title": "两数之和",
+    "stem_markdown": "# 两数之和\n\n从标准输入读入一行，包含两个整数 `a b`（用空格分隔），输出它们的和。\n\n- 输入示例：`3 5`\n- 输出示例：`8`\n\n只输出结果，不要任何提示文字。",
+    "language": "python",
+    "tags": [
+      "python",
+      "python-basic",
+      "arithmetic"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "直接相加",
+        "body": "a, b = map(int, input().split())\nprint(a + b)\n"
+      },
+      {
+        "label": "逐项转换",
+        "body": "parts = input().split()\nprint(int(parts[0]) + int(parts[1]))\n"
+      }
+    ],
+    "reference_answer": "a, b = map(int, input().split())\nprint(a + b)\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：程序在 10 个隐藏用例上的通过率。输出格式不符（多空格、多行、提示文字）按未通过计。\n2. AI 轨：从算法思路、边界处理、代码可读性三方面给出 0~100 的连续分。\n   - 本题重点：把输入解析正确、按题目要求的格式逐行输出\n扣分项：硬编码某个输入对应的输出、用异常吞掉错误、把答案写死，AI 轨最高 40 分。\n若 AI 判断与用例通过数明显冲突，必须在总结里说明原因。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "3 5",
+        "args": [],
+        "expected_stdout": "8\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "0 0",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "-4 9",
+        "args": [],
+        "expected_stdout": "5\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "100 -100",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "7 8",
+        "args": [],
+        "expected_stdout": "15\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "-1 -1",
+        "args": [],
+        "expected_stdout": "-2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "12345 67890",
+        "args": [],
+        "expected_stdout": "80235\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2 2",
+        "args": [],
+        "expected_stdout": "4\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "-50 25",
+        "args": [],
+        "expected_stdout": "-25\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "999999 1",
+        "args": [],
+        "expected_stdout": "1000000\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "42 0",
+        "args": [],
+        "expected_stdout": "42\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "求一组整数的平均值",
+    "stem_markdown": "# 求一组整数的平均值\n\n第一行是整数 `n`，第二行是 `n` 个整数。输出它们的平均值，保留两位小数（四舍五入）。\n\n- 输入：\n  ```\n  3\n  1 2 3\n  ```\n- 输出：`2.00`",
+    "language": "python",
+    "tags": [
+      "python",
+      "python-basic",
+      "loop"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "sum 与 len",
+        "body": "n = int(input())\nvalues = list(map(int, input().split()))\nprint(f\"{sum(values) / n:.2f}\")\n"
+      },
+      {
+        "label": "循环累加",
+        "body": "n = int(input())\nvalues = input().split()\ntotal = 0\nfor item in values:\n    total += int(item)\nprint(f\"{total / n:.2f}\")\n"
+      }
+    ],
+    "reference_answer": "n = int(input())\nvalues = list(map(int, input().split()))\nprint(f\"{sum(values) / n:.2f}\")\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：程序在 10 个隐藏用例上的通过率。输出格式不符（多空格、多行、提示文字）按未通过计。\n2. AI 轨：从算法思路、边界处理、代码可读性三方面给出 0~100 的连续分。\n   - 本题重点：把输入解析正确、按题目要求的格式逐行输出\n扣分项：硬编码某个输入对应的输出、用异常吞掉错误、把答案写死，AI 轨最高 40 分。\n若 AI 判断与用例通过数明显冲突，必须在总结里说明原因。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "3\n1 2 3",
+        "args": [],
+        "expected_stdout": "2.00\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1\n5",
+        "args": [],
+        "expected_stdout": "5.00\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "4\n10 20 30 40",
+        "args": [],
+        "expected_stdout": "25.00\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2\n-1 1",
+        "args": [],
+        "expected_stdout": "0.00\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "5\n1 1 1 1 1",
+        "args": [],
+        "expected_stdout": "1.00\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2\n0 1",
+        "args": [],
+        "expected_stdout": "0.50\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "6\n2 4 6 8 10 12",
+        "args": [],
+        "expected_stdout": "7.00\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "3\n-5 -5 -5",
+        "args": [],
+        "expected_stdout": "-5.00\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "4\n7 8 9 10",
+        "args": [],
+        "expected_stdout": "8.50\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2\n100 1",
+        "args": [],
+        "expected_stdout": "50.50\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "3\n1 2 4",
+        "args": [],
+        "expected_stdout": "2.33\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "最大值与最小值",
+    "stem_markdown": "# 最大值与最小值\n\n第一行整数 `n`，第二行 `n` 个整数。先输出最大值，再输出最小值，各占一行。\n\n- 输入：\n  ```\n  3\n  5 1 9\n  ```\n- 输出：\n  ```\n  9\n  1\n  ```",
+    "language": "python",
+    "tags": [
+      "python",
+      "python-basic",
+      "list"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "内置函数",
+        "body": "n = int(input())\nvalues = list(map(int, input().split()))\nprint(max(values))\nprint(min(values))\n"
+      },
+      {
+        "label": "单次遍历",
+        "body": "n = int(input())\nvalues = list(map(int, input().split()))\nlargest = values[0]\nsmallest = values[0]\nfor v in values[1:]:\n    if v > largest:\n        largest = v\n    if v < smallest:\n        smallest = v\nprint(largest)\nprint(smallest)\n"
+      }
+    ],
+    "reference_answer": "n = int(input())\nvalues = list(map(int, input().split()))\nprint(max(values))\nprint(min(values))\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：程序在 10 个隐藏用例上的通过率。输出格式不符（多空格、多行、提示文字）按未通过计。\n2. AI 轨：从算法思路、边界处理、代码可读性三方面给出 0~100 的连续分。\n   - 本题重点：把输入解析正确、按题目要求的格式逐行输出\n扣分项：硬编码某个输入对应的输出、用异常吞掉错误、把答案写死，AI 轨最高 40 分。\n若 AI 判断与用例通过数明显冲突，必须在总结里说明原因。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "3\n5 1 9",
+        "args": [],
+        "expected_stdout": "9\n1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1\n7",
+        "args": [],
+        "expected_stdout": "7\n7\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "4\n-1 -2 -3 -4",
+        "args": [],
+        "expected_stdout": "-1\n-4\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "5\n0 0 0 0 0",
+        "args": [],
+        "expected_stdout": "0\n0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2\n10 20",
+        "args": [],
+        "expected_stdout": "20\n10\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "6\n3 3 2 2 1 1",
+        "args": [],
+        "expected_stdout": "3\n1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "3\n100 -100 0",
+        "args": [],
+        "expected_stdout": "100\n-100\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "5\n9 8 7 6 5",
+        "args": [],
+        "expected_stdout": "9\n5\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "4\n2 4 6 8",
+        "args": [],
+        "expected_stdout": "8\n2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2\n-7 7",
+        "args": [],
+        "expected_stdout": "7\n-7\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "3\n11 22 33",
+        "args": [],
+        "expected_stdout": "33\n11\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "统计偶数个数",
+    "stem_markdown": "# 统计偶数个数\n\n第一行整数 `n`，第二行 `n` 个整数。输出其中偶数的个数。\n\n- 输入：\n  ```\n  5\n  1 2 3 4 6\n  ```\n- 输出：`3`",
+    "language": "python",
+    "tags": [
+      "python",
+      "python-basic",
+      "loop"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "生成器求和",
+        "body": "n = int(input())\nvalues = list(map(int, input().split()))\nprint(sum(1 for v in values if v % 2 == 0))\n"
+      },
+      {
+        "label": "循环计数",
+        "body": "n = int(input())\nvalues = list(map(int, input().split()))\ncount = 0\nfor v in values:\n    if v % 2 == 0:\n        count += 1\nprint(count)\n"
+      }
+    ],
+    "reference_answer": "n = int(input())\nvalues = list(map(int, input().split()))\nprint(sum(1 for v in values if v % 2 == 0))\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：程序在 10 个隐藏用例上的通过率。输出格式不符（多空格、多行、提示文字）按未通过计。\n2. AI 轨：从算法思路、边界处理、代码可读性三方面给出 0~100 的连续分。\n   - 本题重点：把输入解析正确、按题目要求的格式逐行输出\n扣分项：硬编码某个输入对应的输出、用异常吞掉错误、把答案写死，AI 轨最高 40 分。\n若 AI 判断与用例通过数明显冲突，必须在总结里说明原因。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "5\n1 2 3 4 6",
+        "args": [],
+        "expected_stdout": "3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "3\n1 3 5",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1\n0",
+        "args": [],
+        "expected_stdout": "1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "4\n2 4 6 8",
+        "args": [],
+        "expected_stdout": "4\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2\n-2 -3",
+        "args": [],
+        "expected_stdout": "1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "6\n7 8 9 10 11 12",
+        "args": [],
+        "expected_stdout": "3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "3\n-1 -2 -3",
+        "args": [],
+        "expected_stdout": "1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "5\n0 0 0 0 0",
+        "args": [],
+        "expected_stdout": "5\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "4\n101 102 103 104",
+        "args": [],
+        "expected_stdout": "2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2\n9 10",
+        "args": [],
+        "expected_stdout": "1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "7\n1 2 3 4 5 6 7",
+        "args": [],
+        "expected_stdout": "3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "字符串反转",
+    "stem_markdown": "# 字符串反转\n\n读入一行字符串（不含空格以外的特殊要求），输出它的反转。\n\n- 输入：`abcdef`\n- 输出：`fedcba`",
+    "language": "python",
+    "tags": [
+      "python",
+      "python-basic",
+      "string"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "切片反转",
+        "body": "s = input()\nprint(s[::-1])\n"
+      },
+      {
+        "label": "reversed + join",
+        "body": "s = input()\nprint(''.join(reversed(s)))\n"
+      }
+    ],
+    "reference_answer": "s = input()\nprint(s[::-1])\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：程序在 10 个隐藏用例上的通过率。输出格式不符（多空格、多行、提示文字）按未通过计。\n2. AI 轨：从算法思路、边界处理、代码可读性三方面给出 0~100 的连续分。\n   - 本题重点：把输入解析正确、按题目要求的格式逐行输出\n扣分项：硬编码某个输入对应的输出、用异常吞掉错误、把答案写死，AI 轨最高 40 分。\n若 AI 判断与用例通过数明显冲突，必须在总结里说明原因。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "abcdef",
+        "args": [],
+        "expected_stdout": "fedcba\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a",
+        "args": [],
+        "expected_stdout": "a\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\n",
+        "args": [],
+        "expected_stdout": "\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "12345",
+        "args": [],
+        "expected_stdout": "54321\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "hello world",
+        "args": [],
+        "expected_stdout": "dlrow olleh\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "AaBb",
+        "args": [],
+        "expected_stdout": "bBaA\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "racecar",
+        "args": [],
+        "expected_stdout": "racecar\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "x y z",
+        "args": [],
+        "expected_stdout": "z y x\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "0123456789",
+        "args": [],
+        "expected_stdout": "9876543210\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "中文测试",
+        "args": [],
+        "expected_stdout": "试测文中\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "ab",
+        "args": [],
+        "expected_stdout": "ba\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "大小写反转",
+    "stem_markdown": "# 大小写反转\n\n读入一行字符串，把小写字母变大写、大写字母变小写，其他字符不变，输出结果。\n\n- 输入：`Abc-Def`\n- 输出：`aBC-dEF`",
+    "language": "python",
+    "tags": [
+      "python",
+      "python-basic",
+      "string"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "swapcase",
+        "body": "print(input().swapcase())\n"
+      },
+      {
+        "label": "逐字符判断",
+        "body": "out = []\nfor ch in input():\n    if ch.islower():\n        out.append(ch.upper())\n    elif ch.isupper():\n        out.append(ch.lower())\n    else:\n        out.append(ch)\nprint(''.join(out))\n"
+      }
+    ],
+    "reference_answer": "print(input().swapcase())\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：程序在 10 个隐藏用例上的通过率。输出格式不符（多空格、多行、提示文字）按未通过计。\n2. AI 轨：从算法思路、边界处理、代码可读性三方面给出 0~100 的连续分。\n   - 本题重点：把输入解析正确、按题目要求的格式逐行输出\n扣分项：硬编码某个输入对应的输出、用异常吞掉错误、把答案写死，AI 轨最高 40 分。\n若 AI 判断与用例通过数明显冲突，必须在总结里说明原因。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "Abc-Def",
+        "args": [],
+        "expected_stdout": "aBC-dEF\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "ABC",
+        "args": [],
+        "expected_stdout": "abc\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "xyz",
+        "args": [],
+        "expected_stdout": "XYZ\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "123",
+        "args": [],
+        "expected_stdout": "123\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "HeLLo World!",
+        "args": [],
+        "expected_stdout": "hEllO wORLD!\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "aA",
+        "args": [],
+        "expected_stdout": "Aa\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\n",
+        "args": [],
+        "expected_stdout": "\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "Mixed CASE 42",
+        "args": [],
+        "expected_stdout": "mIXED case 42\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "中文Abc",
+        "args": [],
+        "expected_stdout": "中文aBC\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "Q",
+        "args": [],
+        "expected_stdout": "q\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "zZ",
+        "args": [],
+        "expected_stdout": "Zz\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "判断回文",
+    "stem_markdown": "# 判断回文\n\n读入一行字符串（只含小写字母与数字），若正读反读相同输出 `yes`，否则输出 `no`。\n\n- 输入：`level`\n- 输出：`yes`",
+    "language": "python",
+    "tags": [
+      "python",
+      "python-basic",
+      "string"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "切片比较",
+        "body": "s = input()\nprint('yes' if s == s[::-1] else 'no')\n"
+      },
+      {
+        "label": "双指针",
+        "body": "s = input()\ni, j = 0, len(s) - 1\nok = True\nwhile i < j:\n    if s[i] != s[j]:\n        ok = False\n        break\n    i += 1\n    j -= 1\nprint('yes' if ok else 'no')\n"
+      }
+    ],
+    "reference_answer": "s = input()\nprint('yes' if s == s[::-1] else 'no')\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：程序在 10 个隐藏用例上的通过率。输出格式不符（多空格、多行、提示文字）按未通过计。\n2. AI 轨：从算法思路、边界处理、代码可读性三方面给出 0~100 的连续分。\n   - 本题重点：把输入解析正确、按题目要求的格式逐行输出\n扣分项：硬编码某个输入对应的输出、用异常吞掉错误、把答案写死，AI 轨最高 40 分。\n若 AI 判断与用例通过数明显冲突，必须在总结里说明原因。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "level",
+        "args": [],
+        "expected_stdout": "yes\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "abc",
+        "args": [],
+        "expected_stdout": "no\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a",
+        "args": [],
+        "expected_stdout": "yes\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\n",
+        "args": [],
+        "expected_stdout": "yes\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "12321",
+        "args": [],
+        "expected_stdout": "yes\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "abba",
+        "args": [],
+        "expected_stdout": "yes\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "ab",
+        "args": [],
+        "expected_stdout": "no\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "racecar",
+        "args": [],
+        "expected_stdout": "yes\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "0",
+        "args": [],
+        "expected_stdout": "yes\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "11",
+        "args": [],
+        "expected_stdout": "yes\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "abcba",
+        "args": [],
+        "expected_stdout": "yes\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "统计每个字符出现的次数",
+    "stem_markdown": "# 统计每个字符出现的次数\n\n读入一行字符串，按字符首次出现的顺序输出 `字符:次数`，每行一个。\n\n- 输入：`aabbc`\n- 输出：\n  ```\n  a:2\n  b:2\n  c:1\n  ```",
+    "language": "python",
+    "tags": [
+      "python",
+      "python-basic",
+      "dict-count"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "字典计数",
+        "body": "counts = {}\nfor ch in input():\n    counts[ch] = counts.get(ch, 0) + 1\nfor ch, n in counts.items():\n    print(f'{ch}:{n}')\n"
+      },
+      {
+        "label": "Counter",
+        "body": "from collections import Counter\nfor ch, n in Counter(input()).items():\n    print(f'{ch}:{n}')\n"
+      }
+    ],
+    "reference_answer": "counts = {}\nfor ch in input():\n    counts[ch] = counts.get(ch, 0) + 1\nfor ch, n in counts.items():\n    print(f'{ch}:{n}')\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：程序在 10 个隐藏用例上的通过率。输出格式不符（多空格、多行、提示文字）按未通过计。\n2. AI 轨：从算法思路、边界处理、代码可读性三方面给出 0~100 的连续分。\n   - 本题重点：把输入解析正确、按题目要求的格式逐行输出\n扣分项：硬编码某个输入对应的输出、用异常吞掉错误、把答案写死，AI 轨最高 40 分。\n若 AI 判断与用例通过数明显冲突，必须在总结里说明原因。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "aabbc",
+        "args": [],
+        "expected_stdout": "a:2\nb:2\nc:1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "abc",
+        "args": [],
+        "expected_stdout": "a:1\nb:1\nc:1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a",
+        "args": [],
+        "expected_stdout": "a:1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\n",
+        "args": [],
+        "expected_stdout": "",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "aa",
+        "args": [],
+        "expected_stdout": "a:2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "abab",
+        "args": [],
+        "expected_stdout": "a:2\nb:2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "xyzxyz",
+        "args": [],
+        "expected_stdout": "x:2\ny:2\nz:2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "111",
+        "args": [],
+        "expected_stdout": "1:3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "hello",
+        "args": [],
+        "expected_stdout": "h:1\ne:1\nl:2\no:1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "abca",
+        "args": [],
+        "expected_stdout": "a:2\nb:1\nc:1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "z",
+        "args": [],
+        "expected_stdout": "z:1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "统计单词个数（按空格切分）",
+    "stem_markdown": "# 统计单词个数\n\n读入一行由单个空格分隔的单词，输出单词个数（空行输出 0）。\n\n- 输入：`i love python`\n- 输出：`3`",
+    "language": "python",
+    "tags": [
+      "python",
+      "python-basic",
+      "string"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "split",
+        "body": "line = input().strip()\nprint(0 if line == '' else len(line.split()))\n"
+      },
+      {
+        "label": "循环计数",
+        "body": "line = input().strip()\nif line == '':\n    print(0)\nelse:\n    count = 1\n    for ch in line:\n        if ch == ' ':\n            count += 1\n    print(count)\n"
+      }
+    ],
+    "reference_answer": "line = input().strip()\nprint(0 if line == '' else len(line.split()))\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：程序在 10 个隐藏用例上的通过率。输出格式不符（多空格、多行、提示文字）按未通过计。\n2. AI 轨：从算法思路、边界处理、代码可读性三方面给出 0~100 的连续分。\n   - 本题重点：把输入解析正确、按题目要求的格式逐行输出\n扣分项：硬编码某个输入对应的输出、用异常吞掉错误、把答案写死，AI 轨最高 40 分。\n若 AI 判断与用例通过数明显冲突，必须在总结里说明原因。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "i love python",
+        "args": [],
+        "expected_stdout": "3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "hello",
+        "args": [],
+        "expected_stdout": "1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\n",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a b c d e",
+        "args": [],
+        "expected_stdout": "5\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "  ",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "one two",
+        "args": [],
+        "expected_stdout": "2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "python is fun",
+        "args": [],
+        "expected_stdout": "3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "x",
+        "args": [],
+        "expected_stdout": "1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "aa bb",
+        "args": [],
+        "expected_stdout": "2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1 2 3",
+        "args": [],
+        "expected_stdout": "3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "the quick brown fox",
+        "args": [],
+        "expected_stdout": "4\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "成绩等级判定",
+    "stem_markdown": "# 成绩等级判定\n\n第一行整数 `n`，第二行 `n` 个成绩（0~100 的整数）。逐个输出等级，每行一个：\n\n- 90 及以上 `A`\n- 80~89 `B`\n- 70~79 `C`\n- 60~69 `D`\n- 60 以下 `E`\n\n输入示例：\n```\n3\n95 85 40\n```\n输出示例：\n```\nA\nB\nE\n```",
+    "language": "python",
+    "tags": [
+      "python",
+      "python-basic",
+      "control-flow"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "if/elif 链",
+        "body": "n = int(input())\nfor score in map(int, input().split()):\n    if score >= 90:\n        print('A')\n    elif score >= 80:\n        print('B')\n    elif score >= 70:\n        print('C')\n    elif score >= 60:\n        print('D')\n    else:\n        print('E')\n"
+      },
+      {
+        "label": "阈值表",
+        "body": "n = int(input())\nbands = ((90, 'A'), (80, 'B'), (70, 'C'), (60, 'D'))\nfor score in map(int, input().split()):\n    for limit, label in bands:\n        if score >= limit:\n            print(label)\n            break\n    else:\n        print('E')\n"
+      }
+    ],
+    "reference_answer": "n = int(input())\nfor score in map(int, input().split()):\n    if score >= 90:\n        print('A')\n    elif score >= 80:\n        print('B')\n    elif score >= 70:\n        print('C')\n    elif score >= 60:\n        print('D')\n    else:\n        print('E')\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：程序在 10 个隐藏用例上的通过率。输出格式不符（多空格、多行、提示文字）按未通过计。\n2. AI 轨：从算法思路、边界处理、代码可读性三方面给出 0~100 的连续分。\n   - 本题重点：把输入解析正确、按题目要求的格式逐行输出\n扣分项：硬编码某个输入对应的输出、用异常吞掉错误、把答案写死，AI 轨最高 40 分。\n若 AI 判断与用例通过数明显冲突，必须在总结里说明原因。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "3\n95 85 40",
+        "args": [],
+        "expected_stdout": "A\nB\nE\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1\n100",
+        "args": [],
+        "expected_stdout": "A\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1\n0",
+        "args": [],
+        "expected_stdout": "E\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "4\n90 89 60 59",
+        "args": [],
+        "expected_stdout": "A\nB\nD\nE\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2\n70 79",
+        "args": [],
+        "expected_stdout": "C\nC\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "5\n61 62 63 64 65",
+        "args": [],
+        "expected_stdout": "D\nD\nD\nD\nD\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1\n88",
+        "args": [],
+        "expected_stdout": "B\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2\n0 100",
+        "args": [],
+        "expected_stdout": "E\nA\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "3\n75 74 76",
+        "args": [],
+        "expected_stdout": "C\nC\nC\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1\n59",
+        "args": [],
+        "expected_stdout": "E\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "6\n91 81 71 61 51 41",
+        "args": [],
+        "expected_stdout": "A\nB\nC\nD\nE\nE\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "阶乘之和（1! 到 n!）",
+    "stem_markdown": "# 阶乘之和\n\n读入整数 `n`（1 ≤ n ≤ 20），输出 `1! + 2! + ... + n!` 的结果。\n\n- 输入：`5`\n- 输出：`153`",
+    "language": "python",
+    "tags": [
+      "python",
+      "python-basic",
+      "loop"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "逐步累乘累加",
+        "body": "n = int(input())\ntotal = 0\nfact = 1\nfor i in range(1, n + 1):\n    fact *= i\n    total += fact\nprint(total)\n"
+      },
+      {
+        "label": "math.factorial",
+        "body": "import math\nn = int(input())\nprint(sum(math.factorial(i) for i in range(1, n + 1)))\n"
+      }
+    ],
+    "reference_answer": "n = int(input())\ntotal = 0\nfact = 1\nfor i in range(1, n + 1):\n    fact *= i\n    total += fact\nprint(total)\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：程序在 10 个隐藏用例上的通过率。输出格式不符（多空格、多行、提示文字）按未通过计。\n2. AI 轨：从算法思路、边界处理、代码可读性三方面给出 0~100 的连续分。\n   - 本题重点：把输入解析正确、按题目要求的格式逐行输出\n扣分项：硬编码某个输入对应的输出、用异常吞掉错误、把答案写死，AI 轨最高 40 分。\n若 AI 判断与用例通过数明显冲突，必须在总结里说明原因。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "5",
+        "args": [],
+        "expected_stdout": "153\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1",
+        "args": [],
+        "expected_stdout": "1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2",
+        "args": [],
+        "expected_stdout": "3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "3",
+        "args": [],
+        "expected_stdout": "9\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "4",
+        "args": [],
+        "expected_stdout": "33\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "6",
+        "args": [],
+        "expected_stdout": "873\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "7",
+        "args": [],
+        "expected_stdout": "5913\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "8",
+        "args": [],
+        "expected_stdout": "46233\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "10",
+        "args": [],
+        "expected_stdout": "4037913\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "12",
+        "args": [],
+        "expected_stdout": "522956313\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "20",
+        "args": [],
+        "expected_stdout": "2561327494111820313\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "斐波那契数列前 n 项",
+    "stem_markdown": "# 斐波那契数列\n\n读入整数 `n`（1 ≤ n ≤ 30），输出斐波那契数列前 `n` 项，用单个空格分隔，末尾不带空格。\n\n数列定义：`F(1)=1, F(2)=1, F(k)=F(k-1)+F(k-2)`。\n\n- 输入：`5`\n- 输出：`1 1 2 3 5`",
+    "language": "python",
+    "tags": [
+      "python",
+      "python-basic",
+      "loop"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "滚动两变量",
+        "body": "n = int(input())\nvalues = []\na, b = 1, 1\nfor _ in range(n):\n    values.append(a)\n    a, b = b, a + b\nprint(' '.join(str(v) for v in values))\n"
+      },
+      {
+        "label": "列表递推",
+        "body": "n = int(input())\nvalues = [1, 1]\nwhile len(values) < n:\n    values.append(values[-1] + values[-2])\nprint(' '.join(str(v) for v in values[:n]))\n"
+      }
+    ],
+    "reference_answer": "n = int(input())\nvalues = []\na, b = 1, 1\nfor _ in range(n):\n    values.append(a)\n    a, b = b, a + b\nprint(' '.join(str(v) for v in values))\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：程序在 10 个隐藏用例上的通过率。输出格式不符（多空格、多行、提示文字）按未通过计。\n2. AI 轨：从算法思路、边界处理、代码可读性三方面给出 0~100 的连续分。\n   - 本题重点：把输入解析正确、按题目要求的格式逐行输出\n扣分项：硬编码某个输入对应的输出、用异常吞掉错误、把答案写死，AI 轨最高 40 分。\n若 AI 判断与用例通过数明显冲突，必须在总结里说明原因。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "5",
+        "args": [],
+        "expected_stdout": "1 1 2 3 5\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1",
+        "args": [],
+        "expected_stdout": "1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2",
+        "args": [],
+        "expected_stdout": "1 1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "3",
+        "args": [],
+        "expected_stdout": "1 1 2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "8",
+        "args": [],
+        "expected_stdout": "1 1 2 3 5 8 13 21\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "10",
+        "args": [],
+        "expected_stdout": "1 1 2 3 5 8 13 21 34 55\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "12",
+        "args": [],
+        "expected_stdout": "1 1 2 3 5 8 13 21 34 55 89 144\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "15",
+        "args": [],
+        "expected_stdout": "1 1 2 3 5 8 13 21 34 55 89 144 233 377 610\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "20",
+        "args": [],
+        "expected_stdout": "1 1 2 3 5 8 13 21 34 55 89 144 233 377 610 987 1597 2584 4181 6765\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "25",
+        "args": [],
+        "expected_stdout": "1 1 2 3 5 8 13 21 34 55 89 144 233 377 610 987 1597 2584 4181 6765 10946 17711 28657 46368 75025\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "30",
+        "args": [],
+        "expected_stdout": "1 1 2 3 5 8 13 21 34 55 89 144 233 377 610 987 1597 2584 4181 6765 10946 17711 28657 46368 75025 121393 196418 317811 514229 832040\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "输出区间内的素数",
+    "stem_markdown": "# 输出区间内的素数\n\n读入两个整数 `a b`（`a ≤ b`，1 ≤ a ≤ 1000），按升序输出 `[a, b]` 内的所有素数，用单个空格分隔；若没有素数则输出 `none`。\n\n- 输入：`10 20`\n- 输出：`11 13 17 19`",
+    "language": "python",
+    "tags": [
+      "python",
+      "python-basic",
+      "number-theory"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "试除法",
+        "body": "import sys\n\ndef is_prime(n):\n    if n < 2:\n        return False\n    d = 2\n    while d * d <= n:\n        if n % d == 0:\n            return False\n        d += 1\n    return True\n\na, b = map(int, input().split())\nresult = [str(n) for n in range(a, b + 1) if is_prime(n)]\nprint(' '.join(result) if result else 'none')\n"
+      },
+      {
+        "label": "筛法",
+        "body": "a, b = map(int, input().split())\nlimit = max(b, 2)\nsieve = [True] * (limit + 1)\nsieve[0] = sieve[1] = False\nfor i in range(2, int(limit ** 0.5) + 1):\n    if sieve[i]:\n        for j in range(i * i, limit + 1, i):\n            sieve[j] = False\nresult = [str(n) for n in range(a, b + 1) if sieve[n]]\nprint(' '.join(result) if result else 'none')\n"
+      }
+    ],
+    "reference_answer": "import sys\n\ndef is_prime(n):\n    if n < 2:\n        return False\n    d = 2\n    while d * d <= n:\n        if n % d == 0:\n            return False\n        d += 1\n    return True\n\na, b = map(int, input().split())\nresult = [str(n) for n in range(a, b + 1) if is_prime(n)]\nprint(' '.join(result) if result else 'none')\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：程序在 10 个隐藏用例上的通过率。输出格式不符（多空格、多行、提示文字）按未通过计。\n2. AI 轨：从算法思路、边界处理、代码可读性三方面给出 0~100 的连续分。\n   - 本题重点：把输入解析正确、按题目要求的格式逐行输出\n扣分项：硬编码某个输入对应的输出、用异常吞掉错误、把答案写死，AI 轨最高 40 分。\n若 AI 判断与用例通过数明显冲突，必须在总结里说明原因。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "10 20",
+        "args": [],
+        "expected_stdout": "11 13 17 19\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1 10",
+        "args": [],
+        "expected_stdout": "2 3 5 7\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2 2",
+        "args": [],
+        "expected_stdout": "2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "4 4",
+        "args": [],
+        "expected_stdout": "none\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1 1",
+        "args": [],
+        "expected_stdout": "none\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "50 60",
+        "args": [],
+        "expected_stdout": "53 59\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "100 120",
+        "args": [],
+        "expected_stdout": "101 103 107 109 113\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "997 1000",
+        "args": [],
+        "expected_stdout": "997\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2 30",
+        "args": [],
+        "expected_stdout": "2 3 5 7 11 13 17 19 23 29\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "14 16",
+        "args": [],
+        "expected_stdout": "none\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "90 100",
+        "args": [],
+        "expected_stdout": "97\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "最大公约数与最小公倍数",
+    "stem_markdown": "# 最大公约数与最小公倍数\n\n读入两个正整数 `a b`，先输出最大公约数，再输出最小公倍数，各占一行。\n\n- 输入：`12 18`\n- 输出：\n  ```\n  6\n  36\n  ```",
+    "language": "python",
+    "tags": [
+      "python",
+      "python-basic",
+      "number-theory"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "欧几里得算法",
+        "body": "a, b = map(int, input().split())\n\nx, y = a, b\nwhile y:\n    x, y = y, x % y\ngcd = x\nprint(gcd)\nprint(a // gcd * b)\n"
+      },
+      {
+        "label": "math.gcd",
+        "body": "import math\n\na, b = map(int, input().split())\ng = math.gcd(a, b)\nprint(g)\nprint(a * b // g)\n"
+      }
+    ],
+    "reference_answer": "a, b = map(int, input().split())\n\nx, y = a, b\nwhile y:\n    x, y = y, x % y\ngcd = x\nprint(gcd)\nprint(a // gcd * b)\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：程序在 10 个隐藏用例上的通过率。输出格式不符（多空格、多行、提示文字）按未通过计。\n2. AI 轨：从算法思路、边界处理、代码可读性三方面给出 0~100 的连续分。\n   - 本题重点：把输入解析正确、按题目要求的格式逐行输出\n扣分项：硬编码某个输入对应的输出、用异常吞掉错误、把答案写死，AI 轨最高 40 分。\n若 AI 判断与用例通过数明显冲突，必须在总结里说明原因。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "12 18",
+        "args": [],
+        "expected_stdout": "6\n36\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1 1",
+        "args": [],
+        "expected_stdout": "1\n1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "7 13",
+        "args": [],
+        "expected_stdout": "1\n91\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "100 75",
+        "args": [],
+        "expected_stdout": "25\n300\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "8 12",
+        "args": [],
+        "expected_stdout": "4\n24\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "0 5",
+        "args": [],
+        "expected_stdout": "5\n0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "17 17",
+        "args": [],
+        "expected_stdout": "17\n17\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "24 36",
+        "args": [],
+        "expected_stdout": "12\n72\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "6 35",
+        "args": [],
+        "expected_stdout": "1\n210\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "50 20",
+        "args": [],
+        "expected_stdout": "10\n100\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "999 333",
+        "args": [],
+        "expected_stdout": "333\n999\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "凯撒密码（字母后移 3 位）",
+    "stem_markdown": "# 凯撒密码\n\n读入一行小写字母与空格，把每个小写字母后移 3 位（`x`→`a`、`y`→`b`、`z`→`c`），空格不变，输出结果。\n\n- 输入：`abc xyz`\n- 输出：`def abc`",
+    "language": "python",
+    "tags": [
+      "python",
+      "python-basic",
+      "string"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "ord/chr",
+        "body": "out = []\nfor ch in input():\n    if 'a' <= ch <= 'z':\n        out.append(chr((ord(ch) - ord('a') + 3) % 26 + ord('a')))\n    else:\n        out.append(ch)\nprint(''.join(out))\n"
+      },
+      {
+        "label": "str.translate",
+        "body": "import string\nshifted = string.ascii_lowercase[3:] + string.ascii_lowercase[:3]\ntable = str.maketrans(string.ascii_lowercase, shifted)\nprint(input().translate(table))\n"
+      }
+    ],
+    "reference_answer": "out = []\nfor ch in input():\n    if 'a' <= ch <= 'z':\n        out.append(chr((ord(ch) - ord('a') + 3) % 26 + ord('a')))\n    else:\n        out.append(ch)\nprint(''.join(out))\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：程序在 10 个隐藏用例上的通过率。输出格式不符（多空格、多行、提示文字）按未通过计。\n2. AI 轨：从算法思路、边界处理、代码可读性三方面给出 0~100 的连续分。\n   - 本题重点：把输入解析正确、按题目要求的格式逐行输出\n扣分项：硬编码某个输入对应的输出、用异常吞掉错误、把答案写死，AI 轨最高 40 分。\n若 AI 判断与用例通过数明显冲突，必须在总结里说明原因。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "abc xyz",
+        "args": [],
+        "expected_stdout": "def abc\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "xyz",
+        "args": [],
+        "expected_stdout": "abc\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\n",
+        "args": [],
+        "expected_stdout": "\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "hello world",
+        "args": [],
+        "expected_stdout": "khoor zruog\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a",
+        "args": [],
+        "expected_stdout": "d\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "z",
+        "args": [],
+        "expected_stdout": "c\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "mn",
+        "args": [],
+        "expected_stdout": "pq\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "attack at dawn",
+        "args": [],
+        "expected_stdout": "dwwdfn dw gdzq\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "q",
+        "args": [],
+        "expected_stdout": "t\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "abcdefghijklmnopqrstuvwxyz",
+        "args": [],
+        "expected_stdout": "defghijklmnopqrstuvwxyzabc\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "zz yy",
+        "args": [],
+        "expected_stdout": "cc bb\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "出现次数最多的单词",
+    "stem_markdown": "# 出现次数最多的单词\n\n读入一行由单个空格分隔的小写单词，输出出现次数最多的那个单词及其次数（`单词 次数`）。\n若并列最多，取**最先出现**的那个。\n\n- 输入：`a b a c b a`\n- 输出：`a 3`",
+    "language": "python",
+    "tags": [
+      "python",
+      "python-basic",
+      "dict-count"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "字典 + 首次顺序",
+        "body": "words = input().split()\ncounts = {}\norder = []\nfor w in words:\n    if w not in counts:\n        counts[w] = 0\n        order.append(w)\n    counts[w] += 1\nbest = order[0]\nfor w in order:\n    if counts[w] > counts[best]:\n        best = w\nprint(best, counts[best])\n"
+      },
+      {
+        "label": "max 保留首位",
+        "body": "words = input().split()\ncounts = {}\nfor w in words:\n    counts[w] = counts.get(w, 0) + 1\nbest = max(counts, key=lambda w: counts[w])\nprint(best, counts[best])\n"
+      }
+    ],
+    "reference_answer": "words = input().split()\ncounts = {}\norder = []\nfor w in words:\n    if w not in counts:\n        counts[w] = 0\n        order.append(w)\n    counts[w] += 1\nbest = order[0]\nfor w in order:\n    if counts[w] > counts[best]:\n        best = w\nprint(best, counts[best])\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：程序在 10 个隐藏用例上的通过率。输出格式不符（多空格、多行、提示文字）按未通过计。\n2. AI 轨：从算法思路、边界处理、代码可读性三方面给出 0~100 的连续分。\n   - 本题重点：把输入解析正确、按题目要求的格式逐行输出\n扣分项：硬编码某个输入对应的输出、用异常吞掉错误、把答案写死，AI 轨最高 40 分。\n若 AI 判断与用例通过数明显冲突，必须在总结里说明原因。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "a b a c b a",
+        "args": [],
+        "expected_stdout": "a 3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "x",
+        "args": [],
+        "expected_stdout": "x 1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a b c",
+        "args": [],
+        "expected_stdout": "a 1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "aa aa bb",
+        "args": [],
+        "expected_stdout": "aa 2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "p q p q",
+        "args": [],
+        "expected_stdout": "p 2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "one",
+        "args": [],
+        "expected_stdout": "one 1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "z y x z",
+        "args": [],
+        "expected_stdout": "z 2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "m m m n",
+        "args": [],
+        "expected_stdout": "m 3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a b b a",
+        "args": [],
+        "expected_stdout": "a 2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "k",
+        "args": [],
+        "expected_stdout": "k 1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "red blue red green blue red",
+        "args": [],
+        "expected_stdout": "red 3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "解析简单的键值对",
+    "stem_markdown": "# 解析简单的键值对\n\n读入一行形如 `k1=v1;k2=v2;...` 的字符串（键值都不含 `;` 和 `=`），按输入顺序输出每行 `键:值`。\n若某一段为空则跳过。\n\n- 输入：`a=1;b=2`\n- 输出：\n  ```\n  a:1\n  b:2\n  ```",
+    "language": "python",
+    "tags": [
+      "python",
+      "python-basic",
+      "string"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "split 两次",
+        "body": "line = input()\nfor part in line.split(';'):\n    if not part:\n        continue\n    key, value = part.split('=', 1)\n    print(f'{key}:{value}')\n"
+      },
+      {
+        "label": "partition",
+        "body": "for part in input().split(';'):\n    if not part:\n        continue\n    key, _, value = part.partition('=')\n    print(key + ':' + value)\n"
+      }
+    ],
+    "reference_answer": "line = input()\nfor part in line.split(';'):\n    if not part:\n        continue\n    key, value = part.split('=', 1)\n    print(f'{key}:{value}')\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：程序在 10 个隐藏用例上的通过率。输出格式不符（多空格、多行、提示文字）按未通过计。\n2. AI 轨：从算法思路、边界处理、代码可读性三方面给出 0~100 的连续分。\n   - 本题重点：把输入解析正确、按题目要求的格式逐行输出\n扣分项：硬编码某个输入对应的输出、用异常吞掉错误、把答案写死，AI 轨最高 40 分。\n若 AI 判断与用例通过数明显冲突，必须在总结里说明原因。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "a=1;b=2",
+        "args": [],
+        "expected_stdout": "a:1\nb:2\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "x=9",
+        "args": [],
+        "expected_stdout": "x:9\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\n",
+        "args": [],
+        "expected_stdout": "",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": ";;a=1;;",
+        "args": [],
+        "expected_stdout": "a:1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "k=v;",
+        "args": [],
+        "expected_stdout": "k:v\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "name=tom;age=12",
+        "args": [],
+        "expected_stdout": "name:tom\nage:12\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a=1;b=2;c=3",
+        "args": [],
+        "expected_stdout": "a:1\nb:2\nc:3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "only=v",
+        "args": [],
+        "expected_stdout": "only:v\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "u=;v=1",
+        "args": [],
+        "expected_stdout": "u:\nv:1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "p=q",
+        "args": [],
+        "expected_stdout": "p:q\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "m=1;n=1",
+        "args": [],
+        "expected_stdout": "m:1\nn:1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "提取字符串中的数字",
+    "stem_markdown": "# 提取字符串中的数字\n\n读入一行字符串，按出现顺序输出其中所有连续数字串，用单个空格分隔；没有数字则输出 `none`。\n\n- 输入：`ab12cd345e`\n- 输出：`12 345`",
+    "language": "python",
+    "tags": [
+      "python",
+      "python-basic",
+      "regex"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "re.findall",
+        "body": "import re\nfound = re.findall(r'\\d+', input())\nprint(' '.join(found) if found else 'none')\n"
+      },
+      {
+        "label": "逐字符扫描",
+        "body": "s = input()\nnums = []\ncurrent = ''\nfor ch in s:\n    if ch.isdigit():\n        current += ch\n    elif current:\n        nums.append(current)\n        current = ''\nif current:\n    nums.append(current)\nprint(' '.join(nums) if nums else 'none')\n"
+      }
+    ],
+    "reference_answer": "import re\nfound = re.findall(r'\\d+', input())\nprint(' '.join(found) if found else 'none')\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：程序在 10 个隐藏用例上的通过率。输出格式不符（多空格、多行、提示文字）按未通过计。\n2. AI 轨：从算法思路、边界处理、代码可读性三方面给出 0~100 的连续分。\n   - 本题重点：把输入解析正确、按题目要求的格式逐行输出\n扣分项：硬编码某个输入对应的输出、用异常吞掉错误、把答案写死，AI 轨最高 40 分。\n若 AI 判断与用例通过数明显冲突，必须在总结里说明原因。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "ab12cd345e",
+        "args": [],
+        "expected_stdout": "12 345\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "123",
+        "args": [],
+        "expected_stdout": "123\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "abc",
+        "args": [],
+        "expected_stdout": "none\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1a2b3c",
+        "args": [],
+        "expected_stdout": "1 2 3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "\n",
+        "args": [],
+        "expected_stdout": "none\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "007bond",
+        "args": [],
+        "expected_stdout": "007\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "x9",
+        "args": [],
+        "expected_stdout": "9\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "a1b22c333",
+        "args": [],
+        "expected_stdout": "1 22 333\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "42",
+        "args": [],
+        "expected_stdout": "42\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "no digits here",
+        "args": [],
+        "expected_stdout": "none\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "9 8 7",
+        "args": [],
+        "expected_stdout": "9 8 7\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "十进制转二进制",
+    "stem_markdown": "# 十进制转二进制\n\n读入一个非负整数 `n`（0 ≤ n ≤ 100000），输出它的二进制表示（不带前缀）。\n\n- 输入：`10`\n- 输出：`1010`",
+    "language": "python",
+    "tags": [
+      "python",
+      "python-basic",
+      "number-base"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "bin 去前缀",
+        "body": "n = int(input())\nprint(bin(n)[2:])\n"
+      },
+      {
+        "label": "除二取余",
+        "body": "n = int(input())\nif n == 0:\n    print('0')\nelse:\n    digits = []\n    while n:\n        digits.append(str(n % 2))\n        n //= 2\n    print(''.join(reversed(digits)))\n"
+      }
+    ],
+    "reference_answer": "n = int(input())\nprint(bin(n)[2:])\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：程序在 10 个隐藏用例上的通过率。输出格式不符（多空格、多行、提示文字）按未通过计。\n2. AI 轨：从算法思路、边界处理、代码可读性三方面给出 0~100 的连续分。\n   - 本题重点：把输入解析正确、按题目要求的格式逐行输出\n扣分项：硬编码某个输入对应的输出、用异常吞掉错误、把答案写死，AI 轨最高 40 分。\n若 AI 判断与用例通过数明显冲突，必须在总结里说明原因。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "10",
+        "args": [],
+        "expected_stdout": "1010\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "0",
+        "args": [],
+        "expected_stdout": "0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1",
+        "args": [],
+        "expected_stdout": "1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2",
+        "args": [],
+        "expected_stdout": "10\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "255",
+        "args": [],
+        "expected_stdout": "11111111\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1024",
+        "args": [],
+        "expected_stdout": "10000000000\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "100000",
+        "args": [],
+        "expected_stdout": "11000011010100000\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "7",
+        "args": [],
+        "expected_stdout": "111\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "64",
+        "args": [],
+        "expected_stdout": "1000000\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "999",
+        "args": [],
+        "expected_stdout": "1111100111\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "31",
+        "args": [],
+        "expected_stdout": "11111\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  },
+  {
+    "title": "按数值降序排序",
+    "stem_markdown": "# 按数值降序排序\n\n第一行整数 `n`，第二行 `n` 个整数。按数值从大到小输出，用单个空格分隔。\n\n- 输入：\n  ```\n  4\n  3 1 4 2\n  ```\n- 输出：`4 3 2 1`",
+    "language": "python",
+    "tags": [
+      "python",
+      "python-basic",
+      "sorting"
+    ],
+    "adapter": {
+      "kind": "stdin",
+      "args": [],
+      "stdin": null,
+      "expect_exit_code": 0,
+      "comparison": {
+        "stdout": "ignore_trailing_whitespace",
+        "stderr": "ignored",
+        "numeric_tolerance": null
+      }
+    },
+    "reference_answers": [
+      {
+        "label": "sorted + reverse",
+        "body": "n = int(input())\nvalues = list(map(int, input().split()))\nprint(' '.join(str(v) for v in sorted(values, reverse=True)))\n"
+      },
+      {
+        "label": "sort 原地",
+        "body": "n = int(input())\nvalues = list(map(int, input().split()))\nvalues.sort(reverse=True)\nprint(' '.join(map(str, values)))\n"
+      }
+    ],
+    "reference_answer": "n = int(input())\nvalues = list(map(int, input().split()))\nprint(' '.join(str(v) for v in sorted(values, reverse=True)))\n",
+    "grading_prompt": "权重：用例 60% + AI 40%\n\n评分细则（总分 100，由两条轨按上面的权重合成）：\n1. 用例轨：程序在 10 个隐藏用例上的通过率。输出格式不符（多空格、多行、提示文字）按未通过计。\n2. AI 轨：从算法思路、边界处理、代码可读性三方面给出 0~100 的连续分。\n   - 本题重点：把输入解析正确、按题目要求的格式逐行输出\n扣分项：硬编码某个输入对应的输出、用异常吞掉错误、把答案写死，AI 轨最高 40 分。\n若 AI 判断与用例通过数明显冲突，必须在总结里说明原因。",
+    "execution": {
+      "mode": "per_case"
+    },
+    "cases": [
+      {
+        "name": "公开示例",
+        "ordinal": 0,
+        "weight": 1,
+        "visible_to_student": true,
+        "stdin": "4\n3 1 4 2",
+        "args": [],
+        "expected_stdout": "4 3 2 1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 1",
+        "ordinal": 1,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "1\n5",
+        "args": [],
+        "expected_stdout": "5\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 2",
+        "ordinal": 2,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "3\n-1 -2 -3",
+        "args": [],
+        "expected_stdout": "-1 -2 -3\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 3",
+        "ordinal": 3,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "5\n5 5 5 5 5",
+        "args": [],
+        "expected_stdout": "5 5 5 5 5\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 4",
+        "ordinal": 4,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2\n10 1",
+        "args": [],
+        "expected_stdout": "10 1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 5",
+        "ordinal": 5,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "6\n0 9 8 7 6 5",
+        "args": [],
+        "expected_stdout": "9 8 7 6 5 0\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 6",
+        "ordinal": 6,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "4\n100 -100 0 50",
+        "args": [],
+        "expected_stdout": "100 50 0 -100\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 7",
+        "ordinal": 7,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "3\n2 2 1",
+        "args": [],
+        "expected_stdout": "2 2 1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 8",
+        "ordinal": 8,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "7\n11 12 13 14 15 16 17",
+        "args": [],
+        "expected_stdout": "17 16 15 14 13 12 11\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 9",
+        "ordinal": 9,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "2\n-5 5",
+        "args": [],
+        "expected_stdout": "5 -5\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      },
+      {
+        "name": "隐藏用例 10",
+        "ordinal": 10,
+        "weight": 1,
+        "visible_to_student": false,
+        "stdin": "8\n8 7 6 5 4 3 2 1",
+        "args": [],
+        "expected_stdout": "8 7 6 5 4 3 2 1\n",
+        "expected_stderr": null,
+        "expected_exit_code": 0
+      }
+    ]
+  }
+]
