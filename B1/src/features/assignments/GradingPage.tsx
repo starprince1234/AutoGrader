@@ -37,6 +37,7 @@ import { useAssignmentNotifications } from "./useAssignmentNotifications";
 import { useRosterSummary } from "../../api/directory";
 import { useAssignment } from "./useAssignments";
 import { useAssignmentProgress, type StudentProgress } from "./useAssignmentProgress";
+import { useSubmissionHistory } from "../grades/useSubmissionHistory";
 import type { GradeRow } from "../../api/types";
 
 /** 状态枚举 → 文案键：模板字符串拼出来的键不受 `t()` 的类型约束，容易写错。 */
@@ -193,6 +194,14 @@ export function GradingPage({
     studentId === null
       ? null
       : (progress.rows.find((row) => row.studentId === studentId) ?? null);
+
+  // 教师侧的历史同理：按 (作业, 题目, 该学生) 查询并翻到末页。
+  const gradingHistory = useSubmissionHistory({
+    courseId: assignment?.course_id ?? null,
+    assignmentId: assignment?.assignment_id ?? null,
+    questionVersionId: historyQuestion,
+    studentId: selectedStudent?.studentId ?? null,
+  });
 
   // 选中学生/题目后默认展开当前题：折叠只是让「多题作业」不一次铺满，不该多一次点击才能看答案。
   useEffect(() => {
@@ -558,13 +567,25 @@ export function GradingPage({
                             onClose={() => setHistoryQuestion(null)}
                           >
                             <div className="stack">
-                              {attempts.length === 0 ? (
+                              {gradingHistory.isPending ? (
+                                <Spinner />
+                              ) : null}
+                              <p className="muted" data-testid="grading-history-count">
+                                {gradingHistory.complete
+                                  ? t("grading.historyTotal", {
+                                      count: gradingHistory.rows.length,
+                                    })
+                                  : t("grading.historyPartial", {
+                                      count: gradingHistory.rows.length,
+                                    })}
+                              </p>
+                              {gradingHistory.rows.length === 0 ? (
                                 <p className="muted">{t("grading.historyEmpty")}</p>
                               ) : (
                                 <Table<GradeRow>
                                   testId="grading-history-table"
                                   label={t("grading.historyTitle")}
-                                  rows={attempts}
+                                  rows={gradingHistory.rows}
                                   getRowKey={(row) => row.submission_id}
                                   columns={[
                                     {

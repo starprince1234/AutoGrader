@@ -60,6 +60,7 @@ import {
   useEvaluationRunId,
 } from "./useSubmission";
 import { useSubmissionFileText } from "./useSubmissionFile";
+import { useSubmissionHistory } from "../grades/useSubmissionHistory";
 import {
   answerFileName,
   buildSubmissionEnvelope,
@@ -376,13 +377,14 @@ export function AssignmentWorkspace({
     state: string;
     isPass: boolean | null;
   } | null>(null);
-  const historyRows = useMemo(
-    () =>
-      (progress.gradeRows ?? []).filter(
-        (row) => row.question_version_id === selectedVersionId,
-      ),
-    [progress.gradeRows, selectedVersionId],
-  );
+  // 历史要"全部"：按 (作业, 题目, 本人) 精确查询并翻到末页，而不是从受分页上限约束的成绩行里筛。
+  const history = useSubmissionHistory({
+    courseId,
+    assignmentId: assignment.assignment_id,
+    questionVersionId: selectedVersionId,
+    studentId: ownerId,
+  });
+  const historyRows = history.rows;
   const historyFile = useSubmissionFileText(
     historyPick?.submissionId ?? null,
     answerFileName(currentOrdinal),
@@ -695,6 +697,13 @@ export function AssignmentWorkspace({
             onClose={() => setHistoryOpen(false)}
           >
             <div className="stack">
+              <p className="muted" data-testid="workspace-history-count">
+                {history.isPending
+                  ? t("common.loading")
+                  : history.complete
+                    ? t("workspace.historyTotal", { count: historyRows.length })
+                    : t("workspace.historyPartial", { count: historyRows.length })}
+              </p>
               {historyRows.length === 0 ? (
                 <p className="muted">{t("workspace.historyEmpty")}</p>
               ) : (
