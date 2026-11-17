@@ -89,13 +89,18 @@ export function useUpdateQuestionDraft() {
       questionId: string;
       input: QuestionDraftInput;
       asNewVersion: boolean;
+      /** 另存为新版本时要把题目移到哪门课（换课程）。不传=不改归属。 */
+      courseId?: string | null;
     }): Promise<QuestionPublic> => {
       const requestId = newRequestId();
       const question = await apiRequest<QuestionPublic>(
         `/api/v1/questions/${encodeURIComponent(args.questionId)}`,
         {
           method: "PATCH",
-          query: args.asNewVersion ? { as_new_version: true } : undefined,
+          query: {
+            ...(args.asNewVersion ? { as_new_version: true } : {}),
+            ...(args.courseId ? { course_id: args.courseId } : {}),
+          },
           body: args.input,
           requestId,
         },
@@ -109,6 +114,7 @@ export function useUpdateQuestionDraft() {
         version: newest?.version ?? null,
         status: question.status,
         as_new_version: args.asNewVersion,
+        course_id: question.course_id,
       });
       return question;
     },

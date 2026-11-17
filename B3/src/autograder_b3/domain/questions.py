@@ -539,6 +539,7 @@ def update_question(
     question_id: uuid.UUID,
     payload: QuestionDraftInputModel,
     as_new_version: bool = False,
+    target_course_id: uuid.UUID | None = None,
     revision_note_supplied: bool | None = None,
     cases_supplied: bool | None = None,
     execution_supplied: bool | None = None,
@@ -583,6 +584,17 @@ def update_question(
             raise NotFound("question not found")
         actor = require_course_write(principal, question.course_id)
 
+        # 换课程：题目归属是题目的身份，不是版本内容，所以只在「另存为新版本」时允许，避免一次
+        # 原地草稿编辑把题目悄悄搬到另一门课。目标课程单独要写权限（源课程已在上面校验过）。
+        moving_course = target_course_id is not None and target_course_id != question.course_id
+        if moving_course:
+            if not as_new_version:
+                raise ImmutableVersionConflict(
+                    "changing a question's course rewrites where it belongs; resubmit with "
+                    "as_new_version=true so the move is recorded as a new version"
+                )
+            require_course_write(principal, target_course_id)
+
         latest = bank.latest_version(question_id)
         if latest is None:  # pragma: no cover - every question has a version
             raise NotFound("question has no version")
@@ -592,6 +604,9 @@ def update_question(
         #: The content a new version inherits an omitted protected field from. ``None`` for an
         #: in-place edit, where the version's own rows are simply left alone.
         inherited: VersionContent | None = None
+        if moving_course:
+            bank.move_question(session, question, target_course_id)
+
         if latest.status in ("published", "archived"):
             if not as_new_version:
                 raise ImmutableVersionConflict(

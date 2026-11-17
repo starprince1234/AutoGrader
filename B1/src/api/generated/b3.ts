@@ -2482,6 +2482,14 @@ export interface operations {
                  *     opposite behaviour for a published version.
                  */
                 as_new_version?: boolean;
+                /**
+                 * @description Move the question into this course while branching a new version (the authoring
+                 *     page's course selector). Only accepted together with `as_new_version=true`: the
+                 *     question's course is part of its identity, so a silent in-place move during a draft
+                 *     edit is refused with `409`. The caller needs write scope on **both** the current
+                 *     course and this one; otherwise `403`.
+                 */
+                course_id?: components["schemas"]["Uuid"];
             };
             header?: never;
             path: {

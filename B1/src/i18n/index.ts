@@ -161,6 +161,8 @@ export const messages = {
     // 可选筛选器的空选项：这里是"不加这个筛选条件"，不是"未指派"。
 "common.any": "（不限）",
     // 必选下拉的占位：用户必须先选一个才能继续。
+"common.searchOptions": "输入以筛选",
+"common.noMatchOptions": "没有匹配项",
 "common.selectPrompt": "请选择…",
 
     // 未匹配的站内地址：不渲染路由器默认的英文调试页。

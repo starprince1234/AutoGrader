@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AutoGrader B3 Question Bank API
-  version: 0.39.0
+  version: 0.40.0
   description: |
     Question bank: stems with graphics, reference answers, immutable question
     versions, assignments, three test-suite adapters and de-identified statistics.
@@ -197,6 +197,16 @@ paths:
             contract, so a client could not discover it and an API client generated from
             this file could not use it at all -- while the summary above promised the
             opposite behaviour for a published version.
+        - name: course_id
+          in: query
+          required: false
+          schema: {$ref: './common.yaml#/components/schemas/Uuid'}
+          description: |
+            Move the question into this course while branching a new version (the authoring
+            page's course selector). Only accepted together with `as_new_version=true`: the
+            question's course is part of its identity, so a silent in-place move during a draft
+            edit is refused with `409`. The caller needs write scope on **both** the current
+            course and this one; otherwise `403`.
       requestBody:
         required: true
         content:

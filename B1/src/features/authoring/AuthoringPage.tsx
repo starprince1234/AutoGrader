@@ -164,8 +164,8 @@ export function AuthoringPage({
   const parsed = parseTags(form.tags);
   const dirty = useMemo(() => isDirty(form, baseline), [form, baseline]);
   // 教师读"哪门课"，不是内部编号：能查到就显示代码与名称，查不到留白。
-  const currentCourse = courseOptions.find((course) => course.course_id === courseId);
-  const courseLabel = currentCourse ? `${currentCourse.course_code} · ${currentCourse.title}` : "—";
+  // 原题（另存为新版本时的源）的课程：只用来判断下拉里是否真的换了课程。
+  const originalCourseId = question.data?.course_id ?? "";
 
   // 浏览器级离开提示：只对"表单已改动"的页面生效，且只在真正可能丢失内容时出现。
   useEffect(() => {
@@ -257,6 +257,9 @@ export function AuthoringPage({
         questionId: targetQuestionId,
         input: build.input,
         asNewVersion,
+        // 另存为新版本时可以换课程；课程没变就不发，避免把题目"搬"一次。
+        courseId:
+          asNewVersion && courseId !== "" && courseId !== originalCourseId ? courseId : null,
       });
       const versionId = result.versions?.[0]?.question_version_id ?? null;
       if (alsoPublish && versionId) {
@@ -471,26 +474,24 @@ export function AuthoringPage({
           {step === "basic" ? (
             <Panel title={stepDefinition.label()} testId="step-basic">
               <div className="form-grid">
-                {questionId === null ? (
-                  <Field label={t("authoring.course")} htmlFor="authoring-course">
-                    <Select
-                      id="authoring-course"
-                      value={courseId}
-                      onChange={(event) => setCourseId(event.target.value)}
-                    >
-                      <option value="">{t("common.selectPrompt")}</option>
-                      {courseOptions.map((course) => (
-                        <option key={course.course_id} value={course.course_id}>
-                          {formatCourseLabel(course)}
-                        </option>
-                      ))}
-                    </Select>
-                  </Field>
-                ) : (
-                  <Field label={t("authoring.course")} htmlFor="authoring-course-readonly">
-                    <input id="authoring-course-readonly" value={courseLabel} readOnly />
-                  </Field>
-                )}
+                {/* 新建与「另存为新版本」用**同一个**可搜索下拉：改归属走
+                    `PATCH …?as_new_version=true&course_id=…`（B3 需要源课程与目标课程的写权限）。 */}
+                <Field label={t("authoring.course")} htmlFor="authoring-course">
+                  <Select
+                    id="authoring-course"
+                    data-testid="authoring-course"
+                    searchable
+                    value={courseId}
+                    onChange={(event) => setCourseId(event.target.value)}
+                  >
+                    <option value="">{t("common.selectPrompt")}</option>
+                    {courseOptions.map((course) => (
+                      <option key={course.course_id} value={course.course_id}>
+                        {formatCourseLabel(course)}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
                 <Field label={t("authoring.title")} htmlFor="authoring-title">
                   <input
                     id="authoring-title"

@@ -2371,6 +2371,30 @@ samp {
   }
 }
 
+/* 可搜索的下拉：菜单顶部的筛选框（课程这类长清单用）。 */
+.combo__filter-row {
+  padding: 0 0 6px;
+}
+.combo__filter {
+  width: 100%;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  font-size: 13.5px;
+}
+.combo__filter:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-soft, rgba(99, 102, 241, 0.18));
+}
+.combo__empty {
+  padding: 8px 10px;
+  font-size: 13.5px;
+}
 .combo__option {
   display: block;
   width: 100%;
