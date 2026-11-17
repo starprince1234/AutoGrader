@@ -99,25 +99,14 @@ export function AuthoringEditRoute() {
 
 export function GradesRoute() {
   const { evaluation_run_id } = useSearch({ from: "/grades" });
-  const navigate = useNavigate();
-  const setRun = (runId: string | null) => {
-    // 打开/关闭「查看详细」只改查询参数（`replace`：不该为一份报告堆历史记录）。
-    // 滚动位置必须保住：用户明确报过"点查看详细就跳回最上方，多次查看很麻烦"。
-    // 双重保护：路由不重置滚动 + 导航结束后若位置变了就还原（布局在同帧内变化的兜底）。
-    const top = typeof window === "undefined" ? 0 : window.scrollY;
-    void navigate({
-      to: "/grades",
-      search: { evaluation_run_id: runId ?? undefined },
-      replace: true,
-      resetScroll: false,
-    }).then(() => {
-      if (typeof window === "undefined") return;
-      if (Math.abs(window.scrollY - top) > 1) window.scrollTo({ top });
-    });
-  };
+  // 「查看详细」是弹窗，不是一次路由跳转：打开/关闭**不再改 URL**。
+  //
+  // 曾经用 navigate({search:{evaluation_run_id}}) 同步 URL，结果每次关闭都触发一次导航，
+  // 浏览器/路由在导航后重设滚动，页面跳回顶部（用户报了两次）。深链仍然有效：
+  // 从「查看提交」带 ?evaluation_run_id= 进来时，initialRunId 会在挂载时打开那份报告。
   return (
     <RequireAuth>
-      <GradesPage initialRunId={evaluation_run_id ?? null} onRunChange={setRun} />
+      <GradesPage initialRunId={evaluation_run_id ?? null} />
     </RequireAuth>
   );
 }
