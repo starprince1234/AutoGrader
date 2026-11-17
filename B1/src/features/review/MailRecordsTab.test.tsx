@@ -69,6 +69,8 @@ function routesFor(options: {
   roles?: ("teacher" | "admin")[];
   scope?: { course_id: string; section_id?: string }[];
   mailRespond?: () => Response;
+  rejectRespond?: () => Response;
+  dismissRespond?: () => Response;
   courses?: ReturnType<typeof courseSummary>[];
   assignments?: ReturnType<typeof assignmentPublic>[];
 }): StubbedRoute[] {
@@ -108,6 +110,18 @@ function routesFor(options: {
       method: "GET",
       path: ASSIGNMENTS,
       respond: () => jsonResponse(assignmentPage(options.assignments ?? [])),
+    },
+    {
+      method: "POST",
+      path: `/api/v1/intake/quarantines/${UUID_C}/reject`,
+      respond: () =>
+        options.rejectRespond?.() ??
+        jsonResponse({ record: {}, notification: "queued" }),
+    },
+    {
+      method: "POST",
+      path: `/api/v1/intake/quarantines/${UUID_C}/dismiss`,
+      respond: () => options.dismissRespond?.() ?? jsonResponse({}),
     },
   ];
 }
@@ -238,7 +252,7 @@ describe("/review 邮件记录（只读）", () => {
     expect(within(table).queryByTestId(`review-view-assignment-${UUID_C}`)).toBeNull();
   });
 
-  it("待处理行显示原因的中文说明，不显示英文原因码或处置按钮", async () => {
+  it("待处理行显示原因的中文说明，不显示英文原因码；旧入口已移除", async () => {
     const row = mailRecordView({
       record_id: UUID_C,
       reason_code: "email_verification_expired",
@@ -252,13 +266,98 @@ describe("/review 邮件记录（只读）", () => {
       "核验码已过期，提交没有列入作业",
     );
     expect(within(table).queryByText("email_verification_expired")).toBeNull();
-    // 本页只读：旧的归属/暂存/作废/打回/详情入口全部不存在。
+    // 旧的复核页入口仍不存在；本页只提供打回/作废两个动作。
     expect(screen.queryByTestId(`review-mail-resolve-${UUID_C}`)).toBeNull();
     expect(screen.queryByTestId(`review-mail-hold-${UUID_C}`)).toBeNull();
     expect(screen.queryByTestId(`review-mail-dismiss-${UUID_C}`)).toBeNull();
     expect(screen.queryByTestId(`review-mail-reject-${UUID_C}`)).toBeNull();
     expect(screen.queryByTestId(`review-mail-detail-${UUID_C}`)).toBeNull();
     expect(screen.queryByTestId("review-mail-detail-drawer")).toBeNull();
+    // 待处理行必须能处理：打回 + 标记作废。
+    expect(within(table).getByTestId(`review-record-reject-${UUID_C}`)).toBeInTheDocument();
+    expect(within(table).getByTestId(`review-record-dismiss-${UUID_C}`)).toBeInTheDocument();
+  });
+
+  it("打回待处理记录：确认后 POST 打回，通知结果如实显示", async () => {
+    const user = userEvent.setup();
+    const row = mailRecordView({
+      record_id: UUID_C,
+      category: "pending",
+      reason_code: "no_attachments",
+    });
+    stub = installFetchStub(routesFor({ rows: [row] }));
+    await signIn("teacher1", "pw");
+    renderTab(MAIL_PATH);
+
+    await user.click(await screen.findByTestId(`review-record-reject-${UUID_C}`));
+    await user.type(screen.getByTestId("review-record-note"), "没有按格式提交");
+    await user.click(screen.getByTestId("review-record-confirm"));
+
+    await waitFor(() => {
+      const posted = (stub?.requests ?? []).find(
+        (item) => item.method === "POST" && item.url.pathname.endsWith("/reject"),
+      );
+      expect(posted).toBeDefined();
+      expect(posted!.body).toEqual({ note: "没有按格式提交" });
+    });
+    expect(await screen.findByTestId("review-records-success")).toHaveTextContent(
+      "已打回，失败通知已交给投递",
+    );
+  });
+
+  it("打回时通知没发出去：提示不假装成已送达", async () => {
+    const user = userEvent.setup();
+    const row = mailRecordView({ record_id: UUID_C, category: "pending" });
+    stub = installFetchStub(
+      routesFor({
+        rows: [row],
+        rejectRespond: () => jsonResponse({ record: {}, notification: "unavailable" }),
+      }),
+    );
+    await signIn("teacher1", "pw");
+    renderTab(MAIL_PATH);
+
+    await user.click(await screen.findByTestId(`review-record-reject-${UUID_C}`));
+    await user.click(screen.getByTestId("review-record-confirm"));
+    expect(await screen.findByTestId("review-records-success")).toHaveTextContent(
+      "已打回，但通知没有发出去",
+    );
+  });
+
+  it("标记作废待处理记录：POST 作废并提示，不涉及通知", async () => {
+    const user = userEvent.setup();
+    const row = mailRecordView({ record_id: UUID_C, category: "pending" });
+    stub = installFetchStub(routesFor({ rows: [row] }));
+    await signIn("teacher1", "pw");
+    renderTab(MAIL_PATH);
+
+    await user.click(await screen.findByTestId(`review-record-dismiss-${UUID_C}`));
+    await user.click(screen.getByTestId("review-record-confirm"));
+    await waitFor(() => {
+      const posted = (stub?.requests ?? []).find(
+        (item) => item.method === "POST" && item.url.pathname.endsWith("/dismiss"),
+      );
+      expect(posted).toBeDefined();
+      expect(posted!.body).toEqual({ note: null });
+    });
+    expect(await screen.findByTestId("review-records-success")).toHaveTextContent("邮件已作废");
+  });
+
+  it("已处理行不提供处置动作（那是已经落库的提交）", async () => {
+    const row = mailRecordView({
+      record_id: UUID_C,
+      category: "processed",
+      assignment_id: UUID_A,
+      student_id: UUID_D,
+    });
+    stub = installFetchStub(routesFor({ rows: [row] }));
+    await signIn("teacher1", "pw");
+    renderTab({ ...MAIL_PATH, status: "processed" });
+
+    // 三个标签的内容都在 DOM 里，因此按面板定位「已处理」这一栏。
+    const panel = await screen.findByTestId("review-records-panel-processed");
+    expect(within(panel).queryByTestId(`review-record-reject-${UUID_C}`)).toBeNull();
+    expect(within(panel).queryByTestId(`review-record-dismiss-${UUID_C}`)).toBeNull();
   });
 
   it("403 显示权限说明而不是空列表", async () => {

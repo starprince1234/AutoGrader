@@ -101,7 +101,13 @@ export function GradesRoute() {
   const { evaluation_run_id } = useSearch({ from: "/grades" });
   const navigate = useNavigate();
   const setRun = (runId: string | null) => {
-    void navigate({ to: "/grades", search: { evaluation_run_id: runId ?? undefined } });
+    // 打开/关闭"查看详细"只改查询参数：**不要**把页面滚回顶部，否则每次看下一份报告
+    // 都要重新找刚才那一行（用户明确报过这个 bug）。
+    void navigate({
+      to: "/grades",
+      search: { evaluation_run_id: runId ?? undefined },
+      resetScroll: false,
+    });
   };
   return (
     <RequireAuth>
