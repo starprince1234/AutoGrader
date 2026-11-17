@@ -15,6 +15,7 @@
 | `GET /api/v1/intake/quarantines` | 隔离区列表（`CHG-0014`）：教师能重新找到"没能变成提交"的邮件 | 是（JWT） | 教师/助教/管理员；staff 只返回**记录 scope 被令牌作用域覆盖**的行（NULL scope 仅管理员可见） | 已实现（`tests/test_intake_api.py`；见第 1d 节） |
 | `POST /api/v1/intake/quarantines/{intake_quarantine_id}/resolve` | 人工归属一条隔离记录（`CHG-0014`；写处理人/时间） | 是（JWT） | 同左；**行锁内**重查记录 scope：staff 对无 scope/跨课记录 403，管理员可处置未关联行 | 已实现（同上） |
 | `POST /api/v1/intake/quarantines/{intake_quarantine_id}/dismiss` | 驳回一条隔离记录（不归属学生；任何原因码都可） | 是（JWT） | 同左；行锁内重查 scope；已归属/已驳回 ⇒ 409 | 已实现（`0.23.0`，同上） |
+| `GET /api/v1/intake/mail-records` | 教师端「邮件记录」三态视图（契约 0.39.0）：已处理 / 待处理 / 其他 | 是（JWT） | 教师/助教/管理员，且 staff 令牌必须携带至少一个课程作用域；行级 `(course, section)` 作用域与隔离列表同语义（NULL 课程归属仅管理员可见） | 已实现（`tests/test_intake_api.py`；见第 1g 节） |
 | `POST /api/v1/reference-verifications` | 在沙箱执行参考解答并逐用例比对（`CHG-0019`；发布门禁的执行入口） | 是（JWT） | 教师/助教/管理员且令牌携带课程作用域（**按题目的课程判定做不到，见缺口 ⑦**） | 已实现（`tests/test_reference_verification.py`；见第 1f 节） |
 
 补充（受 `module.yaml` routes 前缀 `/api/v1/evaluation-runs` 覆盖，契约已锁定，详见 `../../../MAIN/contracts/openapi/b2.yaml` 与 [../../../MAIN/docs/workstreams/B2.md](../../../MAIN/docs/workstreams/B2.md) 第 4 节）：
@@ -228,6 +229,41 @@ B2 侧的四条纪律（每条都有测试，见 [../testing/cases.md](../testin
 | ⑧ | `CHG-0019` §7.2/7.3 的"验证草稿 → 存证 → `publish` 成功" | B3 的 `GET .../evaluation-package` 对**草稿**返回 `409`（`B3/domain/packages.py` 只在版本已发布时编译包，且 `load_published_snapshot` 要求 `published_at`），而 B3 的 `recordReferenceAttestation` **只接受草稿**（`status != draft` 即 409/422）。两者相遇时"验证草稿"拿不到用例与比较策略 ⇒ **发布门禁的出题闭环在当前 B3 上仍不成立**。本实现把草稿的 `409` 如实映射成 `422` 并给出指明原因的 `detail`，**不**假装成功；修复属 B3 侧（让草稿也能取到执行输入），已上报 |
 
 
+## 1g. 邮件记录三态（契约 0.39.0）
+
+教师端原来的"邮件提交记录"是隔离区列表 + 人工处置状态的混合体：19 个原因码与
+resolved/held/打回/作废/归属状态混在一起，教师看不出"这封邮件到底变成作业了没有"。
+0.39.0 把该功能明确成**查看邮件记录**，只要三种状态，且三态**互斥并覆盖全部记录**：
+
+| 状态 | 含义 | 数据来源 |
+|---|---|---|
+| `processed`（已处理） | 邮件携带有效一次性核验码并被接受，已经变成（或正在变成）作业提交；`assignment_id` + `student_id` 就是教师从作业界面点进去的钥匙 | `b2.email_verifications` |
+| `pending`（待处理） | 是学生的真实提交尝试，但没列入作业。判据：①正文五行机器格式校验通过（作业编号与挑战一致；发件人恰为挑战所有者时姓名/学号与账号一致）；**或**②发件地址属于已注册账号（即使正文格式不对） | `b2.intake_quarantines` 的分类事实列 |
+| `other`（其他） | 剩余全部：广告垃圾、无核验码/未知码、正文格式不合格（且发件人未注册）、报文/附件闸门拒绝 | 同上 |
+
+| 方法 + 路径 | 语义 | 认证 / 角色 | 边界与取舍 |
+|---|---|---|---|
+| `GET /api/v1/intake/mail-records` | 按 `category=processed|pending|other` 分页列出调用者可见的邮件记录（时间倒序），可按 `course_id`/`section_id`/`cursor`/`limit` 过滤；视图为 `MailRecordView`（主题头、收件时间、三态、课程归属、能证明的作业/学生、原因码） | 是（JWT）；教师/助教/管理员，且 staff 令牌必须携带至少一个课程作用域 | `category` **必填**（缺失/非法 ⇒ 422，不静默列全部）；行级谓词先于排序/limit/游标；`course_id/section_id` 只缩小范围，staff 越界 ⇒ 403；NULL 课程归属的行仅管理员可见；响应不含正文/附件内容/发件地址 |
+
+**分类事实为什么必须写在收件时**：邮件正文与附件原文不落库（平台有意不做第二个邮件仓库），
+事后无法从内容重算"这是不是真实提交尝试"。迁移 `20261117_0024` 给 `b2.intake_quarantines`
+加了 `format_valid` / `sender_associated` / `assignment_id` / `student_id` 四个可空列，收件链路
+（`intake.imap`）在**消费/拒绝之前**独立算出它们并随记录写入：核验码过期时"正文格式正确"仍是
+事实，不会因为先被 `consume` 拒绝而丢失。每封解析成功的邮件只解析一次发件账号、只定位一次
+挑战；B4 身份目录故障仍让本轮拉取失败重试（绝不记成"发件人未注册"）。
+
+**历史行怎么归类**：分类列出现之前写入的行两列皆 NULL。失败阶段可推断正文已通过的两种原因码
+（`email_verification_expired`、`attachment_mapping_invalid`）归 `pending`；其余历史行归
+`other`。这是契约明文写下的历史归类规则；消费方把 `category` 当作服务端的答案，不重算。
+
+**隐私**：响应只有主题头（有界、可打印、≤200 字）、时间、三态、课程归属、能证明的作业/学生
+标识与原因码。不返回正文、附件内容、发件地址，也不返回任何提交答案。`assignment_id`/`student_id`
+只用于让教师从作业界面打开提交，**绝不作授权依据**（授权只看行级 `(course, section)` 归属）。
+
+**与隔离区的分工**：隔离区仍是人工复核（归属/作废/暂存/打回）的工作台；「邮件记录」是只读
+总览。两者共用同一套行级课程作用域谓词（`intake.quarantine.row_scope_predicate`），因此不存在
+"隔离列表挡住的记录从这个视图漏出去"的偏差。
+
 ## 2. 我消费的端点 / 事件
 
 | 提供方 | 我消费什么 | 用途 |
@@ -343,3 +379,21 @@ B2 侧的四条纪律（每条都有测试，见 [../testing/cases.md](../testin
 - **失败可见**：正文/映射失败直接写回挑战（学生记录可见）；附件闸门/结构失败只要能由正文核验码
   唯一定位挑战，就写回通用 `email_verification_rejected` 并让隔离记录带上挑战的课程/课序
   （教师复核可见）。没有码或码无法定位的邮件仍按无关联隔离处理。
+
+## 0.39.0 增量（邮件记录三态）
+
+- 新增 `GET /api/v1/intake/mail-records`（`listMailRecords`）与 `MailRecordView`：教师端只读的
+  邮件记录三态视图（已处理/待处理/其他），取代"隔离列表 + 19 个原因码 + 人工处置状态"的混合视图；
+  `category` 必填，三态互斥且覆盖全部记录。详见第 1g 节。
+- 新增命名 schema `IntakeReasonCode`：把 `IntakeQuarantineView.reason_code` 的内联 19 项 enum
+  收敛成一处**封闭词表**，`MailRecordView.reason_code` 也引用它；B2 的 `EmailIntakeReason`
+  取值不变，写入侧是这份词表的唯一生产者。
+- 迁移 `20261117_0024`：`b2.intake_quarantines` 加 `format_valid`/`sender_associated`/
+  `assignment_id`/`student_id` 四个可空分类事实列（历史行 NULL，不回填），并加索引
+  `ix_email_verifications_course_section_received_at` 支撑"已处理"页按 (课程, 课序) 倒序取页。
+- 收件链路（`intake.imap`）每封解析成功的邮件只解析一次发件账号、只定位一次挑战；分类事实独立于
+  消费结果计算并随隔离记录落库。发件账号解析不可用（B4 身份目录故障）仍然让本轮拉取失败重试，
+  绝不记成"未注册"。
+- 测试：`tests/test_intake_api.py` 的三态/分页/越权矩阵、`tests/test_email_intake_acceptance.py`
+  的真实 IMAP 收件链路断言分类事实；`tests/test_migrations.py` 补新索引断言。验收脚本
+  `MAIN/scripts/acceptance_assignment_workflow.py` 走真实 IMAP 收件链路覆盖三态。

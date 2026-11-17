@@ -14,11 +14,11 @@ import { ReviewPage } from "./ReviewPage";
 import type { ReviewSearch } from "./search";
 
 /**
- * 标签内容在 `MailReviewTab.test.tsx` 里有组件测试；这里只钉页面外壳：
- * 复核页只剩邮件隔离，返回按钮回作业列表，旧的多标签/示例入口不再存在。
+ * 页面外壳测试；标签内容在 `MailRecordsTab.test.tsx` 里覆盖。
+ * 这里只钉三件事：标题是「邮件记录」、页头下方有一句三态说明、返回按钮回作业列表。
  */
-vi.mock("./MailReviewTab", () => ({
-  MailReviewTab: () => <div data-testid="mail-tab-stub" />,
+vi.mock("./MailRecordsTab", () => ({
+  MailRecordsTab: () => <div data-testid="mail-records-stub" />,
 }));
 
 function Harness({ initial }: { initial: ReviewSearch }) {
@@ -42,18 +42,27 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("复核页（只剩邮件隔离）", () => {
-  it("页头返回作业列表，内容是邮件提交", async () => {
+describe("邮件记录页", () => {
+  it("标题为「邮件记录」，页头下方说明三态，返回按钮回作业列表", async () => {
     renderReview({ course_id: "00000000-0000-4000-8000-0000000000a1" });
-    const back = await screen.findByTestId("review-back");
+    expect(
+      await screen.findByRole("heading", { level: 1, name: "邮件记录" }),
+    ).toBeInTheDocument();
+    const intro = screen.getByTestId("review-intro");
+    expect(intro).toHaveTextContent("查看学生通过电子邮件提交作业的记录");
+    expect(intro).toHaveTextContent("已处理");
+    expect(intro).toHaveTextContent("待处理");
+    expect(intro).toHaveTextContent("其他");
+    const back = screen.getByTestId("review-back");
     expect(back).toHaveTextContent("返回作业列表");
     expect(back).toHaveAttribute("href", "/assignments");
-    expect(screen.getByTestId("mail-tab-stub")).toBeInTheDocument();
+    expect(screen.getByTestId("mail-records-stub")).toBeInTheDocument();
   });
 
-  it("不再有题目质量标签，也没有示例开关", async () => {
+  it("不再有「复核工作区」的旧标题，也没有题目质量/示例入口", async () => {
     renderReview();
-    await screen.findByTestId("mail-tab-stub");
+    await screen.findByTestId("mail-records-stub");
+    expect(screen.queryByText("复核工作区")).toBeNull();
     expect(screen.queryByTestId("review-tabs")).toBeNull();
     expect(screen.queryByTestId("review-demo-toggle")).toBeNull();
     expect(screen.queryByText("题目质量")).toBeNull();

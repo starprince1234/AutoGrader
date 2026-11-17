@@ -35,13 +35,23 @@
 | `20261107_0020` | 一次性邮件核验码（设计 §4） | 新增 `email_verification_challenges`/`email_verifications`/`email_sender_bindings`/`intake_state` 四张表；同时把 0017/0018 遗留的时间列收窄到 `timestamptz(3)` |
 | `20261107_0021` | 作业维度接入提交（CHG-0032） | `submissions.assignment_id uuid NULL` + `ix_submissions_assignment_id`；**不回填**（历史行没有作业归属，不猜测） |
 | `20261107_0022` | 多题邮件提交（CHG-0032 / 设计 §6.2） | 核验码/邮件事实按作业绑定（`assignment_id`、`question_version_id` 放开 NOT NULL、`processed_at`）；新表 `email_verification_submissions`；放宽 `ck_email_checkpoints_outcome` 的 processed 分支 |
-| `20261107_0023` | 隔离区「打回」（契约 0.38.0） | `intake_quarantines.sender text NULL`（来件真实 From 地址，打回通知的唯一收件人；历史行 NULL）；重写 `ck_intake_quarantines_decision` / `ck_intake_quarantines_decision_audit` 以容纳 `resolution='rejected'`（与 `dismissed` 一样没有学生与提交，但必须带处置时间与操作人）；**当前 head** |
+| `20261107_0023` | 隔离区「打回」（契约 0.38.0） | `intake_quarantines.sender text NULL`（来件真实 From 地址，打回通知的唯一收件人；历史行 NULL）；重写 `ck_intake_quarantines_decision` / `ck_intake_quarantines_decision_audit` 以容纳 `resolution='rejected'`（与 `dismissed` 一样没有学生与提交，但必须带处置时间与操作人） |
+| `20261117_0024` | 教师端「邮件记录」三态的分类事实（契约 0.39.0） | `intake_quarantines` 加四个**可空**分类事实列：`format_valid`（被拒时正文五行机器格式是否已通过）、`sender_associated`（发件地址是否解析为已注册账号）、`assignment_id`/`student_id`（能定位挑战时挑战的作业与所有者；仅凭发件地址关联**不写**学生）；加索引 `ix_email_verifications_course_section_received_at` 支撑"已处理"页按 (课程, 课序) 倒序取页；**当前 head** |
 
-- 当前 head = **`20261107_0023`**，三处一致：`module.yaml: database.migration_head`、
+- 当前 head = **`20261117_0024`**，三处一致：`module.yaml: database.migration_head`、
   `db/schema.py: EXPECTED_SCHEMA_REVISION`、Alembic 自身（由 `tests/test_migrations.py` 断言）。**注意**：
   `EXPECTED_SCHEMA_REVISION` 是 readiness 判据，因此**部署时必须先跑 `uv run alembic upgrade head`**——
   库停在上一个 revision 时评测/成绩/评语/隔离区路由会按设计返回 503
   （如实报"库结构版本与本构建不符"，而不是带着旧结构继续服务）。
+- **0024 为什么把分类事实写进隔离记录**：教师端「邮件记录」只要三态（已处理/待处理/其他），
+  而"这是不是一次真实的提交尝试"只能在收件当时从正文/发件地址/核验码得出（正文与附件原文
+  **不落库**，事后无法重算）。四列均可空、**不回填历史行**：历史行（两列皆 NULL）由读侧按
+  失败阶段可推断的原因码归类（`email_verification_expired`/`attachment_mapping_invalid` 意味着
+  正文已通过校验 ⇒ 待处理；其余 ⇒ 其他）；解析前即被拒的邮件（体积超限/报文畸形）也保持 NULL，
+  因为那时既没有正文可校验、也没有发件地址可解析——"不知道"不写成 `false`。
+- **0024 的索引**：`email_verifications (course_id, section_id, received_at)` 服务"已处理"页的
+  行级课程过滤 + 时间倒序 keyset 取页；与隔离区 0015 的 `(scope_course_id, scope_section_id,
+  created_at)` 同一类需求，排序/limit/游标判定一律在过滤之后。
 - **0021/0022 的数据后果**：0021 只加**可空**列与索引，**不回填任何一行**——历史提交没有作业归属，
   不猜测、不回填；它们继续可评测、可查成绩，只是不出现在任何作业级视图/过滤里。0022 同样只加可空列、
   不改变既有行的 `question_version_id`/`submission_id`（那是"一邮件一题"时代的真实事实）。

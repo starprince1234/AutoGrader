@@ -453,3 +453,67 @@ def test_mail_submissions_use_the_current_enrollment_section(harness: _Harness) 
             str(row["section_id"]) for row in connection.execute(sa.select(submissions)).mappings()
         }
     assert sections == {new_section}
+
+
+# --------------------------------------------------------------------------------------
+# 标准 4：收件分类事实（契约 0.39.0「邮件记录」三态视图的读侧数据）
+# --------------------------------------------------------------------------------------
+
+
+@requires_postgres
+def test_a_valid_body_without_attachments_is_recorded_as_pending(harness: _Harness) -> None:
+    """正文格式正确 + 有效核验码但**没有附件**：待处理，且带作业与学生（教师能看出是哪份作业）。
+
+    `no_attachments` 发生在核验码消费之前，但"这是一次真实提交尝试"已是事实——分类事实要
+    独立于消费结果记录下来（过期码/无附件都不能把"正文格式通过"抹掉）。
+    """
+    code = issue_code(harness)
+    report = pull(harness, [build_message(code=code, attachments=())])
+    assert report.count("rejected") == 1, report.outcomes
+    rows = harness.quarantine_rows()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["reason_code"] == "no_attachments"
+    assert row["format_valid"] is True
+    assert row["sender_associated"] is True
+    assert str(row["assignment_id"]) == ASSIGNMENT_ID
+    assert str(row["student_id"]) == STUDENT_ID
+    assert harness.count(submissions) == 0
+
+
+@requires_postgres
+def test_a_code_less_message_from_an_unregistered_sender_is_other(harness: _Harness) -> None:
+    """无核验码且发件地址不属于任何账号 ⇒ 两个分类事实都为假（读侧归 `other`）。"""
+    report = pull(
+        harness,
+        [build_message(code="", sender="stranger@example.edu", attachments=(("1.txt", SOURCE_ONE),))],
+    )
+    assert report.count("quarantined") == 1, report.outcomes
+    rows = harness.quarantine_rows()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["reason_code"] == "email_verification_rejected"
+    assert row["format_valid"] is False
+    assert row["sender_associated"] is False
+    assert row["assignment_id"] is None and row["student_id"] is None
+
+
+@requires_postgres
+def test_a_code_less_message_from_a_registered_sender_is_pending(harness: _Harness) -> None:
+    """无核验码但发件地址属于已注册账号 ⇒ 待处理（是学生的邮件，不是垃圾），但不写学生 id。
+
+    发件地址可伪造：它足以把邮件从 `other` 提升为 `pending`，不足以证明作者身份，因此
+    `student_id` 保持 NULL（只有核验码能证明身份）。
+    """
+    report = pull(
+        harness,
+        [build_message(code="", sender=SENDER, attachments=(("1.txt", SOURCE_ONE),))],
+    )
+    assert report.count("quarantined") == 1, report.outcomes
+    rows = harness.quarantine_rows()
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["reason_code"] == "email_verification_rejected"
+    assert row["format_valid"] is False
+    assert row["sender_associated"] is True
+    assert row["assignment_id"] is None and row["student_id"] is None

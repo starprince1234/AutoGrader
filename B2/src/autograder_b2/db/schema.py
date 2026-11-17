@@ -16,7 +16,7 @@ SCHEMA = "b2"
 #: 本代码期望的迁移版本（必须与 `module.yaml: database.migration_head` 和 Alembic head 三者一致）。
 #: 用途：readyness 探测据此判断"库结构与代码是否匹配"——连接得上但版本落后同样是**不可用**，
 #: 否则 health 会谎报健康而受权读请求全线 500。三者一致性由 `tests/test_migrations.py` 断言。
-EXPECTED_SCHEMA_REVISION = "20261107_0023"
+EXPECTED_SCHEMA_REVISION = "20261117_0024"
 
 metadata = sa.MetaData(schema=SCHEMA)
 
@@ -129,6 +129,16 @@ intake_quarantines = sa.Table(
     # 历史行 NULL（那时没有这一列）；NULL 的行「打回」只能报 notification=unavailable，
     # 不能改寄一个看起来合理的地址。
     sa.Column("sender", sa.Text(), nullable=True),
+    # 迁移 0024（契约 0.39.0「邮件记录三态」）：收件当时判定的分类事实。历史行 NULL；
+    # 解析前即被拒的邮件（体积超限/报文畸形）也保持 NULL——"不知道"不是"不是学生邮件"。
+    # 读侧谓词见 `intake.mail_records`：pending = format_valid OR sender_associated（或历史行
+    # 按失败阶段可推断的原因码），其余为 other。
+    sa.Column("format_valid", sa.Boolean(), nullable=True),
+    sa.Column("sender_associated", sa.Boolean(), nullable=True),
+    # 仅信息展示：**绝不**作为授权依据（授权仍只看 scope_*）。
+    sa.Column("assignment_id", sa.Uuid(), nullable=True),
+    # 只在定位到挑战时写（核验码已证明身份）；仅凭发件地址关联时不写。
+    sa.Column("student_id", sa.Uuid(), nullable=True),
 )
 
 artifact_gc_runs = sa.Table(

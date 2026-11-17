@@ -571,6 +571,62 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/intake/mail-records": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List e-mail submission records as processed / pending / other
+         * @description The teacher-facing **mail records** view. It answers one question -- "what did the mail
+         *     intake do with the messages it read?" -- so every message the intake path decided is
+         *     readable here in exactly one of three states:
+         *
+         *     * `processed`: the message carried a valid one-time verification code and was accepted as
+         *       the student's assignment submission(s). `assignment_id` and `student_id` are the keys a
+         *       teacher uses to open the submission in the assignment workspace; the record itself never
+         *       carries the answer.
+         *     * `pending`: a genuine submission attempt that did **not** become part of the assignment.
+         *       A record is `pending` when either (a) the machine-readable five-line body passed format
+         *       validation -- every required field present, the declared 作业编号 equal to the assignment
+         *       the code was issued for, and the declared 姓名/学号 equal to the account's registered
+         *       values when the sender is the challenge owner -- or (b) the sender address belongs to a
+         *       registered account, so the message is a student's mail rather than spam even when its
+         *       body is malformed. `reason_code` names why it was not accepted (e.g.
+         *       `email_verification_expired` for an expired code).
+         *     * `other`: every remaining record: advertising/spam, messages without a verification code
+         *       or with an unknown one, malformed bodies, and envelope/attachment gate rejections.
+         *
+         *     The classification is decided when the message is read (it is stored with the record), so
+         *     it does not depend on a later interpretation of the text. Old records written before the
+         *     classification existed are classified from their stored reason code where the failure stage
+         *     is knowable (`email_verification_expired` and `attachment_mapping_invalid` imply a valid
+         *     body; the rest fall into `other`); a consumer must treat `category` as the server's answer,
+         *     not recompute it.
+         *
+         *     Authorization uses the same row-level course scope as `listIntakeQuarantines`:
+         *
+         *     * `processed` rows are scoped by the `course_id/section_id` the submission belongs to;
+         *     * `pending`/`other` rows are scoped by the record's own verified course association, and
+         *       rows without one are administrator-only;
+         *     * staff naming a course/section outside the token scope get `403`, never an empty page, and
+         *       unassociated rows are invisible to them;
+         *     * `course_id/section_id` only narrow the visible set.
+         *
+         *     The response never contains message bodies, attachment contents, sender addresses or any
+         *     part of a submission. `subject` is the bounded header the intake path already stores.
+         */
+        get: operations["listMailRecords"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/reference-verifications": {
         parameters: {
             query?: never;
@@ -1072,30 +1128,7 @@ export interface components {
             intake_quarantine_id: components["schemas"]["Uuid"];
             /** @enum {string} */
             intake: "email";
-            /**
-             * @description Machine-readable cause. **The vocabulary is closed** (`CHG-0021` §2.1, made
-             *     machine-readable by `CHG-0027`); the previous description was an open "e.g." set, which
-             *     left a consumer unable to tell whether a code it saw was one it should handle.
-             *
-             *     The `enum` is the same 19 values the table below groups, and it is a fact rather than a
-             *     preference: B2's `EmailIntakeReason` is a `Literal` of exactly these, and the write path
-             *     produces no others. A consumer can therefore generate the type instead of copying the
-             *     list -- which the previous prose-only form forced, in violation of the rule that field
-             *     definitions live only in `contracts/**`.
-             *
-             *     | Group | Codes | Attributable |
-             *     |---|---|---|
-             *     | Identity not derived | `not_uniquely_matched`, `ambiguous_match` | **yes** |
-             *     | Message structure | `malformed_message`, `missing_message_id`, `no_attachments`, `too_many_attachments`, `message_too_large` | no |
-             *     | Attachment policy | `attachment_name_not_allowed`, `duplicate_attachment_name`, `unsupported_attachment_encoding`, `malformed_attachment`, `attachment_too_large`, `attachment_total_too_large`, `unsupported_attachment_type`, `nested_message_attachment` | no |
-             *     | Content gates | `executable_attachment`, `archive_bomb`, `archive_attachment`, `not_plain_text` | no |
-             *
-             *     Only the first two are attributable, because only they mean "the identity could not be
-             *     derived". `checkpoint_exists` is deliberately **not** in this table: it is an
-             *     `email_checkpoints` outcome, not an `intake_quarantines.reason_code`.
-             * @enum {string}
-             */
-            reason_code: "not_uniquely_matched" | "ambiguous_match" | "malformed_message" | "missing_message_id" | "no_attachments" | "too_many_attachments" | "message_too_large" | "attachment_name_not_allowed" | "duplicate_attachment_name" | "unsupported_attachment_encoding" | "malformed_attachment" | "attachment_too_large" | "attachment_total_too_large" | "unsupported_attachment_type" | "nested_message_attachment" | "executable_attachment" | "archive_bomb" | "archive_attachment" | "not_plain_text" | "email_verification_rejected" | "email_sender_mismatch" | "email_verification_expired" | "email_body_missing_field" | "email_body_mismatch" | "attachment_mapping_invalid";
+            reason_code: components["schemas"]["IntakeReasonCode"];
             /**
              * @description Already redacted when recorded; bounded here as a backstop.
              *     **`1000`, not `500`** (`CHG-0021` §2.4): the database CHECK is
@@ -1217,6 +1250,82 @@ export interface components {
              * @enum {string}
              */
             notification: "queued" | "unavailable";
+        };
+        /**
+         * @description Machine-readable cause carried by an intake record. **The vocabulary is closed**
+         *     (`CHG-0021` §2.1, made machine-readable by `CHG-0027`); the previous description was an
+         *     open "e.g." set, which left a consumer unable to tell whether a code it saw was one it
+         *     should handle.
+         *
+         *     The `enum` is the same 25 values the table below groups, and it is a fact rather than a
+         *     preference: B2's `EmailIntakeReason` is a `Literal` of exactly these, and the write path
+         *     produces no others. A consumer can therefore generate the type instead of copying the
+         *     list -- which the previous prose-only form forced, in violation of the rule that field
+         *     definitions live only in `contracts/**`. It is a named schema (rather than an inline
+         *     `enum` in `IntakeQuarantineView`) so that every view of a mail record -- quarantine and
+         *     `MailRecordView` alike -- refers to **one** closed vocabulary instead of restating it.
+         *
+         *     | Group | Codes | Attributable |
+         *     |---|---|---|
+         *     | Identity not derived | `not_uniquely_matched`, `ambiguous_match` | **yes** |
+         *     | Message structure | `malformed_message`, `missing_message_id`, `no_attachments`, `too_many_attachments`, `message_too_large` | no |
+         *     | Attachment policy | `attachment_name_not_allowed`, `duplicate_attachment_name`, `unsupported_attachment_encoding`, `malformed_attachment`, `attachment_too_large`, `attachment_total_too_large`, `unsupported_attachment_type`, `nested_message_attachment` | no |
+         *     | Content gates | `executable_attachment`, `archive_bomb`, `archive_attachment`, `not_plain_text` | no |
+         *     | One-time code path | `email_verification_rejected`, `email_sender_mismatch`, `email_verification_expired`, `email_body_missing_field`, `email_body_mismatch`, `attachment_mapping_invalid` | no |
+         *
+         *     Only the first two are attributable, because only they mean "the identity could not be
+         *     derived". `checkpoint_exists` is deliberately **not** in this table: it is an
+         *     `email_checkpoints` outcome, not an `intake_quarantines.reason_code`.
+         * @enum {string}
+         */
+        IntakeReasonCode: "not_uniquely_matched" | "ambiguous_match" | "malformed_message" | "missing_message_id" | "no_attachments" | "too_many_attachments" | "message_too_large" | "attachment_name_not_allowed" | "duplicate_attachment_name" | "unsupported_attachment_encoding" | "malformed_attachment" | "attachment_too_large" | "attachment_total_too_large" | "unsupported_attachment_type" | "nested_message_attachment" | "executable_attachment" | "archive_bomb" | "archive_attachment" | "not_plain_text" | "email_verification_rejected" | "email_sender_mismatch" | "email_verification_expired" | "email_body_missing_field" | "email_body_mismatch" | "attachment_mapping_invalid";
+        /**
+         * @description One e-mail record as the teacher-facing records view shows it. It is deliberately a
+         *     *summary*: the subject header the intake path already keeps, when the message was read,
+         *     the record's three-state category, the course/section association used for row-level
+         *     authorization, and -- where they are server-side facts -- the assignment and student the
+         *     message belongs to. Message bodies, attachment contents, sender addresses and submission
+         *     answers are never part of this view.
+         */
+        MailRecordView: {
+            record_id: components["schemas"]["Uuid"];
+            /** @enum {string} */
+            category: "processed" | "pending" | "other";
+            /**
+             * @description The message's Subject header, collapsed to printable characters and bounded to 200
+             *     characters at intake time. `null` when the header was absent or the record predates
+             *     the field.
+             */
+            subject: string | null;
+            received_at: components["schemas"]["Timestamp"];
+            /**
+             * @description The record's verified course association: the submissions' course for `processed`, the
+             *     intake record's scope for `pending`/`other`. `null` when no association could be proven
+             *     (such rows are administrator-only).
+             */
+            course_id: components["schemas"]["Uuid"] | null;
+            /** @description The matching section; null exactly when `course_id` is null. */
+            section_id: components["schemas"]["Uuid"] | null;
+            /**
+             * @description The assignment the message belongs to: the submissions' assignment for `processed`, the
+             *     challenge's assignment for a `pending` record whose code was located, and `null` when no
+             *     assignment can be proven (spam, no code, or an envelope rejection before any code was
+             *     read). It is informational only and never an authorization basis.
+             */
+            assignment_id: components["schemas"]["Uuid"] | null;
+            /**
+             * @description The platform user id the code proved: the submission owner for `processed`, and the
+             *     challenge owner for `pending` records whose code was located. `null` otherwise -- in
+             *     particular a `pending` row admitted only because its sender address belongs to a
+             *     registered account carries no student id, because the address alone is not proof of
+             *     authorship.
+             */
+            student_id: components["schemas"]["Uuid"] | null;
+            /**
+             * @description Why a `pending`/`other` record was not accepted; `null` for `processed`. The UI maps it
+             *     to a human sentence.
+             */
+            reason_code: components["schemas"]["IntakeReasonCode"] | null;
         };
         /**
          * @description A movable evidence bundle for one evaluation run (CHG-0014). Self-contained on purpose:
@@ -2563,6 +2672,44 @@ export interface operations {
             403: components["responses"]["Forbidden"];
             404: components["responses"]["NotFound"];
             409: components["responses"]["Conflict"];
+            422: components["responses"]["UnprocessableEntity"];
+            503: components["responses"]["ServiceUnavailable"];
+        };
+    };
+    listMailRecords: {
+        parameters: {
+            query: {
+                /**
+                 * @description Which record state to list. The three states are disjoint and cover every readable
+                 *     record; omitting the parameter is invalid (`422`) rather than silently listing all,
+                 *     because the page's three tabs are the whole point of the view.
+                 */
+                category: "processed" | "pending" | "other";
+                cursor?: components["parameters"]["Cursor"];
+                limit?: components["parameters"]["Limit"];
+                course_id?: components["schemas"]["Uuid"];
+                /** @description Requires `course_id`. */
+                section_id?: components["schemas"]["Uuid"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Page of mail records, newest first. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CursorPage"] & {
+                        items?: components["schemas"]["MailRecordView"][];
+                    };
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
             422: components["responses"]["UnprocessableEntity"];
             503: components["responses"]["ServiceUnavailable"];
         };

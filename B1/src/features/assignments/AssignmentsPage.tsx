@@ -5,8 +5,8 @@ import { isApiError } from "../../api/problem";
 import { MAX_AUTO_PAGES } from "../../api/pagination";
 import type { AssignmentPublic, GradeRow } from "../../api/types";
 import { useSession } from "../../auth/sessionContext";
-import { canReviewQuarantine, canViewCohortGrades } from "../../auth/visibility";
-import { useQuarantineMail, REVIEW_PAGE_SIZE } from "../review/useReviewMail";
+import { canViewCohortGrades, canViewMailRecords } from "../../auth/visibility";
+import { MAIL_RECORD_PAGE_SIZE, useMailRecords } from "../review/useMailRecords";
 import { formatDateTime } from "../../ui/format";
 import {
   Banner,
@@ -419,7 +419,7 @@ function MyMembershipsPanel() {
 export function AssignmentsPage() {
   const session = useSession();
   const cohortView = canViewCohortGrades(session);
-  const quarantineIdentity = session.subject ?? session.username ?? "anonymous";
+  const mailRecordsIdentity = session.subject ?? session.username ?? "anonymous";
   const [composerOpen, setComposerOpen] = useState(false);
   const [createdNotice, setCreatedNotice] = useState<string | null>(null);
   const [courseId, setCourseId] = useState("");
@@ -470,26 +470,25 @@ export function AssignmentsPage() {
     return rows.filter((row) => isEnded(row.status) === wantEnded);
   }, [assignments.assignments, statusFilter]);
   /**
-   * 复核入口旁的数字：必须和点进去看到的「待处理记录」是**同一批**——
-   * 同样的课程与统计课序、同样的 `resolved=false & held=false`、同样的分页大小
-   * （`REVIEW_PAGE_SIZE`，复核页第一页也是它）。课程目录未到手前先不请求。
+   * 「邮件记录」入口旁的数字：必须和点进去看到的「待处理」列表是**同一批**——
+   * 同样的课程与统计课序、同样的 `category=pending`、同样的一页大小。课程目录未到手前先不请求。
+   * 列表接口没有 total，因此最多数到第一页（{@link MAIL_RECORD_PAGE_SIZE} 行）；
+   * 还有 `next_cursor` 时显示 `N+`，不谎报成精确总数。
    */
-  const pendingQuarantine = useQuarantineMail({
-    identity: quarantineIdentity,
-    enabled: canReviewQuarantine(session) && !courses.isPending,
+  const pendingMailRecords = useMailRecords({
+    identity: mailRecordsIdentity,
+    enabled: canViewMailRecords(session) && !courses.isPending,
     filter: {
+      category: "pending",
       courseId: listFilter.courseId,
       sectionId: sectionScope === "" ? null : sectionScope,
-      resolved: false,
-      held: false,
-      cursor: null,
-      limit: REVIEW_PAGE_SIZE,
+      limit: MAIL_RECORD_PAGE_SIZE,
     },
   });
-  const pendingRows = (pendingQuarantine.data?.pages ?? []).flatMap((page) => page.items);
+  const pendingRows = (pendingMailRecords.data?.pages ?? []).flatMap((page) => page.items);
   const pendingCount = pendingRows.length;
-  const pendingOverflow = Boolean(pendingQuarantine.data?.pages.at(-1)?.nextCursor);
-  const hasPendingQuarantine = pendingCount > 0;
+  const pendingOverflow = Boolean(pendingMailRecords.data?.pages.at(-1)?.nextCursor);
+  const hasPendingMailRecords = pendingCount > 0;
   const mine = useAllGrades(
     cohortView ? null : (selectedMembership?.course_id ?? null),
     null,
@@ -605,8 +604,8 @@ export function AssignmentsPage() {
 
   return (
     <div className="stack">
-      {/* 邮件隔离复核不占主导航：它从作业上下文进入（P13 的 mail 标签），
-          把当前课程/课序作为筛选上下文带过去；授权仍由服务端按令牌与记录 scope 判定。 */}
+      {/* 邮件记录（只读）不占主导航：它从作业上下文进入，把当前课程/课序作为筛选上下文带过去；
+          授权仍由服务端按令牌与记录 scope 判定。 */}
       <div className="panel__head">
         <PageTitle>{t("nav.assignments")}</PageTitle>
         <div className="row-actions">
@@ -620,7 +619,7 @@ export function AssignmentsPage() {
               {t("assignments.create.entry")}
             </button>
           ) : null}
-          {canReviewQuarantine(session) ? (
+          {canViewMailRecords(session) ? (
             <Link
               to="/review"
               search={{
@@ -634,13 +633,13 @@ export function AssignmentsPage() {
                 background: "var(--color-surface)",
                 boxShadow: "inset 0 0 0 1px var(--color-border)",
               }}
-              data-testid="assignments-quarantine-link"
+              data-testid="assignments-mail-records-link"
             >
-              {t("review.mail.title")}
-              {hasPendingQuarantine ? (
+              {t("review.title")}
+              {hasPendingMailRecords ? (
                 <span
                   aria-label={t("review.pendingBadge", { count: pendingCount })}
-                  data-testid="assignments-quarantine-badge"
+                  data-testid="assignments-mail-records-badge"
                   style={{
                     minWidth: 18,
                     height: 18,

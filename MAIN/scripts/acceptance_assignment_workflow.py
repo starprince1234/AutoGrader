@@ -29,6 +29,11 @@ What the run proves (design section 6):
   snapshot), while the course they remain in keeps working;
 * web and mail intake enforce the same (student, assignment, question) authorization and the
   same authoritative section; an existing token cannot claim a different section;
+* the teacher-facing mail records view (contract 0.39.0) puts each message it read into exactly
+  one state: a code+valid body without an attachment is `pending` (with its assignment and the
+  student the code proved), the accepted mail is `processed` (assignment/student keys present),
+  and code-less spam from an unregistered sender is `other` (administrator-only, because no
+  verified course association can be proven); the three pages are disjoint;
 * the publication notification is materialised for the whole active audience, delivered over
   real SMTP to exactly the expected recipients, and the three skipped reasons are distinct
   from a real delivery failure and from an idempotent repeat pass.
@@ -1921,6 +1926,22 @@ def grade_rows(ctx: Context, course_key: str, assignment_key: str) -> list[dict[
     )
 
 
+def mail_records(
+    token: str, *, category: str, course_id: str | None = None
+) -> list[dict[str, object]]:
+    """教师端「邮件记录」三态视图（契约 0.39.0）的一页（`limit=100`，按需翻页）。"""
+    query: list[tuple[str, object]] = [("category", category)]
+    if course_id is not None:
+        query.append(("course_id", course_id))
+    return paginate(
+        "/api/v1/intake/mail-records",
+        token,
+        query=query,
+        limit=100,
+        label=f"mail records ({category})",
+    )
+
+
 def check_web_and_mail_submissions(ctx: Context) -> None:
     assignment_a = ctx.require("assignment", "a")
     q1 = ctx.require("version", "q1")
@@ -1991,14 +2012,30 @@ def check_web_and_mail_submissions(ctx: Context) -> None:
     )
     assert isinstance(challenge, dict), challenge
     check(str(challenge["assignment_id"]) == assignment_a, "the challenge is assignment-scoped")
-    message = build_mail_message(
+    challenge_id = str(challenge["challenge_id"])
+    mail_display_name = ctx.spec("mail").display_name
+    mail_student_number = ctx.spec("mail").student_number
+    mail_sender = expected_roster_email(ctx, "mail")
+
+    # (1) 正文正确 + 有效核验码但**没有附件**：一次真实的提交尝试，只是没列入作业。
+    #     它必须被算成 pending（并带上作业/学生），而不是混进 other；同一轮再送一封垃圾邮件。
+    pending_message = build_mail_message(
         ctx,
-        sender=expected_roster_email(ctx, "mail"),
-        display_name=ctx.spec("mail").display_name,
-        student_number=ctx.spec("mail").student_number,
+        sender=mail_sender,
+        display_name=mail_display_name,
+        student_number=mail_student_number,
         code=str(challenge["code"]),
         assignment_id=assignment_a,
-        answers={1: "echo alpha via mail\n"},
+        answers={},
+    )
+    spam_message = build_mail_message(
+        ctx,
+        sender="acc032.spam@example.edu",
+        display_name="垃圾邮件",
+        student_number="0000000000000",
+        code="",
+        assignment_id=assignment_a,
+        answers={1: "buy something\n"},
     )
     sys.path.insert(0, str(REPO_ROOT / "B2" / "tests"))
     from imap_fixture import FixtureMessage, ImapFixtureServer  # noqa: PLC0415 - real fixture
@@ -2006,13 +2043,75 @@ def check_web_and_mail_submissions(ctx: Context) -> None:
     imap_username = "acceptance-inbox"
     imap_password = "acceptance-imap-pass"
     imap = ImapFixtureServer(
-        messages=[FixtureMessage(uid=1, raw=message)],
+        messages=[
+            FixtureMessage(uid=1, raw=pending_message),
+            FixtureMessage(uid=2, raw=spam_message),
+        ],
         username=imap_username,
         password=imap_password,
     ).start()
     try:
         run_pull_cli(imap.port, imap_username, imap_password)
-        status = wait_for_challenge(ctx.tokens["mail"], str(challenge["challenge_id"]))
+    finally:
+        imap.stop()
+
+    pending_records = mail_records(
+        ctx.teacher_token, category="pending", course_id=ctx.courses["a"]
+    )
+    check(len(pending_records) == 1,
+          "the code+valid-body mail without attachments is one pending record"
+          f" ({len(pending_records)} seen)")
+    pending_ids = {str(item.get("record_id")) for item in pending_records}
+    if pending_records:
+        pending_record = pending_records[0]
+        check(pending_record.get("category") == "pending",
+              "the mail record is classified pending")
+        check(str(pending_record.get("reason_code")) == "no_attachments",
+              "the pending reason names the missing attachment")
+        check(str(pending_record.get("assignment_id")) == assignment_a,
+              "the pending record carries the assignment the mail belongs to")
+        check(str(pending_record.get("student_id")) == ctx.users["mail"],
+              "the pending record proves the student from the one-time code")
+        check(str(pending_record.get("course_id")) == ctx.courses["a"],
+              "the pending record carries its verified course")
+
+    other_records = mail_records(ctx.admin_token, category="other")
+    check(len(other_records) == 1,
+          "the code-less spam message is the only other record"
+          f" ({len(other_records)} seen)")
+    other_ids = {str(item.get("record_id")) for item in other_records}
+    if other_records:
+        spam_record = other_records[0]
+        check(str(spam_record.get("reason_code")) == "email_verification_rejected",
+              "the spam record names the missing verification code")
+        check(spam_record.get("course_id") is None and spam_record.get("student_id") is None,
+              "a message with no verified course association carries no course/student")
+    check(
+        mail_records(ctx.teacher_token, category="other") == [],
+        "a message with no verified course association is administrator-only",
+    )
+    check(not (other_ids & pending_ids), "pending and other pages are disjoint")
+
+    # (2) 同一核验码 + 正确正文 + 附件：这次真的变成作业提交（三态里的 processed）。
+    message = build_mail_message(
+        ctx,
+        sender=mail_sender,
+        display_name=mail_display_name,
+        student_number=mail_student_number,
+        code=str(challenge["code"]),
+        assignment_id=assignment_a,
+        answers={1: "echo alpha via mail\n"},
+    )
+    imap = ImapFixtureServer(
+        messages=[FixtureMessage(uid=1, raw=message)],
+        # 换一个 UIDVALIDITY：上一轮的两封邮件已占用 (INBOX, 1, 1) 与 (INBOX, 1, 2) 的 checkpoint。
+        uidvalidity=2,
+        username=imap_username,
+        password=imap_password,
+    ).start()
+    try:
+        run_pull_cli(imap.port, imap_username, imap_password)
+        status = wait_for_challenge(ctx.tokens["mail"], challenge_id)
         check(status.get("state") == "received",
               f"the real mail is received (state={status.get('state')})")
         mapped = list(status.get("submissions") or [])
@@ -2071,6 +2170,22 @@ def check_web_and_mail_submissions(ctx: Context) -> None:
             check(b"via mail" in teacher_file.body, "the teacher sees the mailed answer")
     finally:
         imap.stop()
+
+    processed_records = mail_records(
+        ctx.teacher_token, category="processed", course_id=ctx.courses["a"]
+    )
+    check(len(processed_records) == 1,
+          f"the accepted mail is one processed record ({len(processed_records)} seen)")
+    if processed_records:
+        processed_record = processed_records[0]
+        check(str(processed_record.get("assignment_id")) == assignment_a,
+              "the processed record carries the assignment")
+        check(str(processed_record.get("student_id")) == ctx.users["mail"],
+              "the processed record carries the student")
+        check(processed_record.get("reason_code") is None,
+              "a processed record carries no rejection reason")
+        check(str(processed_record.get("record_id")) not in pending_ids,
+              "the processed record is not repeated in the pending page")
 
     # Web and mail intake agree on refusal for a student of another course.
     must(

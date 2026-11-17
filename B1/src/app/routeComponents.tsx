@@ -14,7 +14,7 @@ import { RequireAuth, RequirePermission } from "../auth/guards";
 import {
   canAuthorQuestions,
   canManageUsers,
-  canReviewQuarantine,
+  canViewMailRecords,
   canViewRoster,
 } from "../auth/visibility";
 
@@ -194,9 +194,9 @@ export function UsersRoute() {
 }
 
 /**
- * P13 复核工作区（`/review?tab=mail|quality`）。
+ * 邮件记录页（`/review`，只读）。
  *
- * 唯一路由、两个标签；标签与筛选住在 URL 里（刷新/复制链接/前进后退都恢复）。
+ * 路由与 URL 不变；三态分类、课程/课序筛选住在 URL 里（刷新/复制链接/前进后退都恢复）。
  * 可见性与 B2 的角色集合一致；服务端仍是判定方：学生或越权调用得到 403，页面原样展示。
  */
 export function ReviewRoute() {
@@ -205,7 +205,7 @@ export function ReviewRoute() {
   return (
     <RequireAuth>
       <RequirePermission
-        allow={canReviewQuarantine}
+        allow={canViewMailRecords}
         allowedRoles={["teacher", "admin"]}
       >
         <ReviewPage

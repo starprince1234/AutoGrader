@@ -324,26 +324,24 @@ export type LearningHintLevel = LearningHintStep["level"];
 /** 成绩行的三态安全结论（`null` = 没走到安全判定阶段，与 `not_checked` 不同）。 */
 export type SecurityStatus = NonNullable<GradeRow["security_status"]>;
 
-/* ------------------------------------------- B2（隔离区 / 证据包 / 质量聚合，CHG-0014/0015） */
+/* ------------------------------------------- B2（邮件记录 / 证据包 / 质量聚合，CHG-0014/0015） */
 
 /**
- * 隔离区复核（`listIntakeQuarantines` / `resolveIntakeQuarantine`）。
- * `IntakeQuarantineView` 只含识别性元数据与**已脱敏**的原因说明：它让教师能在自己的邮箱里
- * 重新找到那封信，因此**不含**附件内容、学生源码或提交的任何部分。
+ * 教师端的**邮件记录**（`listMailRecords`，契约 0.39.0）。
+ *
+ * 这个视图只回答"邮件接收把读到的信怎么处理了"：每一封信恰好落在 `processed`（已成功变成
+ * 作业提交）、`pending`（真实提交但没列入作业）或 `other`（其余：垃圾、无格式、报文/附件被拒）
+ * 之一。分类由服务端在收件时判定并存储，**界面只消费 `category`，不重新推导**。
+ *
+ * 它永远是摘要：没有邮件正文、附件内容、发件地址与提交答案。`assignment_id`/`student_id`
+ * 是可点进作业界面的键，不是授权依据；`reason_code` 的取值词表由契约里的 `IntakeReasonCode`
+ * 统一定义（`MailRecordView` 复用同一份 enum，不再各自复述 19 项）。
  */
-export type IntakeQuarantineView = B2Schemas["IntakeQuarantineView"];
-export type IntakeQuarantinePage = JsonBody<B2Operations["listIntakeQuarantines"], 200>;
-export type ResolveIntakeQuarantineRequest =
-  B2Operations["resolveIntakeQuarantine"]["requestBody"]["content"]["application/json"];
-export type DismissIntakeQuarantineRequest =
-  B2Operations["dismissIntakeQuarantine"]["requestBody"]["content"]["application/json"];
-export type RejectIntakeQuarantineRequest =
-  B2Operations["rejectIntakeQuarantine"]["requestBody"]["content"]["application/json"];
-export type IntakeQuarantineRejection = B2Schemas["IntakeQuarantineRejection"];
-export type CompleteIntakeQuarantineRequest =
-  B2Operations["completeIntakeQuarantine"]["requestBody"]["content"]["application/json"];
-export type SetIntakeQuarantineHoldRequest =
-  B2Operations["setIntakeQuarantineHold"]["requestBody"]["content"]["application/json"];
+export type MailRecordView = B2Schemas["MailRecordView"];
+export type MailRecordCategory = MailRecordView["category"];
+/** 原因码的词表直接取自契约 enum；页面据此保证每个取值都有一句中文说明。 */
+export type MailRecordReasonCode = NonNullable<MailRecordView["reason_code"]>;
+export type MailRecordPage = JsonBody<B2Operations["listMailRecords"], 200>;
 
 /**
  * 可移动的申诉证据包（`getAppealPack`）。`report` 受调用方 `view` 约束——

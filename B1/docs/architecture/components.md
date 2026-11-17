@@ -37,7 +37,7 @@
 | 证据下钻 | `src/features/grades/GradeDrilldown.tsx` | 报告渲染；学生视图不下发/不渲染期望输出；**并列渲染权威分与 AI 参考分**（参考分权重更低）；报告不可得时仍保留评语轨 | `evaluation-report` + `/commentary` |
 | 教学评语轨 | `src/features/commentary/CommentarySection.tsx`、`useCommentary.ts` | 四态 + 404「尚未生成」信息态 + `disclaimers` 逐字 + 出处/输入白名单；`advisory_score` 只显示（不计算）；生成是 mutation | B2 `/commentary` |
 | 申诉证据包 | `src/features/appeals/AppealPackPanel.tsx`、`useAppealPack.ts` | 按需加载；`view` 由角色显式推出；`redactions` 逐条；下载响应体原字节（同一个 `Blob`） | B2 `/appeal-pack` |
-| 复核工作区（P13） | `src/features/review/ReviewPage.tsx`、`MailReviewTab.tsx`、`QualityReviewTab.tsx`、`useReviewMail.ts`、`useQualityVersions.ts`、`useReviewQuality.ts`、`search.ts` | 唯一 `/review?tab=mail|quality`：邮件列表（`resolved` 三态、课程/课序/原因、游标分页）+ 详情 + 安全归属（候选来自 B4 名单、确认后才 POST）；题目质量（P07 带版本、先经 B3 校验、顶部五元计数、三态/未测量/系统类别/静态规则分开） | B2 `/intake/quarantines`、`/quality-summary`；B3 版本元信息；B4 课程/课序/名单 |
+| 邮件记录（`/review`，只读） | `src/features/review/ReviewPage.tsx`、`MailRecordsTab.tsx`、`useMailRecords.ts`、`reasonCodes.ts`、`search.ts` | 唯一 `/review`：三态分类（已处理 / 待处理 / 其他，缺省待处理）+ 课程/课序筛选 + 游标分页；已处理行给「查看作业」链接，待处理/其他行给一句中文原因说明；**没有处置动作**（归属/暂存/作废/打回已移除） | B2 `listMailRecords`；B4 课程/课序 |
 | 分布图 | `src/features/grades/GradesChart.tsx`、`echartsLoader.ts` | ECharts 分布图（可注入加载器，失败降级为表格） | echarts |
 | 前端日志器 | `src/logging/logger.ts`、`redaction.ts` | 结构化 JSON 行 + 拒绝清单脱敏 + 有界缓冲 | 无 |
 | UI 原语与脱敏 | `src/ui/components.tsx`、`src/ui/masking.ts`、`src/styles.css` | 表格/面板/弹窗与抽屉（焦点陷阱 + 焦点归还）/选项卡/分页控件/页面标题/诊断复制 + 展示层脱敏 + 设计 token | 无 |

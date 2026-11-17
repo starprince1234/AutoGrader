@@ -310,10 +310,10 @@ const usersRoute = createRoute({
 });
 
 /*
- * P13 复核工作区的唯一入口（`/review`）。
+ * 邮件记录页（`/review`，只读）的唯一入口。
  *
  * 旧 `/intake/quarantines` 与 `/quality` 已删除：不注册别名、不留兼容路由。
- * 「题目质量」视图与「示例预览」已按老师要求移除；查询串只承载邮件列表的筛选与对象 ID。
+ * 页面没有处置动作；查询串只承载三态分类（`status`）与课程/课序筛选。
  */
 const reviewRoute = createRoute({
   getParentRoute: () => rootRoute,

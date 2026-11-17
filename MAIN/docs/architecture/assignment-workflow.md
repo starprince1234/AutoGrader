@@ -149,6 +149,20 @@
   每次申请形成一条可回看的邮件提交记录（`GET /api/v1/email-verification/challenges?assignment_id=`：
   pending / received(reason null) / rejected(reason) / expired）。
 - 邮件入口沿用同一 `IntakeService.persist`；同一学生的网页与邮件提交在作业/题目/课程/课序上同口径。
+- **邮件记录三态视图**（契约 0.39.0 `listMailRecords` / `MailRecordView`）：教师端把收件链路的结果
+  明确成三种状态，**互斥且覆盖全部邮件**：
+  - `processed`（已处理）＝邮件携带有效一次性核验码并被接受，已经变成作业提交；`assignment_id`/
+    `student_id` 是教师从作业界面点进去的钥匙（读 `b2.email_verifications`）；
+  - `pending`（待处理）＝真实提交尝试但没列入作业：正文五行机器格式通过（作业编号与挑战一致；
+    发件人恰为挑战所有者时姓名/学号与账号一致），**或**发件地址属于已注册账号（即使正文格式不对）；
+  - `other`（其他）＝剩余全部：广告垃圾、无核验码/未知码、正文格式不合格且发件人未注册、
+    报文/附件闸门拒绝。
+  分类事实（`format_valid`/`sender_associated`/`assignment_id`/`student_id`）在**收件当时**写入
+  `b2.intake_quarantines`（迁移 `20261117_0024`）——正文与附件原文不落库，事后无法重算；历史行
+  （分类列 NULL）按契约明文规则从原因码推断（过期码/附件映射失败 ⇒ 正文已通过 ⇒ 待处理，其余
+  归其他）。行级课程作用域与隔离列表**共用同一套谓词**（NULL 课程归属仅管理员可见），
+  `course_id/section_id` 只是筛选、staff 越界 ⇒ 403；`assignment_id`/`student_id` 仅信息展示，
+  **绝不作授权依据**。
 - 人工复核 `resolveQuarantine`：服务端校验作业的 course 与请求 course 一致，并用 B4 authorization
   校验/补全学生 section（不一致 → 422）。
 - 成绩（`grades.query`/`grades.export`）：学生读者增加权威归属检查（课程不在当前 enrollments → 403）；
@@ -193,6 +207,12 @@
   删除旧 `useAttachRegisteredClass`（`/courses/{id}/classes`）调用。
 - 学生视图：`GET /me` memberships 展示课程/课序/班级，多课程可切换；作业列表/工作区去掉
   `section_ids/student_ids` 依赖，提交请求仍从本人 membership 取 course/section。
+- 教师端「邮件提交记录」改成三个**互斥** tab：已处理 / 待处理 / 其他，数据来自
+  `GET /api/v1/intake/mail-records?category=processed|pending|other&course_id=...`（`category` 必填，
+  三个状态由服务端分类，前端**不**按 `reason_code` 自行归类）。已处理行用 `assignment_id`/
+  `student_id` 跳到作业界面里的该提交；`reason_code` 只用于显示"为什么没列入作业"的人类文案
+  （子分类只是展示，不改变所属 tab）；无课程归属的记录只对管理员可见。旧的隔离区/处置状态页保留为
+  人工复核工作台，两个视图不混用。
 - i18n 删除废弃 key；`pnpm typecheck`/`pnpm lint` 必须通过。
 
 ## 7. 契约、部署与 CI

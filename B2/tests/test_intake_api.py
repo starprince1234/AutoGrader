@@ -27,6 +27,7 @@ from sqlalchemy import Engine
 from autograder_b2.api.errors import install_problem_handlers
 from autograder_b2.db.schema import (
     artifacts,
+    email_verifications,
     intake_quarantines,
     outbox_events,
     submission_files,
@@ -1516,6 +1517,8 @@ DISMISS = "/api/v1/intake/quarantines/{quarantine}/dismiss"
 REJECT = "/api/v1/intake/quarantines/{quarantine}/reject"
 HOLD = "/api/v1/intake/quarantines/{quarantine}/hold"
 COMPLETE = "/api/v1/intake/quarantines/{quarantine}/complete"
+#: 教师端「邮件记录」三态视图（契约 0.39.0）。
+MAIL_RECORDS = "/api/v1/intake/mail-records"
 #: 人工复核选定的作业（隔离 complete 的请求体字段 `assignment_id`；题目由附件映射决定）。
 _COMPLETION_ASSIGNMENT_ID = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"
 #: 只有这两种原因码能被人工归属（见 `intake.quarantine`）。
@@ -1570,12 +1573,19 @@ def _seed_quarantine(
     scope_section_id: str | None = None,
     subject: str | None = None,
     sender: str | None = None,
+    format_valid: bool | None = None,
+    sender_associated: bool | None = None,
+    assignment_id: str | None = None,
+    student_id: str | None = None,
 ) -> str:
     """用**生产写入路径**（`intake.imap.QuarantineStore`）落一条隔离记录，返回它的 id。
 
     为什么不用手写 INSERT：这条测试要证明"邮件入口写下的记录能被读出来"，因此写入必须走
     `QuarantineStore.record`（与 `EmailIntakeService` 用的是同一个对象）。`scope_*` 不传即
     "没有可验证的课程关联"，与 `not_matched`/跨 scope ambiguous 的真实写入一致。
+
+    四个分类事实（`format_valid`/`sender_associated`/`assignment_id`/`student_id`）与生产写入
+    同路径：它们是迁移 `20261117_0024` 的列，读侧的 `pending/other` 谓词只认这几列。
     """
     scope = None
     if scope_course_id is not None and scope_section_id is not None:
@@ -1594,6 +1604,10 @@ def _seed_quarantine(
             scope=scope,
             subject=subject,
             sender=sender,
+            format_valid=format_valid,
+            sender_associated=sender_associated,
+            assignment_id=assignment_id,
+            student_id=student_id,
         )
 
 
@@ -2794,3 +2808,478 @@ def test_quarantine_complete_requires_the_authorization_directory(
             note=None,
         )
     assert _resolved_state(engine, quarantine_id) == (False, None, None)
+
+
+# --- 契约 0.39.0：教师端「邮件记录」三态视图（`listMailRecords`） -----------------------------
+#
+# 用户需求：不要把 19 个原因码 + 人工处置状态混成一个列表，只要三种状态——
+# 已处理（邮件已成功变成作业提交、可从作业界面点进去）/ 待处理（真实提交尝试但没列入作业）/
+# 其他（剩余全部）。三态互斥且覆盖全部记录；行级课程作用域与隔离列表同语义。
+
+
+def _mail_record_items(client: TestClient, token: str, **params: str) -> list[dict[str, Any]]:
+    response = client.get(MAIL_RECORDS, params=params, headers=_auth(token))
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert set(body) == {"items", "next_cursor"}, body
+    return list(body["items"])
+
+
+def _seed_processed_mail(
+    engine: Engine,
+    *,
+    course_id: str,
+    section_id: str,
+    student_id: str,
+    assignment_id: str,
+    received_at: datetime | None = None,
+    subject: str | None = None,
+    uid: int = 1,
+) -> str:
+    """落一条"已处理"邮件事实（`email_verifications` + 它消费的挑战），返回 verification_id。
+
+    生产写入路径是 `EmailVerificationService.try_consume_received`；这里直接 insert 是为了让
+    "按课程作用域/时间取页"的用例不依赖 B3/B4 端口替身（processed 读的就是这张表）。
+    两行必须一起写：verification 对 challenge 有外键，挑战的消费列成对且反向引用 verification，
+    因此先写未消费的挑战、再写 verification、最后回填挑战的 `consumed_*`。
+    """
+    from autograder_b2.db.schema import email_verification_challenges
+
+    verification_id = uuid.uuid4()
+    challenge_id = uuid.uuid4()
+    moment = received_at or datetime.now(UTC)
+    created_at = moment - timedelta(minutes=5)
+    with engine.begin() as connection:
+        connection.execute(
+            sa.insert(email_verification_challenges).values(
+                challenge_id=challenge_id,
+                student_id=uuid.UUID(student_id),
+                course_id=uuid.UUID(course_id),
+                section_id=uuid.UUID(section_id),
+                question_version_id=None,
+                code_sha256=hashlib.sha256(str(uuid.uuid4()).encode()).hexdigest(),
+                created_at=created_at,
+                expires_at=created_at + timedelta(minutes=30),
+                consumed_at=None,
+                consumed_verification_id=None,
+                last_rejection_code=None,
+                attempts=1,
+                assignment_id=uuid.UUID(assignment_id),
+            )
+        )
+        connection.execute(
+            sa.insert(email_verifications).values(
+                verification_id=verification_id,
+                challenge_id=challenge_id,
+                student_id=uuid.UUID(student_id),
+                course_id=uuid.UUID(course_id),
+                section_id=uuid.UUID(section_id),
+                question_version_id=None,
+                submission_id=None,
+                sender="student@example.edu",
+                subject=subject,
+                student_number="2024141460192",
+                message_id=f"<{uuid.uuid4()}@example.edu>",
+                mailbox="submissions@example.edu",
+                uidvalidity=1,
+                uid=uid,
+                attachment_names=[],
+                received_at=moment,
+                created_at=created_at,
+                assignment_id=uuid.UUID(assignment_id),
+                processed_at=moment,
+            )
+        )
+        connection.execute(
+            sa.update(email_verification_challenges)
+            .where(email_verification_challenges.c.challenge_id == challenge_id)
+            .values(
+                consumed_at=created_at + timedelta(minutes=1),
+                consumed_verification_id=verification_id,
+            )
+        )
+    return str(verification_id)
+
+
+def test_mail_record_list_rejects_unauthenticated_and_non_staff(
+    client: TestClient, signer: _Signer, student: tuple[str, str, str, str]
+) -> None:
+    """无令牌 ⇒ 401；学生 / 无课程作用域的 staff ⇒ 403（与隔离列表同一套入口授权）。"""
+    assert client.get(MAIL_RECORDS, params={"category": "pending"}).status_code == 401
+    for token in (_student_token(signer, student), _scopeless_staff_token(signer)):
+        response = client.get(
+            MAIL_RECORDS, params={"category": "pending"}, headers=_auth(token)
+        )
+        assert response.status_code == 403, response.text
+        assert response.headers["content-type"].startswith("application/problem+json")
+
+
+def test_mail_record_category_is_required_and_filters_are_validated(
+    client: TestClient,
+    engine: Engine,
+    signer: _Signer,
+    student: tuple[str, str, str, str],
+) -> None:
+    """`category` 必填且只接受三态（缺失/非法 422，不静默"列出全部"）；其余过滤同隔离列表。"""
+    token = _auth(_staff_token(signer, student))
+    scope = {"scope_course_id": student[1], "scope_section_id": student[2]}
+    pending_id = _seed_quarantine(engine, uid=1, format_valid=True, **scope)
+
+    # 缺失（含空串）与非法取值都是 422：页面三个 tab 就是视图的全部。
+    for params in ({}, {"category": ""}, {"category": "all"}, {"category": "resolved"}):
+        response = client.get(MAIL_RECORDS, params=params, headers=token)
+        assert response.status_code == 422, (params, response.text)
+        assert response.headers["content-type"].startswith("application/problem+json")
+
+    # section 必须同时有 course；limit 越界 / 坏游标同样是 422。
+    for params in (
+        {"category": "pending", "section_id": str(uuid.uuid4())},
+        {"category": "pending", "limit": "0"},
+        {"category": "pending", "limit": "201"},
+        {"category": "pending", "cursor": "not-a-cursor"},
+    ):
+        assert client.get(MAIL_RECORDS, params=params, headers=token).status_code == 422, params
+
+    # 合法请求：契约字段逐字一致，且不含正文/附件/发件地址。
+    items = _mail_record_items(client, token, category="pending", course_id=student[1])
+    assert [item["record_id"] for item in items] == [pending_id]
+    item = items[0]
+    assert set(item) == {
+        "record_id",
+        "category",
+        "subject",
+        "received_at",
+        "course_id",
+        "section_id",
+        "assignment_id",
+        "student_id",
+        "reason_code",
+    }
+    assert item["category"] == "pending"
+    assert item["received_at"].endswith("Z")
+    assert not {"body", "sender", "content", "attachments"} & set(item)
+
+
+def test_mail_record_processed_lists_the_accepted_mail_newest_first(
+    client: TestClient,
+    engine: Engine,
+    signer: _Signer,
+    student: tuple[str, str, str, str],
+) -> None:
+    """`processed` 读 `email_verifications`：带回作业与学生（教师据此点进作业界面），倒序分页不重不漏。"""
+    token = _auth(_staff_token(signer, student))
+    base = datetime(2026, 11, 17, 9, 0, 0, tzinfo=UTC)
+    assignment_id = str(uuid.uuid4())
+    identifiers = [
+        _seed_processed_mail(
+            engine,
+            course_id=student[1],
+            section_id=student[2],
+            student_id=student[0],
+            assignment_id=assignment_id,
+            received_at=base + timedelta(minutes=index),
+            subject=f"作业提交 {index}",
+            uid=index + 1,
+        )
+        for index in range(3)
+    ]
+
+    first = client.get(
+        MAIL_RECORDS,
+        params={"category": "processed", "course_id": student[1], "limit": 2},
+        headers=token,
+    )
+    assert first.status_code == 200, first.text
+    first_body = first.json()
+    assert len(first_body["items"]) == 2 and first_body["next_cursor"]
+    assert [item["record_id"] for item in first_body["items"]] == identifiers[::-1][:2], (
+        "必须按收件时间倒序（最新的在前）"
+    )
+    item = first_body["items"][0]
+    assert item["category"] == "processed"
+    assert item["assignment_id"] == assignment_id
+    assert item["student_id"] == student[0]
+    assert item["course_id"] == student[1] and item["section_id"] == student[2]
+    assert item["reason_code"] is None, "已处理的邮件没有被拒原因"
+    assert item["subject"] == "作业提交 2"
+    assert item["received_at"].endswith("Z")
+
+    second = client.get(
+        MAIL_RECORDS,
+        params={
+            "category": "processed",
+            "course_id": student[1],
+            "limit": 2,
+            "cursor": first_body["next_cursor"],
+        },
+        headers=token,
+    ).json()
+    assert [item["record_id"] for item in second["items"]] == [identifiers[0]]
+    assert second["next_cursor"] is None
+    assert (
+        {item["record_id"] for item in first_body["items"]}
+        | {item["record_id"] for item in second["items"]}
+    ) == set(identifiers)
+
+
+def test_mail_record_processed_is_scoped_by_the_token_course_scope(
+    client: TestClient,
+    engine: Engine,
+    signer: _Signer,
+    student: tuple[str, str, str, str],
+) -> None:
+    """已处理记录按提交所属 (course, section) 做行级过滤：staff 只看到自己作用域内的课程。"""
+    mine = _seed_processed_mail(
+        engine,
+        course_id=student[1],
+        section_id=student[2],
+        student_id=student[0],
+        assignment_id=str(uuid.uuid4()),
+        uid=1,
+    )
+    foreign_course = str(uuid.uuid4())
+    foreign = _seed_processed_mail(
+        engine,
+        course_id=foreign_course,
+        section_id=str(uuid.uuid4()),
+        student_id=str(uuid.uuid4()),
+        assignment_id=str(uuid.uuid4()),
+        uid=2,
+    )
+    token = _auth(_staff_token(signer, student))
+
+    items = _mail_record_items(client, token, category="processed")
+    assert {item["record_id"] for item in items} == {mine}
+    # 显式指定作用域外课程 ⇒ 403（不是空页）；管理员能看全部。
+    assert (
+        client.get(
+            MAIL_RECORDS,
+            params={"category": "processed", "course_id": foreign_course},
+            headers=token,
+        ).status_code
+        == 403
+    )
+    admin_items = _mail_record_items(client, _admin_token(signer), category="processed")
+    assert {item["record_id"] for item in admin_items} == {mine, foreign}
+
+
+def test_mail_record_pending_and_other_follow_the_stored_facts(
+    client: TestClient,
+    engine: Engine,
+    signer: _Signer,
+    student: tuple[str, str, str, str],
+) -> None:
+    """三态判定只认收件时落库的分类事实：正文格式正确 **或** 发件地址属于已注册账号 ⇒ 待处理。
+
+    同时覆盖历史行（两个分类列皆 NULL）的契约归类规则：失败阶段可推断正文已通过的两种原因码
+    （核验码过期 / 附件映射失败）归 `pending`，其余历史原因归 `other`。
+    """
+    token = _auth(_staff_token(signer, student))
+    scope = {"scope_course_id": student[1], "scope_section_id": student[2]}
+    assignment_id = str(uuid.uuid4())
+    lesson_student = str(uuid.uuid4())
+
+    pending_by_format = _seed_quarantine(
+        engine,
+        uid=1,
+        reason_code="no_attachments",
+        format_valid=True,
+        sender_associated=False,
+        assignment_id=assignment_id,
+        student_id=lesson_student,
+        subject="正确正文但没有附件",
+        **scope,
+    )
+    pending_by_sender = _seed_quarantine(
+        engine,
+        uid=2,
+        reason_code="email_body_mismatch",
+        format_valid=False,
+        sender_associated=True,
+        **scope,
+    )
+    other_malformed = _seed_quarantine(
+        engine,
+        uid=3,
+        reason_code="email_body_mismatch",
+        format_valid=False,
+        sender_associated=False,
+        **scope,
+    )
+    other_unscoped = _seed_quarantine(
+        engine,
+        uid=4,
+        reason_code="executable_attachment",
+        format_valid=False,
+        sender_associated=False,
+    )
+    historical_expired = _seed_quarantine(
+        engine, uid=5, reason_code="email_verification_expired", **scope
+    )
+    historical_mapping = _seed_quarantine(
+        engine, uid=6, reason_code="attachment_mapping_invalid", **scope
+    )
+    historical_other = _seed_quarantine(
+        engine, uid=7, reason_code="not_uniquely_matched", **scope
+    )
+
+    pending = _mail_record_items(
+        client, token, category="pending", course_id=student[1]
+    )
+    assert {item["record_id"] for item in pending} == {
+        pending_by_format,
+        pending_by_sender,
+        historical_expired,
+        historical_mapping,
+    }
+    by_id = {item["record_id"]: item for item in pending}
+    assert by_id[pending_by_format]["assignment_id"] == assignment_id
+    assert by_id[pending_by_format]["student_id"] == lesson_student
+    assert by_id[pending_by_format]["reason_code"] == "no_attachments"
+    assert by_id[pending_by_format]["subject"] == "正确正文但没有附件"
+    # 仅凭发件地址关联的待处理行**不带**学生：地址可伪造，不是作者证明。
+    assert by_id[pending_by_sender]["student_id"] is None
+    assert by_id[pending_by_sender]["assignment_id"] is None
+    assert by_id[pending_by_sender]["reason_code"] == "email_body_mismatch"
+    for item in pending:
+        assert item["category"] == "pending"
+
+    other = _mail_record_items(client, token, category="other", course_id=student[1])
+    assert {item["record_id"] for item in other} == {other_malformed, historical_other}
+    for item in other:
+        assert item["category"] == "other"
+    # 无课程关联的行（NULL scope）只对管理员可见——即使它被归类为 other。
+    admin_other = _mail_record_items(client, _admin_token(signer), category="other")
+    assert {item["record_id"] for item in admin_other} == {
+        other_malformed,
+        other_unscoped,
+        historical_other,
+    }
+
+    # 两个类别互斥且覆盖全部隔离行（同一行不会出现在两个 tab）。
+    assert (
+        {item["record_id"] for item in pending}
+        & {item["record_id"] for item in other}
+    ) == set()
+
+
+def test_mail_record_pending_is_filtered_by_row_scope_before_pagination(
+    client: TestClient,
+    engine: Engine,
+    signer: _Signer,
+    student: tuple[str, str, str, str],
+) -> None:
+    """待处理行也按隔离记录自己的 scope 做行级过滤；NULL/跨课行对 staff 不可见。"""
+    base = datetime(2026, 11, 17, 9, 0, 0, tzinfo=UTC)
+    mine = _seed_quarantine(
+        engine,
+        uid=1,
+        format_valid=True,
+        recorded_at=base,
+        scope_course_id=student[1],
+        scope_section_id=student[2],
+    )
+    foreign = _seed_quarantine(
+        engine,
+        uid=2,
+        format_valid=True,
+        recorded_at=base + timedelta(minutes=1),
+        scope_course_id=str(uuid.uuid4()),
+        scope_section_id=str(uuid.uuid4()),
+    )
+    unscoped = _seed_quarantine(
+        engine, uid=3, format_valid=True, recorded_at=base + timedelta(minutes=2)
+    )
+
+    token = _auth(_staff_token(signer, student))
+    items = _mail_record_items(client, token, category="pending")
+    assert [item["record_id"] for item in items] == [mine], (
+        "staff 只能看到自己课程作用域内的行；NULL scope 行只对管理员可见"
+    )
+    # 显式请求作用域外课程 ⇒ 403，而不是空页。
+    assert (
+        client.get(
+            MAIL_RECORDS,
+            params={"category": "pending", "course_id": str(uuid.uuid4())},
+            headers=token,
+        ).status_code
+        == 403
+    )
+
+    admin_items = _mail_record_items(client, _admin_token(signer), category="pending")
+    assert [item["record_id"] for item in admin_items] == [
+        unscoped,
+        foreign,
+        mine,
+    ], "管理员看全部且按时间倒序"
+
+
+def test_mail_record_section_scoped_staff_only_sees_that_section(
+    client: TestClient,
+    engine: Engine,
+    signer: _Signer,
+    student: tuple[str, str, str, str],
+) -> None:
+    """课序级 staff 作用域要求记录课序精确相等（processed 与 pending 同一语义）。"""
+    section_one, section_two = student[2], str(uuid.uuid4())
+    mine = _seed_processed_mail(
+        engine,
+        course_id=student[1],
+        section_id=section_one,
+        student_id=student[0],
+        assignment_id=str(uuid.uuid4()),
+        uid=1,
+    )
+    other_section = _seed_processed_mail(
+        engine,
+        course_id=student[1],
+        section_id=section_two,
+        student_id=str(uuid.uuid4()),
+        assignment_id=str(uuid.uuid4()),
+        uid=2,
+    )
+    scoped = _seed_quarantine(
+        engine,
+        uid=3,
+        format_valid=True,
+        scope_course_id=student[1],
+        scope_section_id=section_one,
+    )
+    pending_other_section = _seed_quarantine(
+        engine,
+        uid=4,
+        format_valid=True,
+        scope_course_id=student[1],
+        scope_section_id=section_two,
+    )
+    token = _auth(
+        _section_staff_token(signer, course_id=student[1], section_id=section_one)
+    )
+
+    processed = _mail_record_items(client, token, category="processed")
+    assert {item["record_id"] for item in processed} == {mine}
+    pending = _mail_record_items(client, token, category="pending")
+    assert {item["record_id"] for item in pending} == {scoped}
+    # 显式请求另一个课序（同一课程）同样 403。
+    assert (
+        client.get(
+            MAIL_RECORDS,
+            params={
+                "category": "processed",
+                "course_id": student[1],
+                "section_id": section_two,
+            },
+            headers=token,
+        ).status_code
+        == 403
+    )
+    # 反证：记录确实存在（管理员视角），不是种子没写进去。
+    admin_processed = _mail_record_items(
+        client, _admin_token(signer), category="processed"
+    )
+    assert {item["record_id"] for item in admin_processed} == {mine, other_section}
+    admin_pending = _mail_record_items(client, _admin_token(signer), category="pending")
+    assert {item["record_id"] for item in admin_pending} == {
+        scoped,
+        pending_other_section,
+    }

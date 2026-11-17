@@ -526,7 +526,7 @@ class IntakeQuarantineService:
         wanted_section = parse_section_filter(section_id)
         if wanted_section is not None and wanted_course is None:
             raise InvalidQuarantineFilterError("section_id requires course_id")
-        _require_query_scope_authority(principal, wanted_course, wanted_section)
+        require_query_scope_authority(principal, wanted_course, wanted_section)
         after = None if cursor is None else decode_cursor(cursor)
         with self._engine.connect() as connection:
             rows = connection.execute(
@@ -1058,38 +1058,51 @@ def _select_view() -> sa.Select[Any]:
     )
 
 
-def _scope_predicate(principal: Principal) -> sa.ColumnElement[bool]:
-    """行级可见性谓词（**必须在排序、limit 与游标之前施加**）。
+def row_scope_predicate(
+    principal: Principal,
+    *,
+    course_column: Any,
+    section_column: Any,
+) -> sa.ColumnElement[bool]:
+    """行级可见性谓词（隔离列表与「邮件记录」视图**共用**同一语义；**在排序/limit/游标前施加**）。
 
     - 管理员：`true`（全局，含未关联行——这正是管理员视图存在的理由）；
-    - staff：`scope_course_id` 非空且被某个令牌作用域覆盖。作用域条目未限定课序时覆盖该课程
-      的任意课序（与 `Principal.covers_course` 同一语义），限定课序时要求精确相等；
+    - staff：课程列非空且被某个令牌作用域覆盖。作用域条目未限定课序时覆盖该课程的任意课序
+      （与 `Principal.covers_course` 同一语义），限定课序时要求精确相等；
     - 空作用域：`false`（fail-closed；入口层已拒绝这种 staff 令牌，这里再兜一次）。
+
+    `course_column`/`section_column` 是两张表的同义列（隔离记录用 `scope_*`，已处理的邮件
+    记录用 `course_id/section_id`）：把谓词写成对列参数化的函数，三个列表读同一份判定，
+    不会出现"隔离列表挡住的、邮件记录漏出去"的偏差。
     """
     if principal.is_admin:
         return sa.true()
     clauses: list[sa.ColumnElement[bool]] = []
     for scope in principal.scopes:
-        condition: sa.ColumnElement[bool] = (
-            intake_quarantines.c.scope_course_id == uuid.UUID(scope.course_id)
-        )
+        condition: sa.ColumnElement[bool] = course_column == uuid.UUID(scope.course_id)
         if scope.section_id is not None:
-            condition = sa.and_(
-                condition,
-                intake_quarantines.c.scope_section_id == uuid.UUID(scope.section_id),
-            )
+            condition = sa.and_(condition, section_column == uuid.UUID(scope.section_id))
         clauses.append(condition)
     if not clauses:
         return sa.false()
-    return sa.and_(intake_quarantines.c.scope_course_id.is_not(None), sa.or_(*clauses))
+    return sa.and_(course_column.is_not(None), sa.or_(*clauses))
 
 
-def _require_query_scope_authority(
+def _scope_predicate(principal: Principal) -> sa.ColumnElement[bool]:
+    """隔离记录的行级可见性谓词（`row_scope_predicate` 在 `scope_*` 列上的实例）。"""
+    return row_scope_predicate(
+        principal,
+        course_column=intake_quarantines.c.scope_course_id,
+        section_column=intake_quarantines.c.scope_section_id,
+    )
+
+
+def require_query_scope_authority(
     principal: Principal, course_id: str | None, section_id: str | None
 ) -> None:
     """`course_id/section_id` 只是筛选：staff 传了作用域之外的课程/课序 → 403。
 
-    不带课程筛选是合法的（此时仍由 `_scope_predicate` 把范围限制在令牌作用域内）；
+    不带课程筛选是合法的（此时仍由行级谓词把范围限制在令牌作用域内）；
     显式指定课程时，显式越界必须失败，而不是静默返回空列表——"空结果"与"无权"是两件事。
     """
     if principal.is_admin or course_id is None:
@@ -1213,5 +1226,7 @@ __all__ = [
     "quarantine_page_body",
     "quarantine_rejection_body",
     "quarantine_view_body",
+    "require_query_scope_authority",
+    "row_scope_predicate",
     "validate_resolution_request",
 ]

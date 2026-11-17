@@ -319,6 +319,8 @@ def test_indexes_and_unique_keys_exist(empty_database_url: str) -> None:
         # 迁移 0022：映射表的两条唯一约束/索引。
         "uq_email_verification_submissions_submission_id",
         "ix_email_verification_submissions_question_version_id",
+        # 迁移 0024：教师端「邮件记录」的"已处理"页按 (课程, 课序) 倒序取页的索引。
+        "ix_email_verifications_course_section_received_at",
     ):
         assert expected in indexes, f"索引/唯一键缺失: {expected}"
 

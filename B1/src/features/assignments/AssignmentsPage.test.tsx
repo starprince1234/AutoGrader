@@ -27,7 +27,8 @@ import {
   enrollmentPublic,
   gradePage,
   gradeRow,
-  intakeQuarantineView,
+  mailRecordPage,
+  mailRecordView,
   myMembership,
   sessionCreated,
 } from "../../testing/contractFixtures";
@@ -127,22 +128,24 @@ function routes(options: {
   grades?: unknown[];
   gradeNextCursor?: string | null;
   enrollments?: unknown[];
-  pendingQuarantines?: number;
+  pendingMailRecords?: number;
   memberships?: ReturnType<typeof myMembership>[];
 }): StubbedRoute[] {
   const common: StubbedRoute[] = [
     {
+      // 作业页头的「邮件记录」徽标只请求待处理分类的第一页（limit=1）。
       method: "GET",
-      path: "/api/v1/intake/quarantines",
+      path: "/api/v1/intake/mail-records",
       respond: ({ url }) => {
         const limit = Number(url.searchParams.get("limit") ?? "50");
-        const total = options.pendingQuarantines ?? 0;
+        const total = options.pendingMailRecords ?? 0;
         const items = Array.from({ length: Math.min(total, limit) }, (_, index) =>
-          intakeQuarantineView({
-            intake_quarantine_id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+          mailRecordView({
+            record_id: `00000000-0000-4000-8000-${String(index + 1).padStart(12, "0")}`,
+            category: "pending",
           }),
         );
-        return jsonResponse({ items, next_cursor: total > limit ? "more" : null });
+        return jsonResponse(mailRecordPage(items, total > limit ? "more" : null));
       },
     },
     {
@@ -483,6 +486,27 @@ describe("作业中心（教师侧作业列表）", () => {
     await screen.findByTestId("teacher-assignments-table");
     return user;
   }
+
+  it("页头「邮件记录」入口显示待处理记录数（第一页满时显示 N+）", async () => {
+    await openTeacherList({ pendingMailRecords: 3 });
+
+    const link = screen.getByTestId("assignments-mail-records-link");
+    expect(link).toHaveTextContent("邮件记录");
+    expect(link.getAttribute("href")).toContain("/review");
+    const badge = await screen.findByTestId("assignments-mail-records-badge");
+    // 与点进去看到的第一页同一批：limit=50，这里 3 条都能数到。
+    expect(badge).toHaveTextContent("3");
+    expect(badge).toHaveAttribute("aria-label", "有 3 条待处理的邮件记录");
+
+    const request = stub!.requests.find(
+      (item) => item.method === "GET" && item.url.pathname === "/api/v1/intake/mail-records",
+    );
+    expect(request?.url.searchParams.get("category")).toBe("pending");
+    expect(request?.url.searchParams.get("limit")).toBe("50");
+    // 徽标与入口必须是同一批：带上当前课程/课序。
+    expect(request?.url.searchParams.get("course_id")).toBe(COURSE);
+    expect(request?.url.searchParams.get("section_id")).toBe(SECTION);
+  });
 
   it("作业列表按 PDF 结构：作业名 / 状态 / 截止时间 / 题目数 / 已处理作业数量", async () => {
     await openTeacherList({ grades: teacherGrades });

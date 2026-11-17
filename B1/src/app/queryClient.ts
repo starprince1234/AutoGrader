@@ -1,5 +1,6 @@
 import { QueryClient } from "@tanstack/react-query";
 import { isApiError } from "../api/problem";
+import type { MailRecordCategory } from "../api/types";
 
 /**
  * 全局查询客户端。
@@ -104,19 +105,18 @@ export const queryKeys = {
    */
   commentary: (runId: string) => ["evaluation-commentary", runId] as const,
   /**
-   * 复核工作区（P13）。身份 + 筛选一起进键：
-   * - 同一浏览器切换账号后不得读到上一个账号的隔离记录缓存；
-   * - `resolved`/课程/课序/原因不同即为**不同的列表**，不能共用缓存。
+   * 邮件记录（`/review`，契约 `listMailRecords`）。身份 + 筛选一起进键：
+   * - 同一浏览器切换账号后不得读到上一个账号的邮件记录缓存；
+   * - `category`（已处理/待处理/其他）与课程/课序不同即为**不同的列表**，不能共用缓存。
    */
-  reviewQuarantines: (
+  mailRecords: (
     identity: string,
     filter: {
+      category: MailRecordCategory;
       courseId: string | null;
       sectionId: string | null;
-      resolved: boolean | null;
-      cursor: string | null;
     },
-  ) => ["review-quarantines", identity, filter] as const,
+  ) => ["mail-records", identity, filter] as const,
   /** 申诉证据包。`view` 进键：学生视图与教师视图是两份不同的内容。 */
   appealPack: (runId: string, view: string) => ["appeal-pack", runId, view] as const,
   /**

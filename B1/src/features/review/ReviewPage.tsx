@@ -1,17 +1,17 @@
 import { Link } from "@tanstack/react-router";
 import { t } from "../../i18n";
 import { PageTitle } from "../../ui/components";
-import { MailReviewTab } from "./MailReviewTab";
+import { MailRecordsTab } from "./MailRecordsTab";
 import type { ReviewSearch } from "./search";
 
 /**
- * P13 复核工作区（`/review`）：只做一件事——把待处理的隔离邮件归属到学生。
+ * `/review`：**邮件记录**页（只读）。
  *
- * 老师的要求：这里不要「题目质量」（题目详情页的入口也一并去掉），也不要「示例预览」。
- * 于是本页只剩一个视图；旧链接上的 `tab=…` 等参数由 `parseReviewSearch` 丢弃，
- * 不会渲染第二个页面，也不会留一个半可见的标签。
+ * 用户的要求：这个功能用于"查看邮件提交记录"，所以这里没有处置动作，也不再有第二个标签：
+ * 打开就是三种分类（已处理 / 待处理 / 其他）的记录列表。页头只保留"返回作业列表"。
  *
- * 状态全部住在 URL：刷新、复制链接、前进/后退都能恢复。
+ * 状态全部住在 URL（课程/课序与三态分类）：刷新、复制链接、前进/后退都能恢复；旧链接上的
+ * `resolved`/`held`/`reason_code`/`cursor`/`tab` 等参数由 `parseReviewSearch` 丢弃。
  */
 export function ReviewPage({
   search,
@@ -30,7 +30,10 @@ export function ReviewPage({
           </Link>
         </div>
       </div>
-      <MailReviewTab search={search} onChange={onChange} />
+      <p className="muted" data-testid="review-intro">
+        {t("review.intro")}
+      </p>
+      <MailRecordsTab search={search} onChange={onChange} />
     </div>
   );
 }

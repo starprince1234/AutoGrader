@@ -43,6 +43,7 @@ from autograder_b2.db.engine import create_db_engine
 from autograder_b2.db.schema import EXPECTED_SCHEMA_REVISION
 from autograder_b2.intake.email_verification import EmailVerificationService
 from autograder_b2.intake.imap import EmailCheckpointStore, EmailIntakeService, QuarantineStore
+from autograder_b2.intake.mail_records import MailRecordService
 from autograder_b2.intake.matching import DirectoryEmailMatcher, SenderDirectory
 from autograder_b2.intake.quarantine import IntakeQuarantineService
 from autograder_b2.intake.query import SubmissionQueryService
@@ -66,6 +67,9 @@ class IntakeRuntime:
     #: 隔离区复核（`CHG-0014`）：只依赖库与认证器，与邮件入口**是否配置无关**——
     #: 读到已写下的隔离记录不需要连邮箱（见 `intake.quarantine` 的"重跑哪些校验"一节）。
     quarantines: IntakeQuarantineService | None = None
+    #: 教师端「邮件记录」三态视图（契约 0.39.0）：与隔离区一样只依赖库与认证器，**始终可用**。
+    #: 它读的是收件当时落库的分类事实，所以不需要连邮箱、也不会触发任何评测。
+    mail_records: MailRecordService | None = None
     unavailable_reason: str | None = None
     engine: Engine | None = None
     email: EmailIntakeService | None = None
@@ -89,6 +93,7 @@ class IntakeRuntime:
             and self.service is not None
             and self.query is not None
             and self.quarantines is not None
+            and self.mail_records is not None
             and self.unavailable_reason is None
         )
 
@@ -192,6 +197,8 @@ def build_runtime(settings_source: Mapping[str, str]) -> IntakeRuntime:
     runtime.quarantines = IntakeQuarantineService(
         engine, authorization_directory=runtime.authorization_directory
     )
+    # 「邮件记录」读的是收件时落库的分类事实，与邮件入口是否配置无关：库 + 认证器就够。
+    runtime.mail_records = MailRecordService(engine)
     _wire_email_intake(runtime, settings_source, engine)
     if runtime.email is not None:
         # 人工复核需要回邮箱取原邮件；没有邮件入口时服务仍可读列表/作废/暂存。

@@ -41,6 +41,7 @@ from autograder_b2.api.formatting import rfc3339_millis
 from autograder_b2.auth.authorization import AuthorizationError
 from autograder_b2.auth.tokens import AuthenticationError
 from autograder_b2.domain.envelope import EnvelopeRejected
+from autograder_b2.intake.mail_records import mail_record_page_body
 from autograder_b2.intake.quarantine import (
     InvalidQuarantineCursorError,
     InvalidQuarantineFilterError,
@@ -365,6 +366,55 @@ def build_router(runtime: IntakeRuntime) -> APIRouter:
             runtime.record_failure()
             return problem_response(SERVICE_UNAVAILABLE, instance)
         return JSONResponse(status_code=200, content=quarantine_page_body(page))
+
+    @router.get("/api/v1/intake/mail-records")
+    async def list_mail_records(
+        request: Request,
+        category: str | None = None,
+        course_id: str | None = None,
+        section_id: str | None = None,
+        cursor: str | None = None,
+        limit: str | None = None,
+    ) -> Response:
+        """列出教师端「邮件记录」的三个**互斥**状态之一（契约 0.39.0 的 `listMailRecords`）。
+
+        三个状态回答的是同一个问题——"收件链路对这封邮件做了什么"：`processed`（已变成作业
+        提交，教师可点进去看）、`pending`（真实提交尝试但没列入作业）、`other`（广告垃圾/
+        无码/格式不合格/报文闸门拒绝）。判定**只有一处**（`intake.mail_records`）：`category`
+        必填（缺失/非法 → 422，不静默列全部），行级课程作用域、游标与 `limit` 的判定也在那里，
+        本层只做状态码映射。响应不含正文/附件内容/发件地址。
+        """
+        instance = request.url.path
+        if not runtime.ready:
+            return _not_available(instance, runtime.unavailable_reason)
+        assert runtime.authenticator is not None and runtime.mail_records is not None
+        try:
+            principal = runtime.authenticator.authenticate(request.headers.get("authorization"))
+        except AuthenticationError:
+            return problem_response(UNAUTHORIZED, instance)
+
+        try:
+            page = runtime.mail_records.list_records(
+                principal=principal,
+                category=category,
+                course_id=course_id or None,
+                section_id=section_id or None,
+                limit=limit,
+                cursor=cursor or None,
+            )
+        except AuthorizationError:
+            return problem_response(FORBIDDEN, instance)
+        except (InvalidQuarantineFilterError, InvalidQuarantineCursorError) as error:
+            return _unprocessable(instance, str(error))
+        except SQLAlchemyError as error:
+            # 依赖不可用**既有状态也有日志**（RQ-B-2-99 场景 2-99-D）；`record_failure()` 只如实
+            # 累计、不翻转健康判定。未预期异常照旧冒泡，由宿主处理。
+            log_dependency_unavailable(
+                logger, dependency="database", error=error, stage="intake mail records"
+            )
+            runtime.record_failure()
+            return problem_response(SERVICE_UNAVAILABLE, instance)
+        return JSONResponse(status_code=200, content=mail_record_page_body(page))
 
     @router.post("/api/v1/intake/quarantines/{intake_quarantine_id}/resolve")
     async def resolve_intake_quarantine(intake_quarantine_id: str, request: Request) -> Response:

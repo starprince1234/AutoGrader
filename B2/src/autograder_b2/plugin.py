@@ -13,7 +13,7 @@
 | `POST /api/v1/submissions`、`GET /api/v1/submissions/{id}` | `/api/v1/submissions` | `intake.api` |
 | `GET /api/v1/evaluation-runs/{id}`、`/events`、`/report`、`/appeal-pack`、`/commentary`、`POST .../commentary`、`GET /api/v1/evaluation-runs/quality-summary`、`GET/POST .../learning-hints`（AI-FLOW-01B） | `/api/v1/evaluation-runs` | `api.evaluation_routes` |
 | `GET /api/v1/grades`、`/api/v1/grades/export` | `/api/v1/grades` | `api.grades_routes` |
-| `GET /api/v1/intake/quarantines`、`POST .../{quarantine_id}/resolve`（CHG-0014） | `/api/v1/intake` | `intake.api`（两条读/写路径都由 `intake.quarantine` 判定） |
+| `GET /api/v1/intake/quarantines`、`POST .../{quarantine_id}/resolve`（CHG-0014）、`GET /api/v1/intake/mail-records`（契约 0.39.0 的教师端邮件记录三态） | `/api/v1/intake` | `intake.api`（隔离区读/写由 `intake.quarantine` 判定；邮件记录由 `intake.mail_records` 判定） |
 | `POST /api/v1/reference-verifications`（`CHG-0019`） | `/api/v1/reference-verifications` | `api.reference_routes` |
 
 `/api/v1/grades` 一行曾是**已记录的声明缺口**（CHG-0005 缺口 3）：成绩两条路径没有被任何 `routes`
@@ -54,7 +54,7 @@ from autograder_b2.runtime import B2Runtime, build_b2_runtime
 class B2Module:
     descriptor = ModuleDescriptor(
         module="B2",
-        contract_version="0.38.0",
+        contract_version="0.39.0",
         provides=("b2-submissions",),
         requires=("host", "b4-auth", "b3-questions"),
         routes=(

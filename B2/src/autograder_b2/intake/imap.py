@@ -37,6 +37,11 @@
 4. **可恢复的两段式**：`try_consume_received` 先提交"邮件事实"，随后逐题 `persist`；中途失败
    不写 checkpoint，下一轮 resume 既有 verification、按幂等键重放已落库提交并补齐剩余题目，
    全部成功后才写 `processed_at` 与 checkpoint。
+5. **分类事实随记录落库**：每封**解析成功**的邮件在收件时算出 `_MailClassification`（正文五行
+   格式是否通过、发件地址是否属于已注册账号、能否定位挑战对应的作业/学生），随隔离记录写进
+   `b2.intake_quarantines`；教师端「邮件记录」三态视图（`intake.mail_records`）只做映射、不
+   重算——正文不落库，事后无法重算。发件账号与挑战定位**每封邮件只解析一次**；B4 身份目录
+   不可用时本轮拉取失败重试，绝不把故障记成"发件人未注册"。
 
 **授权从哪里来**：邮件入口没有认证头、也没有调用者身份，因此它**不**走 API 那套 `Principal` 判定。
 这里的授权依据是两件服务端事实：能读到这个邮箱（凭据只来自部署配置）＋ 这封邮件携带的核验码
@@ -104,7 +109,7 @@ from autograder_b2.intake.email_verification import (
     extract_challenge_codes,
     redact_challenge_codes,
 )
-from autograder_b2.intake.matching import MatchingUnavailable, ScopeContext
+from autograder_b2.intake.matching import MatchedAccount, MatchingUnavailable, ScopeContext
 from autograder_b2.intake.receipt_mailer import send_submission_receipt_email
 from autograder_b2.intake.service import (
     IntakeLimits,
@@ -439,6 +444,10 @@ class QuarantineStore:
         intake: str = "email",
         subject: str | None = None,
         sender: str | None = None,
+        format_valid: bool | None = None,
+        sender_associated: bool | None = None,
+        assignment_id: str | None = None,
+        student_id: str | None = None,
     ) -> str:
         """写一条隔离记录（在调用方事务内）。`detail` 已在调用方脱敏，这里只兜长度上限。
 
@@ -447,6 +456,11 @@ class QuarantineStore:
 
         `sender` 是这封邮件真实的 From 地址，按与提交绑定同一形态（去空白、小写）落库：
         它是打回通知的唯一收件人，平台不得从邮箱、主题、scope 或学生名单里推出一个替代地址。
+
+        四个分类事实（`format_valid`/`sender_associated`/`assignment_id`/`student_id`）来自
+        `EmailIntakeService` 的收件判定（见 `_MailClassification`），是教师端「邮件记录」三态
+        视图的判断依据。默认 `None` 表示"这条记录写于分类列存在之前 / 邮件在解析前就被拒"
+        ——读侧按原因码推断历史行，绝不把"不知道"猜成某个布尔值。
         """
         sender_address = None if sender is None else (sender.strip().lower() or None)
         identifier = uuid.uuid4()
@@ -465,6 +479,10 @@ class QuarantineStore:
                 scope_section_id=None if scope is None else uuid.UUID(scope.section_id),
                 subject=subject,
                 sender=sender_address,
+                format_valid=format_valid,
+                sender_associated=sender_associated,
+                assignment_id=None if assignment_id is None else uuid.UUID(assignment_id),
+                student_id=None if student_id is None else uuid.UUID(student_id),
             )
         )
         return str(identifier)
@@ -549,6 +567,27 @@ class _MappedAttachment:
     question_version_id: str
     attachment_name: str
     content: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class _MailClassification:
+    """一封来件的**收件分类事实**（随隔离记录落库，教师端「邮件记录」三态视图据此判定）。
+
+    - `format_valid`：正文五行机器格式校验是否已通过（作业编号与挑战一致；发件人恰为挑战
+      所有者时姓名/学号与账号一致）。**独立于消费结果计算**：核验码过期时，这一事实同样要留下。
+    - `sender_associated`：发件地址是否解析为 B4 已注册账号。地址**可伪造**，它只能说明
+      "这像某个学生发的邮件"，不能说明作者；因此仅凭它为真时**不写** `student_id`。
+    - `assignment_id`/`student_id`：只在定位到挑战时写（挑战是服务端签发事实，核验码已证明
+      身份）。`assignment_id` 仅信息展示，**绝不**作为授权依据。
+
+    没有任何"未知"三值逻辑：分类只在**解析成功**的邮件上计算；体积超限/报文畸形的邮件在
+    解析前就被拒，事实保持 `None`（`NULL`），由读侧按原因码归入 `other`。
+    """
+
+    format_valid: bool
+    sender_associated: bool
+    assignment_id: str | None = None
+    student_id: str | None = None
 
 
 class EmailIntakeService:
@@ -818,6 +857,8 @@ class EmailIntakeService:
         mailbox = self._settings.mailbox
         limit = self._settings.max_message_bytes
         if len(raw) > limit:
+            # 解析前即拒绝：既没有正文可校验，也没有发件地址可解析，分类事实保持 NULL
+            # （"不知道"不是"不是学生邮件"）；读侧按原因码把它归入 `other`。
             return self._reject(
                 uidvalidity=uidvalidity,
                 uid=uid,
@@ -837,8 +878,10 @@ class EmailIntakeService:
         message_id = message.message_id
         if message_id is None:
             # 缺 `Message-ID` 就没有第二把幂等钥匙：UIDVALIDITY 一变，同一封邮件会被当成新邮件。
-            inspection = self._challenge_for_feedback(message.body_excerpt)
-            self._record_precheck_failure(inspection)
+            # 仍解析一次发件账号与核验码——分类事实与"给学生可见的失败原因"都需要它们。
+            account = self._resolve_sender(message.sender)
+            feedback = self._feedback_of(self._inspect_once(message.body_excerpt))
+            self._record_precheck_failure(feedback)
             return self._reject(
                 uidvalidity=uidvalidity,
                 uid=uid,
@@ -849,8 +892,11 @@ class EmailIntakeService:
                     " the double-key checkpoint cannot be formed",
                 ),
                 subject=message.subject,
-                scope=self._scope_of(inspection),
+                scope=self._scope_of(feedback),
                 sender=message.sender,
+                classification=self._classify(
+                    message, account=account, inspection=feedback
+                ),
             )
 
         existing = self._checkpoints.lookup(
@@ -865,21 +911,32 @@ class EmailIntakeService:
                 detail=f"checkpoint status={existing.status}",
             )
 
+        # 每封**解析成功**的邮件只解析一次发件账号、只定位一次核验码挑战：
+        # - 发件账号是分类事实（`sender_associated`）与正文身份核对共用的输入；B4 身份目录
+        #   不可用（`MatchingUnavailable`）**原样上抛** ⇒ 本轮拉取失败重试，绝不记成"未注册"。
+        # - 挑战定位是分类事实（`format_valid`/`assignment_id`/`student_id`）、附件闸门失败时
+        #   学生可见的原因与核验路径共用的只读查询。
+        account = self._resolve_sender(message.sender)
+        found = self._inspect_once(message.body_excerpt)
+
         try:
             accepted = screen_attachments(message, limits=self.limits)
         except AttachmentRejected as rejected:
             # 附件闸门先跑（不合格邮件不消费任何挑战）；但只要正文里有能唯一定位的核验码，
             # 仍把这次失败记到该挑战上——否则学生只看到“等待收件”，永远不知道哪里错了。
-            inspection = self._challenge_for_feedback(message.body_excerpt)
-            self._record_precheck_failure(inspection)
+            feedback = self._feedback_of(found)
+            self._record_precheck_failure(feedback)
             return self._reject(
                 uidvalidity=uidvalidity,
                 uid=uid,
                 message_id=message_id,
                 rejection=rejected,
                 subject=message.subject,
-                scope=self._scope_of(inspection),
+                scope=self._scope_of(feedback),
                 sender=message.sender,
+                classification=self._classify(
+                    message, account=account, inspection=feedback
+                ),
             )
 
         # 设计 §6.4 第 10 步：没有核验码的邮件不再有"固定目标/匹配规则"可路由，可解释地隔离。
@@ -895,16 +952,39 @@ class EmailIntakeService:
                 ),
                 scope=None,
                 sender=message.sender,
+                classification=self._classify(message, account=account, inspection=None),
             )
+        # 形状命中 ⇒ `extract_challenge_codes` 至少返回一个候选，`inspect_challenge` 必有结论
+        # （`ChallengeInspection` 或可解释的 `VerificationRejected`）。
+        assert found is not None
         return self._process_verification(
-            uidvalidity=uidvalidity, uid=uid, message=message, accepted=accepted
+            uidvalidity=uidvalidity,
+            uid=uid,
+            message=message,
+            accepted=accepted,
+            account=account,
+            inspection=found,
         )
 
-    def _challenge_for_feedback(self, body_excerpt: str) -> ChallengeInspection | None:
-        """只读定位正文核验码对应的挑战，用于结构/附件闸门失败时也能告诉学生原因。
+    def _resolve_sender(self, sender: str) -> MatchedAccount | None:
+        """发件地址 → B4 账号（**每封解析成功的邮件只查一次**）。
 
-        找不到（没有码、码不存在、已过期等）返回 `None`：此时没有可归属的对象，
-        只能按无关联隔离处理。数据库故障原样上抛（那是平台故障，不是学生邮件不合格）。
+        `None` 有两种含义，且都**不**是"这封信是学生发的"：没有装配核验服务（部署没有
+        身份目录）或地址确实不属于任何账号。查不了（`MatchingUnavailable`）由底层上抛，
+        调用方按"本轮拉取失败、下一轮重试"处理。
+        """
+        verification = self._verification
+        if verification is None:
+            return None
+        return verification.resolve_sender(sender)
+
+    def _inspect_once(
+        self, body_excerpt: str
+    ) -> ChallengeInspection | VerificationRejected | None:
+        """只读定位正文核验码对应的挑战（**每封解析成功的邮件只查一次**）。
+
+        没有码 / 未装配核验服务 → `None`（调用方按"无法定位挑战"处理）；
+        数据库故障原样上抛（那是平台故障，不是学生邮件不合格）。
         """
         verification = self._verification
         if verification is None:
@@ -912,8 +992,57 @@ class EmailIntakeService:
         codes = extract_challenge_codes(body_excerpt)
         if not codes:
             return None
-        inspection = verification.inspect_challenge(codes)
-        return None if isinstance(inspection, VerificationRejected) else inspection
+        return verification.inspect_challenge(codes)
+
+    @staticmethod
+    def _feedback_of(
+        found: ChallengeInspection | VerificationRejected | None,
+    ) -> ChallengeInspection | None:
+        """可挂"给学生看的失败原因"的挑战（只有真正定位到的挑战才行）。"""
+        return found if isinstance(found, ChallengeInspection) else None
+
+    @staticmethod
+    def _classify(
+        message: EmailMessage,
+        *,
+        account: MatchedAccount | None,
+        inspection: ChallengeInspection | None,
+    ) -> _MailClassification:
+        """计算收件分类事实（写进隔离记录；教师端「邮件记录」读侧只做映射，不重算）。
+
+        几个刻意的取舍：
+
+        - `format_valid` 用与核验路径**同一个** `_body_problem` 判定，但**独立于消费结果**计算：
+          核验码过期时，`consume` 会先拒绝，可"正文格式正确"仍是事实，必须留下（否则会把它
+          误归 `other`）。`owner_account` 只在发件账号恰是挑战所有者时参与姓名/学号比对。
+        - 定位不到挑战（没有码/未知码/挑战在作业模型之前签发）时 `format_valid=False` 且
+          `assignment_id`/`student_id` 为 NULL；`sender_associated` 仍按已解析账号如实写——
+          这正是"发件地址属于已注册账号 ⇒ 待处理"的来源。
+        """
+        sender_associated = account is not None
+        if inspection is None:
+            return _MailClassification(
+                format_valid=False, sender_associated=sender_associated
+            )
+        owner_account = (
+            account
+            if account is not None and str(account.user_id) == inspection.student_id
+            else None
+        )
+        format_valid = (
+            _body_problem(
+                parse_email_body(message.body_excerpt),
+                inspection=inspection,
+                account=owner_account,
+            )
+            is None
+        )
+        return _MailClassification(
+            format_valid=format_valid,
+            sender_associated=sender_associated,
+            assignment_id=inspection.assignment_id,
+            student_id=inspection.student_id,
+        )
 
     def _record_precheck_failure(self, inspection: ChallengeInspection | None) -> None:
         """把“附件/结构不合格”记到能定位的挑战上（只记录、不消费），让学生记录可见。"""
@@ -940,8 +1069,13 @@ class EmailIntakeService:
         uid: int,
         message: EmailMessage,
         accepted: tuple[ParsedAttachment, ...],
+        account: MatchedAccount | None,
+        inspection: ChallengeInspection | VerificationRejected,
     ) -> MessageOutcome:
         """正文携带核验码的邮件：**核验码即身份**，发件地址不参与归属。
+
+        `account`/`inspection` 由调用方（`process_raw`）**每封邮件只解析一次**后传入：分类事实、
+        正文身份核对与核验消费共用同一组只读结论，不会对同一封邮件重复调用 B4 身份目录。
 
         顺序是有意的：**附件安全闸门先跑**（附件不合格的邮件不应消费任何挑战）；发件账号解析
         不可用时**本轮拉取失败重试**（绝不把故障记成隔离）；正文/映射校验不通过时在挑战上记
@@ -953,22 +1087,23 @@ class EmailIntakeService:
         message_id = message.message_id
         assert message_id is not None  # process_raw 已在缺 Message-ID 时拒绝
 
-        # 发件账号只用于“正文身份更严格核对”和 email_delivery 的 sender 事实；归属由核验码决定，
-        # 发件地址不再参与接受/拒绝。查不了（令牌错误/服务不可达）仍然让本轮拉取失败重试，
-        # 绝不把故障说成“发件人没注册”。
-        account = verification.resolve_sender(message.sender)
-
-        inspection = verification.inspect_challenge(
-            extract_challenge_codes(message.body_excerpt)
-        )
         if isinstance(inspection, VerificationRejected):
+            # 码定位失败（无此码/多个挑战/作业模型之前签发的挑战）：没有可证明的身份，
+            # 分类事实只剩"发件地址是否属于已注册账号"这一项。
             return self._quarantine_from_rejection(
-                uidvalidity=uidvalidity, uid=uid, message_id=message_id, rejected=inspection,
+                uidvalidity=uidvalidity,
+                uid=uid,
+                message_id=message_id,
+                rejected=inspection,
                 sender=message.sender,
+                classification=self._classify(message, account=account, inspection=None),
             )
         scope = ScopeContext(
             course_id=inspection.course_id, section_id=inspection.section_id
         )
+        # 分类事实必须**先于消费**算好：过期码会被 `_consume` 先拒绝，但"正文格式正确"仍是
+        # 事实，不能因为过期就丢掉（否则这条记录会被错误归入 `other`）。
+        classification = self._classify(message, account=account, inspection=inspection)
         # 只有发件账号恰好就是挑战所有者时，才用它的姓名/学号严格核对正文；任意邮箱发送是允许的，
         # 此时正文身份字段只要求存在，身份由一次性核验码证明。
         owner_account = (
@@ -988,7 +1123,7 @@ class EmailIntakeService:
             if isinstance(consumed, VerificationRejected):
                 return self._quarantine_from_rejection(
                     uidvalidity=uidvalidity, uid=uid, message_id=message_id, rejected=consumed,
-                sender=message.sender,
+                    sender=message.sender, classification=classification,
                 )
             resumed = consumed
         elif inspection.expired:
@@ -1000,7 +1135,7 @@ class EmailIntakeService:
             if isinstance(consumed, VerificationRejected):
                 return self._quarantine_from_rejection(
                     uidvalidity=uidvalidity, uid=uid, message_id=message_id, rejected=consumed,
-                sender=message.sender,
+                    sender=message.sender, classification=classification,
                 )
             resumed = consumed
 
@@ -1020,6 +1155,7 @@ class EmailIntakeService:
                 detail=detail,
                 scope=scope,
                 sender=message.sender,
+                classification=classification,
             )
 
         loaded = self._load_audience(inspection)
@@ -1027,7 +1163,7 @@ class EmailIntakeService:
             verification.record_rejection(inspection.challenge_id, loaded.reason_code)
             return self._quarantine_from_rejection(
                 uidvalidity=uidvalidity, uid=uid, message_id=message_id, rejected=loaded,
-                sender=message.sender,
+                sender=message.sender, classification=classification,
             )
         audience, authoritative_section = loaded
         try:
@@ -1042,6 +1178,7 @@ class EmailIntakeService:
                 detail=rejected.detail,
                 scope=scope,
                 sender=message.sender,
+                classification=classification,
             )
 
         if resumed is None:
@@ -1052,7 +1189,7 @@ class EmailIntakeService:
             if isinstance(consumed, VerificationRejected):
                 return self._quarantine_from_rejection(
                     uidvalidity=uidvalidity, uid=uid, message_id=message_id, rejected=consumed,
-                sender=message.sender,
+                    sender=message.sender, classification=classification,
                 )
             resumed = consumed
         return self._persist_submissions(
@@ -1073,7 +1210,7 @@ class EmailIntakeService:
         mailbox: str,
         uidvalidity: int,
         uid: int,
-        account: object,
+        account: MatchedAccount | None,
         accepted: tuple[ParsedAttachment, ...],
     ) -> ConsumedVerification | VerificationRejected:
         return verification.try_consume_received(
@@ -1082,7 +1219,7 @@ class EmailIntakeService:
             uidvalidity=uidvalidity,
             uid=uid,
             sender=message.sender,
-            matched_account=account,  # type: ignore[arg-type] - MatchedAccount
+            matched_account=account,
             attachment_names=tuple(item.filename for item in accepted),
         )
 
@@ -1345,6 +1482,7 @@ class EmailIntakeService:
         message_id: str,
         rejected: VerificationRejected,
         sender: str | None = None,
+        classification: _MailClassification | None = None,
     ) -> MessageOutcome:
         scope = (
             ScopeContext(course_id=rejected.course_id, section_id=rejected.section_id)
@@ -1359,6 +1497,7 @@ class EmailIntakeService:
             detail=rejected.detail,
             scope=scope,
             sender=sender,
+            classification=classification,
         )
 
     def _reject(
@@ -1371,6 +1510,7 @@ class EmailIntakeService:
         subject: str | None = None,
         scope: ScopeContext | None = None,
         sender: str | None = None,
+        classification: _MailClassification | None = None,
     ) -> MessageOutcome:
         """安全/结构拒绝：隔离记录 + checkpoint 同事务，然后记一条结构化安全日志。"""
         outcome = self._record_outcome(
@@ -1383,6 +1523,7 @@ class EmailIntakeService:
             scope=scope,
             subject=subject,
             sender=sender,
+            classification=classification,
         )
         if outcome.status == "rejected":
             # 日志有意放在事务**之后**：日志说"已拒绝"时，隔离记录一定已经落库。
@@ -1408,6 +1549,7 @@ class EmailIntakeService:
         scope: ScopeContext | None,
         subject: str | None = None,
         sender: str | None = None,
+        classification: _MailClassification | None = None,
     ) -> MessageOutcome:
         """无法唯一匹配：进隔离区、不产生提交、也**不因此**产生任何评测。"""
         outcome = self._record_outcome(
@@ -1420,6 +1562,7 @@ class EmailIntakeService:
             scope=scope,
             subject=subject,
             sender=sender,
+            classification=classification,
         )
         if outcome.status == "quarantined":
             logger.info(
@@ -1444,6 +1587,7 @@ class EmailIntakeService:
         scope: ScopeContext | None = None,
         subject: str | None = None,
         sender: str | None = None,
+        classification: _MailClassification | None = None,
     ) -> MessageOutcome:
         mailbox = self._settings.mailbox
         now = utc_now()
@@ -1461,6 +1605,16 @@ class EmailIntakeService:
                     scope=scope,
                     subject=subject,
                     sender=sender,
+                    format_valid=(
+                        None if classification is None else classification.format_valid
+                    ),
+                    sender_associated=(
+                        None if classification is None else classification.sender_associated
+                    ),
+                    assignment_id=(
+                        None if classification is None else classification.assignment_id
+                    ),
+                    student_id=None if classification is None else classification.student_id,
                 )
                 self._checkpoints.record(
                     connection,

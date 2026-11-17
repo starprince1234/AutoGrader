@@ -84,11 +84,11 @@ export function canGenerateCommentary(state: SessionState): boolean {
 }
 
 /**
- * 隔离区复核入口（CHG-0014）。契约在 `listIntakeQuarantines` 的 `description` 里写明授权是
+ * 邮件记录入口（`/review`，契约 `listMailRecords`）。契约写明授权是
  * "teacher/assistant/admin within the course scope"，因此入口与之一致。
  * 与其它可见性一样，这**不是**授权：B2 对越权调用返回 403，页面原样展示。
  */
-export function canReviewQuarantine(state: SessionState): boolean {
+export function canViewMailRecords(state: SessionState): boolean {
   return has(state, ["teacher", "admin"]);
 }
 

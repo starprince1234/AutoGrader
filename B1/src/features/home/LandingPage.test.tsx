@@ -60,7 +60,7 @@ function renderLanding(initialEntry = "/") {
     ["/questions", "题库页"],
     ["/grades", "成绩页"],
     ["/roster", "课程页"],
-    ["/review", "复核页"],
+    ["/review", "邮件记录页"],
   ].map(([path, label]) =>
     createRoute({
       getParentRoute: () => rootRoute,
@@ -104,14 +104,14 @@ describe("P01 导览页", () => {
     expect(within(teacher).getByText("题库")).toBeInTheDocument();
     expect(within(teacher).getByText("班级成绩")).toBeInTheDocument();
     expect(within(teacher).getByText("课程与名单")).toBeInTheDocument();
-    expect(within(teacher).getByText("复核工作区")).toBeInTheDocument();
+    expect(within(teacher).getByText("邮件记录")).toBeInTheDocument();
 
-    // 学生端只有自己的两种功能；不能出现教师端的题库/课程/复核。
+    // 学生端只有自己的两种功能；不能出现教师端的题库/课程/邮件记录。
     expect(within(student).getByText("我的作业")).toBeInTheDocument();
     expect(within(student).getByText("我的成绩")).toBeInTheDocument();
     expect(within(student).queryByText("题库")).not.toBeInTheDocument();
     expect(within(student).queryByText("课程与名单")).not.toBeInTheDocument();
-    expect(within(student).queryByText("复核工作区")).not.toBeInTheDocument();
+    expect(within(student).queryByText("邮件记录")).not.toBeInTheDocument();
     expect(within(teacher).queryByText("我的作业")).not.toBeInTheDocument();
   });
 

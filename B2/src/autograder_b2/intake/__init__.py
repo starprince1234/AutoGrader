@@ -72,6 +72,14 @@ from autograder_b2.intake.imap import (
     QuarantineRecord,
     QuarantineStore,
 )
+from autograder_b2.intake.mail_records import (
+    MailRecordCategory,
+    MailRecordPage,
+    MailRecordService,
+    MailRecordView,
+    mail_record_page_body,
+    mail_record_view_body,
+)
 from autograder_b2.intake.matching import (
     DirectoryEmailMatcher,
     MatchedAccount,
@@ -150,6 +158,10 @@ __all__ = [
     "InvalidQuarantineCursorError",
     "InvalidQuarantineFilterError",
     "IssuedChallenge",
+    "MailRecordCategory",
+    "MailRecordPage",
+    "MailRecordService",
+    "MailRecordView",
     "MatchedAccount",
     "MatchingUnavailable",
     "MessageOutcome",
@@ -174,6 +186,8 @@ __all__ = [
     "extract_challenge_codes",
     "intake_health",
     "load_email_receipt",
+    "mail_record_page_body",
+    "mail_record_view_body",
     "missing_fields_detail",
     "normalize_assignment_id",
     "normalize_person_text",

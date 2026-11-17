@@ -25,9 +25,9 @@ import type {
   EvaluationReport,
   EvaluationStreamFrame,
   GradeRow,
-  IntakeQuarantineView,
   LearningHintStep,
   LearningHintsResponse,
+  MailRecordView,
   MyMembership,
   ProblemDetails,
   QuestionDraftGeneration,
@@ -883,49 +883,29 @@ export function evaluationCommentary(
 }
 
 /**
- * 隔离记录（`IntakeQuarantineView`，CHG-0014；词表与可归属集合见 CHG-0021）。刻意**只有识别性元数据与已脱敏的原因**：
- * 夹具里没有附件内容、没有源码、没有提交的任何部分——页面若去渲染契约之外的字段，
- * 就没有任何东西可渲染。
+ * 邮件记录（`MailRecordView`，契约 0.39.0 的 `listMailRecords`）。
  *
- * 默认 `reason_code` 取 `not_uniquely_matched`：它是 `CHG-0021` §2.1 词表里**可归属**的两类之一，
- * 因此默认夹具代表"教师真的能归属"的那种记录。需要"不可归属"的用例请显式传
- * （例如 `archive_bomb`、`attachment_too_large`）。
+ * 刻意**只有摘要字段**：没有邮件正文、附件内容、发件地址或提交答案——页面若去渲染契约之外的
+ * 字段，就没有任何东西可渲染。默认夹具是「待处理 + 核验码过期」：一条真实的提交尝试，
+ * 因为没有列入作业而停在待处理；需要「已处理 / 其他」的用例请显式传 `category`
+ * （已处理记录还应当带 `assignment_id/student_id`，用于渲染「查看作业」入口）。
  */
-export function intakeQuarantineView(
-  overrides?: Partial<IntakeQuarantineView>,
-): IntakeQuarantineView {
+export function mailRecordView(overrides?: Partial<MailRecordView>): MailRecordView {
   return {
-    intake_quarantine_id: UUID_C,
-    intake: "email",
-    reason_code: "not_uniquely_matched",
-    detail: "邮件主题与正文都未能解析出作业标识；已按策略记录并脱敏。",
-    mailbox: "submissions@example.edu",
-    message_id: "<20260915.abc123@example.edu>",
-    uid: 4211,
-    recorded_at: "2026-09-15T08:05:00.000Z",
-    resolved: false,
-    resolved_student_id: null,
-    resolution_note: null,
-    // 默认夹具代表"有可靠课程关联"的记录（P13 之后 staff 只能看到这种行）；
-    // 需要未关联行（只对管理员可见）时显式传 `scope_course_id: null, scope_section_id: null`。
-    scope_course_id: UUID_A,
-    scope_section_id: UUID_B,
+    record_id: UUID_C,
+    category: "pending",
     subject: "作业一提交",
-    resolution: null,
-    resolved_at: null,
-    resolved_by: null,
-    resolved_submission_id: null,
-    held: false,
-    held_at: null,
-    held_by: null,
+    received_at: "2026-09-15T08:05:00.000Z",
+    course_id: UUID_A,
+    section_id: UUID_B,
+    assignment_id: UUID_A,
+    student_id: UUID_D,
+    reason_code: "email_verification_expired",
     ...overrides,
-  } as IntakeQuarantineView;
+  } as MailRecordView;
 }
 
-export function intakeQuarantinePage(
-  items: IntakeQuarantineView[],
-  nextCursor: string | null = null,
-) {
+export function mailRecordPage(items: MailRecordView[], nextCursor: string | null = null) {
   return { items, next_cursor: nextCursor };
 }
 
