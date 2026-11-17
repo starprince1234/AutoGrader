@@ -2859,6 +2859,18 @@ samp {
 
 /* ---------------------------------------------------------------- 编辑器 */
 
+/* 题目标题：一整句作业要求也要能看全，所以它是一个会折行的文本域（与 textarea 同一套基线样式），
+   高度随 rows 起步，可手动拉高；方向键、Home/End、选区都按原生行为工作。 */
+.title-input {
+  min-height: 40px;
+  line-height: 1.45;
+  resize: vertical;
+}
+.title-input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-soft, rgba(99, 102, 241, 0.18));
+}
 .editor {
   border: 1px solid var(--color-border-strong);
   border-radius: var(--radius-md);
