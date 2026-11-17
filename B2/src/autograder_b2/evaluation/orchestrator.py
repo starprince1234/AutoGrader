@@ -501,7 +501,7 @@ class EvaluationOrchestrator:
                                 submission, run_id, view, evidences, static, security, mode=mode
                             )
                         ai_result = self._run_ai_only(
-                            submission, run_id, view, static, security, sources
+                            submission, run_id, view, static, security, sources, evidences
                         )
                     else:
                         # 历史遗留题没有用例：AI-only，权重由 dual_track 整体归给 AI 轨。
@@ -1065,6 +1065,7 @@ class EvaluationOrchestrator:
         static: StaticAnalysisResult,
         security: SecurityDecision,
         sources: Mapping[str, str],
+        evidences: Sequence[CaseEvidence],
     ) -> AiGradeResult:
         """双轨里的 AI 轨：只取"AI 逻辑评分"的分与评语，**不**写逐用例证据。
 
@@ -1093,6 +1094,7 @@ class EvaluationOrchestrator:
                     language=view.language,
                     static=static,
                     sources=sources,
+                    case_summary=_case_summary(evidences),
                 )
             except AiGradingError as error:
                 raise InfrastructureError(str(error)) from error
@@ -1873,3 +1875,18 @@ class EvaluationOrchestrator:
             event_id=str(uuid.uuid4()),
         )
         enqueue(connection, event, deduplication_key=deduplication_key, enqueued_at=occurred_at)
+
+
+def _case_summary(evidences: Sequence[CaseEvidence]) -> str:
+    """确定性轨的摘要：通过数 + 逐例结论（序号/通过与否/失败分类）。
+
+    刻意**不含**用例输入、期望输出与实际输出：那些是受保护内容，一旦进 prompt 就等于送进
+    第三方模型。失败分类是契约里的公开词表，够模型理解"错在哪一类"。
+    """
+    total = len(evidences)
+    passed = sum(1 for item in evidences if item.passed)
+    lines = [f"- 用例 {item.ordinal + 1}：{'通过' if item.passed else '未通过'}"
+             + ("" if item.passed or not item.failure_category else f"（{item.failure_category}）")
+             for item in sorted(evidences, key=lambda item: item.ordinal)]
+    head = f"通过 {passed}/{total} 个用例。"
+    return head + ("\n" + "\n".join(lines) if lines else "")

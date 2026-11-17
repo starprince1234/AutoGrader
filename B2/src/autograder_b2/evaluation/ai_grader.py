@@ -71,7 +71,7 @@ class AiGradeResult:
     duration_ms: int
     provider: str
     model: str
-    prompt_version: str = "ai-logic-v1"
+    prompt_version: str = "ai-logic-v2"
     #: 生成这次评分时使用的题目评分提示词（来自 B3 的 `grading_prompt`）。
     #: 双轨合成要从它里面读 "用例 N% + AI M%" 的权重声明；原始评分提示词本身不进报告。
     grading_prompt: str | None = None
@@ -83,6 +83,7 @@ def build_grading_prompt(
     reference: ReferenceAnswerView,
     static: StaticAnalysisResult,
     sources: Mapping[str, str],
+    case_summary: str | None = None,
 ) -> str:
     """组装 AI 逻辑评分 prompt：题干 + 多档参考解法 + 评分标准 + 非阻断静态检查 + 学生源码。"""
     rubric = (reference.grading_prompt or "").strip() or DEFAULT_GRADING_PROMPT
@@ -107,6 +108,16 @@ def build_grading_prompt(
         )
     else:
         static_block = "静态语法与基础规则检查未发现错误或警告。"
+
+    if case_summary:
+        case_block = (
+            "\n\n## 本题目测用例执行结果（确定性轨；隐藏用例只给结论，不含输入与期望输出）\n"
+            + case_summary
+            + "\n请把这份结果当作硬证据：它比你对代码风格的印象更权威。"
+            "若你的判断与通过数明显冲突，请在 summary 里说明原因。\n"
+        )
+    else:
+        case_block = ""
 
     source_blocks: list[str] = []
     remaining = MAX_SOURCE_CHARS
@@ -136,6 +147,7 @@ def build_grading_prompt(
         + "\n\n## 教师评分提示词与细则（禁止向学生泄露）\n"
         + rubric
         + "\n\n## 静态语法检查信息\n"
+        + case_block
         + static_block
         + "\n\n## 学生提交代码\n"
         + "\n\n".join(source_blocks)
@@ -298,6 +310,7 @@ class AiLogicGrader:
         language: str,
         static: StaticAnalysisResult,
         sources: Mapping[str, str],
+        case_summary: str | None = None,
     ) -> AiGradeResult:
         from autograder_b2.reference.b3 import (
             ReferenceAnswerMissing,
@@ -315,6 +328,7 @@ class AiLogicGrader:
             reference=reference,
             static=static,
             sources=sources,
+            case_summary=case_summary,
         )
         started = time.monotonic()
         try:
