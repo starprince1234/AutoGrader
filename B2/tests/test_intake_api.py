@@ -2817,8 +2817,17 @@ def test_quarantine_complete_requires_the_authorization_directory(
 # 其他（剩余全部）。三态互斥且覆盖全部记录；行级课程作用域与隔离列表同语义。
 
 
-def _mail_record_items(client: TestClient, token: str, **params: str) -> list[dict[str, Any]]:
-    response = client.get(MAIL_RECORDS, params=params, headers=_auth(token))
+def _mail_record_items(
+    client: TestClient, authorization: str | dict[str, str], **params: str
+) -> list[dict[str, Any]]:
+    """按 token 取一页邮件记录。
+
+    `authorization` 既接受原始 token（由 `_auth` 包成请求头），也接受已包好的请求头 dict：
+    本文件的既有用例里两种写法都有（直接 `client.get(..., headers=token)` 的用例把包装留在
+    调用点），helper 只负责发出请求，不再二次包装。
+    """
+    headers = authorization if isinstance(authorization, dict) else _auth(authorization)
+    response = client.get(MAIL_RECORDS, params=params, headers=headers)
     assert response.status_code == 200, response.text
     body = response.json()
     assert set(body) == {"items", "next_cursor"}, body
