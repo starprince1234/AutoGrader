@@ -1349,12 +1349,16 @@ def create_published_version(
                     "expect_exit_code": 0,
                     "comparison": {"stdout": "exact", "stderr": "ignored"},
                 },
+                # 发布门禁要求"恰好 1 个公开示例 + 10 个隐藏评测用例"：1 个公开用来展示格式，
+                # 10 个隐藏才是评分依据。这里每个隐藏用例都声明期望输出（否则同样被拒发）。
                 "cases": [
                     {
-                        "name": "case-1",
-                        "ordinal": 0,
+                        "name": f"case-{index + 1}",
+                        "ordinal": index,
+                        "visible_to_student": index == 0,
                         "expected_stdout": f"{expected_stdout}\n",
                     }
+                    for index in range(11)
                 ],
             },
         ),
@@ -1386,8 +1390,8 @@ def create_published_version(
             body={
                 "content_digest": digest,
                 "verifier": "acceptance-fixture",
-                "cases_total": 1,
-                "cases_passed": 1,
+                "cases_total": 11,
+                "cases_passed": 11,
             },
         ),
         (201,),
