@@ -40,6 +40,8 @@ import pathlib
 import struct
 import sys
 import urllib.error
+
+from bank_shape import require_dual_track_shape
 import urllib.request
 import zlib
 
@@ -135,6 +137,9 @@ def placeholder_png(width: int = 640, height: int = 200) -> bytes:
 
 
 def draft_body(problem: dict) -> dict:
+    # 发布门禁（per_case）要求恰好 1 个公开示例 + 10 个隐藏用例；旧形状的题库在这里就被拦下，
+    # 不会等到 publish 才收到一个只说数量不对的 422。
+    require_dual_track_shape(problem["title"], problem.get("cases"))
     body = {
         "title": problem["title"],
         "stem_markdown": problem["stem_markdown"],

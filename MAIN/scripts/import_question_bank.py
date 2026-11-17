@@ -37,6 +37,8 @@ import json
 import os
 import sys
 import urllib.error
+
+from bank_shape import require_dual_track_shape
 import urllib.request
 from pathlib import Path
 
@@ -129,6 +131,9 @@ def declared_files(fixtures: list[dict] | None) -> list[dict] | None:
 
 def draft_body(problem: dict) -> dict:
     """Map one bank problem onto `QuestionDraftInput` (dropping bank-only fields)."""
+    # 发布门禁要求恰好 1 个公开示例 + 10 个隐藏用例；不合形状的题库在建题前就停下。
+    cases = problem["cases"]
+    require_dual_track_shape(problem["title"], cases)
     adapter = dict(problem["adapter"])
     files = declared_files(problem.get("fixtures"))
     if files:
@@ -139,7 +144,8 @@ def draft_body(problem: dict) -> dict:
         "language": problem["language"],
         "reference_answer": problem["reference_answer"],
         "adapter": adapter,
-        "cases": problem["cases"],
+        # 1 公开 + 10 隐藏：旧形状的题库在建题前就被拦下（见 MAIN/scripts/bank_shape.py）。
+        "cases": cases,
         "max_files": problem.get("max_files", 20),
         "max_total_bytes": problem.get("max_total_bytes", 1048576),
     }

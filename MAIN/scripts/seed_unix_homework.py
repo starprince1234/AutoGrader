@@ -1,5 +1,9 @@
 """Seed the ten Unix homework questions into the B3 question bank.
 
+**已被取代（2026-11）：** 这批题依赖夹具文件与邮件/ssh 执行模式，按评测交接文档 §4 不再是可自动
+评测的题型；线上题库已换成 `MAIN/scripts/seed_dual_track_unix.py` 的 20 道 stdin/stdout 题。
+此脚本保留仅作历史参考：发布路径现在会先校验"1 公开 + 10 隐藏用例"，旧形状会被直接拒绝。
+
 This is a **content script**, not product code: it talks to the public B3 API with a teacher
 token, so nothing here is reachable from the running service.
 
@@ -29,6 +33,8 @@ import json
 import pathlib
 import sys
 import urllib.error
+
+from bank_shape import require_dual_track_shape
 import urllib.request
 
 DATA = pathlib.Path(__file__).parent / "data" / "unix-homework-10.json"
@@ -144,6 +150,8 @@ def main(argv: list[str] | None = None) -> int:
             if not gradable:
                 print(f"skip publish (not gradable yet): {question_id}")
                 continue
+            # 发布门禁（per_case）：恰好 1 个公开示例 + 10 个隐藏用例，隐藏用例须有期望输出。
+            require_dual_track_shape(entry["title"], entry.get("cases"))
             status, body = request(
                 "POST",
                 f"{base}/api/v1/question-versions/{version_id}/publish",
