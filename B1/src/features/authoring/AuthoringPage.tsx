@@ -408,13 +408,6 @@ export function AuthoringPage({
     </button>
   );
 
-  const saveRow = (
-    <div className="inline wizard__save" data-testid="step-save">
-      {saveButton}
-      {saveAndPublishButton}
-    </div>
-  );
-
   const stepDefinition = STEPS.find((definition) => definition.id === step) ?? STEPS[0];
   // 前四步只有「下一步」：保存动作统一放在最后一步（与检验并发布同屏）。
   const nextIndex = STEPS.findIndex((definition) => definition.id === step) + 1;
@@ -844,8 +837,12 @@ export function AuthoringPage({
                 </div>
               ) : null}
 
-              <div className="inline">
-                {saveRow}
+              {/* 三个动作放在**同一个 flex 行**里：原来是「保存/发布」套一层 `.wizard__save`
+                  （带 12px 上边距），第三个按钮是外层兄弟，于是两者基线错位。拍平后由 `.preview-actions`
+                  统一居中、底边对齐、等距。 */}
+              <div className="inline preview-actions" data-testid="step-save">
+                {saveButton}
+                {saveAndPublishButton}
                 {questionId === null ? (
                   <button
                     type="button"

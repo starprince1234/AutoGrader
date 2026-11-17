@@ -2612,6 +2612,19 @@ samp {
   flex-wrap: wrap;
 }
 
+/* 预览页底部三个动作按钮：同一行、视觉居中、底边对齐（按钮高度一致，故与顶边也齐），
+   间距沿用 `.inline` 的 `gap`，因此三者等距。 */
+.preview-actions {
+  justify-content: center;
+  align-items: flex-end;
+}
+
+/* 前四步的「下一步」行：靠右对齐（与预览页的居中动作行 `.preview-actions` 区分开）。 */
+.wizard__save {
+  justify-content: flex-end;
+  margin-top: 12px;
+}
+
 .grid-2 {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
@@ -3554,10 +3567,6 @@ samp {
 }
 
 /* 每一步底部的「保存草稿」：右下角对齐，说明文字在按钮左边。 */
-.wizard__save {
-  justify-content: flex-end;
-  margin-top: 12px;
-}
 
 /* 注册名单：一班一行。
    班级 / 人数 / 时间 三个字段在一行内均匀分开（space-between），删除按钮固定在右侧；

@@ -1758,7 +1758,15 @@ describe("AI 出题精简文案：清理内部说明，直接进入预览", () =
     expect(await screen.findByTestId("step-preview")).toBeInTheDocument();
     expect(screen.queryByTestId("generation-global-notice")).toBeNull();
     expect(screen.queryByTestId("generation-expiry")).toBeNull();
-    expect(screen.getByTestId("preview-back-to-ai")).toBeInTheDocument();
+
+    // 三个动作按钮必须落在**同一个** flex 行里（同一个父节点），否则会出现高低错位
+    // （曾被 `.wizard__save` 的 12px 上边距顶偏）。
+    const row = screen.getByTestId("step-save");
+    expect(row.className).toContain("preview-actions");
+    const back = screen.getByTestId("preview-back-to-ai");
+    expect(back.parentElement).toBe(row);
+    expect(screen.getByTestId("authoring-save").parentElement).toBe(row);
+    expect(screen.getByTestId("authoring-save-publish").parentElement).toBe(row);
   });
 });
 
