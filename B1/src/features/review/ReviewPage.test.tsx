@@ -43,16 +43,12 @@ afterEach(() => {
 });
 
 describe("邮件记录页", () => {
-  it("标题为「邮件记录」，页头下方说明三态，返回按钮回作业列表", async () => {
+  it("标题为「邮件记录」，返回按钮回作业列表", async () => {
     renderReview({ course_id: "00000000-0000-4000-8000-0000000000a1" });
     expect(
       await screen.findByRole("heading", { level: 1, name: "邮件记录" }),
     ).toBeInTheDocument();
-    const intro = screen.getByTestId("review-intro");
-    expect(intro).toHaveTextContent("查看学生通过电子邮件提交作业的记录");
-    expect(intro).toHaveTextContent("已处理");
-    expect(intro).toHaveTextContent("待处理");
-    expect(intro).toHaveTextContent("其他");
+    expect(screen.queryByTestId("review-intro")).toBeNull();
     const back = screen.getByTestId("review-back");
     expect(back).toHaveTextContent("返回作业列表");
     expect(back).toHaveAttribute("href", "/assignments");

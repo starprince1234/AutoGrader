@@ -69,22 +69,10 @@ const CATEGORY_TITLE: Record<MailRecordCategory, MessageKey> = {
   other: "review.title.other",
 };
 
-const CATEGORY_HINT: Record<MailRecordCategory, MessageKey> = {
-  processed: "review.hint.processed",
-  pending: "review.hint.pending",
-  other: "review.hint.other",
-};
-
 const CATEGORY_EMPTY: Record<MailRecordCategory, MessageKey> = {
   processed: "review.empty.processed",
   pending: "review.empty.pending",
   other: "review.empty.other",
-};
-
-/** 列表「说明」列的分类提示：只给 pending/other 用（processed 显示作业）。 */
-const CATEGORY_ROW_HINT: Partial<Record<MailRecordCategory, MessageKey>> = {
-  pending: "review.rowHint.pending",
-  other: "review.rowHint.other",
 };
 
 function courseText(course: { course_code: string | null; title: string } | undefined, courseId: string): string {
@@ -207,15 +195,9 @@ export function MailRecordsTab({
 
   const renderDetail = (row: MailRecordView) => {
     if (row.category !== "processed") {
-      const hintKey = CATEGORY_ROW_HINT[row.category];
       return (
-        <div>
-          <div data-testid={`review-reason-${row.record_id}`}>{reasonText(row.reason_code)}</div>
-          {hintKey ? (
-            <div className="muted" data-testid={`review-row-hint-${row.record_id}`}>
-              {t(hintKey)}
-            </div>
-          ) : null}
+        <div data-testid={`review-reason-${row.record_id}`}>
+          {reasonText(row.reason_code)}
         </div>
       );
     }
@@ -270,7 +252,6 @@ export function MailRecordsTab({
       ) : rows.length === 0 ? (
         <div data-testid="review-records-empty">
           <p className="muted">{t(CATEGORY_EMPTY[category])}</p>
-          {!isAdmin ? <p className="muted">{t("review.emptyHint")}</p> : null}
         </div>
       ) : (
         <Table<MailRecordView>
@@ -318,14 +299,7 @@ export function MailRecordsTab({
   const tabs = MAIL_CATEGORIES.map((category) => ({
     id: category,
     label: t(CATEGORY_LABEL[category]),
-    content: (
-      <div className="stack">
-        <p className="muted" data-testid={`review-status-hint-${category}`}>
-          {t(CATEGORY_HINT[category])}
-        </p>
-        {renderList(category)}
-      </div>
-    ),
+    content: renderList(category),
   }));
 
   return (
@@ -370,7 +344,6 @@ export function MailRecordsTab({
           </div>
           {courses.isError ? <ErrorState error={courses.error} /> : null}
           {sections.isError ? <ErrorState error={sections.error} /> : null}
-          <p className="muted">{t("review.scopeNote")}</p>
         </div>
       </Panel>
 

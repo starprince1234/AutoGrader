@@ -281,7 +281,8 @@ describe("/review 邮件记录（只读）", () => {
     expect(screen.queryByTestId("review-records-empty")).toBeNull();
   });
 
-  it("空列表按分类给出不同空状态", async () => {
+  it("空列表按分类给出不同空状态，且不再附带解释性提示", async () => {
+    const user = userEvent.setup();
     stub = installFetchStub(routesFor({ rows: [] }));
     await signIn("teacher1", "pw");
     renderTab(MAIL_PATH);
@@ -289,8 +290,20 @@ describe("/review 邮件记录（只读）", () => {
     expect(await screen.findByTestId("review-records-empty")).toHaveTextContent(
       "没有待处理的邮件记录。",
     );
-    // staff 的空状态额外说明未关联记录只对管理员可见。
-    expect(screen.getByText(/仅管理员可见/)).toBeInTheDocument();
+    // 解释性提示已删除（未关联记录仅管理员可见之类的说明不再出现在页面上）。
+    expect(screen.queryByText(/仅管理员可见/)).toBeNull();
+    await user.click(screen.getByRole("tab", { name: "已处理" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("review-records-empty")).toHaveTextContent(
+        "还没有已处理的邮件记录。",
+      );
+    });
+    await user.click(screen.getByRole("tab", { name: "其他" }));
+    await waitFor(() => {
+      expect(screen.getByTestId("review-records-empty")).toHaveTextContent(
+        "没有其他邮件记录。",
+      );
+    });
   });
 
   it("课程筛选会进入请求参数", async () => {

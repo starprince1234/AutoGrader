@@ -30,9 +30,6 @@ export function ReviewPage({
           </Link>
         </div>
       </div>
-      <p className="muted" data-testid="review-intro">
-        {t("review.intro")}
-      </p>
       <MailRecordsTab search={search} onChange={onChange} />
     </div>
   );
