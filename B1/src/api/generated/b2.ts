@@ -1943,6 +1943,23 @@ export interface components {
                 is_pass: boolean;
                 /** @description Deterministic, rule-derived conclusion text. Not model-generated: scoring never depends on an LLM (ADR-0005). */
                 summary?: string | null;
+                /** @description 双轨评分的分解（测试用例轨 + AI 逻辑评分轨）。`overall.score` 是按题目声明的权重合成后的最终分；本对象是它的可核对分解：用例轨比例、AI 分、两侧权重。题目在 AI 评分提示词里用「用例 N% + AI M%」声明权重，读不到时按 60/40。`ai_available` 为 false 表示本次评测 AI 轨未参与（模型未配置或调用失败），此时用例轨独占 100%，绝不因此把学生判 0 分。纯确定性运行（AI 未配置）该字段为 null。 */
+                dual_track?: {
+                    /** @description 用例轨实得权重和（等于逐项 awarded 之和）。 */
+                    case_score: number;
+                    /** @description 用例轨满分（等于逐项 weight 之和）。 */
+                    case_max: number;
+                    /** @description 用例轨百分比（两位小数）。 */
+                    case_ratio: number;
+                    /** @description 题目声明的用例轨权重。 */
+                    case_percent: number;
+                    /** @description AI 逻辑评分（0~100）；AI 未参与时为 null。 */
+                    ai_score: number | null;
+                    /** @description 题目声明的 AI 轨权重。 */
+                    ai_percent: number;
+                    /** @description AI 轨是否参与本次评测。 */
+                    ai_available: boolean;
+                } | null;
             };
             /** @description How the cases were produced. `invocation_count` is the number of sandbox executions actually started (per_case = number of cases, single_run/ssh_session = 1, email_delivery = 0 because no code is executed). It is recorded separately from `evidence_count` so a single-run question cannot be reported as if each case had its own sandbox. */
             execution?: {

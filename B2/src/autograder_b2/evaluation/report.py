@@ -80,6 +80,21 @@ VOLATILE_CASE_FIELDS = ("duration_ms", "resource")
 #: 报告规模上限（防御性：报告不得因用例过多而失控；超出即缺陷而不是静默截断）。
 MAX_REPORT_CASES = 1000
 
+#: 双轨合成后的满分：用例轨与 AI 轨都按百分制贡献，合成结果也是百分制。
+_DUAL_MAX_SCORE = 100
+
+#: `dual_track` 在报告里的字段（与 `evaluation-report.schema.json` 的 required 一一对应）。
+#: `final_score`/`is_pass` 不在这里：它们是 `overall` 上的最终结论，不是分解。
+_DUAL_TRACK_KEYS = (
+    "case_score",
+    "case_max",
+    "case_ratio",
+    "case_percent",
+    "ai_score",
+    "ai_percent",
+    "ai_available",
+)
+
 
 class ReportRejected(ValueError):
     """报告输入不满足前置条件（非完成态、证据不成对、摘要形态不合法）。"""
@@ -188,6 +203,8 @@ class ReportInputs:
     summary: str | None = field(default=None)
     execution: ReportExecution | None = field(default=None)
     security_not_applicable: bool = field(default=False)
+    #: 双轨分解（`dual_track.DualTrackScore.as_dict()`）。为空表示这次评测只有用例轨。
+    dual: Mapping[str, object] | None = field(default=None)
 
 
 def _require_digest(name: str, value: object) -> str:
@@ -353,6 +370,29 @@ def _file_change_payload(change: FileChange) -> dict[str, object]:
     }
 
 
+def _overall(inputs: ReportInputs) -> dict[str, object]:
+    """`overall` 字段：有双轨时是合成后的最终分 + 分解，没有时就是用例轨的分。"""
+    dual = inputs.dual
+    if dual is None:
+        return {
+            "score": float(inputs.breakdown.score),
+            "max_score": float(inputs.breakdown.max_score),
+            "is_pass": bool(inputs.breakdown.is_pass),
+            "summary": inputs.summary or inputs.breakdown.summary,
+            "dual_track": None,
+        }
+    # 双轨：最终分由 `dual_track.combine` 算出，满分固定 100（两条轨都是百分制贡献）。
+    # `dual_track` 只放契约声明的分解字段；`final_score`/`is_pass` 属于 `overall`。
+    track = {key: dual[key] for key in _DUAL_TRACK_KEYS}
+    return {
+        "score": float(dual["final_score"]),
+        "max_score": float(_DUAL_MAX_SCORE),
+        "is_pass": bool(dual["is_pass"]),
+        "summary": inputs.summary or inputs.breakdown.summary,
+        "dual_track": track,
+    }
+
+
 def build_report(inputs: ReportInputs, *, generated_at: datetime) -> dict[str, object]:
     """组装并**校验**报告（校验不通过不返回）。"""
     if inputs.state != "completed":
@@ -403,12 +443,7 @@ def build_report(inputs: ReportInputs, *, generated_at: datetime) -> dict[str, o
             "invocation_count": execution.invocation_count,
             "evidence_count": execution.evidence_count,
         },
-        "overall": {
-            "score": float(inputs.breakdown.score),
-            "max_score": float(inputs.breakdown.max_score),
-            "is_pass": bool(inputs.breakdown.is_pass),
-            "summary": inputs.summary or inputs.breakdown.summary,
-        },
+        "overall": _overall(inputs),
         "static_findings": _static_findings(inputs.static),
         "security_conclusion": _security_conclusion(
             inputs.security, not_applicable=not_applicable

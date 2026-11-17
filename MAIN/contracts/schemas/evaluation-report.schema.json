@@ -35,6 +35,22 @@
         "max_score": { "type": "number", "exclusiveMinimum": 0 },
         "is_pass": { "type": "boolean" },
         "summary": { "type": ["string", "null"], "maxLength": 2000, "description": "Deterministic, rule-derived conclusion text. Not model-generated: scoring never depends on an LLM (ADR-0005)." }
+        ,
+        "dual_track": {
+          "type": ["object", "null"],
+          "description": "双轨评分的分解（测试用例轨 + AI 逻辑评分轨）。`overall.score` 是按题目声明的权重合成后的最终分；本对象是它的可核对分解：用例轨比例、AI 分、两侧权重。题目在 AI 评分提示词里用「用例 N% + AI M%」声明权重，读不到时按 60/40。`ai_available` 为 false 表示本次评测 AI 轨未参与（模型未配置或调用失败），此时用例轨独占 100%，绝不因此把学生判 0 分。纯确定性运行（AI 未配置）该字段为 null。",
+          "required": ["case_score", "case_max", "case_ratio", "case_percent", "ai_score", "ai_percent", "ai_available"],
+          "properties": {
+            "case_score": { "type": "number", "minimum": 0, "description": "用例轨实得权重和（等于逐项 awarded 之和）。" },
+            "case_max": { "type": "number", "minimum": 0, "description": "用例轨满分（等于逐项 weight 之和）。" },
+            "case_ratio": { "type": "number", "minimum": 0, "maximum": 100, "description": "用例轨百分比（两位小数）。" },
+            "case_percent": { "type": "integer", "minimum": 0, "maximum": 100, "description": "题目声明的用例轨权重。" },
+            "ai_score": { "type": ["number", "null"], "minimum": 0, "maximum": 100, "description": "AI 逻辑评分（0~100）；AI 未参与时为 null。" },
+            "ai_percent": { "type": "integer", "minimum": 0, "maximum": 100, "description": "题目声明的 AI 轨权重。" },
+            "ai_available": { "type": "boolean", "description": "AI 轨是否参与本次评测。" }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     },

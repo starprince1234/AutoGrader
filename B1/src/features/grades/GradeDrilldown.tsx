@@ -72,6 +72,29 @@ export function GradeDrilldown({
             </strong>
           )}
         </div>
+        {/* 双轨分解：最终分是用例轨与 AI 轨按题目权重合成的，学生/教师必须能看出这两半。 */}
+        {state === "completed" && data.overall.dual_track ? (
+          <div className="stack" data-testid="dual-track-breakdown">
+            <p className="muted">
+              {t("grades.dualTrackCase", {
+                ratio: data.overall.dual_track.case_ratio,
+                score: data.overall.dual_track.case_score,
+                max: data.overall.dual_track.case_max,
+                percent: data.overall.dual_track.case_percent,
+              })}
+            </p>
+            <p className="muted">
+              {data.overall.dual_track.ai_available
+                ? t("grades.dualTrackAi", {
+                    score: data.overall.dual_track.ai_score ?? 0,
+                    percent: data.overall.dual_track.ai_percent,
+                  })
+                : t("grades.dualTrackAiUnavailable", {
+                    percent: data.overall.dual_track.ai_percent,
+                  })}
+            </p>
+          </div>
+        ) : null}
         <CommentarySection runId={runId} />
       </div>
     </div>

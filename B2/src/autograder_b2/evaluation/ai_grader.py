@@ -72,6 +72,9 @@ class AiGradeResult:
     provider: str
     model: str
     prompt_version: str = "ai-logic-v1"
+    #: 生成这次评分时使用的题目评分提示词（来自 B3 的 `grading_prompt`）。
+    #: 双轨合成要从它里面读 "用例 N% + AI M%" 的权重声明；原始评分提示词本身不进报告。
+    grading_prompt: str | None = None
 
 
 def build_grading_prompt(
@@ -332,6 +335,7 @@ class AiLogicGrader:
             duration_ms=duration_ms,
             provider=self.provider_name,
             model=self.model_name,
+            grading_prompt=reference.grading_prompt,
         )
 
 

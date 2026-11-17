@@ -94,6 +94,7 @@ from autograder_b2.domain.security import SecurityDecision
 from autograder_b2.domain.static_result import StaticAnalysisResult
 from autograder_b2.evaluation import progress, store
 from autograder_b2.evaluation.ai_grader import AiGradeResult, AiGradingError, AiLogicGrader
+from autograder_b2.evaluation.dual_track import DualTrackScore, combine
 from autograder_b2.evaluation.ports import (
     CaseDescriptor,
     CaseRunner,
@@ -467,6 +468,7 @@ class EvaluationOrchestrator:
                     view = self._fetch_package(submission, run_id)
                 mode = view.execution.mode
                 ai_result: AiGradeResult | None = None
+                dual: DualTrackScore | None = None
                 if mode == "email_delivery":
                     # 该模式不执行代码：静态/安全不适用（报告里显式写 not_applicable，不是 not_checked）。
                     static = _not_applicable_static(view.language)
@@ -488,8 +490,29 @@ class EvaluationOrchestrator:
                     with self._stage("security_decision"):
                         security = self._run_security(submission, run_id, view, workspace)
                     sources = self._read_sources(workspace, submission.files)
-                    evidences, invocations, breakdown, ai_result = self._run_ai_grading(
-                        submission, run_id, view, static, security, sources
+                    if view.cases_total > 0:
+                        # 双轨（ADR-0019）：用例轨先在沙箱里真跑，AI 轨只提供自己的分。
+                        # 逐用例证据必须来自真实执行——用 AI 的结论伪造 passed 会让"通过了几个
+                        # 用例"变成模型说法，那正是双轨要消除的东西。
+                        with self._stage("dynamic_execution"):
+                            evidences, invocations = self._run_dynamic(submission, run_id, view)
+                        with self._stage("scoring", count=invocations):
+                            breakdown = self._run_scoring(
+                                submission, run_id, view, evidences, static, security, mode=mode
+                            )
+                        ai_result = self._run_ai_only(
+                            submission, run_id, view, static, security, sources
+                        )
+                    else:
+                        # 历史遗留题没有用例：AI-only，权重由 dual_track 整体归给 AI 轨。
+                        evidences, invocations, breakdown, ai_result = self._run_ai_grading(
+                            submission, run_id, view, static, security, sources
+                        )
+                    dual = combine(
+                        case_score=breakdown.score,
+                        case_max=breakdown.max_score,
+                        ai_score=ai_result.score,
+                        grading_prompt=ai_result.grading_prompt,
                     )
                     evidence_written = len(evidences)
                 else:
@@ -522,9 +545,17 @@ class EvaluationOrchestrator:
                             evidence_count=len(evidences),
                         ),
                         security_not_applicable=mode == "email_delivery",
+                        dual=dual,
                     )
                 if ai_result is not None:
-                    self._persist_ai_commentary(run_id, ai_result, breakdown)
+                    self._persist_ai_commentary(
+                        run_id,
+                        ai_result,
+                        breakdown,
+                        advisory_score=(
+                            dual.ai_score if dual is not None and dual.ai_available else None
+                        ),
+                    )
                 log_event(
                     logger,
                     "evaluation.run_completed",
@@ -1026,8 +1057,53 @@ class EvaluationOrchestrator:
                 evidences.append(evidence)
         return tuple(evidences), 1, breakdown, ai_result
 
+    def _run_ai_only(
+        self,
+        submission: SubmissionEnvelope,
+        run_id: str,
+        view: PackageView,
+        static: StaticAnalysisResult,
+        security: SecurityDecision,
+        sources: Mapping[str, str],
+    ) -> AiGradeResult:
+        """双轨里的 AI 轨：只取"AI 逻辑评分"的分与评语，**不**写逐用例证据。
+
+        双轨的逐用例证据必须来自真实沙箱执行（`_run_dynamic`）。这里若像
+        `_run_ai_grading` 那样按 AI 结论给每个用例编 `passed`，报告里的"通过几个用例"就变
+        成了模型说法——与"用例轨是确定性证据"直接矛盾。
+        """
+        assert self._ai_grader is not None
+        # 进度的 stage 词表由契约固定（queued/fetching_package/static_analysis/
+        # security_check/dynamic_execution/scoring/reporting/terminal）。AI 轨属于"产出评测"的
+        # 一部分，因此归到 dynamic_execution 并用自己的 message 区分，不新造 stage。
+        with self._stage("dynamic_execution"):
+            self._enter_stage(
+                submission,
+                run_id,
+                stage="dynamic_execution",
+                state="running",
+                moment=self._now(),
+                message="正在做 AI 逻辑评分（双轨中的 AI 轨）。",
+                cases_total=view.cases_total,
+                cases_done=view.cases_total,
+            )
+            try:
+                return self._ai_grader.grade(
+                    question_version_id=submission.question_version_id,
+                    language=view.language,
+                    static=static,
+                    sources=sources,
+                )
+            except AiGradingError as error:
+                raise InfrastructureError(str(error)) from error
+
     def _persist_ai_commentary(
-        self, run_id: str, ai_result: AiGradeResult, breakdown: ScoreBreakdown
+        self,
+        run_id: str,
+        ai_result: AiGradeResult,
+        breakdown: ScoreBreakdown,
+        *,
+        advisory_score: Decimal | None = None,
     ) -> None:
         """将 AI 逻辑评分的详细反馈自动落入 ``evaluation_commentaries`` 供师生直接查看。"""
         moment = self._now()
@@ -1053,8 +1129,18 @@ class EvaluationOrchestrator:
                     evaluation_run_id=run_id,
                     text=ai_result.formatted_feedback,
                     advisory=commentary_store.AdvisoryScore(
-                        score=breakdown.score,
-                        max_score=breakdown.max_score,
+                        # 双轨时这条评语记录的是 **AI 轨** 的分（0~100）；AI 轨未参与时退回
+                        # 用例轨，保持"没有 AI 分就不要写一个 AI 分"的含义。
+                        score=(
+                            advisory_score
+                            if advisory_score is not None
+                            else breakdown.score
+                        ),
+                        max_score=(
+                            Decimal(100)
+                            if advisory_score is not None
+                            else breakdown.max_score
+                        ),
                         rationale=(ai_result.summary or "AI 逻辑评分完成。")[:2000],
                         confidence="high",
                     ),
@@ -1396,6 +1482,7 @@ class EvaluationOrchestrator:
         invocations: int,
         execution: ReportExecution,
         security_not_applicable: bool,
+        dual: DualTrackScore | None = None,
     ) -> EvaluationOutcome:
         """阶段 `reporting`：组报告 → 与结果**同事务**写入 → 迁 `completed` → 终态帧 → 事件。"""
         self._enter_stage(
@@ -1428,6 +1515,7 @@ class EvaluationOrchestrator:
                     ),
                     execution=execution,
                     security_not_applicable=security_not_applicable,
+                    dual=None if dual is None else dual.as_dict(),
                 ),
                 generated_at=self._now(),
             )
@@ -1452,12 +1540,16 @@ class EvaluationOrchestrator:
                     occurred_at=moment,
                     reason="评测完成。",
                 )
+                # 最终分：双轨时是用例轨与 AI 轨按题目权重合成后的分；否则就是用例轨的分。
+                final_score = breakdown.score if dual is None else dual.final_score
+                final_max = breakdown.max_score if dual is None else Decimal(100)
+                final_pass = breakdown.is_pass if dual is None else dual.is_pass
                 store.persist_result(
                     connection,
                     evaluation_run_id=run_id,
-                    score=breakdown.score,
-                    max_score=breakdown.max_score,
-                    is_pass=breakdown.is_pass,
+                    score=final_score,
+                    max_score=final_max,
+                    is_pass=final_pass,
                     result_digest=digest,
                     report=report,
                     persisted_at=moment,
@@ -1471,8 +1563,8 @@ class EvaluationOrchestrator:
                     occurred_at=moment,
                     cases_total=view.cases_total,
                     cases_done=len(evidence),
-                    score=breakdown.score,
-                    is_pass=breakdown.is_pass,
+                    score=final_score,
+                    is_pass=final_pass,
                     message="评测完成。",
                 )
                 self._enqueue(
