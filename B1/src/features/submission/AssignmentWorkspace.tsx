@@ -390,7 +390,21 @@ export function AssignmentWorkspace({
     answerFileName(currentOrdinal),
   );
 
-    // 历史文本到位后写进编辑器：只影响显示，不会把历史内容当成新提交发出去。
+    // 「本题当前结果」必须与切换后的代码、AI 评价同源：有历史选中就用历史，否则用当前提交。
+  const resultScore = historyPick?.score ?? currentSubmission?.score ?? null;
+  const resultMaxScore = historyPick?.maxScore ?? currentSubmission?.max_score ?? null;
+  const resultState = historyPick?.state ?? currentSubmission?.state ?? null;
+  const resultSubmittedAt = historyPick?.submittedAt ?? currentSubmission?.submitted_at ?? null;
+  const resultQuestionState =
+    historyPick !== null
+      ? historyPick.state === "completed"
+        ? "completed"
+        : historyPick.state === "failed" || historyPick.state === "rejected"
+          ? "failed"
+          : "evaluating"
+      : (currentProgress?.state ?? "not_submitted");
+
+  // 历史文本到位后写进编辑器：只影响显示，不会把历史内容当成新提交发出去。
   useEffect(() => {
     if (historyPick !== null && typeof historyFile.data === "string") {
       setContent(historyFile.data);
@@ -1058,15 +1072,15 @@ export function AssignmentWorkspace({
                   </div>
                 ) : null}
 
-                {progress.complete && currentSubmission !== null ? (
+                {progress.complete && (historyPick !== null || currentSubmission !== null) ? (
                   <div className="stack" data-testid="workspace-current-result">
                     <p>
                       {t("workspace.currentResult")}：
-                      {currentSubmission.state === "completed" ? (
-                        typeof currentSubmission.score === "number" ? (
+                      {resultState === "completed" ? (
+                        typeof resultScore === "number" ? (
                           <span className="muted">
-                            {t("grades.score")}：{currentSubmission.score} /{" "}
-                            {currentSubmission.max_score ?? "—"}
+                            {t("grades.score")}：{resultScore} /{" "}
+                            {resultMaxScore ?? "—"}
                           </span>
                         ) : (
                           <span className="muted">{t("grades.notScored")}</span>
@@ -1074,16 +1088,16 @@ export function AssignmentWorkspace({
                       ) : null}{" "}
                       <StatusPill
                         tone={questionStateTone(
-                          currentProgress?.state ?? "not_submitted",
+                          resultQuestionState,
                         )}
                       >
-                        {questionStateLabel(currentProgress?.state ?? "not_submitted")}
+                        {questionStateLabel(resultQuestionState)}
                       </StatusPill>
                     </p>
                     <div className="inline">
                       <span className="muted">
                         {t("grades.submittedAt")}：
-                        {formatDateTime(currentSubmission.submitted_at, t("common.none"))}
+                        {formatDateTime(resultSubmittedAt, t("common.none"))}
                       </span>
                       {knownRunId !== null ? (
                         <Link

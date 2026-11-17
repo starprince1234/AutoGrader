@@ -20,21 +20,24 @@ import { GRADE_PAGE_SIZE, type GradeListPage } from "./useGrades";
 export type SubmissionHistoryInput = {
   courseId: string | null;
   sectionId?: string | null;
-  assignmentId: string | null;
+  /**
+   * 仅用于判断"该不该查"：**不作为过滤条件**。契约写明在 `assignment_id` 字段存在之前受理的行
+   * 没有作业归属，按作业过滤会把它们整批漏掉——本题 5 次提交只列出 3 次就是这个原因。
+   * 历史因此按"课程 + 题目 + 学生"取，与成绩列表同范围。
+   */
+  assignmentId?: string | null;
   questionVersionId: string | null;
   /** 学生看自己的历史时传本人 id；教师看某学生时传该学生 id；为空表示不按人过滤。 */
   studentId?: string | null;
 };
 
 export function useSubmissionHistory(input: SubmissionHistoryInput) {
-  const enabled =
-    Boolean(input.courseId) && Boolean(input.assignmentId) && Boolean(input.questionVersionId);
+  const enabled = Boolean(input.courseId) && Boolean(input.questionVersionId);
 
   const query = useInfiniteQuery({
     queryKey: queryKeys.grades({
       course_id: input.courseId ?? undefined,
       section_id: input.sectionId ?? undefined,
-      assignment_id: input.assignmentId ?? undefined,
       question_version_id: input.questionVersionId ?? undefined,
       student_id: input.studentId ?? undefined,
       scope: "history",
@@ -46,7 +49,6 @@ export function useSubmissionHistory(input: SubmissionHistoryInput) {
         query: {
           course_id: input.courseId as string,
           section_id: input.sectionId ?? undefined,
-          assignment_id: input.assignmentId as string,
           question_version_id: input.questionVersionId as string,
           student_id: input.studentId ?? undefined,
           limit: GRADE_PAGE_SIZE,
