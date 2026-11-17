@@ -321,6 +321,13 @@ class QuestionBankRepository:
         )
         return list(self.session.execute(statement).scalars())
 
+    def move_question(
+        self, session: Session, question: Question, course_id: uuid.UUID
+    ) -> None:
+        """Re-point a question at another course (used by 另存为新版本 with a course change)."""
+        question.course_id = course_id
+        session.flush()
+
     def latest_version(self, question_id: uuid.UUID) -> QuestionVersion | None:
         statement = (
             select(QuestionVersion)

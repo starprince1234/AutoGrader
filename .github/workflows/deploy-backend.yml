@@ -617,7 +617,15 @@ jobs:
             .venv/bin/python - <<"PY"
           import os, psycopg
 
-          url = os.environ["B3_DATABASE_URL"]
+          # 变量名同时兼容 CI（B3_DATABASE_URL）与运行环境（B3_DATABASE_PROTECTED_URL /
+          # DATABASE_PROTECTED_URL）；值可能是 SQLAlchemy 形式，psycopg 需要去掉 `+psycopg`。
+          # 删除题目必须用受保护角色：普通角色按最小权限没有 DELETE 授权。
+          url = (
+              os.environ.get("B3_DATABASE_PROTECTED_URL")
+              or os.environ.get("DATABASE_PROTECTED_URL")
+              or os.environ.get("B3_DATABASE_URL")
+              or os.environ["DATABASE_URL"]
+          ).replace("postgresql+psycopg://", "postgresql://")
           with psycopg.connect(url) as conn:
               with conn.cursor() as cur:
                   cur.execute(
@@ -657,7 +665,13 @@ jobs:
             cd /opt/autograder/current/MAIN
             .venv/bin/python - <<"PY"
           import os, psycopg
-          with psycopg.connect(os.environ["B3_DATABASE_URL"]) as conn, conn.cursor() as cur:
+          url = (
+              os.environ.get("B3_DATABASE_PROTECTED_URL")
+              or os.environ.get("DATABASE_PROTECTED_URL")
+              or os.environ.get("B3_DATABASE_URL")
+              or os.environ["DATABASE_URL"]
+          ).replace("postgresql+psycopg://", "postgresql://")
+          with psycopg.connect(url) as conn, conn.cursor() as cur:
               cur.execute("SELECT status, count(*) FROM b3.question_versions GROUP BY status ORDER BY status")
               for status, count in cur.fetchall():
                   print(f"  {status}: {count}")

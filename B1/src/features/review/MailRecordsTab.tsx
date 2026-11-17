@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { t, type MessageKey } from "../../i18n";
 import { isApiError } from "../../api/problem";
@@ -18,6 +18,7 @@ import {
   ErrorState,
   Field,
   LoadMoreActions,
+  Modal,
   Panel,
   Spinner,
   Table,
@@ -25,6 +26,7 @@ import {
 } from "../../ui/components";
 import { formatDateTime, shortenId } from "../../ui/format";
 import { loadedMailRecords, useMailRecords } from "./useMailRecords";
+import { useDismissMailRecord, useRejectMailRecord } from "./useMailRecordActions";
 import { reasonText } from "./reasonCodes";
 import {
   MAIL_CATEGORIES,
@@ -36,11 +38,11 @@ import {
 import { Select } from "../../ui/Select";
 
 /**
- * `/review`：**邮件记录**（只读）。
+ * `/review`：**邮件记录**。
  *
- * 用户的原话是"这个功能想用于查看邮件提交记录"，所以本页只做一件事：把邮件接收处理过的信
- * 按三态呈现出来。它**不提供任何处置动作**——归属/匹配用户/暂存/作废/打回都已被移除，
- * 后端端点保留但本页不再调用。
+ * 用户的原话是"这个功能想用于查看邮件提交记录"，所以本页的主体是把邮件接收处理过的信按三态
+ * 呈现出来；但"有待处理记录却无法处理"是明确报过的 bug，因此 `pending`/`other` 行提供两个
+ * 处置动作：**打回**（处置 + 通知原发件人）与**标记作废**（只处置，不发信）。
  *
  * 三态的语义（与服务端判定一致，界面不自行推导）：
  *
@@ -165,6 +167,69 @@ export function MailRecordsTab({
   });
   const rows = useMemo(() => loadedMailRecords(query.data?.pages), [query.data]);
 
+  // 处置动作（打回 / 作废）：这一页曾经只读，导致"有待处理记录却处理不了"。
+  // `processed` 行是已经落库的提交，没有可处置的隔离记录，因此不提供动作。
+  const rejectRecord = useRejectMailRecord();
+  const dismissRecord = useDismissMailRecord();
+  const [action, setAction] = useState<{
+    kind: "reject" | "dismiss";
+    row: MailRecordView;
+  } | null>(null);
+  const [actionNote, setActionNote] = useState("");
+  const [actionIssue, setActionIssue] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  const openAction = (kind: "reject" | "dismiss", row: MailRecordView) => {
+    setSuccess(null);
+    setAction({ kind, row });
+    setActionNote("");
+    setActionIssue(null);
+    rejectRecord.reset();
+    dismissRecord.reset();
+  };
+
+  const closeAction = () => {
+    setAction(null);
+    setActionNote("");
+    setActionIssue(null);
+    rejectRecord.reset();
+    dismissRecord.reset();
+  };
+
+  const submitAction = () => {
+    if (!action) return;
+    if (actionNote.length > 500) {
+      setActionIssue(t("review.action.noteTooLong"));
+      return;
+    }
+    const input = {
+      recordId: action.row.record_id,
+      note: actionNote.trim() === "" ? null : actionNote.trim(),
+    };
+    if (action.kind === "reject") {
+      rejectRecord.mutate(input, {
+        onSuccess: (result) => {
+          // 处置已经生效：通知没发出去是另一句话，不能合并成"失败"。
+          setSuccess(
+            result.notification === "queued"
+              ? t("review.action.rejectedOk")
+              : t("review.action.rejectedOkNoNotice"),
+          );
+          closeAction();
+        },
+      });
+      return;
+    }
+    dismissRecord.mutate(input, {
+      onSuccess: () => {
+        setSuccess(t("review.action.dismissedOk"));
+        closeAction();
+      },
+    });
+  };
+
+  const actionPending = rejectRecord.isPending || dismissRecord.isPending;
+
   // 已处理记录要显示作业标题：作业是课程级的，按当前课程筛选（管理员/未选课程 = 全部可见作业）。
   // 只有"已处理"列会用到它，因此其他分类不请求；取不到时退回短 id（不猜标题）。
   const assignments = useAllAssignments(
@@ -227,6 +292,7 @@ export function MailRecordsTab({
   const renderList = (category: MailRecordCategory) => (
     <Panel
       title={t(CATEGORY_TITLE[category], { count: rows.length })}
+      testId={`review-records-panel-${category}`}
       actions={
         <LoadMoreActions
           loadedCount={rows.length}
@@ -290,6 +356,34 @@ export function MailRecordsTab({
               header: t("review.col.detail"),
               render: renderDetail,
             },
+            ...(category === "processed"
+              ? []
+              : [
+                  {
+                    key: "action",
+                    header: t("review.col.action"),
+                    render: (row: MailRecordView) => (
+                      <div className="row-actions">
+                        <button
+                          type="button"
+                          className="button button--ghost"
+                          data-testid={`review-record-reject-${row.record_id}`}
+                          onClick={() => openAction("reject", row)}
+                        >
+                          {t("review.action.reject")}
+                        </button>
+                        <button
+                          type="button"
+                          className="button button--ghost"
+                          data-testid={`review-record-dismiss-${row.record_id}`}
+                          onClick={() => openAction("dismiss", row)}
+                        >
+                          {t("review.action.dismiss")}
+                        </button>
+                      </div>
+                    ),
+                  },
+                ]),
           ]}
         />
       )}
@@ -347,6 +441,12 @@ export function MailRecordsTab({
         </div>
       </Panel>
 
+      {success ? (
+        <Banner tone="success" testId="review-records-success">
+          {success}
+        </Banner>
+      ) : null}
+
       <Tabs
         label={t("review.status.label")}
         testId="review-status"
@@ -357,6 +457,82 @@ export function MailRecordsTab({
           if (category !== undefined) changeFilter({ category });
         }}
       />
+
+      {action ? (
+        <Modal
+          title={
+            action.kind === "reject"
+              ? t("review.action.rejectTitle")
+              : t("review.action.dismissTitle")
+          }
+          testId="review-record-action"
+          onClose={closeAction}
+        >
+          <div className="stack">
+            <p className="muted">
+              {action.kind === "reject"
+                ? t("review.action.rejectHint")
+                : t("review.action.dismissHint")}
+            </p>
+            <p className="muted" data-testid="review-record-action-target">
+              {formatDateTime(action.row.received_at, t("common.none"))} ·{" "}
+              {scopeText(action.row, courseMap, sectionMap)}
+            </p>
+            <Field label={t("review.action.note")} htmlFor="review-record-note">
+              <textarea
+                id="review-record-note"
+                className="input"
+                data-testid="review-record-note"
+                rows={3}
+                maxLength={500}
+                value={actionNote}
+                onChange={(event) => setActionNote(event.target.value)}
+              />
+            </Field>
+            {actionIssue ? (
+              <Banner tone="error" testId="review-record-issue">
+                {actionIssue}
+              </Banner>
+            ) : null}
+            {[rejectRecord.error, dismissRecord.error].some(
+              (error) => isApiError(error) && error.isForbidden,
+            ) ? (
+              <Banner tone="error" testId="review-record-forbidden">
+                {t("review.action.forbidden")}
+              </Banner>
+            ) : null}
+            {[rejectRecord.error, dismissRecord.error].some(
+              (error) => isApiError(error) && error.isConflict,
+            ) ? (
+              <Banner tone="warn" testId="review-record-conflict">
+                {t("review.action.conflict")}
+              </Banner>
+            ) : null}
+            {actionPending ? null : rejectRecord.isError || dismissRecord.isError ? (
+              !isApiError(rejectRecord.error ?? dismissRecord.error) ? (
+                <ErrorState
+                  error={rejectRecord.error ?? dismissRecord.error}
+                  testId="review-record-error"
+                />
+              ) : null
+            ) : null}
+            <div className="row-actions">
+              <button
+                type="button"
+                className="button"
+                data-testid="review-record-confirm"
+                disabled={actionPending}
+                onClick={submitAction}
+              >
+                {actionPending ? t("review.action.pending") : t("review.action.confirm")}
+              </button>
+              <button type="button" className="button button--ghost" onClick={closeAction}>
+                {t("common.cancel")}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      ) : null}
     </div>
   );
 }

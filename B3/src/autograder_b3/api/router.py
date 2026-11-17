@@ -313,6 +313,7 @@ def update_question_endpoint(
     question_id: uuid.UUID,
     payload: QuestionDraftInputModel,
     as_new_version: bool = False,
+    course_id: uuid.UUID | None = None,
 ) -> dict:
     context = _context(request)
     dependencies = _dependencies(request)
@@ -323,6 +324,9 @@ def update_question_endpoint(
         question_id=question_id,
         payload=payload,
         as_new_version=as_new_version,
+        # 另存为新版本时可以换归属课程（前端「课程」下拉就是这么用的）。目标课程要有写权限，
+        # 判断在 domain 里做，和所有其它写路径一致。
+        target_course_id=course_id,
         # Presence, not truthiness: `revision_note: null` is still the caller stating
         # something about the write, and the write path answers `422` rather than
         # ignoring a field it cannot honour.

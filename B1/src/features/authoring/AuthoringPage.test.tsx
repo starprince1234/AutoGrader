@@ -30,6 +30,7 @@ import {
   sessionCreated,
   SHA_A,
   UUID_A,
+  UUID_B,
   UUID_C,
 } from "../../testing/contractFixtures";
 import { signIn } from "../../auth/sessionStore";
@@ -603,6 +604,14 @@ describe("新建题目（POST /api/v1/questions）", () => {
       const stem = screen.getByLabelText("题干") as HTMLTextAreaElement;
       expect(stem.value).toContain(`/api/v1/questions/${UUID_A}/assets/${UUID_C}`);
     });
+
+    // 选错图：删除按钮把刚插入的那一行 Markdown 去掉，按钮随之消失（可以重新选）。
+    await user.click(screen.getByTestId("image-remove"));
+    await waitFor(() => {
+      const stem = screen.getByLabelText("题干") as HTMLTextAreaElement;
+      expect(stem.value).not.toContain(`/api/v1/questions/${UUID_A}/assets/${UUID_C}`);
+    });
+    expect(screen.queryByTestId("image-remove")).toBeNull();
   });
 
   it("校验失败的原因拼成一句话，不会出现「。；」连在一起", async () => {
@@ -1993,5 +2002,91 @@ describe("统一 AI 逻辑评分流程（Python 与 Unix 题目共用）", () =>
       "使用 grep | wc -l 得 70 分；直接使用 grep -c 或 awk 单遍扫描得 90 分。",
     );
     expect(body.cases).toBeUndefined();
+  });
+});
+
+describe("另存为新版本：课程是下拉选择器", () => {
+  it("回填原课程、可输入筛选，换课后保存会带上 course_id", async () => {
+    stub = installFetchStub(
+      baseRoutes([
+        {
+          path: "/api/v1/courses",
+          respond: () =>
+            jsonResponse(
+              coursePage([
+                courseSummary({ course_id: UUID_B, course_code: "OS-2026", title: "操作系统" }),
+                courseSummary({ course_id: UUID_C, course_code: "DB-2026", title: "数据库" }),
+              ]),
+            ),
+        },
+        {
+          path: `/api/v1/questions/${QUESTION_ID}`,
+          method: "GET",
+          respond: () => jsonResponse(publishedQuestion()),
+        },
+        {
+          path: `/api/v1/question-versions/${UUID_A}`,
+          method: "GET",
+          respond: () =>
+            jsonResponse(
+              questionVersionPublic({
+                question_version_id: UUID_A,
+                version: 2,
+                status: "published",
+                content_digest: SHA_A,
+              }),
+            ),
+        },
+        {
+          path: `/api/v1/question-versions/${UUID_A}/draft-content`,
+          method: "GET",
+          respond: () =>
+            jsonResponse({
+              reference_answer: "print(1)",
+              reference_answers: [{ label: "主解", body: "print(1)" }],
+              grading_prompt: null,
+              cases: [],
+            }),
+        },
+        {
+          method: "PATCH",
+          path: `/api/v1/questions/${QUESTION_ID}`,
+          respond: () => jsonResponse(publishedQuestion()),
+        },
+      ]),
+    );
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(QUESTION_ID);
+
+    // 1) 课程是**下拉**而不是只读文本，且回填原题课程。
+    const select = (await screen.findByTestId("authoring-course")) as HTMLSelectElement;
+    expect(select.tagName).toBe("SELECT");
+    // 原题课程是异步取回来的，回填要等它到。
+    await waitFor(() => expect(select.value).toBe(UUID_B));
+    expect(screen.queryByTestId("authoring-course-readonly")).toBeNull();
+
+    // 2) 支持输入筛选：打开菜单后出现筛选框，输入只留下匹配项。
+    await user.click(select);
+    const filter = await screen.findByTestId("combo-filter");
+    await user.type(filter, "数据");
+    expect(await screen.findByRole("button", { name: /数据库/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /操作系统/ })).toBeNull();
+
+    // 3) 换到另一门课后保存：PATCH 带上新课程（另存为新版本）。
+    await user.selectOptions(select, UUID_C);
+    expect(select.value).toBe(UUID_C);
+
+    await goToStep(user, "preview");
+    await user.type(screen.getByLabelText("版本说明"), "把题挪到数据库课");
+    await user.click(screen.getByTestId("authoring-save"));
+
+    const request = await waitFor(() => {
+      const found = stub?.requests.find((item) => item.method === "PATCH");
+      if (!found) throw new Error("还没有发出保存请求");
+      return found;
+    });
+    expect(request.url.searchParams.get("as_new_version")).toBe("true");
+    expect(request.url.searchParams.get("course_id")).toBe(UUID_C);
   });
 });

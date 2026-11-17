@@ -161,6 +161,8 @@ export const messages = {
     // 可选筛选器的空选项：这里是"不加这个筛选条件"，不是"未指派"。
 "common.any": "（不限）",
     // 必选下拉的占位：用户必须先选一个才能继续。
+"common.searchOptions": "输入以筛选",
+"common.noMatchOptions": "没有匹配项",
 "common.selectPrompt": "请选择…",
 
     // 未匹配的站内地址：不渲染路由器默认的英文调试页。
@@ -792,6 +794,8 @@ export const messages = {
 "authoring.image.typeRejected": "不支持这种图片格式，请用 {types}。",
 "authoring.image.tooLarge": "图片最大 {max} MB。",
 "authoring.image.publishedFrozen": "已发布的版本不能再改图片，请先另存为新版本。",
+"authoring.image.inserted": "已插入 {count} 张图片",
+"authoring.image.remove": "删除最后插入的图片",
 
     // ------------------------------------------------- 夹具上传（RQ-B-3-50）
 "authoring.fixture.title": "题目用到的文件",
@@ -1653,6 +1657,22 @@ export const messages = {
 "review.col.subject": "邮件摘要",
 "review.col.scope": "课程/课序",
 "review.col.detail": "说明",
+"review.col.action": "操作",
+"review.action.reject": "打回",
+"review.action.dismiss": "标记作废",
+"review.action.rejectTitle": "打回这次提交",
+"review.action.dismissTitle": "标记作废",
+"review.action.rejectHint": "打回会关闭这条记录，并向这封邮件的发件人发送失败通知。通知发不出去不会回滚打回。",
+"review.action.dismissHint": "作废只关闭这条记录，不发送任何通知。",
+"review.action.note": "备注（可选，最多 500 字，学生看不到）",
+"review.action.noteTooLong": "备注不能超过 500 字。",
+"review.action.confirm": "确认",
+"review.action.pending": "处理中…",
+"review.action.rejectedOk": "已打回，失败通知已交给投递",
+"review.action.rejectedOkNoNotice": "已打回，但通知没有发出去",
+"review.action.dismissedOk": "邮件已作废",
+"review.action.forbidden": "你没有权限处置这条邮件记录。",
+"review.action.conflict": "这条记录已被处理，请刷新列表。",
 "review.noSubject": "（无摘要）",
 "review.scopeUnscoped": "未关联",
 "review.scopeUnknown": "未提供",

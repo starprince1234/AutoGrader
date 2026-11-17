@@ -1,5 +1,6 @@
 import { Children, isValidElement, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ReactNode, SelectHTMLAttributes } from "react";
+import { t } from "../i18n";
 
 /**
  * 下拉框：**原生 select 仍然是真的控件**，只是在它上面盖了一层自绘外观。
@@ -19,6 +20,13 @@ import type { ReactNode, SelectHTMLAttributes } from "react";
 type SelectProps = SelectHTMLAttributes<HTMLSelectElement> & {
   /** 允许透传 data-*（少数调用点用 data-testid 定位）。 */
   [key: `data-${string}`]: string | number | undefined;
+  /**
+   * 打开菜单时在上面加一个筛选框：选项多时按输入过滤（课程这类会越来越长的清单）。
+   *
+   * 原生 `<select>` 仍是**唯一的值来源**：筛选只影响自绘菜单显示哪些项，选择动作仍然写回
+   * 原生 select 并派发 `change`，所以键盘、表单语义与既有测试都不受影响。
+   */
+  searchable?: boolean;
 };
 
 type OptionItem = { value: string; label: string; disabled: boolean };
@@ -62,15 +70,34 @@ function commitValue(select: HTMLSelectElement, next: string): void {
   select.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
-export function Select({ children, className, onMouseDown, onKeyDown, ...rest }: SelectProps) {
+export function Select({
+  children,
+  className,
+  searchable = false,
+  onMouseDown,
+  onKeyDown,
+  ...rest
+}: SelectProps) {
   const selectRef = useRef<HTMLSelectElement>(null);
   const wrapRef = useRef<HTMLSpanElement>(null);
+  const filterRef = useRef<HTMLInputElement>(null);
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
   const menuId = useId();
 
   const options = useMemo(() => collectOptions(children), [children]);
   const value = rest.value === undefined ? "" : String(rest.value);
   const current = options.find((option) => option.value === value) ?? options[0];
+  const needle = query.trim().toLocaleLowerCase();
+  const visible =
+    needle === ""
+      ? options
+      : options.filter((option) => option.label.toLocaleLowerCase().includes(needle));
+
+  // 打开时把焦点放进筛选框（只有可搜索的才有）。
+  useEffect(() => {
+    if (open && searchable) filterRef.current?.focus();
+  }, [open, searchable]);
 
   // 点外面关掉：用捕获阶段，避免被菜单内的 stopPropagation 影响。
   useEffect(() => {
@@ -106,6 +133,7 @@ export function Select({ children, className, onMouseDown, onKeyDown, ...rest }:
           // 拦住系统下拉菜单，改用自绘的那个；键盘行为不受影响。
           event.preventDefault();
           if (rest.disabled) return;
+          setQuery("");
           setOpen((previous) => !previous);
         }}
         onKeyDown={(event) => {
@@ -115,8 +143,10 @@ export function Select({ children, className, onMouseDown, onKeyDown, ...rest }:
             setOpen(false);
           }
         }}
-        onBlur={() => {
-          // Tab 走开时收起；点菜单项不会走到这里（那里用 mousedown 拦截了默认行为）。
+        onBlur={(event) => {
+          // Tab 走开时收起；焦点跑进筛选框不算走开。
+          const next = event.relatedTarget as Node | null;
+          if (next && wrapRef.current?.contains(next)) return;
           setOpen(false);
         }}
       >
@@ -124,8 +154,41 @@ export function Select({ children, className, onMouseDown, onKeyDown, ...rest }:
       </select>
 
       {open ? (
-        <ul className="combo__menu" id={menuId} role="listbox" aria-hidden="true">
-          {options.map((option) => (
+        <ul
+          className="combo__menu"
+          id={menuId}
+          role="listbox"
+          // 可搜索时这一层里有可聚焦的输入框，不能再整块对读屏隐藏。
+          aria-hidden={searchable ? undefined : true}
+        >
+          {searchable ? (
+            <li className="combo__filter-row">
+              <input
+                ref={filterRef}
+                className="combo__filter"
+                data-testid="combo-filter"
+                aria-label={t("common.searchOptions")}
+                placeholder={t("common.searchOptions")}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setOpen(false);
+                    selectRef.current?.focus();
+                  } else if (event.key === "Enter") {
+                    event.preventDefault();
+                    const target = visible.find((option) => !option.disabled);
+                    if (target) choose(target.value);
+                  }
+                }}
+              />
+            </li>
+          ) : null}
+          {visible.length === 0 ? (
+            <li className="combo__empty muted">{t("common.noMatchOptions")}</li>
+          ) : null}
+          {visible.map((option) => (
             <li key={option.value}>
               <button
                 type="button"
