@@ -2,8 +2,9 @@
 
 Publish is the moment a version becomes immutable:
 
-1. completeness is validated - non-empty stem, at least one case, a reference
-   answer, a legal adapter declaration whose fixture digests match stored content;
+1. completeness is validated - non-empty stem, exactly one public example case plus
+   ten hidden evaluation cases (each hidden case must declare an expected output), a
+   reference answer, a legal adapter declaration whose fixture digests match stored content;
 2. ``content_digest`` is computed over the whole content and frozen;
 3. a reference-answer attestation whose ``content_digest`` equals that recomputed
    digest must exist - B3 cannot run a reference answer, so it refuses to publish
@@ -37,6 +38,7 @@ from ..errors import (
     Conflict,
     Forbidden,
     InvalidStateTransition,
+    ManifestInvalid,
     NotFound,
     ProtectedContentMissing,
     Unauthenticated,
@@ -122,6 +124,30 @@ def publish_version(
         fixtures = content.fixtures
         if not version.stem_markdown.strip():
             raise ProtectedContentMissing("publish rejected: the version has an empty stem")
+
+        # 双轨评分的题必须"1 个公开示例用例 + 10 个隐藏评测用例"：公开用例只向学生展示
+        # 输入输出格式，隐藏用例才是评分的依据。数量不符或隐藏用例缺期望输出一律拒发，
+        # 这样"AI 逻辑评分"的旧式单用例题目无法再混进发布门禁。
+        public_cases = [case for case in cases if case.visible_to_student]
+        hidden_cases = [case for case in cases if not case.visible_to_student]
+        if len(public_cases) != 1 or len(hidden_cases) != 10:
+            raise ManifestInvalid(
+                "publish rejected: exactly one public example case and ten hidden "
+                "evaluation cases are required "
+                f"(found {len(public_cases)} public, {len(hidden_cases)} hidden)",
+                field="cases",
+            )
+        hidden_without_expected = [
+            case.name
+            for case in hidden_cases
+            if case.expected_stdout is None and case.expected_stderr is None
+        ]
+        if hidden_without_expected:
+            raise ManifestInvalid(
+                "publish rejected: every hidden case must declare an expected output; "
+                "missing on: " + ", ".join(hidden_without_expected),
+                field="cases",
+            )
 
         snapshot = content.snapshot_for(created_at=now)
         content_digest = snapshot.content_digest

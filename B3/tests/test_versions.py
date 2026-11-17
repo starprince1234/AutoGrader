@@ -54,7 +54,6 @@ from autograder_b3.errors import (
 from .conftest import COURSE_A, COURSE_B, draft_payload
 from .examples import CALLABLE_MANIFEST, FILE_MANIFEST, STDIN_MANIFEST
 from .support import (
-    attest,
     create_published_question,
     create_question,
     draft,
@@ -150,7 +149,14 @@ def test_publish_without_a_reference_answer_is_refused(database, settings):
         publish(database, principal=teacher_principal(), question_version_id=version.question_version_id)
 
 
-def test_publish_without_any_case_uses_default_ai_case(database, settings):
+def test_publish_without_any_case_is_refused(database, settings):
+    """无用例的版本只剩"AI 逻辑评分"旧式单用例，双轨门禁要求 1 公开 + 10 隐藏，必须拒发。
+
+    这正是旧题库（PDF 导入、无测试用例）不能再发布的原因：它拿不到 10 个隐藏用例，
+    也就无法进入"用例 + AI"的双轨评分。
+    """
+    from autograder_b3.errors import ManifestInvalid
+
     _question, version = create_question(
         database, settings, principal=teacher_principal(), payload=draft_payload()
     )
@@ -159,13 +165,140 @@ def test_publish_without_any_case_uses_default_ai_case(database, settings):
             text("DELETE FROM b3.test_cases WHERE question_version_id = :vid"),
             {"vid": version.question_version_id},
         )
-    published = publish(
+    with pytest.raises(ManifestInvalid) as error:
+        publish(
+            database,
+            principal=teacher_principal(),
+            question_version_id=version.question_version_id,
+            attestation=False,
+        )
+    assert "ten hidden" in str(error.value)
+    assert "0 hidden" in str(error.value)
+
+
+def _cases_with_one_public(*, hidden: int, expected_stdout: str | None = "0\n") -> list[dict]:
+    """1 public + ``hidden`` hidden cases, all well-formed unless a caller breaks one."""
+    rows = [
+        {
+            "name": "example",
+            "ordinal": 0,
+            "weight": 1,
+            "visible_to_student": True,
+            "stdin": "a\nb\nc\n",
+            "args": [],
+            "expected_stdout": "3\n",
+            "expected_stderr": None,
+            "expected_exit_code": 0,
+        }
+    ]
+    for index in range(hidden):
+        rows.append(
+            {
+                "name": f"hidden {index}",
+                "ordinal": index + 1,
+                "weight": 1,
+                "visible_to_student": False,
+                "stdin": "",
+                "args": [],
+                "expected_stdout": expected_stdout,
+                "expected_stderr": None,
+                "expected_exit_code": 0,
+            }
+        )
+    return rows
+
+
+def test_publish_with_fewer_than_ten_hidden_cases_is_refused(database, settings):
+    """隐藏用例不足 10 个时拒发，并在错误里说清实际数量。"""
+    from autograder_b3.errors import ManifestInvalid
+
+    _question, version = create_question(
         database,
+        settings,
         principal=teacher_principal(),
-        question_version_id=version.question_version_id,
-        attestation=False,
+        payload=draft_payload(cases=_cases_with_one_public(hidden=9)),
+    )
+    with pytest.raises(ManifestInvalid) as error:
+        publish(
+            database,
+            principal=teacher_principal(),
+            question_version_id=version.question_version_id,
+            attestation=False,
+        )
+    assert "1 public, 9 hidden" in str(error.value)
+
+
+def test_publish_with_two_public_cases_is_refused(database, settings):
+    """公开示例必须恰好一个：两个也拒发。"""
+    from autograder_b3.errors import ManifestInvalid
+
+    cases = _cases_with_one_public(hidden=10)
+    cases.append(
+        {
+            "name": "second example",
+            "ordinal": 11,
+            "weight": 1,
+            "visible_to_student": True,
+            "stdin": "",
+            "args": [],
+            "expected_stdout": "0\n",
+            "expected_stderr": None,
+            "expected_exit_code": 0,
+        }
+    )
+    _question, version = create_question(
+        database,
+        settings,
+        principal=teacher_principal(),
+        payload=draft_payload(cases=cases),
+    )
+    with pytest.raises(ManifestInvalid) as error:
+        publish(
+            database,
+            principal=teacher_principal(),
+            question_version_id=version.question_version_id,
+            attestation=False,
+        )
+    assert "2 public, 10 hidden" in str(error.value)
+
+
+def test_publish_with_a_hidden_case_without_expected_output_is_refused(database, settings):
+    """隐藏用例必须声明期望输出，否则"通过"无从判定。"""
+    from autograder_b3.errors import ManifestInvalid
+
+    cases = _cases_with_one_public(hidden=10)
+    cases[3]["expected_stdout"] = None
+    _question, version = create_question(
+        database,
+        settings,
+        principal=teacher_principal(),
+        payload=draft_payload(cases=cases),
+    )
+    with pytest.raises(ManifestInvalid) as error:
+        publish(
+            database,
+            principal=teacher_principal(),
+            question_version_id=version.question_version_id,
+            attestation=False,
+        )
+    assert "hidden 2" in str(error.value)
+
+
+def test_publish_with_one_public_and_ten_hidden_cases_succeeds(database, settings):
+    """门禁的正面例子：1 + 10 可以发布，包里的用例数也是 11。"""
+    from autograder_b3.domain.packages import load_evaluation_package
+
+    _question, published = create_published_question(
+        database,
+        settings,
+        payload=draft_payload(cases=_cases_with_one_public(hidden=10)),
     )
     assert published.status == "published"
+    package = load_evaluation_package(
+        database, question_version_id=published.question_version_id
+    )
+    assert len(package.tests) == 11
+    assert [test["visible_to_student"] for test in package.tests].count(True) == 1
 
 
 def test_publish_with_an_invalid_manifest_is_refused(database, settings):
@@ -890,7 +1023,7 @@ def test_example_questions_publish_and_yield_a_package(database, settings, paylo
     package = load_evaluation_package(database, question_version_id=version.question_version_id)
     assert package.adapter["kind"] == kind
     assert package.package_digest == version.package_digest
-    assert len(package.tests) == 2
+    assert len(package.tests) == 11
 
 
 def test_publishing_with_a_microsecond_clock_survives_the_database_round_trip(database, settings):
@@ -1149,7 +1282,7 @@ def test_revision_diff_records_what_changed_and_never_contains_protected_content
     assert declared_revision_diff_properties() == REVISION_DIFF_KEYS
     assert set(delta) == declared_revision_diff_properties()
     assert delta["stem_length_before"] != delta["stem_length_after"]
-    assert delta["case_count_before"] == delta["case_count_after"] == 2
+    assert delta["case_count_before"] == delta["case_count_after"] == 11
     assert delta["weights_changed"] is True
     assert delta["case_set_changed"] is False
     assert delta["adapter_kind_changed"] is False
@@ -1163,7 +1296,7 @@ def test_revision_diff_records_what_changed_and_never_contains_protected_content
     # The delta is structural: it must not be a paraphrase of the content. The hidden
     # case name is the sharpest probe - it is text that exists nowhere else.
     assert "Version two stem." not in serialized
-    assert "hidden edge case: empty input" not in serialized
+    assert "hidden case 0" not in serialized
     assert "counts lines" not in serialized
     # Nor may the protected vocabulary appear as a key: a public DTO key named
     # `reference_answer` would be refused by the serializer, so the digest carries the
@@ -1217,7 +1350,7 @@ def test_revision_diff_on_the_first_version_is_not_comparable_rather_than_unchan
     # version has no cases, which is a different (and false) claim.
     assert all(first[key] is None for key in first if key.endswith("_before"))
     assert all(first[key] is None for key in first if key.endswith("_changed"))
-    assert first["case_count_after"] == 2
+    assert first["case_count_after"] == 11
     assert first["stem_length_after"] == len(stem)
     assert first["reference_answer_digest_after"] is not None
 
@@ -1556,7 +1689,7 @@ def test_a_branched_version_that_omits_cases_records_no_case_change(database, se
         assert row is not None and row.revision_diff is not None
         delta = row.revision_diff
 
-    assert delta["case_count_before"] == delta["case_count_after"] == 2
+    assert delta["case_count_before"] == delta["case_count_after"] == 11
     assert delta["case_set_changed"] is False
     assert delta["weights_changed"] is False
     assert delta["adapter_kind_changed"] is False

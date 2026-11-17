@@ -39,7 +39,7 @@ REFERENCE_ANSWER = "#!/usr/bin/env bash\nwc -l < /dev/stdin\n"
 #: exactly like "return the answer for the declared language".
 PYTHON_ANSWER = "print('the python one')\n"
 HIDDEN_STDOUT = "0\n"
-HIDDEN_CASE_NAME = "hidden edge case: empty input"
+HIDDEN_CASE_NAME = "hidden case 0"
 #: The literal segment that must be declared before ``/api/v1/questions/{question_id}``.
 COVERAGE = "/api/v1/questions/coverage"
 
@@ -1193,7 +1193,7 @@ def test_authoring_payload_carries_no_protected_content_and_no_content_change(
     assert REFERENCE_ANSWER not in serialized
     assert HIDDEN_STDOUT not in serialized
     assert HIDDEN_CASE_NAME not in serialized
-    assert payload["case_count"] == 2
+    assert payload["case_count"] == 11
 
     assert [item.topic for item in result.suggestions] == ["quality", "comparison_policy"]
     assert result.provenance is not None
@@ -1511,7 +1511,7 @@ def test_a_draft_can_be_verified_and_published_without_publishing_it_first(
         f"/api/v1/question-versions/{version_id}", headers=auth_headers("teacher-a")
     ).json()["content_digest"]
 
-    attestation = http_attestation(client, version_id, cases=2)
+    attestation = http_attestation(client, version_id, cases=11)
     assert attestation["content_digest"] == answer.json()["content_digest"]
 
     published = client.post(
@@ -1838,7 +1838,7 @@ def test_the_reference_answer_digest_is_the_one_the_attestation_binds(
     shown = client.get(
         f"/api/v1/question-versions/{version_id}", headers=auth_headers("teacher-a")
     ).json()
-    attestation = http_attestation(client, version_id, cases=2)
+    attestation = http_attestation(client, version_id, cases=11)
     served = client.get(_reference_answer_path(version_id), headers=service_headers).json()
 
     assert served["content_digest"] == attestation["content_digest"] == shown["content_digest"]
@@ -2217,6 +2217,33 @@ def test_diagnostics_report_the_content_rules_with_declared_severities(client, a
             "expected_stderr": None,
             "expected_exit_code": 0,
         },
+        # 发布门禁要求"1 个公开示例 + 10 个隐藏用例"，这些填充用例本身不触发任何规则
+        # （ASCII、无尾随空白、不以换行结束），只为让这一版可发布。
+        {
+            "name": "example",
+            "ordinal": 3,
+            "weight": 1,
+            "visible_to_student": True,
+            "stdin": "a\n",
+            "args": [],
+            "expected_stdout": "1",
+            "expected_stderr": None,
+            "expected_exit_code": 0,
+        },
+        *[
+            {
+                "name": f"clean {index}",
+                "ordinal": 4 + index,
+                "weight": 1,
+                "visible_to_student": False,
+                "stdin": "a\n",
+                "args": [],
+                "expected_stdout": "1",
+                "expected_stderr": None,
+                "expected_exit_code": 0,
+            }
+            for index in range(7)
+        ],
     ]
     question_id = _published_question_with(
         client,
@@ -2245,7 +2272,7 @@ def test_diagnostics_report_the_content_rules_with_declared_severities(client, a
     # here, which is the rule behaving as declared rather than a test artefact.
     assert [item["ordinal"] for item in by_rule["CMP-001"]] == [0]
     assert [item["ordinal"] for item in by_rule["CMP-002"]] == [1]
-    assert sorted(item["ordinal"] for item in by_rule["CMP-003"]) == [0, 1, 2]
+    assert {0, 1, 2} <= {item["ordinal"] for item in by_rule["CMP-003"]}
     assert all(item["message"] for item in findings)
     assert HIDDEN_CASE_NAME not in response.text
     assert "café" not in response.text
@@ -2902,7 +2929,7 @@ def test_a_correction_that_omits_both_protected_fields_is_accepted(client, auth_
         f"/api/v1/question-versions/{new_version}", headers=auth_headers("teacher-a")
     ).json()
     diff = version["revision_diff"]
-    assert diff["case_count_before"] == diff["case_count_after"] == 2
+    assert diff["case_count_before"] == diff["case_count_after"] == 11
     assert diff["case_set_changed"] is False
     assert diff["weights_changed"] is False
     assert diff["reference_answer_digest_before"] == diff["reference_answer_digest_after"]

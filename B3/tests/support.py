@@ -188,7 +188,7 @@ def http_attestation(
     client,
     question_version_id: uuid.UUID,
     *,
-    cases: int = 2,
+    cases: int = 11,
     headers: dict[str, str] | None = None,
 ) -> dict:
     """Read the version's digest over HTTP, then record a matching attestation.

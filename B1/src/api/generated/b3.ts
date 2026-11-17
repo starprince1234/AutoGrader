@@ -630,10 +630,22 @@ export interface paths {
         /**
          * Publish and freeze a question version (RQ-B-3-20)
          * @description Publication validates completeness: a non-empty stem with reachable assets, a
-         *     reference answer, at least one test case, a valid adapter declaration and an
-         *     explicit comparison policy. On success the version becomes immutable, a
-         *     content digest is bound, and `autograder.v1.question.version.published` is
-         *     emitted without any protected content.
+         *     reference answer, a valid adapter declaration and an explicit comparison policy.
+         *
+         *     **Case set (hard rule, dual-track scoring).** A version is publishable only with
+         *     exactly **one public example case** (`visible_to_student: true`, shown in the stem
+         *     so a student can read the input/output format) plus exactly **ten hidden
+         *     evaluation cases** (`visible_to_student: false`), and every hidden case must declare
+         *     an `expected_stdout` or `expected_stderr`. Anything else is refused with `422`
+         *     (`adapter-manifest-invalid`), naming the counts actually supplied. The rule is
+         *     enforced in B3, not merely suggested in the authoring UI: a version whose hidden
+         *     cases cannot be scored deterministically must not reach a student, because the
+         *     deterministic track of the score has nothing to run. Legacy versions authored
+         *     before this rule keep working (they are already frozen); they simply cannot be
+         *     republished, and a new version of them has to carry the 1 + 10 set.
+         *
+         *     On success the version becomes immutable, a content digest is bound, and
+         *     `autograder.v1.question.version.published` is emitted without any protected content.
          *
          *     Added by CHG-0008: publication **also** requires a reference-answer attestation
          *     whose `content_digest` matches the version's recomputed content. Rationale: B3 must

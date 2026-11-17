@@ -566,17 +566,20 @@ def draft_payload(
                 "expected_stderr": None,
                 "expected_exit_code": 0,
             },
-            {
-                "name": "hidden edge case: empty input",
-                "ordinal": 1,
-                "weight": 2,
-                "visible_to_student": False,
-                "stdin": "",
-                "args": [],
-                "expected_stdout": "0\n",
-                "expected_stderr": None,
-                "expected_exit_code": 0,
-            },
+            *[
+                {
+                    "name": f"hidden case {index}",
+                    "ordinal": index + 1,
+                    "weight": 1,
+                    "visible_to_student": False,
+                    "stdin": "",
+                    "args": [],
+                    "expected_stdout": "0\n",
+                    "expected_stderr": None,
+                    "expected_exit_code": 0,
+                }
+                for index in range(10)
+            ],
         ],
     }
     if reference_answer is not None:
