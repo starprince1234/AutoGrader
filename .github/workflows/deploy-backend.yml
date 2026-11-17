@@ -1071,10 +1071,12 @@ jobs:
           for unit in autograder.service cloudflared.service; do
             count="$(journalctl -u "$unit" --since '-30 min' --no-pager -o json \
               --grep 'Traceback|Error:|Exception:|Permission denied|Address already in use|ERROR:|failed|critical' \
-              | python3 -c 'import json,sys; print(sum(1 for line in sys.stdin if json.loads(line)))')"
+              2>/dev/null \
+              | python3 -c 'import json,sys; print(sum(1 for line in sys.stdin if json.loads(line)))' \
+              2>/dev/null || printf unavailable)"
             printf '%s: %s\n' "$unit" "$count"
           done
-          postgres_container="$(docker ps --filter label=com.docker.compose.project=autograder --filter label=com.docker.compose.service=postgres --format '{{.Names}}' | head -n 1)"
+          postgres_container="$(docker ps --filter label=com.docker.compose.project=autograder --filter label=com.docker.compose.service=postgres --format '{{.Names}}' 2>/dev/null | head -n 1 || true)"
           if [[ -z "$postgres_container" ]]; then
             printf '%s\n' 'migration_revisions=postgres_container_missing'
           else

@@ -2,6 +2,40 @@
 set -euo pipefail
 umask 077
 fail() { printf '[autograder-deployctl] ERROR: %s\n' "$*" >&2; exit 1; }
+
+# GitHub 出口常被中途重置（`OpenSSL SSL_connect: SSL_ERROR_SYSCALL`），一次失败不代表仓库不可用。
+# 这里对只读的 git 探测重试三次，失败时把代理状态一起打出来——否则日志里只有一个 SSL 错误，
+# 看不出究竟是代理挂了还是上游被重置。
+retry_git() {
+    local attempt=1 status=0
+    local attempts="${RETRY_ATTEMPTS:-3}"
+    while (( attempt <= attempts )); do
+        if "$@"; then
+            return 0
+        fi
+        status=$?
+        printf '[autograder-deployctl] git attempt %d/%d failed (exit %d), retrying\n' \
+            "$attempt" "$attempts" "$status" >&2
+        attempt=$(( attempt + 1 ))
+        sleep 5
+    done
+    return "$status"
+}
+
+report_github_egress() {
+    local proxy="http://127.0.0.1:7893"
+    printf '[autograder-deployctl] egress diagnosis:\n' >&2
+    printf '[autograder-deployctl]   proxy=%s listener=%s\n' "$proxy" \
+        "$(ss -H -ltn 'sport = :7893' 2>/dev/null | head -n 1 || printf none)" >&2
+    printf '[autograder-deployctl]   proxy_unit=%s\n' \
+        "$(systemctl is-active mihomo 2>/dev/null || printf unknown)" >&2
+    printf '[autograder-deployctl]   https_via_proxy=%s\n' \
+        "$(timeout 20 curl --silent --output /dev/null --write-out '%{http_code}' \
+            --proxy "$proxy" https://github.com/ 2>/dev/null || printf failed)" >&2
+    printf '[autograder-deployctl]   https_direct=%s\n' \
+        "$(timeout 20 curl --silent --output /dev/null --write-out '%{http_code}' \
+            --noproxy '*' https://github.com/ 2>/dev/null || printf failed)" >&2
+}
 root=/opt/autograder
 case "${1:-}" in
     preflight)
@@ -34,13 +68,20 @@ case "${1:-}" in
             git --git-dir="$cache" config remote.origin.promisor true
             git --git-dir="$cache" config remote.origin.partialclonefilter blob:none
         fi
-        current_main="$(timeout 30 git --git-dir="$cache" ls-remote origin refs/heads/main | awk 'NR == 1 { print $1 }')"
+        current_main_refs="$(retry_git timeout 30 git --git-dir="$cache" ls-remote origin refs/heads/main)" || {
+            report_github_egress
+            fail "could not reach github.com to resolve main (proxy 127.0.0.1:7893)"
+        }
+        current_main="$(printf '%s\n' "$current_main_refs" | awk 'NR == 1 { print $1 }')"
         [[ "$current_main" =~ ^[a-f0-9]{40}$ ]] || fail "could not resolve the production main SHA"
         if [[ "$current_main" != "$sha" ]]; then
             printf '[autograder-deployctl] skipping stale SHA %s; main is now %s\n' "$sha" "$current_main"
             exit 0
         fi
-        timeout 120 git --git-dir="$cache" fetch --quiet --filter=blob:none --no-tags --depth=1 origin refs/heads/main
+        retry_git timeout 120 git --git-dir="$cache" fetch --quiet --filter=blob:none --no-tags --depth=1 origin refs/heads/main || {
+            report_github_egress
+            fail "could not fetch $sha from github.com (proxy 127.0.0.1:7893)"
+        }
         [[ "$(git --git-dir="$cache" rev-parse FETCH_HEAD)" == "$sha" ]] || fail "fetched SHA mismatch"
         stage="$root/staging/$release_id"
         [[ ! -e "$stage" && ! -e "$root/releases/$release_id" ]] || fail "release ID already exists"
