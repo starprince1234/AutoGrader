@@ -927,11 +927,12 @@ export interface paths {
         put?: never;
         /**
          * Upload a roster file and start parsing (RQ-B-1-10)
-         * @description Accepts a CSV or XLSX roster for one **class**: the caller names the course, the
-         *     section (课序) and the class (班级) the file belongs to, and the server verifies that
-         *     the class belongs to that section and the section to that course. Parsing never
-         *     guesses: when a column cannot be mapped unambiguously the import stops in
-         *     `mapping_required` and waits for a human decision. No roster row is persisted
+         * @description Accepts a CSV, XLSX, XLS (BIFF), or text-based PDF roster for one **class**: the caller
+         *     names the course, the section (课序) and the class (班级) the file belongs to, and the
+         *     server verifies that the class belongs to that section and the section to that course.
+         *     The parser locates the first header row containing both student-number and display-name
+         *     aliases within the leading rows, extracts any leading course metadata for verification,
+         *     and never guesses ambiguous columns (`mapping_required`). No roster row is persisted
          *     before confirmation.
          */
         post: operations["createRosterImport"];
@@ -996,7 +997,8 @@ export interface paths {
         /**
          * Commit the previewed roster atomically (RQ-B-1-10)
          * @description Idempotent: repeating the confirmation does not duplicate rows. Atomic: either
-         *     every accepted row is written or none is. Emits
+         *     every accepted row is written or none is. Rejected with 422 when
+         *     `course_verification.status` is `mismatched`. Emits
          *     `autograder.v1.roster.import.completed` on success; the payload carries no PII.
          */
         post: operations["confirmRosterImport"];
@@ -1449,7 +1451,31 @@ export interface components {
             };
             accepted_rows?: components["schemas"]["RosterRowPreview"][];
             rejected_rows?: components["schemas"]["RosterRowPreview"][];
+            /** @description 1-based row number where the table header was located. */
+            header_row_number?: number | null;
+            document_metadata?: components["schemas"]["RosterDocumentMetadata"] | null;
+            course_verification?: components["schemas"]["RosterCourseVerification"] | null;
+            /** @description Non-blocking parse notices (for example numeric student numbers that may lose leading zeros). */
+            warnings?: string[];
             created_at?: components["schemas"]["Timestamp"];
+        };
+        /** @description Non-PII course metadata extracted from leading document rows for preview only; never persisted as student data. */
+        RosterDocumentMetadata: {
+            course_name?: string | null;
+            course_code?: string | null;
+            section_code?: string | null;
+            semester?: string | null;
+            instructor?: string | null;
+        };
+        /** @description Comparison between the course/section declared in the document metadata and the selected import target. */
+        RosterCourseVerification: {
+            /** @enum {string} */
+            status: "matched" | "mismatched" | "unavailable";
+            file_course_code?: string | null;
+            file_section_code?: string | null;
+            selected_course_code: string;
+            selected_section_code: string;
+            message: string;
         };
         RosterRowPreview: {
             row_number: number;

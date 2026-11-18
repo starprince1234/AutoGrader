@@ -12,6 +12,17 @@
 
 ---
 
+## 0.43.0 — 名单导入支持 XLS/PDF、表头定位与课程信息核对
+
+- **类型**：最小新增（扩展 `media_type` 枚举与 `RosterImportPreview` 可选预览字段，无破坏性字段删除）
+- **状态**：有效
+- **变更**：
+  - `schemas/roster-import.schema.json`：`media_type` 新增 `application/vnd.ms-excel`（`.xls` BIFF，魔数 `D0 CF 11 E0`）与 `application/pdf`（文本型 PDF，魔数 `%PDF-`），并更新格式识别说明。
+  - `openapi/b4.yaml`：
+    - 更新 `createRosterImport` 与 `confirmRosterImport` 说明：支持 CSV/XLSX/XLS/PDF、前 30 行内自动定位表头行、元信息区课程信息核对，且 `course_verification.status == mismatched` 时 `confirmRosterImport` 返回 `422` 阻断写入；
+    - `RosterImportPreview` 新增可选属性 `header_row_number`、`document_metadata`（`RosterDocumentMetadata`）、`course_verification`（`RosterCourseVerification`）与 `warnings`。
+  - 全部契约版本同步至 `0.43.0`。
+
 ## 0.42.0 — 题目 IO 类型（`io_type`）与可见附件 / 用例级文件
 
 - **类型**：题目级不可变类型 + 附件可见性 + 用例级文件 + 废弃 `adapter_kind_changed` 移除

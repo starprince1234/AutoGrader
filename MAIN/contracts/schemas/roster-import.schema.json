@@ -15,9 +15,11 @@
       "type": "string",
       "enum": [
         "text/csv",
-        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "application/vnd.ms-excel",
+        "application/pdf"
       ],
-      "description": "Only CSV and XLSX rosters are accepted. Anything else is rejected with 422. CSV is recognised by its .csv filename and validated on decode, because plain text has no container signature."
+      "description": "CSV, XLSX, XLS (BIFF), and text-based PDF rosters are accepted. Anything else is rejected with 422. Binary formats are recognised by magic bytes (PK\\x03\\x04 for XLSX, D0 CF 11 E0 for XLS, %PDF- for PDF); CSV is recognised by its .csv filename and validated on decode."
     },
     "content_sha256": {
       "type": "string",

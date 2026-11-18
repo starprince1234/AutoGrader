@@ -1535,8 +1535,11 @@ export interface components {
             status: "draft" | "published" | "archived";
             language: components["schemas"]["Language"];
             io_type: components["schemas"]["IoType"];
-            /** @description Which of the three test frameworks the version uses (RQ-B-3-40/50/60). Must equal question io_type. */
-            adapter_kind: components["schemas"]["IoType"];
+            /**
+             * @description Which of the three test frameworks the version uses (RQ-B-3-40/50/60). Must equal question io_type.
+             * @enum {string}
+             */
+            adapter_kind: "stdin" | "file" | "callable";
             /** @description Publicly downloadable input fixture attachments (only student_visible=true, mount=input). Never contains hidden fixtures or expected_output. */
             visible_fixtures?: {
                 fixture_id: components["schemas"]["Uuid"];
