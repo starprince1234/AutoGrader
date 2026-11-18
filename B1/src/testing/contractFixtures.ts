@@ -430,6 +430,10 @@ export function rosterImportPreview(
         reason: "缺少必填字段：学号",
       },
     ],
+    header_row_number: 1,
+    document_metadata: null,
+    course_verification: null,
+    warnings: [],
     created_at: "2026-09-15T07:30:00.000Z",
     ...overrides,
   } as RosterImportPreview;

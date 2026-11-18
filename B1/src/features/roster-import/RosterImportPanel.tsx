@@ -218,9 +218,43 @@ function MappingForm({ preview }: { preview: RosterImportPreview }) {
   );
 }
 
+function classifyUploadError(error: unknown): string {
+  const raw = describeApiError(error);
+  const lowered = raw.toLowerCase();
+  if (isApiError(error) && error.status === 413) {
+    return `文件大小超出上限：${raw}`;
+  }
+  if (lowered.includes("encrypted")) {
+    return `PDF 文件已加密，请解密后重试：${raw}`;
+  }
+  if (lowered.includes("scanned") || lowered.includes("no extractable text")) {
+    return `检测到扫描件或无文本可提取的 PDF（不支持 OCR）：${raw}`;
+  }
+  if (
+    lowered.includes("limit") ||
+    lowered.includes("exceeds") ||
+    lowered.includes("more than") ||
+    lowered.includes("pages")
+  ) {
+    return `文件内容超出解析上限：${raw}`;
+  }
+  if (
+    lowered.includes("signature") ||
+    lowered.includes("unsupported") ||
+    lowered.includes("does not match") ||
+    lowered.includes("not decodable")
+  ) {
+    return `文件格式不正确或扩展名与内容不匹配：${raw}`;
+  }
+  return raw;
+}
+
 function PreviewAndConfirm({ preview }: { preview: RosterImportPreview }) {
   const confirm = useConfirmRosterImport(preview.roster_import_id);
   const committed = isCommitted(preview.status);
+  const verification = preview.course_verification;
+  const isCourseMismatched = verification?.status === "mismatched";
+  const meta = preview.document_metadata;
 
   return (
     <div className="stack">
@@ -233,6 +267,47 @@ function PreviewAndConfirm({ preview }: { preview: RosterImportPreview }) {
           {t("import.noWriteBeforeConfirm")}
         </Banner>
       )}
+
+      {verification ? (
+        <Banner
+          tone={
+            verification.status === "matched"
+              ? "success"
+              : verification.status === "mismatched"
+                ? "error"
+                : "warn"
+          }
+          testId="course-verification-banner"
+        >
+          <strong>{verification.message}</strong>
+          {isCourseMismatched ? (
+            <p className="muted">
+              文件：{verification.file_course_code ?? "-"}-{verification.file_section_code ?? "-"}
+              {" / "}
+              所选：{verification.selected_course_code}-{verification.selected_section_code}
+              （课程信息不一致，已禁止确认写入，请改选目标课程/课序号或更换文件）
+            </p>
+          ) : null}
+        </Banner>
+      ) : null}
+
+      {meta && (meta.course_name || meta.semester || meta.instructor) ? (
+        <p className="muted" data-testid="document-metadata-summary">
+          {[
+            meta.course_name ? `课程：${meta.course_name}` : null,
+            meta.semester ? `学期：${meta.semester}` : null,
+            meta.instructor ? `任课教师：${meta.instructor}` : null,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+        </p>
+      ) : null}
+
+      {preview.warnings && preview.warnings.length > 0 ? (
+        <Banner tone="warn" testId="import-warnings">
+          {preview.warnings.join("；")}
+        </Banner>
+      ) : null}
 
       <p className="muted" data-testid="masking-notice">
         {t("import.maskedNotice")}
@@ -256,12 +331,16 @@ function PreviewAndConfirm({ preview }: { preview: RosterImportPreview }) {
             type="button"
             className="button"
             data-testid="confirm-import"
-            disabled={confirm.isPending}
+            disabled={confirm.isPending || isCourseMismatched}
             onClick={() => confirm.mutate()}
           >
             {confirm.isPending ? t("import.confirming") : t("import.confirm")}
           </button>
-          <span className="muted">{t("import.idempotencyNotice")}</span>
+          <span className="muted">
+            {isCourseMismatched
+              ? "课程信息核对不一致，无法确认导入。"
+              : t("import.idempotencyNotice")}
+          </span>
         </div>
       ) : null}
       {confirm.isError ? <ErrorState error={confirm.error} /> : null}
@@ -409,7 +488,7 @@ export function RosterImportPanel({
             <input
               id="import-file"
               type="file"
-              accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              accept=".csv,.xlsx,.xls,.pdf,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/pdf"
               onChange={(event) => setFile(event.target.files?.[0] ?? null)}
             />
           </Field>
@@ -446,7 +525,7 @@ export function RosterImportPanel({
             {/* 网络层失败与 4xx 是两回事：前者说明"请求根本没到服务端"（部署未更新、代理拦截、
                 网关超时），后者才是文件或参数被拒。把状态码与 request id 一起显示，用户才能判断该
                 改文件还是该找运维，而不是只看到一句 could not be completed。 */}
-            <p>{describeApiError(uploadError)}</p>
+            <p>{classifyUploadError(uploadError)}</p>
             {isApiError(uploadError) ? (
               <p className="muted" data-testid="upload-error-status">
                 HTTP {uploadError.status}
@@ -478,6 +557,11 @@ export function RosterImportPanel({
             <span className="muted">
               {t("import.detectedColumns")}：{preview.detected_columns.join("、") || t("common.none")}
             </span>
+            {preview.header_row_number != null ? (
+              <span className="muted" data-testid="header-row-notice">
+                表头位于第 {preview.header_row_number} 行
+              </span>
+            ) : null}
           </div>
 
           {preview.status === "failed_parse" ? (

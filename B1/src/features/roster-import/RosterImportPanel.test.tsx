@@ -333,3 +333,93 @@ describe("导入任务恢复（P12：任务 ID 住在 URL）", () => {
     stub.restore();
   });
 });
+
+describe("R3：XLS/PDF 接收、表头行号、课程信息核对阻断与错误区分", () => {
+  it("文件选择器接受 .csv / .xlsx / .xls / .pdf", () => {
+    const stub = installFetchStub(baseRoutes(rosterImportPreview()));
+    renderPanel(null);
+    const input = document.getElementById("import-file") as HTMLInputElement;
+    expect(input.accept).toContain(".xls");
+    expect(input.accept).toContain(".pdf");
+    expect(input.accept).toContain("application/vnd.ms-excel");
+    expect(input.accept).toContain("application/pdf");
+    stub.restore();
+  });
+
+  it("预览展示表头行号与课程信息核对结果；不一致时禁用确认按钮并显示阻断原因", async () => {
+    const mismatchedPreview = rosterImportPreview({
+      header_row_number: 7,
+      document_metadata: {
+        course_name: "软件工程",
+        course_code: "304064030",
+        section_code: "04",
+        semester: "2026-2027学年秋",
+        instructor: "测试教师",
+      },
+      course_verification: {
+        status: "mismatched",
+        file_course_code: "304064030",
+        file_section_code: "04",
+        selected_course_code: "304064030",
+        selected_section_code: "03",
+        message: "文件课程信息 (304064030-04) 与所选 (304064030-03) 不一致",
+      },
+      warnings: ["学号为数值型可能丢失前导零"],
+    });
+    const stub = installFetchStub(baseRoutes(mismatchedPreview));
+    renderPanel(IMPORT_ID);
+
+    expect(await screen.findByTestId("header-row-notice")).toHaveTextContent("表头位于第 7 行");
+    expect(screen.getByTestId("course-verification-banner")).toHaveTextContent("304064030-04");
+    expect(screen.getByTestId("document-metadata-summary")).toHaveTextContent("软件工程");
+    expect(screen.getByTestId("import-warnings")).toHaveTextContent("学号为数值型可能丢失前导零");
+    expect(screen.getByTestId("confirm-import")).toBeDisabled();
+    stub.restore();
+  });
+
+  it("上传失败时明确区分扫描件、加密 PDF、超限与格式不对", async () => {
+    const cases: Array<{ detail: string; status?: number; expected: RegExp }> = [
+      {
+        detail: "the PDF contains no extractable text (scanned or image-only PDFs are not supported)",
+        expected: /扫描件/,
+      },
+      {
+        detail: "the PDF is encrypted and cannot be read",
+        expected: /已加密/,
+      },
+      {
+        detail: "The roster exceeds the 10485760 byte upload limit.",
+        status: 413,
+        expected: /超出上限/,
+      },
+      {
+        detail: "The file content does not match the expected binary signature for its extension.",
+        expected: /格式不正确/,
+      },
+    ];
+
+    for (const item of cases) {
+      const user = userEvent.setup();
+      const stub = installFetchStub([
+        ...baseRoutes(rosterImportPreview()).filter((route) => route.path !== "/api/v1/roster-imports"),
+        {
+          path: "/api/v1/roster-imports",
+          method: "POST",
+          respond: () =>
+            problemResponse({
+              status: item.status ?? 422,
+              title: "Error",
+              detail: item.detail,
+              instance: "/api/v1/roster-imports",
+            }),
+        },
+      ]);
+      const view = renderPanel(null);
+      await selectClass(user);
+      await uploadFile(user, "roster.pdf");
+      expect(await screen.findByTestId("upload-error")).toHaveTextContent(item.expected);
+      view.unmount();
+      stub.restore();
+    }
+  });
+});
