@@ -1488,6 +1488,7 @@ export interface components {
                 content_type: string;
                 alt_text?: string | null;
             }[];
+            /** @description Programming language. Enforced against course_code matrix: 08 -> python, 07 -> bash (both allow stdin, file, callable). */
             language: components["schemas"]["Language"];
             io_type: components["schemas"]["IoType"];
             /** @enum {string} */
@@ -1533,6 +1534,7 @@ export interface components {
             version: number;
             /** @enum {string} */
             status: "draft" | "published" | "archived";
+            /** @description Programming language. Enforced against course_code matrix: 08 -> python, 07 -> bash (both allow stdin, file, callable). */
             language: components["schemas"]["Language"];
             io_type: components["schemas"]["IoType"];
             /**
@@ -1625,6 +1627,7 @@ export interface components {
         QuestionDraftInput: {
             title: string;
             stem_markdown: string;
+            /** @description Programming language. Enforced against course_code matrix: 08 -> python, 07 -> bash (both allow stdin, file, callable). */
             language: components["schemas"]["Language"];
             /** @description Immutable question I/O type. Optional on create (defaults to adapter.kind); if provided must equal adapter.kind and existing question io_type. */
             io_type?: components["schemas"]["IoType"];

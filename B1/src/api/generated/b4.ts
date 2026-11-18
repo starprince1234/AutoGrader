@@ -379,6 +379,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/internal/courses/{course_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                course_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Authoritative course code and title for one course (internal)
+         * @description B3 uses this internal endpoint on question creation, revision and publication to fetch
+         *     the authoritative `course_code` for the course-language-io_type matrix check.
+         */
+        get: operations["getInternalCourse"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/internal/course-targets/validate": {
         parameters: {
             query?: never;
@@ -1179,6 +1202,12 @@ export interface components {
                 section_id: components["schemas"]["Uuid"];
                 class_id: components["schemas"]["Uuid"];
             }[];
+        };
+        /** @description Authoritative course metadata for internal service-to-service validation. */
+        InternalCourse: {
+            course_id: components["schemas"]["Uuid"];
+            course_code?: string | null;
+            title: string;
         };
         /**
          * @description What B3 hands to B4 when an assignment is published. B4 narrows the course's current
@@ -2182,6 +2211,30 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InternalUserAuthorization"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            404: components["responses"]["NotFound"];
+        };
+    };
+    getInternalCourse: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                course_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The course metadata. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalCourse"];
                 };
             };
             401: components["responses"]["Unauthorized"];
