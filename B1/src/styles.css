@@ -2954,6 +2954,21 @@ samp {
   letter-spacing: -0.02em;
 }
 
+/* 小屏：四项指标排成 2×2，避免四张整行卡片把图表推到很下面。 */
+@media (max-width: 600px) {
+  .summary-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .summary-card {
+    padding: var(--space-3);
+  }
+
+  .summary-card dd {
+    font-size: 20px;
+  }
+}
+
 /* ------------------------------------------------------------ 事实列表 */
 
 .facts {
@@ -3681,6 +3696,25 @@ samp {
 
 .allowlist-batch__delete {
   flex: 0 0 auto;
+}
+
+/* 小屏：班级名独占一行，人数与导入时间另起一行；否则「开发者小组 / 7 人 / 时间」会被
+   挤成每个词一行。 */
+@media (max-width: 600px) {
+  .allowlist-batch__head {
+    gap: 8px;
+  }
+
+  .allowlist-batch__toggle {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    column-gap: 8px;
+    row-gap: 2px;
+  }
+
+  .allowlist-batch__name {
+    flex: 1 0 100%;
+  }
 }
 
 /* 学生：一行 3–4 个，按可用宽度自动决定列数。 */

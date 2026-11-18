@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import {
   keepPreviousData,
   useInfiniteQuery,
@@ -54,21 +53,7 @@ export type QuestionListFilter = {
  * 但"不渲染"不等于"不请求"——一个仍在后台发出的题库请求既没有必要，也让"学生能不能拿到全量
  * 题目"这个问题在客户端就已经含糊了。因此由调用方显式关掉它。
  */
-/**
- * 把快速变化的输入压成"停手 250ms 之后的值"。
- *
- * 搜索框要"边输入边刷新列表"，但每个按键都发一次请求既浪费也会让列表闪。防抖后：停手
- * 250ms 再请求；清空输入立即生效（清空不该等）。
- */
-export function useDebouncedValue<T>(value: T, delayMs: number): T {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    if (value === debounced) return;
-    const timer = setTimeout(() => setDebounced(value), delayMs);
-    return () => clearTimeout(timer);
-  }, [value, delayMs, debounced]);
-  return debounced;
-}
+export { useDebouncedValue } from "../../ui/useDebouncedValue";
 
 export function useQuestionList(
   courseId: string | null,

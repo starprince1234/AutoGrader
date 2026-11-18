@@ -17,6 +17,7 @@ import {
   useUsers,
 } from "./useUsers";
 import { Select } from "../../ui/Select";
+import { useDebouncedValue } from "../../ui/useDebouncedValue";
 
 /**
  * 用户标签（P14 的一半：`GET/POST/PATCH/DELETE /api/v1/users`，仅管理员）。
@@ -44,11 +45,14 @@ export function UsersPage({
   const [statusFilter, setStatusFilter] = useState<"active" | "inactive" | "all">("active");
   const [classFilter, setClassFilter] = useState("");
   const [queryFilter, setQueryFilter] = useState("");
+  // 输入每个字符都发一次请求既浪费也会让列表闪；停手 250ms 后再查。
+  const debouncedClassFilter = useDebouncedValue(classFilter, 250);
+  const debouncedQueryFilter = useDebouncedValue(queryFilter, 250);
   const users = useUsers({
     role: roleFilter === "" ? null : roleFilter,
     isActive: statusFilter === "all" ? null : statusFilter === "active",
-    className: classFilter,
-    q: queryFilter,
+    className: debouncedClassFilter,
+    q: debouncedQueryFilter,
   });
   const rows = useMemo(() => loadedUsers(users.data?.pages), [users.data]);
   const knownClassNames = useMemo(() => {
