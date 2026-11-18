@@ -16,6 +16,7 @@ callable harness 文件名与解析失败退出码见下方常量。
 from __future__ import annotations
 
 import json
+import os
 import shlex
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -93,6 +94,7 @@ class ExecutionPlan:
     input_fixtures: tuple[PackageFixture, ...]
     expected_outputs: tuple[PackageFixture, ...]
     harness_name: str | None
+    submitted_entry: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -207,6 +209,7 @@ def build_execution_plan(*, adapter: PackageAdapter, case: PackageCase, policy: 
             + tuple(item for item in case.files if item.mount == "expected_output")
         ),
         harness_name=harness_name,
+        submitted_entry=submitted_entry,
     )
 
 
@@ -267,6 +270,7 @@ def write_workspace_prepare_program(workspace: Path) -> str:
     if target.exists() or target.is_symlink():
         raise ValueError(f"reserved prepare-program path already exists: {PREPARE_PROGRAM_FILENAME}")
     target.write_text(render_workspace_prepare_program(), encoding="utf-8")
+    os.chmod(target, 0o644)
     return f"/workspace/{PREPARE_PROGRAM_FILENAME}"
 
 
@@ -308,6 +312,18 @@ def prepare_case_workspace(
             ),
             encoding="utf-8",
         )
+        os.chmod(harness_path, 0o644)
+        # Assignment-UI submissions arrive as `<ordinal>.txt`; materialize the declared module file
+        # (`main.py` / `main.sh`) when absent so import/source resolves the student's code.
+        if plan.submitted_entry and plan.submitted_entry.endswith(".txt"):
+            ext = ".py" if plan.language == "python" else ".sh"
+            module_rel = entry_module.replace(".", "/") + ext
+            src_path = workspace_path(workspace, plan.submitted_entry)
+            module_path = workspace_path(workspace, module_rel)
+            if src_path.is_file() and not module_path.exists():
+                module_path.parent.mkdir(parents=True, exist_ok=True)
+                module_path.write_bytes(src_path.read_bytes())
+                os.chmod(module_path, 0o644)
     for fixture in plan.input_fixtures:
         target = workspace_path(workspace, fixture.path)
         if not target.is_file():

@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -115,8 +116,16 @@ def materialize_fixtures(
             problems.append(f"input fixture digest mismatch: {declared.path}")
             continue
         target.parent.mkdir(parents=True, exist_ok=True)
+        for parent in target.parents:
+            if parent == workspace:
+                break
+            try:
+                os.chmod(parent, 0o755)
+            except OSError:
+                break
         try:
             target.write_bytes(item.content)
+            os.chmod(target, 0o644)
             written = target.read_bytes()
         except OSError as error:
             problems.append(f"input fixture write failed: {declared.path} ({type(error).__name__})")
