@@ -242,10 +242,20 @@ export function AppShell() {
             <span />
           </span>
         </button>
-        <Link to="/assignments" className="app-brand" style={{ fontSize: "1.75rem" }}>
-          {t("app.brand")}
-        </Link>
-        <ThemeToggle />
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            position: "relative",
+            top: -4,
+          }}
+        >
+          <Link to="/assignments" className="app-brand" style={{ fontSize: "1.75rem" }}>
+            {t("app.brand")}
+          </Link>
+          <ThemeToggle />
+        </div>
         <div className="app-header__spacer" />
         <AccountMenu signingOut={signingOut} onSignOut={switchAccount} />
       </header>
