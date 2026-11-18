@@ -148,3 +148,52 @@ export function installLogSinkFromEnv(): void {
     setLogSink(createHttpLogSink(endpoint.trim()));
   }
 }
+
+/**
+ * 安装经认证的浏览器日志上报通道（`POST /api/v1/logs/client`）。
+ * 未登录或上报失败时静默降级为本地有界缓冲，绝不阻塞主流程。
+ */
+export function createAuthenticatedLogSink(options: {
+  getToken: () => string | null;
+  getBaseUrl: () => string;
+}): LogSink {
+  return async (lines) => {
+    const token = options.getToken();
+    if (!token) return;
+    const base = options.getBaseUrl().replace(/\/$/, "");
+    const batch = lines.slice(-50).map((item) => ({
+      timestamp: item.timestamp,
+      level: item.level,
+      event: item.event,
+      request_id: item.request_id,
+      ...Object.fromEntries(
+        Object.entries(item).filter(
+          ([k]) => k !== "timestamp" && k !== "level" && k !== "event" && k !== "request_id",
+        ),
+      ),
+    }));
+    if (batch.length === 0) return;
+    const response = await fetch(`${base}/api/v1/logs/client`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ lines: batch }),
+      keepalive: true,
+    });
+    if (!response.ok) throw new Error(`client log sink rejected: ${response.status}`);
+  };
+}
+
+export function installAuthenticatedLogSink(options: {
+  getToken: () => string | null;
+  getBaseUrl: () => string;
+}): void {
+  const endpoint = import.meta.env?.VITE_LOG_ENDPOINT;
+  if (endpoint && endpoint.trim() !== "") {
+    setLogSink(createHttpLogSink(endpoint.trim()));
+    return;
+  }
+  setLogSink(createAuthenticatedLogSink(options));
+}

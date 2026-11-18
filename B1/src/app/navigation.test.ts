@@ -27,8 +27,8 @@ describe("按角色的主导航（体验层，服务端仍判权）", () => {
     expect(paths(session(["student"]))).toEqual(["/assignments", "/grades"]);
   });
 
-  it("教师看到作业、题库、成绩、课程", () => {
-    const expected = ["/assignments", "/questions", "/grades", "/roster"];
+  it("教师看到作业、题库、成绩、课程、运维日志", () => {
+    const expected = ["/assignments", "/questions", "/grades", "/roster", "/ops/logs"];
     expect(paths(session(["teacher"]))).toEqual(expected);
   });
 
@@ -38,6 +38,7 @@ describe("按角色的主导航（体验层，服务端仍判权）", () => {
       "/questions",
       "/grades",
       "/roster",
+      "/ops/logs",
       "/admin/users",
     ]);
   });

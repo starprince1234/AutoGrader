@@ -93,7 +93,7 @@ export function FixtureEditor({
       }
       const base64 = result.slice(result.indexOf(",") + 1);
       upload.mutate(
-        { path, mount, content_base64: base64 },
+        { path, mount, student_visible: false, content_base64: base64 },
         {
           onSuccess: (fixture) => {
             onChange([

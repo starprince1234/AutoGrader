@@ -18,6 +18,7 @@ import {
   AuthoringEditRoute,
   AuthoringNewRoute,
   GradesRoute,
+  OpsLogsRoute,
   QuestionDetailRoute,
   QuestionListRoute,
   ReviewRoute,
@@ -322,6 +323,45 @@ const reviewRoute = createRoute({
   component: ReviewRoute,
 });
 
+type OpsLogsSearch = {
+  tab?: "overview" | "search" | "trace" | "audit";
+  trace?: string;
+  producer?: "B1" | "B2" | "B3" | "B4" | "B5" | "MAIN";
+};
+
+function validateOpsLogsSearch(search: Record<string, unknown>): OpsLogsSearch {
+  const result: OpsLogsSearch = {};
+  if (
+    search.tab === "overview" ||
+    search.tab === "search" ||
+    search.tab === "trace" ||
+    search.tab === "audit"
+  ) {
+    result.tab = search.tab;
+  }
+  if (typeof search.trace === "string" && search.trace !== "") {
+    result.trace = search.trace;
+  }
+  if (
+    search.producer === "B1" ||
+    search.producer === "B2" ||
+    search.producer === "B3" ||
+    search.producer === "B4" ||
+    search.producer === "B5" ||
+    search.producer === "MAIN"
+  ) {
+    result.producer = search.producer;
+  }
+  return result;
+}
+
+const opsLogsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/ops/logs",
+  validateSearch: validateOpsLogsSearch,
+  component: OpsLogsRoute,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   loginRoute,
@@ -342,6 +382,7 @@ const routeTree = rootRoute.addChildren([
   rosterRoute,
   usersRoute,
   reviewRoute,
+  opsLogsRoute,
 ]);
 
 export const router = createRouter({

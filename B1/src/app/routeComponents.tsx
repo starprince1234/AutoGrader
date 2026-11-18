@@ -5,6 +5,7 @@ import { GradingPage } from "../features/assignments/GradingPage";
 import { AuthoringPage } from "../features/authoring/AuthoringPage";
 import { GradesPage } from "../features/grades/GradesPage";
 import { ReviewPage } from "../features/review/ReviewPage";
+import { OpsLogsPage, type OpsLogsTab } from "../features/ops-logs/OpsLogsPage";
 import { QuestionDetailPage } from "../features/questions/QuestionDetailPage";
 import { QuestionListPage } from "../features/questions/QuestionListPage";
 import { RosterPage } from "../features/roster/RosterPage";
@@ -15,6 +16,7 @@ import {
   canAuthorQuestions,
   canManageUsers,
   canViewMailRecords,
+  canViewOpsLogs,
   canViewRoster,
 } from "../auth/visibility";
 
@@ -213,6 +215,40 @@ export function ReviewRoute() {
           search={search}
           onChange={(next) => {
             void navigate({ to: "/review", search: next });
+          }}
+        />
+      </RequirePermission>
+    </RequireAuth>
+  );
+}
+
+export function OpsLogsRoute() {
+  const { tab, trace, producer } = useSearch({ from: "/ops/logs" });
+  const navigate = useNavigate();
+  const normalizedTab: OpsLogsTab =
+    tab === "search" || tab === "trace" || tab === "audit" ? tab : "overview";
+  return (
+    <RequireAuth>
+      <RequirePermission allow={canViewOpsLogs} allowedRoles={["teacher", "admin"]}>
+        <OpsLogsPage
+          tab={normalizedTab}
+          initialTraceId={trace ?? ""}
+          initialProducer={producer}
+          onTabChange={(next) => {
+            void navigate({
+              to: "/ops/logs",
+              search: (prev) => ({ ...prev, tab: next }),
+            });
+          }}
+          onTraceChange={(nextTrace) => {
+            void navigate({
+              to: "/ops/logs",
+              search: (prev) => ({
+                ...prev,
+                tab: "trace",
+                trace: nextTrace || undefined,
+              }),
+            });
           }}
         />
       </RequirePermission>

@@ -92,6 +92,11 @@ export function canViewMailRecords(state: SessionState): boolean {
   return has(state, ["teacher", "admin"]);
 }
 
+/** 运维日志中心入口（管理员全量、教师仅本课程范围；学生由后端返回 403）。 */
+export function canViewOpsLogs(state: SessionState): boolean {
+  return has(state, ["teacher", "admin"]);
+}
+
 /**
  * 证据包的 `view` 参数（CHG-0014）。
  *

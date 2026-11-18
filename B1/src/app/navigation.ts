@@ -13,7 +13,7 @@ import type { SessionState } from "../auth/sessionStore";
 
 export type MainNavItem = {
   /** 站内绝对路径，同时也是激活态判定的前缀。 */
-  to: "/assignments" | "/questions" | "/grades" | "/roster" | "/admin/users";
+  to: "/assignments" | "/questions" | "/grades" | "/roster" | "/admin/users" | "/ops/logs";
   labelKey: MessageKey;
 };
 
@@ -36,6 +36,7 @@ export function mainNavItems(
     { to: "/questions", labelKey: "nav.questions" },
     { to: "/grades", labelKey: "nav.grades" },
     { to: "/roster", labelKey: "nav.roster" },
+    { to: "/ops/logs", labelKey: "nav.opsLogs" },
   ];
   // 用户管理是管理员专属入口；教师看不到，直接访问仍由 B4 判权。
   if (session.roles.includes("admin")) {

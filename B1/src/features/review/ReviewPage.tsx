@@ -25,6 +25,14 @@ export function ReviewPage({
       <div className="panel__head">
         <PageTitle>{t("review.title")}</PageTitle>
         <div className="row-actions">
+          <Link
+            className="button button--ghost"
+            to="/ops/logs"
+            search={{ tab: "search", producer: "B2" }}
+            data-testid="review-view-related-logs"
+          >
+            {t("opsLogs.deepLink.viewLogs")}
+          </Link>
           <Link className="button button--ghost" to="/assignments" data-testid="review-back">
             {t("review.backToAssignments")}
           </Link>

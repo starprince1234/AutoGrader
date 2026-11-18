@@ -96,6 +96,17 @@ export function GradeDrilldown({
           </div>
         ) : null}
         <CommentarySection runId={runId} />
+        {view === "teacher" && (
+          <div className="inline">
+            <a
+              className="button button--ghost"
+              href={`/app/ops/logs?tab=trace&trace=${encodeURIComponent(data.submission_id ?? runId)}`}
+              data-testid="view-related-logs"
+            >
+              {t("opsLogs.deepLink.viewLogs")}
+            </a>
+          </div>
+        )}
       </div>
     </div>
   );

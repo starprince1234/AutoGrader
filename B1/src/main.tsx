@@ -2,8 +2,9 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 import { Root } from "./app/Root";
-import { installSessionAuth, restoreSession } from "./auth/sessionStore";
-import { installLogSinkFromEnv, log, newRequestId } from "./logging/logger";
+import { apiBaseUrl } from "./api/client";
+import { getAccessToken, installSessionAuth, restoreSession } from "./auth/sessionStore";
+import { installAuthenticatedLogSink, log, newRequestId } from "./logging/logger";
 import { t } from "./i18n";
 
 /**
@@ -15,7 +16,7 @@ import { t } from "./i18n";
  */
 
 installSessionAuth();
-installLogSinkFromEnv();
+installAuthenticatedLogSink({ getToken: getAccessToken, getBaseUrl: apiBaseUrl });
 
 const bootRequestId = newRequestId();
 void restoreSession().then((session) => {
