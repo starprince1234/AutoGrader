@@ -1,13 +1,14 @@
-"""The intermediate representation of a parsed roster, shared by the CSV and XLSX readers.
+"""The intermediate representation of a parsed roster, shared by all format readers.
 
-Both readers must produce the same shape so that mapping, validation, previewing and
-committing are format-independent. Row numbers are 1-based positions inside the detected
-table, counting the header, so a rejected row can be pointed at in the source document
-without the operator re-counting.
+All readers (CSV, XLSX, XLS, PDF) must produce the same shape so that mapping, validation,
+previewing and committing are format-independent. Row numbers are 1-based positions inside
+the source document, counting the header, so a rejected row can be pointed at in the source
+document without the operator re-counting.
 """
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field
 
@@ -34,11 +35,24 @@ _WHITESPACE = re.compile(r"\s+")
 
 
 @dataclass(frozen=True)
+class DocumentMetadata:
+    """Non-PII course metadata extracted from leading document rows for preview only."""
+
+    course_name: str | None = None
+    course_code: str | None = None
+    section_code: str | None = None
+    semester: str | None = None
+    instructor: str | None = None
+
+
+@dataclass(frozen=True)
 class ParsedRow:
     """One data row, keyed by the source header text."""
 
     row_number: int
     cells: dict[str, str]
+    numeric_columns: frozenset[str] = field(default_factory=frozenset)
+    non_integer_columns: frozenset[str] = field(default_factory=frozenset)
 
 
 @dataclass(frozen=True)
@@ -52,6 +66,9 @@ class RosterTable:
     #: Human-readable notes about the parse that are useful for an operator but are not
     #: validation verdicts (for example "3 trailing blank rows ignored").
     notes: tuple[str, ...] = field(default=())
+    header_row_number: int | None = None
+    metadata: DocumentMetadata | None = None
+    warnings: tuple[str, ...] = field(default=())
 
     def value(self, row: ParsedRow, column: str) -> str:
         return row.cells.get(column, "")
@@ -97,9 +114,13 @@ def clean_cell(value: object) -> str:
         return ""
     if isinstance(value, bool):
         return "true" if value else "false"
-    if isinstance(value, float) and value.is_integer():
-        # Spreadsheets store student numbers as numbers; 20230001.0 must read as "20230001".
-        return str(int(value))
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise RosterParseError("the roster contains a non-finite numeric cell")
+        if value.is_integer():
+            # Spreadsheets store student numbers as numbers; 20230001.0 must read as "20230001".
+            return str(int(value))
+        return str(value)
     if isinstance(value, (int, str)):
         return _WHITESPACE.sub(" ", str(value)).strip()
     return _WHITESPACE.sub(" ", str(value)).strip()

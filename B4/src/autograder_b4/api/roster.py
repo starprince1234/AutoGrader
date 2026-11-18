@@ -53,6 +53,25 @@ def _row_document(row) -> dict[str, object]:
 
 
 def _view_document(view: RosterImportView) -> dict[str, object]:
+    document_metadata = None
+    if view.document_metadata is not None:
+        document_metadata = {
+            "course_name": view.document_metadata.course_name,
+            "course_code": view.document_metadata.course_code,
+            "section_code": view.document_metadata.section_code,
+            "semester": view.document_metadata.semester,
+            "instructor": view.document_metadata.instructor,
+        }
+    course_verification = None
+    if view.course_verification is not None:
+        course_verification = {
+            "status": view.course_verification.status,
+            "file_course_code": view.course_verification.file_course_code,
+            "file_section_code": view.course_verification.file_section_code,
+            "selected_course_code": view.course_verification.selected_course_code,
+            "selected_section_code": view.course_verification.selected_section_code,
+            "message": view.course_verification.message,
+        }
     return {
         "roster_import_id": str(view.roster_import_id),
         "status": view.status,
@@ -63,6 +82,10 @@ def _view_document(view: RosterImportView) -> dict[str, object]:
         "proposed_mapping": view.proposed_mapping,
         "accepted_rows": [_row_document(row) for row in view.accepted_rows],
         "rejected_rows": [_row_document(row) for row in view.rejected_rows],
+        "header_row_number": view.header_row_number,
+        "document_metadata": document_metadata,
+        "course_verification": course_verification,
+        "warnings": list(view.warnings or ()),
         "created_at": view.created_at.astimezone()
         .isoformat(timespec="milliseconds")
         .replace("+00:00", "Z"),

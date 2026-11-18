@@ -47,10 +47,12 @@ from ..classes import (
     translate_integrity_error,
 )
 from ..db.tables import (
+    courses,
     enrollments,
     roster_import_files,
     roster_import_rows,
     roster_imports,
+    sections,
 )
 from ..errors import conflict, not_found, unprocessable
 from ..logging import get_logger
@@ -66,13 +68,18 @@ from .table import (
     FIELD_DISPLAY_NAME,
     FIELD_STUDENT_NUMBER,
     REQUIRED_FIELDS,
+    DocumentMetadata,
     RosterParseError,
     RosterTable,
 )
 from .validation import (
     STATUS_ACCEPTED,
+    VERIFICATION_MISMATCHED,
+    CourseVerification,
     ValidatedRow,
+    collect_mapping_warnings,
     validate_rows,
+    verify_course_metadata,
 )
 from .validation import STATUS_REJECTED as ROW_STATUS_REJECTED
 
@@ -118,6 +125,10 @@ class RosterImportView:
     rejected_count: int
     parse_detail: str | None
     created_at: datetime
+    header_row_number: int | None = None
+    document_metadata: DocumentMetadata | None = None
+    course_verification: CourseVerification | None = None
+    warnings: list[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -257,7 +268,31 @@ def create_import(
                     updated_at=_now(),
                 )
             )
-    return load_view(engine, roster_import_id)
+    return _view_with_table(
+        engine,
+        roster_import_id,
+        table=table,
+        course_code=course_code,
+        section_code=section_code,
+    )
+
+
+def _view_with_table(
+    engine: Engine,
+    roster_import_id: uuid.UUID,
+    *,
+    table: RosterTable | None = None,
+    course_code: str | None = None,
+    section_code: str | None = None,
+) -> RosterImportView:
+    with engine.connect() as connection:
+        return _view(
+            connection,
+            roster_import_id,
+            table=table,
+            course_code=course_code,
+            section_code=section_code,
+        )
 
 
 def load_view(engine: Engine, roster_import_id: uuid.UUID) -> RosterImportView:
@@ -265,7 +300,14 @@ def load_view(engine: Engine, roster_import_id: uuid.UUID) -> RosterImportView:
         return _view(connection, roster_import_id)
 
 
-def _view(connection: Connection, roster_import_id: uuid.UUID) -> RosterImportView:
+def _view(
+    connection: Connection,
+    roster_import_id: uuid.UUID,
+    *,
+    table: RosterTable | None = None,
+    course_code: str | None = None,
+    section_code: str | None = None,
+) -> RosterImportView:
     row = _load_row(connection, roster_import_id)
     staged = connection.execute(
         select(roster_import_rows)
@@ -282,6 +324,38 @@ def _view(connection: Connection, roster_import_id: uuid.UUID) -> RosterImportVi
         for item in staged
         if item.status == STATUS_REJECTED
     ]
+    resolved_table = table
+    if resolved_table is None and row.status != STATUS_FAILED_PARSE:
+        try:
+            content = _load_content_from(connection, roster_import_id)
+            resolved_table = parse_roster(content, row.media_type)
+        except (RosterParseError, UnsupportedDocument, ValueError, OSError):
+            resolved_table = None
+    if course_code is None:
+        course_code = connection.execute(
+            select(courses.c.course_code).where(courses.c.course_id == row.course_id)
+        ).scalar_one_or_none()
+    if section_code is None:
+        section_code = connection.execute(
+            select(sections.c.section_code).where(sections.c.section_id == row.section_id)
+        ).scalar_one_or_none()
+    active_mapping = dict(row.confirmed_mapping or row.proposed_mapping or {})
+    header_row_number = resolved_table.header_row_number if resolved_table else None
+    document_metadata = resolved_table.metadata if resolved_table else None
+    verification = (
+        verify_course_metadata(
+            document_metadata,
+            course_code=course_code or "",
+            section_code=section_code or "",
+        )
+        if resolved_table is not None and course_code is not None and section_code is not None
+        else None
+    )
+    warnings = (
+        list(collect_mapping_warnings(resolved_table, active_mapping))
+        if resolved_table is not None
+        else []
+    )
     return RosterImportView(
         roster_import_id=row.roster_import_id,
         status=row.status,
@@ -299,6 +373,10 @@ def _view(connection: Connection, roster_import_id: uuid.UUID) -> RosterImportVi
         rejected_count=row.rejected_count,
         parse_detail=row.parse_detail,
         created_at=row.created_at,
+        header_row_number=header_row_number,
+        document_metadata=document_metadata,
+        course_verification=verification,
+        warnings=warnings,
     )
 
 
@@ -437,6 +515,11 @@ def confirm_import(
             )
 
         table = parse_roster(content, row.media_type)
+        verification = verify_course_metadata(
+            table.metadata, course_code=course_code, section_code=section_code
+        )
+        if verification.status == VERIFICATION_MISMATCHED:
+            raise unprocessable(f"{verification.message}; 已阻断确认写入.")
         mapping = dict(row.confirmed_mapping or row.proposed_mapping or {})
         missing = [field for field in REQUIRED_FIELDS if not mapping.get(field)]
         if missing:

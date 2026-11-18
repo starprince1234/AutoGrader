@@ -77,6 +77,18 @@ class MappingProposal:
         return "; ".join(parts)
 
 
+def is_header_candidate(cells: list[str]) -> bool:
+    """Return True if the row contains aliases for both student_number and display_name."""
+    found_fields: set[str] = set()
+    for cell in cells:
+        field = _ALIAS_LOOKUP.get(normalize_header(cell))
+        if field is not None:
+            found_fields.add(field)
+            if FIELD_STUDENT_NUMBER in found_fields and FIELD_DISPLAY_NAME in found_fields:
+                return True
+    return False
+
+
 def propose_mapping(table: RosterTable) -> MappingProposal:
     """Match headers by exact folded alias, and only when the match is unique."""
     candidates: dict[str, list[str]] = {field: [] for field in TARGET_FIELDS}

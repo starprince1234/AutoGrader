@@ -421,12 +421,12 @@ def _csv_bytes(
 # --------------------------------------------------------------------------- rejections
 
 
-def test_a_pdf_upload_is_rejected(client, course, sign_in_as, factory):
-    """PDF rosters were dropped: the reader used to guess columns from spacing."""
+def test_an_invalid_pdf_upload_is_rejected(client, course, sign_in_as, factory):
+    """A malformed or image-only PDF is rejected with 422 and writes nothing."""
     headers = sign_in_as("teacher").headers
     response = _upload(client, headers, None, b"%PDF-1.4\n%not a roster\n", "roster.pdf", course)
     assert response.status_code == 422
-    assert "CSV" in response.json()["detail"] and "XLSX" in response.json()["detail"]
+    assert "PDF" in response.json()["detail"]
     assert factory.enrollment_count() == 0
 
 
@@ -436,7 +436,8 @@ def test_mismatched_extension_and_content_is_rejected(client, course, sign_in_as
     content = b"student_number,display_name\n20230001,Alice\n"
     response = _upload(client, headers, None, content, "roster.xlsx", course)
     assert response.status_code == 422
-    assert "XLSX" in response.json()["detail"] or "zip" in response.json()["detail"].lower()
+    detail = response.json()["detail"].lower()
+    assert "xlsx" in detail or "zip" in detail or "signature" in detail
 
 
 def test_an_oversized_upload_is_rejected(client, course, sign_in_as, settings):
