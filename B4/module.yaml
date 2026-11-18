@@ -1,4 +1,4 @@
-﻿schema_version: 1
+schema_version: 1
 module: B4
 contract_version: 0.43.0
 entry_point: autograder_b4.plugin:create_module
@@ -19,6 +19,8 @@ routes:
   # 鍐呴儴鏈嶅姟绔偣锛圔2 閭欢鏀朵俊鎸夊彂浠朵汉鏌ヨ处鍙凤級锛氫互 serviceToken 閴存潈锛屼笉瀵规祻瑙堝櫒寮€鏀俱€?
   - /api/v1/internal
   - /api/v1/registration-allowlists
+  - /api/v1/ops/logs
+  - /api/v1/logs/client
 events:
   publishes: [autograder.v1.roster.import.completed]
   subscribes: []

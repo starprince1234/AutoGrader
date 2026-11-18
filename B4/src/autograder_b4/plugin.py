@@ -60,6 +60,10 @@ DESCRIPTOR = ModuleDescriptor(
         # Internal endpoint for B2 mail intake (look up an account by sender address).
         # Must match module.yaml: validate_registry refuses to start otherwise.
         "/api/v1/internal",
+        # Unified log center routes served by host (declared here so contract_paths
+        # and module route prefixes agree in both static checks and B5 conformance).
+        "/api/v1/ops/logs",
+        "/api/v1/logs/client",
     ),
     events=("autograder.v1.roster.import.completed",),
 )
