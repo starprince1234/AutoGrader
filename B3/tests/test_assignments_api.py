@@ -203,6 +203,7 @@ def test_create_assignment_without_a_target_covers_the_whole_course(
         "status",
         "due_at",
         "question_version_ids",
+        "question_items",
         "notification_state",
         "target",
         "created_at",
