@@ -135,3 +135,118 @@ def test_public_serializers_include_io_type_and_strip_legacy_diff_key() -> None:
     )
     lc_pub = serialize_public(learning_context_to_public(lc))
     assert lc_pub["io_type"] == "callable"
+
+
+def test_compile_package_and_content_digest_include_visibility_and_case_files() -> None:
+    from autograder_b3.compile.compiler import compile_evaluation_package
+    from autograder_b3.domain.content import content_wire
+    from autograder_b3.dto.internal import (
+        AdapterManifestInternal,
+        ComparisonPolicy,
+        DeclaredFile,
+        ExecutionManifest,
+        FixtureInternal,
+        PublishedVersionSnapshot,
+        ReferenceAnswerInternal,
+        TestCaseInternal,
+    )
+
+    now = datetime.now(UTC)
+    qid = uuid.uuid4()
+    vid = uuid.uuid4()
+    cid = uuid.uuid4()
+    sha_in = "1" * 64
+    sha_case = "2" * 64
+    sha_out = "3" * 64
+
+    manifest = AdapterManifestInternal(
+        kind="file",
+        comparison=ComparisonPolicy(),
+        files=(
+            DeclaredFile(path="sample.txt", content_sha256=sha_in, mount="input"),
+            DeclaredFile(path="out.txt", content_sha256=sha_out, mount="expected_output"),
+        ),
+    )
+    case = TestCaseInternal(
+        case_id=cid,
+        question_version_id=vid,
+        name="case-0",
+        ordinal=0,
+        weight=1.0,
+        visible_to_student=True,
+    )
+    fixtures = (
+        FixtureInternal(
+            fixture_id=uuid.uuid4(),
+            question_version_id=vid,
+            path="sample.txt",
+            mount="input",
+            content_sha256=sha_in,
+            size_bytes=5,
+            student_visible=True,
+        ),
+        FixtureInternal(
+            fixture_id=uuid.uuid4(),
+            question_version_id=vid,
+            path="out.txt",
+            mount="expected_output",
+            content_sha256=sha_out,
+            size_bytes=5,
+            student_visible=False,
+        ),
+        FixtureInternal(
+            fixture_id=uuid.uuid4(),
+            question_version_id=vid,
+            path="case_in.txt",
+            mount="input",
+            content_sha256=sha_case,
+            size_bytes=7,
+            student_visible=False,
+            test_case_id=cid,
+        ),
+    )
+    snapshot = PublishedVersionSnapshot(
+        question_id=qid,
+        question_version_id=vid,
+        version=1,
+        language="python",
+        manifest=manifest,
+        execution=ExecutionManifest(),
+        max_files=20,
+        max_total_bytes=1024,
+        content_digest="0" * 64,
+        published_at=now,
+    )
+    pkg = compile_evaluation_package(snapshot, manifest, (case,), fixtures, created_at=now)
+    wire = pkg.to_wire()
+    assert wire["adapter"]["files"][0]["student_visible"] is True
+    assert "student_visible" not in wire["adapter"]["files"][1]
+    assert wire["tests"][0]["files"] == [
+        {"path": "case_in.txt", "content_sha256": sha_case, "mount": "input"}
+    ]
+    from autograder_b3.domain.content import VersionContentSnapshot
+
+    vc = VersionContentSnapshot(
+        question_id=qid,
+        question_version_id=vid,
+        version=1,
+        language="python",
+        stem_markdown="Read sample.txt",
+        manifest=manifest,
+        execution=ExecutionManifest(),
+        cases=(case,),
+        fixtures=fixtures,
+        reference_answers=(
+            ReferenceAnswerInternal(
+                reference_answer_id=uuid.uuid4(),
+                question_version_id=vid,
+                language="python",
+                body="print(1)",
+            ),
+        ),
+        max_files=20,
+        max_total_bytes=1024,
+    )
+    cw = content_wire(vc)
+    assert any(f.get("student_visible") is True for f in cw["fixtures"])
+    assert any(f.get("test_case_id") == str(cid) for f in cw["fixtures"])

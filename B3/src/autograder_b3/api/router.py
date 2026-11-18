@@ -639,7 +639,23 @@ def get_version_endpoint(request: Request, question_version_id: uuid.UUID) -> di
         principal=context.principal,
         question_version_id=question_version_id,
     )
-    return serialize_public(version_to_public(version, _assets_of_version(dependencies, version)))
+    return serialize_public(
+        version_to_public(
+            version,
+            _assets_of_version(dependencies, version),
+            _visible_fixtures_of_version(dependencies, version),
+        )
+    )
+
+
+def _visible_fixtures_of_version(dependencies: B3Dependencies, version) -> list:
+    from ..infra.repositories import QuestionBankRepository
+
+    with dependencies.database.app_session() as session:
+        rows = QuestionBankRepository(session).list_visible_fixtures(version.question_version_id)
+        for row in rows:
+            session.expunge(row)
+        return rows
 
 
 def _assets_of_version(dependencies: B3Dependencies, version) -> list:
@@ -817,9 +833,39 @@ def upload_fixture_endpoint(
             question_version_id=fixture.question_version_id,
             path=fixture.path,
             mount=fixture.mount,
+            student_visible=fixture.student_visible,
+            test_case_id=fixture.test_case_id,
             content_sha256=fixture.content_sha256,
             size_bytes=fixture.size_bytes,
         )
+    )
+
+
+@router.get("/api/v1/question-versions/{question_version_id}/fixtures/{fixture_id}/download")
+def download_fixture_endpoint(
+    request: Request, question_version_id: uuid.UUID, fixture_id: uuid.UUID
+) -> Response:
+    from pathlib import PurePosixPath
+    from ..domain.fixtures import download_visible_fixture
+
+    context = _context(request)
+    dependencies = _dependencies(request)
+    content, path, content_sha256 = download_visible_fixture(
+        dependencies.database,
+        principal=context.principal,
+        question_version_id=question_version_id,
+        fixture_id=fixture_id,
+        authorization_directory=dependencies.authorization_directory,
+    )
+    filename = PurePosixPath(path).name
+    return Response(
+        content=content,
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Content-Type-Options": "nosniff",
+            "ETag": f'"{content_sha256}"',
+        },
     )
 
 

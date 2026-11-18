@@ -177,7 +177,11 @@ def assert_fixture_binding(
     cross-checked, never trusted as the authoritative value (``RQ-B-3-50``
     acceptance 2).
     """
-    stored = {(fixture.path, fixture.mount): fixture for fixture in fixtures}
+    stored = {
+        (fixture.path, fixture.mount): fixture
+        for fixture in fixtures
+        if getattr(fixture, "test_case_id", None) is None
+    }
     declared = {(entry.path, entry.mount): entry for entry in manifest.files}
 
     undeclared = sorted(set(stored) - set(declared))

@@ -122,6 +122,7 @@ class DeclaredFileInput(BaseModel):
     path: str = Field(min_length=1, max_length=200)
     content_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     mount: FixtureMount = "input"
+    student_visible: bool = False
 
 
 class AdapterManifestInput(BaseModel):
@@ -220,6 +221,7 @@ class TestCaseInputModel(BaseModel):
     expected_stdout: str | None = None
     expected_stderr: str | None = None
     expected_exit_code: int | None = None
+    files: tuple[DeclaredFileInput, ...] = ()
     #: Flat per-case execution declaration (segment/file_checks/ssh_check/email_check). The
     #: mode-specific rules are checked in ``compile.manifest``; these defaults make an omitted
     #: declaration mean "this case declares nothing", which is the legacy per_case shape.
@@ -388,6 +390,8 @@ class FixtureUploadInputModel(BaseModel):
 
     path: str = Field(min_length=1, max_length=200)
     mount: FixtureMount = "input"
+    student_visible: bool = False
+    test_case_id: UUID | None = None
     content_base64: str
 
 
@@ -572,6 +576,8 @@ class FixtureInternal:
     mount: FixtureMount
     content_sha256: str
     size_bytes: int
+    student_visible: bool = False
+    test_case_id: UUID | None = None
 
 
 @dataclass(frozen=True)
@@ -772,15 +778,19 @@ class FixtureContentItem:
     content_sha256: str
     size_bytes: int
     content_base64: str
+    test_case_id: UUID | None = None
 
     def to_wire(self) -> dict[str, Any]:
-        return {
+        payload: dict[str, Any] = {
             "path": self.path,
             "mount": self.mount,
             "content_sha256": self.content_sha256,
             "size_bytes": self.size_bytes,
             "content_base64": self.content_base64,
         }
+        if self.test_case_id is not None:
+            payload["test_case_id"] = str(self.test_case_id)
+        return payload
 
 
 @dataclass(frozen=True)

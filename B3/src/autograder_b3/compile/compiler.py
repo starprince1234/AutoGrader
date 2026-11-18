@@ -82,7 +82,10 @@ def compute_package_digest(package: Mapping[str, Any]) -> str:
     return digest_without(package)
 
 
-def case_to_package_entry(case: TestCaseInternal) -> dict[str, Any]:
+def case_to_package_entry(
+    case: TestCaseInternal,
+    case_fixtures: Sequence[Any] = (),
+) -> dict[str, Any]:
     """Map a protected test case onto a contract ``tests[]`` entry.
 
     Execution fields are added **only when the case declares them**, so a case written before
@@ -102,6 +105,16 @@ def case_to_package_entry(case: TestCaseInternal) -> dict[str, Any]:
         "expected_stderr": case.expected_stderr,
         "expected_exit_code": case.expected_exit_code,
     }
+    if case_fixtures:
+        entry["files"] = [
+            {
+                "path": f.path,
+                "content_sha256": f.content_sha256,
+                "mount": f.mount,
+                **({"student_visible": True} if getattr(f, "student_visible", False) else {}),
+            }
+            for f in sorted(case_fixtures, key=lambda item: (item.path, item.mount))
+        ]
     entry.update(case_execution_payload(case.execution))
     return entry
 
@@ -156,7 +169,15 @@ def compile_evaluation_package(
     )
 
     adapter_section = compiler.to_package_section(manifest, cases=cases, fixtures=fixtures)
-    tests = tuple(case_to_package_entry(case) for case in sorted(cases, key=lambda c: c.ordinal))
+    fixtures_by_case: dict[Any, list[Any]] = {}
+    for fixture in fixtures:
+        tc_id = getattr(fixture, "test_case_id", None)
+        if tc_id is not None:
+            fixtures_by_case.setdefault(tc_id, []).append(fixture)
+    tests = tuple(
+        case_to_package_entry(case, fixtures_by_case.get(case.case_id, ()))
+        for case in sorted(cases, key=lambda c: c.ordinal)
+    )
     execution_section = execution_manifest_to_storage(snapshot.execution)
 
     draft = EvaluationPackage(

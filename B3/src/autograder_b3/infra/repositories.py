@@ -822,6 +822,33 @@ class QuestionBankRepository:
         row.last_error = error[:1000]
         self.session.flush()
 
+    def list_visible_fixtures(self, question_version_id: uuid.UUID) -> list[Fixture]:
+        statement = (
+            select(Fixture)
+            .where(
+                Fixture.question_version_id == question_version_id,
+                Fixture.mount == "input",
+                Fixture.student_visible.is_(True),
+            )
+            .order_by(Fixture.path, Fixture.fixture_id)
+        )
+        return list(self.session.execute(statement).scalars())
+
+    def is_version_in_open_assignment(
+        self, question_version_id: uuid.UUID, *, course_id: uuid.UUID
+    ) -> bool:
+        statement = (
+            select(AssignmentItem.assignment_id)
+            .join(Assignment, Assignment.assignment_id == AssignmentItem.assignment_id)
+            .where(
+                AssignmentItem.question_version_id == question_version_id,
+                Assignment.course_id == course_id,
+                Assignment.status != "archived",
+            )
+            .limit(1)
+        )
+        return self.session.execute(statement).first() is not None
+
 
 class ProtectedContentRepository:
     """Protected reads/writes. Requires the internal database role."""
@@ -855,44 +882,84 @@ class ProtectedContentRepository:
         question_version_id: uuid.UUID,
         path: str,
         mount: str,
+        student_visible: bool = False,
+        test_case_id: uuid.UUID | None = None,
         content: bytes,
         content_sha256: str,
         now: datetime,
     ) -> Fixture:
         self.put_blob(content, content_sha256=content_sha256, now=now)
-        statement = (
-            pg_insert(Fixture)
-            .values(
-                fixture_id=new_id(),
-                question_version_id=question_version_id,
-                path=path,
-                mount=mount,
-                content_sha256=content_sha256,
-                size_bytes=len(content),
-                created_at=now,
+        values = {
+            "fixture_id": new_id(),
+            "question_version_id": question_version_id,
+            "test_case_id": test_case_id,
+            "path": path,
+            "mount": mount,
+            "student_visible": student_visible,
+            "content_sha256": content_sha256,
+            "size_bytes": len(content),
+            "created_at": now,
+        }
+        if test_case_id is None:
+            statement = (
+                pg_insert(Fixture)
+                .values(**values)
+                .on_conflict_do_update(
+                    index_elements=[Fixture.question_version_id, Fixture.path, Fixture.mount],
+                    index_where=Fixture.test_case_id.is_(None),
+                    set_={
+                        "student_visible": student_visible,
+                        "content_sha256": content_sha256,
+                        "size_bytes": len(content),
+                    },
+                )
             )
-            .on_conflict_do_update(
-                index_elements=[Fixture.question_version_id, Fixture.path, Fixture.mount],
-                set_={
-                    "content_sha256": content_sha256,
-                    "size_bytes": len(content),
-                },
+        else:
+            statement = (
+                pg_insert(Fixture)
+                .values(**values)
+                .on_conflict_do_update(
+                    index_elements=[
+                        Fixture.question_version_id,
+                        Fixture.test_case_id,
+                        Fixture.path,
+                        Fixture.mount,
+                    ],
+                    index_where=Fixture.test_case_id.is_not(None),
+                    set_={
+                        "student_visible": student_visible,
+                        "content_sha256": content_sha256,
+                        "size_bytes": len(content),
+                    },
+                )
             )
-        )
         self.session.execute(statement)
         self.session.flush()
-        return self.get_fixture(question_version_id, path, mount)
+        return self.get_fixture(question_version_id, path, mount, test_case_id=test_case_id)
 
     def get_fixture(
-        self, question_version_id: uuid.UUID, path: str, mount: str
+        self,
+        question_version_id: uuid.UUID,
+        path: str,
+        mount: str,
+        *,
+        test_case_id: uuid.UUID | None = None,
     ) -> Fixture:
-        statement = select(Fixture).where(
+        conditions = [
             Fixture.question_version_id == question_version_id,
             Fixture.path == path,
             Fixture.mount == mount,
-        )
+        ]
+        if test_case_id is None:
+            conditions.append(Fixture.test_case_id.is_(None))
+        else:
+            conditions.append(Fixture.test_case_id == test_case_id)
+        statement = select(Fixture).where(*conditions)
         row = self.session.execute(statement).scalar_one()
         return row
+
+    def get_fixture_by_id(self, fixture_id: uuid.UUID) -> Fixture | None:
+        return self.session.get(Fixture, fixture_id)
 
     def list_fixtures(self, question_version_id: uuid.UUID) -> list[FixtureInternal]:
         statement = (
@@ -908,6 +975,8 @@ class ProtectedContentRepository:
                 mount=row.mount,  # type: ignore[arg-type]
                 content_sha256=row.content_sha256,
                 size_bytes=row.size_bytes,
+                student_visible=row.student_visible,
+                test_case_id=row.test_case_id,
             )
             for row in self.session.execute(statement).scalars()
         ]

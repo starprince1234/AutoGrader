@@ -371,14 +371,16 @@ class Fixture(Base):
 
     __tablename__ = "fixtures"
     __table_args__ = (
-        UniqueConstraint(
-            "question_version_id", "path", "mount", name="uq_fixtures_question_version_id_path_mount"
-        ),
         _sha256_check("content_sha256", "ck_fixtures_content_sha256"),
         CheckConstraint("mount IN ('input', 'expected_output')", name="ck_fixtures_mount"),
+        CheckConstraint(
+            "NOT student_visible OR mount = 'input'",
+            name="ck_fixtures_student_visible_input_only",
+        ),
         CheckConstraint(f"path ~ '{PATH_PATTERN}'", name="ck_fixtures_path_pattern"),
         CheckConstraint("size_bytes >= 0", name="ck_fixtures_size_non_negative"),
         Index("ix_fixtures_question_version_id", "question_version_id"),
+        Index("ix_fixtures_test_case_id", "test_case_id"),
         {"schema": SCHEMA},
     )
 
@@ -392,8 +394,18 @@ class Fixture(Base):
         ),
         nullable=False,
     )
+    test_case_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid,
+        ForeignKey(
+            "b3.test_cases.test_case_id",
+            name="fk_fixtures_test_case_id",
+            ondelete="CASCADE",
+        ),
+        nullable=True,
+    )
     path: Mapped[str] = mapped_column(String(200), nullable=False)
     mount: Mapped[str] = mapped_column(String(16), nullable=False)
+    student_visible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     content_sha256: Mapped[str] = mapped_column(
         String(64), ForeignKey("b3.blobs.content_sha256", name="fk_fixtures_content_sha256"), nullable=False
     )

@@ -126,9 +126,18 @@ def upload_fixture(
             )
 
         path = validate_workspace_path(payload.path, field="path")
+        if payload.student_visible and payload.mount != "input":
+            raise ManifestInvalid(
+                "only mount='input' fixtures may be marked student_visible",
+                field="student_visible",
+            )
         content = decode_base64(payload.content_base64)
         content_sha256, _size = validated_fixture_bytes(content=content, settings=settings)
         protected = ProtectedContentRepository(session)
+        if payload.test_case_id is not None:
+            case_ids = {case.case_id for case in protected.list_cases(question_version_id)}
+            if payload.test_case_id not in case_ids:
+                raise NotFound("test case not found in this question version")
         if len(protected.list_fixtures(question_version_id)) >= settings.max_fixtures_per_version:
             raise PayloadTooLarge(
                 "a version may carry at most "
@@ -139,6 +148,8 @@ def upload_fixture(
             question_version_id=question_version_id,
             path=path,
             mount=payload.mount,
+            student_visible=payload.student_visible,
+            test_case_id=payload.test_case_id,
             content=content,
             content_sha256=content_sha256,
             now=now,
@@ -152,6 +163,8 @@ def upload_fixture(
             get_logger("domain.assets"),
             "question.fixture.uploaded",
             question_version_id=str(question_version_id),
+            student_visible=payload.student_visible,
+            test_case_id=None if payload.test_case_id is None else str(payload.test_case_id),
             status_code=201,
         )
         return FixtureInternal(
@@ -161,6 +174,8 @@ def upload_fixture(
             mount=row.mount,  # type: ignore[arg-type]
             content_sha256=row.content_sha256,
             size_bytes=row.size_bytes,
+            student_visible=row.student_visible,
+            test_case_id=row.test_case_id,
         )
 
 

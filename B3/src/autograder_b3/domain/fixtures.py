@@ -25,11 +25,20 @@ from __future__ import annotations
 import base64
 import uuid
 
+from ..auth import Principal, require_course_read
 from ..compile.canonical import sha256_hex
 from ..dto.internal import FixtureContentBundle, FixtureContentItem, FixtureInternal
-from ..errors import B3Error, NotFound, PayloadTooLarge, UnprocessableEntity
+from ..errors import (
+    B3Error,
+    Forbidden,
+    NotFound,
+    PayloadTooLarge,
+    Unauthenticated,
+    UnprocessableEntity,
+)
 from ..infra.db import Database
 from ..infra.repositories import ProtectedContentRepository, QuestionBankRepository
+from ..integration.b4 import AuthorizationDirectory
 
 #: The contract's delivery bounds (``FixtureContentBundle`` description): one item at most
 #: 1 MiB, the whole bundle at most 4 MiB. Kept as module constants rather than settings because
@@ -117,4 +126,63 @@ def _read_item(
         content_sha256=computed,
         size_bytes=len(content),
         content_base64=base64.b64encode(content).decode("ascii"),
+        test_case_id=fixture.test_case_id,
     )
+
+
+def download_visible_fixture(
+    database: Database,
+    *,
+    principal: Principal | None,
+    question_version_id: uuid.UUID,
+    fixture_id: uuid.UUID,
+    authorization_directory: AuthorizationDirectory | None = None,
+) -> tuple[bytes, str, str]:
+    """Download bytes of a student-visible input fixture attachment.
+
+    Hidden fixtures (``student_visible=False``) and ``expected_output`` fixtures are
+    strictly refused with ``403 Forbidden``.
+    """
+    if principal is None:
+        raise Unauthenticated("a bearer token is required")
+
+    with database.protected_session() as session:
+        bank = QuestionBankRepository(session)
+        version = bank.get_version(question_version_id)
+        if version is None:
+            raise NotFound("question version not found")
+        question = bank.get_question(version.question_id)
+        if question is None:
+            raise NotFound("question not found")
+
+        is_staff = principal.is_service or principal.has_role("teacher", "admin")
+        if is_staff:
+            require_course_read(principal, question.course_id)
+        else:
+            if authorization_directory is not None:
+                auth = authorization_directory.user_authorization(uuid.UUID(principal.subject))
+                if not auth.is_enrolled_in(question.course_id):
+                    raise Forbidden("you are not enrolled in this course")
+            else:
+                require_course_read(principal, question.course_id)
+            if version.status != "published":
+                raise Forbidden("draft or archived question versions are not downloadable")
+            if not bank.is_version_in_open_assignment(
+                question_version_id, course_id=question.course_id
+            ):
+                raise Forbidden("this question version is not part of an active assignment")
+
+        protected = ProtectedContentRepository(session)
+        fixture = protected.get_fixture_by_id(fixture_id)
+        if fixture is None or fixture.question_version_id != question_version_id:
+            raise NotFound("fixture not found")
+        if fixture.mount != INPUT_MOUNT or not fixture.student_visible:
+            raise Forbidden("this fixture is hidden and cannot be downloaded")
+
+        content = protected.get_blob_content(fixture.content_sha256)
+        computed = sha256_hex(content)
+        if computed != fixture.content_sha256 or len(content) != fixture.size_bytes:
+            raise B3Error(
+                f"stored fixture bytes for {fixture.path} do not match their recorded digest"
+            )
+        return content, fixture.path, computed

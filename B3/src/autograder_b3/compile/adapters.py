@@ -43,15 +43,26 @@ def _common_section(manifest: AdapterManifestInternal) -> dict[str, Any]:
     }
 
 
-def _files_section(manifest: AdapterManifestInternal) -> list[dict[str, Any]]:
-    return [
-        {
+def _files_section(
+    manifest: AdapterManifestInternal,
+    fixtures: Sequence[FixtureInternal] = (),
+) -> list[dict[str, Any]]:
+    visibility_by_key = {
+        (f.path, f.mount): f.student_visible
+        for f in fixtures
+        if f.test_case_id is None
+    }
+    entries: list[dict[str, Any]] = []
+    for declared in manifest.files:
+        item: dict[str, Any] = {
             "path": declared.path,
             "content_sha256": declared.content_sha256,
             "mount": declared.mount,
         }
-        for declared in manifest.files
-    ]
+        if visibility_by_key.get((declared.path, declared.mount), False):
+            item["student_visible"] = True
+        entries.append(item)
+    return entries
 
 
 def _only_input_mounts(manifest: AdapterManifestInternal, kind: str) -> None:
@@ -163,14 +174,19 @@ class FileIoAdapterCompiler:
         fixtures: Sequence[FixtureInternal],
     ) -> dict[str, Any]:
         _require_cases(cases)
-        if not any(declared.mount == "input" for declared in manifest.files):
+        has_version_input = any(declared.mount == "input" for declared in manifest.files)
+        has_case_input = any(
+            fixture.mount == "input" and fixture.test_case_id is not None
+            for fixture in fixtures
+        )
+        if not (has_version_input or has_case_input):
             raise ManifestInvalid(
                 "adapter kind 'file' must declare at least one input fixture before the "
                 "question can be compiled or published",
                 field="adapter.files",
             )
         section = _common_section(manifest)
-        section["files"] = _files_section(manifest)
+        section["files"] = _files_section(manifest, fixtures)
         return section
 
 

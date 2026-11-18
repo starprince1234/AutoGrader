@@ -395,6 +395,8 @@ class FixtureUploadResult(BaseModel):
     question_version_id: UUID
     path: str
     mount: Literal["input", "expected_output"]
+    student_visible: bool = False
+    test_case_id: UUID | None = None
     content_sha256: str
     size_bytes: int
 

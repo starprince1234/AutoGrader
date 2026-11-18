@@ -106,8 +106,17 @@ def content_wire(snapshot: VersionContentSnapshot) -> dict[str, Any]:
                 "mount": fixture.mount,
                 "content_sha256": fixture.content_sha256,
                 "size_bytes": fixture.size_bytes,
+                **({"student_visible": True} if getattr(fixture, "student_visible", False) else {}),
+                **(
+                    {"test_case_id": str(fixture.test_case_id)}
+                    if getattr(fixture, "test_case_id", None) is not None
+                    else {}
+                ),
             }
-            for fixture in sorted(snapshot.fixtures, key=lambda item: (item.path, item.mount))
+            for fixture in sorted(
+                snapshot.fixtures,
+                key=lambda item: (str(getattr(item, "test_case_id", "") or ""), item.path, item.mount),
+            )
         ],
         "max_files": snapshot.max_files,
         "max_total_bytes": snapshot.max_total_bytes,
