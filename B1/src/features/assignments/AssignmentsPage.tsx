@@ -510,6 +510,24 @@ export function AssignmentsPage() {
     <div className="stack">
       {cohortView ? null : <MyMembershipsPanel />}
       <Panel title={cohortView ? t("assignments.tabs.list") : t("assignments.myTitle")}>
+        {!cohortView && memberships.length > 1 ? (
+          <div data-testid="student-course-switch">
+            <Field label={t("grades.course")} htmlFor="student-course">
+              <Select
+                id="student-course"
+                value={selectedMembership?.course_id ?? ""}
+                onChange={(event) => setStudentCourseId(event.target.value)}
+              >
+                {memberships.map((membership) => (
+                  <option key={membership.course_id} value={membership.course_id}>
+                    {membership.course_title} · {membership.section_code} ·{" "}
+                    {membership.class_name}
+                  </option>
+                ))}
+              </Select>
+            </Field>
+          </div>
+        ) : null}
         {!cohortView ? (
           <p className="muted">{t("assignments.studentHint")}</p>
         ) : null}
@@ -719,27 +737,7 @@ export function AssignmentsPage() {
           </Panel>
         </>
       ) : (
-        <>
-          {memberships.length > 1 ? (
-            <Panel title={t("assignments.courseSwitch")} testId="student-course-switch">
-              <Field label={t("grades.course")} htmlFor="student-course">
-                <Select
-                  id="student-course"
-                  value={selectedMembership?.course_id ?? ""}
-                  onChange={(event) => setStudentCourseId(event.target.value)}
-                >
-                  {memberships.map((membership) => (
-                    <option key={membership.course_id} value={membership.course_id}>
-                      {membership.course_title} · {membership.section_code} ·{" "}
-                      {membership.class_name}
-                    </option>
-                  ))}
-                </Select>
-              </Field>
-            </Panel>
-          ) : null}
-          {listView}
-        </>
+        listView
       )}
 
       {createdNotice ? (
