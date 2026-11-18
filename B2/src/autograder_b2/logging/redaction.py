@@ -76,6 +76,7 @@ ALLOWED_FIELDS: frozenset[str] = frozenset(
         "section_id",
         "question_version_id",
         "assignment_id",
+        "io_type",
         # 状态 / 阶段 / 结论 / 错误类别
         "status",
         "state",
@@ -151,6 +152,7 @@ UUID_FIELDS: frozenset[str] = frozenset(
         "section_id",
         "question_version_id",
         "assignment_id",
+        "io_type",
     }
 )
 

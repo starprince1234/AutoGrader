@@ -53,9 +53,20 @@ def conformance(
     application_paths = [
         route.path for route in request.app.routes if hasattr(route, "path")
     ]
-    return build_report(
+    report = build_report(
         current_settings().contracts_dir, descriptors, application_paths
     )
+    log_fn = logger.info if report.consistent else logger.warning
+    log_fn(
+        "conformance.report.generated",
+        extra={
+            "event": "conformance.report.generated",
+            "consistent": report.consistent,
+            "difference_count": len(report.differences),
+            "request_id": request.headers.get("X-Request-ID"),
+        },
+    )
+    return report
 
 
 def install_error_handlers(app) -> None:
