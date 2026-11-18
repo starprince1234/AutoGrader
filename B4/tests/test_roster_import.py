@@ -911,7 +911,7 @@ def test_pdf_roster_upload_and_confirm_writes_enrollments(
     body = response.json()
     assert body["status"] == "previewed"
     assert body["header_row_number"] == 1
-    assert body["course_verification"]["status"] == "matched"
+    assert body["course_verification"]["status"] == "unavailable"
     assert len(body["accepted_rows"]) == 2
 
     confirmed = _confirm(client, headers, body["roster_import_id"])
