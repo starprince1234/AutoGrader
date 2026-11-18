@@ -128,6 +128,7 @@ def list_questions_endpoint(
     limit: int | None = None,
     course_id: uuid.UUID | None = None,
     language: str | None = None,
+    io_type: str | None = None,
     published_only: bool = True,
     tags: Annotated[list[str] | None, Query()] = None,
     q: str | None = None,
@@ -136,6 +137,8 @@ def list_questions_endpoint(
     dependencies = _dependencies(request)
     if language is not None and language not in ("python", "bash"):
         raise UnprocessableEntity("`language` must be 'python' or 'bash'")
+    if io_type is not None and io_type not in ("stdin", "file", "callable"):
+        raise UnprocessableEntity("`io_type` must be 'stdin', 'file', or 'callable'")
     # 片段检索（CHG-0030）：空白等于"不搜索"，超长则拒绝——不能让一个超长 LIKE 打到库里。
     search = (q or "").strip()
     if len(search) > 200:
@@ -151,6 +154,7 @@ def list_questions_endpoint(
         principal=context.principal,
         course_id=course_id,
         language=language,
+        io_type=io_type,
         published_only=published_only,
         limit=resolved_limit,
         after=after,

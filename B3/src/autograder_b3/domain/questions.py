@@ -45,9 +45,11 @@ from ..compile.manifest import (
     execution_from_stored,
     execution_manifest_to_storage,
     manifest_to_storage,
+    resolve_question_io_type,
     validate_adapter_manifest,
     validate_case_execution,
     validate_case_executions,
+    validate_course_language_io_type,
     validate_execution_manifest,
 )
 from ..dto.internal import (
@@ -448,6 +450,8 @@ def create_question(
     )
     validate_stem_markdown(payload.stem_markdown, max_chars=settings.max_stem_chars)
     manifest = validate_adapter_manifest(payload.adapter)
+    io_type = resolve_question_io_type(payload.io_type, manifest.kind)
+    validate_course_language_io_type(language=payload.language, io_type=io_type)
     tags = validate_tags(payload.tags)
     cases_provided = _cases_supplied(payload, cases_supplied)
     _validate_ordinals(payload)
@@ -472,6 +476,7 @@ def create_question(
             title=payload.title,
             stem_markdown=payload.stem_markdown,
             language=payload.language,
+            io_type=io_type,
             status="draft",
             tags=tags,
             created_by=_actor_id(actor),
@@ -522,6 +527,7 @@ def create_question(
             question_id=str(question.question_id),
             question_version_id=str(version.question_version_id),
             course_id=str(course_id),
+            io_type=io_type,
             adapter_kind=manifest.kind,
             generation_id=None if generation_id is None else str(generation_id),
         )
@@ -569,6 +575,8 @@ def update_question(
     )
     validate_stem_markdown(payload.stem_markdown, max_chars=settings.max_stem_chars)
     manifest = validate_adapter_manifest(payload.adapter)
+    io_type = resolve_question_io_type(payload.io_type, manifest.kind)
+    validate_course_language_io_type(language=payload.language, io_type=io_type)
     tags = validate_tags(payload.tags)
     cases_provided = _cases_supplied(payload, cases_supplied)
     _validate_ordinals(payload)
@@ -583,6 +591,11 @@ def update_question(
             # existence so a cross-course probe cannot distinguish the two.
             raise NotFound("question not found")
         actor = require_course_write(principal, question.course_id)
+        if io_type != question.io_type:
+            raise ManifestInvalid(
+                f"question io_type is immutable ({question.io_type!r}); cannot change adapter.kind to {io_type!r}",
+                field="adapter.kind",
+            )
 
         # 换课程：题目归属是题目的身份，不是版本内容，所以只在「另存为新版本」时允许，避免一次
         # 原地草稿编辑把题目悄悄搬到另一门课。目标课程单独要写权限（源课程已在上面校验过）。
@@ -722,6 +735,7 @@ def update_question(
             question_id=str(question_id),
             question_version_id=str(target.question_version_id),
             course_id=str(question.course_id),
+            io_type=question.io_type,
             adapter_kind=manifest.kind,
             outcome="new_version" if target is not latest else "in_place",
         )

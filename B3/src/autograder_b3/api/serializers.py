@@ -27,12 +27,15 @@ from ..assistance import AssistanceResult
 from ..dto.internal import PROTECTED_FIELD_NAMES, ExecutionMode
 from ..dto.public import (
     AssignmentPublic,
+    AssignmentQuestionItemPublic,
     AssignmentTargetPublic,
     AuthoringAssistancePublic,
     AuthoringProvenancePublic,
     AuthoringSuggestionPublic,
     ComparisonDiagnosticsPublic,
     ComparisonFindingPublic,
+    IoSpecPublic,
+    IoTypeCountPublic,
     QuestionPublic,
     QuestionStatisticsPublic,
     QuestionTagCoveragePublic,
@@ -43,6 +46,7 @@ from ..dto.public import (
     RevisionDiffPublic,
     StemAssetPublic,
     TagCountPublic,
+    VisibleFixturePublic,
 )
 from ..domain.catalog import TagCoverage
 from ..domain.tags import tags_from_storage
@@ -129,6 +133,7 @@ def question_to_public(
             for asset in (assets or [])
         ),
         language=row.language,
+        io_type=row.io_type,
         status=row.status,
         # Read through the validator, not straight off the row: a tag that violates the
         # declared form is a defect and must fail loudly here rather than reach a public
@@ -148,7 +153,11 @@ def question_to_public(
     )
 
 
-def version_to_public(row: Any, assets: list[Any] | None = None) -> QuestionVersionPublic:
+def version_to_public(
+    row: Any,
+    assets: list[Any] | None = None,
+    visible_fixtures: list[Any] | None = None,
+) -> QuestionVersionPublic:
     manifest = row.adapter_manifest or {}
     kind = manifest.get("kind")
     if kind not in ("stdin", "file", "callable"):
@@ -162,13 +171,38 @@ def version_to_public(row: Any, assets: list[Any] | None = None) -> QuestionVers
         # file digests, email templates) must never reach this response. An unknown mode is a
         # stored-row defect, refused here rather than emitted outside the contract enum.
         raise SerializationViolation("stored execution mode is not a contract value")
+    callable_cfg = manifest.get("callable") if isinstance(manifest.get("callable"), Mapping) else None
+    declared_files = manifest.get("files") if isinstance(manifest.get("files"), list) else []
+    expected_output_paths = tuple(
+        str(entry["path"])
+        for entry in declared_files
+        if isinstance(entry, Mapping) and entry.get("mount") == "expected_output" and entry.get("path")
+    )
+    io_spec = IoSpecPublic(
+        callable_module=(str(callable_cfg["module"]) if callable_cfg and callable_cfg.get("module") else None),
+        callable_attribute=(str(callable_cfg["attribute"]) if callable_cfg and callable_cfg.get("attribute") else None),
+        expected_output_paths=expected_output_paths,
+    )
     return QuestionVersionPublic(
         question_version_id=row.question_version_id,
         question_id=row.question_id,
         version=row.version,
         status=row.status,
         language=row.language,
+        io_type=kind,
         adapter_kind=kind,
+        visible_fixtures=tuple(
+            VisibleFixturePublic(
+                fixture_id=item.fixture_id,
+                path=item.path,
+                content_sha256=item.content_sha256,
+                size_bytes=item.size_bytes,
+                test_case_id=getattr(item, "test_case_id", None),
+            )
+            for item in (visible_fixtures or [])
+            if getattr(item, "mount", "input") == "input" and getattr(item, "student_visible", False)
+        ),
+        io_spec=io_spec,
         execution_mode=execution_mode,
         stem_markdown=row.stem_markdown,
         stem_assets=tuple(
@@ -182,7 +216,11 @@ def version_to_public(row: Any, assets: list[Any] | None = None) -> QuestionVers
         content_digest=row.content_digest,
         revision_note=row.revision_note,
         revision_diff=(
-            None if row.revision_diff is None else RevisionDiffPublic(**row.revision_diff)
+            None
+            if row.revision_diff is None
+            else RevisionDiffPublic(
+                **{k: v for k, v in row.revision_diff.items() if k != "adapter_kind_changed"}
+            )
         ),
         published_at=row.published_at,
         max_files=row.max_files,
@@ -227,6 +265,10 @@ def coverage_to_public(result: TagCoverage) -> QuestionTagCoveragePublic:
         tags=tuple(
             TagCountPublic(tag=tag, question_count=count) for tag, count in result.tag_counts
         ),
+        by_io_type=tuple(
+            IoTypeCountPublic(io_type=io_type, question_count=count)
+            for io_type, count in result.by_io_type
+        ),
     )
 
 
@@ -243,6 +285,7 @@ def learning_context_to_public(context: Any) -> QuestionLearningContextPublic:
         stem_markdown=context.stem_markdown,
         language=context.language,
         tags=context.tags,
+        io_type=context.io_type,
         adapter_kind=context.adapter_kind,
     )
 
@@ -305,6 +348,7 @@ def assignment_to_public(
     row: Any,
     version_ids: list[UUID],
     target: tuple[tuple[UUID, ...], tuple[UUID, ...]] = ((), ()),
+    question_items: list[AssignmentQuestionItemPublic] | tuple[AssignmentQuestionItemPublic, ...] = (),
 ) -> AssignmentPublic:
     """Project one assignment (v0.38.0).
 
@@ -324,6 +368,7 @@ def assignment_to_public(
         status=row.status,
         due_at=row.due_at,
         question_version_ids=tuple(version_ids),
+        question_items=tuple(question_items),
         notification_state=row.notification_state,
         target=AssignmentTargetPublic(
             section_ids=tuple(section_ids), student_ids=tuple(student_ids)

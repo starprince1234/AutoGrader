@@ -37,6 +37,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 Language = Literal["python", "bash"]
+IoType = Literal["stdin", "file", "callable"]
 AdapterKind = Literal["stdin", "file", "callable"]
 FixtureMount = Literal["input", "expected_output"]
 #: An assignment's lifecycle state (``open`` / ``closed`` / ``archived``); the same enum the
@@ -249,6 +250,7 @@ class QuestionDraftInputModel(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     stem_markdown: str = Field(min_length=1)
     language: Language
+    io_type: IoType | None = None
     reference_answer: str | None = None
     reference_answers: tuple[ReferenceAnswerTierInput, ...] = ()
     grading_prompt: str | None = Field(default=None, max_length=10000)

@@ -144,6 +144,7 @@ def draft_body(problem: dict) -> dict:
         "title": problem["title"],
         "stem_markdown": problem["stem_markdown"],
         "language": problem["language"],
+        "io_type": problem.get("io_type") or problem["adapter"]["kind"],
         "reference_answer": problem["reference_answer"],
         "adapter": problem["adapter"],
         "cases": problem["cases"],

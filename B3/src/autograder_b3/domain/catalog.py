@@ -77,6 +77,7 @@ class TagCoverage:
     tagged_questions: int
     untagged_questions: int
     tag_counts: tuple[tuple[str, int], ...]
+    by_io_type: tuple[tuple[str, int], ...] = ()
 
 
 def list_questions(
@@ -85,6 +86,7 @@ def list_questions(
     principal: Principal | None,
     course_id: uuid.UUID | None,
     language: str | None,
+    io_type: str | None = None,
     published_only: bool,
     limit: int,
     after: tuple[datetime, uuid.UUID] | None = None,
@@ -107,6 +109,7 @@ def list_questions(
             course_ids=scoped,
             course_id=None,
             language=language,
+            io_type=io_type,
             published_only=published_only,
             limit=limit,
             after=after,
@@ -140,7 +143,7 @@ def question_tag_coverage(
         principal, course_id=course_id, published_only=published_only
     )
     with database.app_session() as session:
-        total, tagged, untagged, tag_counts = QuestionBankRepository(session).tag_coverage(
+        total, tagged, untagged, tag_counts, by_io_type = QuestionBankRepository(session).tag_coverage(
             course_ids=scoped, course_id=course_id, published_only=published_only
         )
     return TagCoverage(
@@ -149,6 +152,7 @@ def question_tag_coverage(
         tagged_questions=tagged,
         untagged_questions=untagged,
         tag_counts=tuple(tag_counts),
+        by_io_type=tuple(by_io_type),
     )
 
 
@@ -237,6 +241,7 @@ class LearningContext:
     stem_markdown: str
     language: str
     tags: tuple[str, ...]
+    io_type: str
     adapter_kind: str
 
 
@@ -282,6 +287,7 @@ def load_learning_context(
             stem_markdown=version.stem_markdown,
             language=version.language,
             tags=tags_from_storage(question.tags),
+            io_type=question.io_type,
             adapter_kind=kind,
         )
 

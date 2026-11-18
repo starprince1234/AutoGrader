@@ -1285,7 +1285,6 @@ def test_revision_diff_records_what_changed_and_never_contains_protected_content
     assert delta["case_count_before"] == delta["case_count_after"] == 11
     assert delta["weights_changed"] is True
     assert delta["case_set_changed"] is False
-    assert delta["adapter_kind_changed"] is False
     assert delta["fixtures_changed"] is False
     assert delta["size_limits_changed"] is False
     # Digests only; the reference answer is unchanged by this edit and the delta says so.
@@ -1692,7 +1691,6 @@ def test_a_branched_version_that_omits_cases_records_no_case_change(database, se
     assert delta["case_count_before"] == delta["case_count_after"] == 11
     assert delta["case_set_changed"] is False
     assert delta["weights_changed"] is False
-    assert delta["adapter_kind_changed"] is False
     assert delta["size_limits_changed"] is False
     # The reference answer was omitted too, and the delta says so rather than claiming a
     # change nobody made.

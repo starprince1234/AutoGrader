@@ -25,6 +25,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field
 
 Language = Literal["python", "bash"]
+IoType = Literal["stdin", "file", "callable"]
 QuestionStatus = Literal["draft", "published", "archived"]
 AdapterKind = Literal["stdin", "file", "callable"]
 #: The public half of an execution declaration: **how** cases are produced, never the
@@ -82,7 +83,6 @@ class RevisionDiffPublic(BaseModel):
     fixtures_changed: bool | None = None
     stem_length_before: int | None = Field(default=None, ge=0)
     stem_length_after: int | None = Field(default=None, ge=0)
-    adapter_kind_changed: bool | None = None
     size_limits_changed: bool | None = None
     reference_answer_digest_before: str | None = None
     reference_answer_digest_after: str | None = None
@@ -138,6 +138,13 @@ class TagCountPublic(BaseModel):
     question_count: int = Field(ge=1)
 
 
+class IoTypeCountPublic(BaseModel):
+    model_config = _PUBLIC_CONFIG
+
+    io_type: IoType
+    question_count: int = Field(ge=0)
+
+
 class QuestionTagCoveragePublic(BaseModel):
     """How one course's bank is distributed across tags (``RQ-B-3-20``, ``CHG-0020``).
 
@@ -157,6 +164,7 @@ class QuestionTagCoveragePublic(BaseModel):
     tagged_questions: int = Field(ge=0)
     untagged_questions: int = Field(ge=0)
     tags: tuple[TagCountPublic, ...] = ()
+    by_io_type: tuple[IoTypeCountPublic, ...] = ()
 
 
 class QuestionVersionSummary(BaseModel):
@@ -184,6 +192,7 @@ class QuestionPublic(BaseModel):
     stem_markdown: str
     stem_assets: tuple[StemAssetPublic, ...] = ()
     language: Language
+    io_type: IoType
     status: QuestionStatus
     tags: tuple[str, ...] = ()
     #: Full version history (draft + published + archived), newest first. Required for
@@ -191,6 +200,24 @@ class QuestionPublic(BaseModel):
     versions: tuple[QuestionVersionSummary, ...] = ()
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+class VisibleFixturePublic(BaseModel):
+    model_config = _PUBLIC_CONFIG
+
+    fixture_id: UUID
+    path: str
+    content_sha256: str
+    size_bytes: int = Field(ge=0)
+    test_case_id: UUID | None = None
+
+
+class IoSpecPublic(BaseModel):
+    model_config = _PUBLIC_CONFIG
+
+    callable_module: str | None = None
+    callable_attribute: str | None = None
+    expected_output_paths: tuple[str, ...] = ()
 
 
 class QuestionVersionPublic(BaseModel):
@@ -201,7 +228,10 @@ class QuestionVersionPublic(BaseModel):
     version: int
     status: QuestionStatus
     language: Language
+    io_type: IoType
     adapter_kind: AdapterKind
+    visible_fixtures: tuple[VisibleFixturePublic, ...] = ()
+    io_spec: IoSpecPublic | None = None
     #: How this version's cases are produced (design baseline §8). The **enum only**: the
     #: declaration behind it may carry an SSH password, the expected file digests, an email
     #: subject template or the segment marker, and none of that belongs on a public DTO. A
@@ -246,6 +276,7 @@ class QuestionLearningContextPublic(BaseModel):
     stem_markdown: str
     language: Language
     tags: tuple[str, ...] = ()
+    io_type: IoType
     adapter_kind: AdapterKind
 
 
@@ -281,6 +312,16 @@ class AssignmentTargetPublic(BaseModel):
     student_ids: tuple[UUID, ...] = ()
 
 
+class AssignmentQuestionItemPublic(BaseModel):
+    model_config = _PUBLIC_CONFIG
+
+    question_version_id: UUID
+    question_id: UUID
+    title: str
+    language: Language
+    io_type: IoType
+
+
 class AssignmentPublic(BaseModel):
     """One homework set with an explicit target (v0.38.0).
 
@@ -306,6 +347,7 @@ class AssignmentPublic(BaseModel):
     status: AssignmentStatus
     due_at: datetime | None = None
     question_version_ids: tuple[UUID, ...] = ()
+    question_items: tuple[AssignmentQuestionItemPublic, ...] = ()
     notification_state: NotificationState
     #: 必填而不是默认可空:序列化器漏填要让构造直接失败,而不是悄悄输出"没有目标"。
     target: AssignmentTargetPublic

@@ -142,6 +142,7 @@ def draft_body(problem: dict) -> dict:
         "title": problem["title"],
         "stem_markdown": problem["stem_markdown"],
         "language": problem["language"],
+        "io_type": problem.get("io_type") or adapter["kind"],
         "reference_answer": problem["reference_answer"],
         "adapter": adapter,
         # 1 公开 + 10 隐藏：旧形状的题库在建题前就被拦下（见 MAIN/scripts/bank_shape.py）。

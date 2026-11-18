@@ -45,6 +45,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 SCHEMA = "b3"
 
 LANGUAGE_VALUES = ("python", "bash")
+IO_TYPE_VALUES = ("stdin", "file", "callable")
 VERSION_STATUS_VALUES = ("draft", "published", "archived")
 ASSIGNMENT_STATUS_VALUES = ("open", "archived")
 MOUNT_VALUES = ("input", "expected_output")
@@ -78,6 +79,9 @@ class Question(Base):
             "language IN ('python', 'bash')", name="ck_questions_language"
         ),
         CheckConstraint(
+            "io_type IN ('stdin', 'file', 'callable')", name="ck_questions_io_type"
+        ),
+        CheckConstraint(
             "status IN ('draft', 'published', 'archived')", name="ck_questions_status"
         ),
         CheckConstraint("length(title) BETWEEN 1 AND 300", name="ck_questions_title_length"),
@@ -93,6 +97,7 @@ class Question(Base):
         ),
         CheckConstraint(f"jsonb_array_length(tags) <= {MAX_TAGS}", name="ck_questions_tags_count"),
         Index("ix_questions_course_id", "course_id"),
+        Index("ix_questions_io_type", "io_type"),
         Index("ix_questions_status", "status"),
         Index("ix_questions_tags", "tags", postgresql_using="gin"),
         {"schema": SCHEMA},
@@ -103,6 +108,7 @@ class Question(Base):
     title: Mapped[str] = mapped_column(Text, nullable=False)
     stem_markdown: Mapped[str] = mapped_column(Text, nullable=False)
     language: Mapped[str] = mapped_column(String(16), nullable=False)
+    io_type: Mapped[str] = mapped_column(String(16), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
     tags: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     created_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)

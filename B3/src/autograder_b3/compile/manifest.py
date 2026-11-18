@@ -958,3 +958,62 @@ def case_owner(cases: Sequence[TestCaseInternal]) -> UUID | None:
     if not cases:
         return None
     return cases[0].question_version_id
+
+
+ALLOWED_IO_TYPES_BY_LANGUAGE: dict[str, frozenset[str]] = {
+    "python": frozenset({"stdin", "file", "callable"}),
+    "bash": frozenset({"stdin", "file", "callable"}),
+}
+COURSE_EXPECTED_LANGUAGE_BY_CODE: dict[str, str] = {
+    "08": "python",
+    "07": "bash",
+}
+
+
+def resolve_question_io_type(declared_io_type: str | None, adapter_kind: str) -> str:
+    """Resolve and verify question-level io_type against adapter.kind."""
+    if adapter_kind not in ("stdin", "file", "callable"):
+        raise ManifestInvalid(
+            f"unsupported io_type / adapter.kind {adapter_kind!r}",
+            field="adapter.kind",
+        )
+    if declared_io_type is None:
+        return adapter_kind
+    if declared_io_type != adapter_kind:
+        raise ManifestInvalid(
+            f"io_type {declared_io_type!r} must equal adapter.kind {adapter_kind!r}",
+            field="io_type",
+        )
+    return declared_io_type
+
+
+def validate_course_language_io_type(
+    *,
+    language: str,
+    io_type: str,
+    course_code: str | None = None,
+    course_title: str | None = None,
+) -> None:
+    """Enforce the course <-> language <-> io_type matrix (D6)."""
+    allowed = ALLOWED_IO_TYPES_BY_LANGUAGE.get(language)
+    if allowed is None:
+        raise ManifestInvalid(f"unsupported language {language!r}", field="language")
+    if io_type not in allowed:
+        raise ManifestInvalid(
+            f"io_type {io_type!r} is not allowed for language {language!r}",
+            field="io_type",
+        )
+    expected_lang = COURSE_EXPECTED_LANGUAGE_BY_CODE.get((course_code or "").strip())
+    if expected_lang is None and course_title:
+        lowered = course_title.lower()
+        is_python = "python" in lowered
+        is_unix = "unix" in lowered or "linux" in lowered
+        if is_python and not is_unix:
+            expected_lang = "python"
+        elif is_unix and not is_python:
+            expected_lang = "bash"
+    if expected_lang is not None and language != expected_lang:
+        raise ManifestInvalid(
+            f"course requires language {expected_lang!r}, got {language!r}",
+            field="language",
+        )

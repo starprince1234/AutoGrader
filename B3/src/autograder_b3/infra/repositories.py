@@ -89,6 +89,7 @@ class QuestionBankRepository:
         title: str,
         stem_markdown: str,
         language: str,
+        io_type: str,
         status: str,
         tags: Sequence[str],
         created_by: uuid.UUID | None,
@@ -100,6 +101,7 @@ class QuestionBankRepository:
             title=title,
             stem_markdown=stem_markdown,
             language=language,
+            io_type=io_type,
             status=status,
             tags=list(tags),
             created_by=created_by,
@@ -119,6 +121,7 @@ class QuestionBankRepository:
         course_ids: Iterable[uuid.UUID] | None,
         course_id: uuid.UUID | None,
         language: str | None,
+        io_type: str | None = None,
         published_only: bool,
         limit: int,
         after: tuple[datetime, uuid.UUID] | None = None,
@@ -135,6 +138,8 @@ class QuestionBankRepository:
             statement = statement.where(Question.course_id == course_id)
         if language is not None:
             statement = statement.where(Question.language == language)
+        if io_type is not None:
+            statement = statement.where(Question.io_type == io_type)
         if query:
             # 片段检索（CHG-0030）：标题或题干**包含**该片段即可，大小写不敏感。
             # LIKE 的通配符必须转义，否则老师输入一个 `%` 就会把整库都捞出来。
@@ -171,32 +176,13 @@ class QuestionBankRepository:
         course_ids: Iterable[uuid.UUID] | None,
         course_id: uuid.UUID,
         published_only: bool,
-    ) -> tuple[int, int, int, list[tuple[str, int]]]:
-        """Counts for the tag-coverage read (``CHG-0020``).
-
-        Returns ``(total, tagged, untagged, tag_counts)``. Two aggregates over the same
-        visibility predicate, and the split matters:
-
-        * the totals are one row of ``count(*) FILTER`` clauses, so ``tagged`` and
-          ``untagged`` are counted from the rows themselves rather than derived by
-          subtraction -- which is what makes ``tagged + untagged == total`` a statement
-          about the data instead of about arithmetic done afterwards;
-        * the per-tag numbers come from expanding ``tags`` with
-          ``jsonb_array_elements_text`` and grouping, so a tag no question carries cannot
-          appear at all (``GROUP BY`` only yields groups that exist) and the order is
-          fixed here: count descending, then tag ascending.
-
-        Per-tag counts **overlap**: one question may carry up to 20 tags, so their sum
-        exceeds ``total`` whenever the bank reuses a topic. That is the declared reading,
-        not a defect. There is no pre-aggregated table: a second source of truth would
-        have to be maintained, and at one course's worth of questions it would buy
-        nothing (``CHG-0020`` §5).
-        """
+    ) -> tuple[int, int, int, list[tuple[str, int]], list[tuple[str, int]]]:
+        """Counts for the tag-coverage read (``CHG-0020``)."""
         filters = [Question.deleted_at.is_(None), Question.course_id == course_id]
         if course_ids is not None:
             scoped = list(course_ids)
             if not scoped:
-                return 0, 0, 0, []
+                return 0, 0, 0, [], [("stdin", 0), ("file", 0), ("callable", 0)]
             filters.append(Question.course_id.in_(scoped))
         if published_only:
             filters.append(Question.status == "published")
@@ -223,11 +209,19 @@ class QuestionBankRepository:
             .group_by(tag)
             .order_by(func.count().desc(), tag.asc())
         ).all()
+        per_type_rows = self.session.execute(
+            select(Question.io_type, func.count().label("question_count"))
+            .where(*filters)
+            .group_by(Question.io_type)
+        ).all()
+        type_counts = {str(row[0]): int(row[1]) for row in per_type_rows}
+        by_io_type = [(t, type_counts.get(t, 0)) for t in ("stdin", "file", "callable")]
         return (
             int(totals.total),
             int(totals.tagged),
             int(totals.untagged),
             [(row[0], int(row[1])) for row in per_tag],
+            by_io_type,
         )
 
     def update_question_content(

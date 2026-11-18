@@ -44,7 +44,6 @@ REVISION_DIFF_KEYS: frozenset[str] = frozenset(
         "fixtures_changed",
         "stem_length_before",
         "stem_length_after",
-        "adapter_kind_changed",
         "size_limits_changed",
         "reference_answer_digest_before",
         "reference_answer_digest_after",
@@ -139,7 +138,6 @@ def compute_revision_diff(
         **_presence("case_set_changed", "case_ordinals", previous, current),
         **_presence("weights_changed", "case_weights", previous, current),
         **_presence("fixtures_changed", "fixture_digests", previous, current),
-        **_presence("adapter_kind_changed", "adapter_kind", previous, current),
         **_presence("size_limits_changed", SIZE_LIMIT_FIELDS, previous, current),
         **_answer_digests(previous, current),
     }
@@ -167,8 +165,6 @@ def revision_note(diff: Mapping[str, Any] | None, supersedes: Any | None) -> str
         changes.append("fixtures")
     if diff["reference_answer_digest_before"] != diff["reference_answer_digest_after"]:
         changes.append("reference answer")
-    if diff["adapter_kind_changed"]:
-        changes.append("adapter kind")
     if diff["size_limits_changed"]:
         changes.append("size limits")
     if not changes:

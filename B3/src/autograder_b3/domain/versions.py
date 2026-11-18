@@ -122,6 +122,11 @@ def publish_version(
         manifest = content.manifest
         cases = content.cases
         fixtures = content.fixtures
+        if manifest.kind != question.io_type:
+            raise ManifestInvalid(
+                f"publish rejected: version adapter.kind {manifest.kind!r} does not match question io_type {question.io_type!r}",
+                field="adapter.kind",
+            )
         if not version.stem_markdown.strip():
             raise ProtectedContentMissing("publish rejected: the version has an empty stem")
 
@@ -145,10 +150,21 @@ def publish_version(
                 f"(found {len(public_cases)} public, {len(hidden_cases)} hidden)",
                 field="cases",
             )
+        has_expected_output_fixture = any(
+            fixture.mount == "expected_output" for fixture in fixtures
+        )
         hidden_without_expected = [
             case.name
             for case in hidden_cases
-            if case.expected_stdout is None and case.expected_stderr is None
+            if case.expected_stdout is None
+            and case.expected_stderr is None
+            and not (
+                manifest.kind == "file"
+                and (
+                    has_expected_output_fixture
+                    or bool((case.execution or {}).get("file_checks"))
+                )
+            )
         ]
         if execution_mode == "per_case" and hidden_without_expected:
             raise ManifestInvalid(
@@ -201,6 +217,7 @@ def publish_version(
             content_digest=content_digest,
             package_digest=package.package_digest,
             actor_role=",".join(sorted(actor.roles)),
+            io_type=question.io_type,
             adapter_kind=manifest.kind,
         )
         session.expunge(version)

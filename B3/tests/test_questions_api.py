@@ -2479,7 +2479,6 @@ def test_revision_note_and_diff_round_trip_through_http(client, auth_headers):
         "fixtures_changed",
         "stem_length_before",
         "stem_length_after",
-        "adapter_kind_changed",
         "size_limits_changed",
         "reference_answer_digest_before",
         "reference_answer_digest_after",
