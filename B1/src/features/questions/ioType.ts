@@ -5,7 +5,7 @@ export const IO_TYPE_OPTIONS: readonly IoType[] = ["stdin", "file", "callable"];
 const IO_TYPE_LABELS: Record<IoType, string> = {
   stdin: "命令行输入",
   file: "文件读取",
-  callable: "接口调用",
+  callable: "函数调用",
 };
 
 const IO_TYPE_DESCRIPTIONS: Record<IoType, string> = {

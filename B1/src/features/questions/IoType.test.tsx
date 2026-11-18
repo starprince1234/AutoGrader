@@ -11,7 +11,7 @@ describe("IoTypeBadge & IoSpecPanel", () => {
     expect(screen.getByTestId("b")).toHaveTextContent("文件读取");
 
     rerender(<IoTypeBadge ioType="callable" testId="b" />);
-    expect(screen.getByTestId("b")).toHaveTextContent("接口调用");
+    expect(screen.getByTestId("b")).toHaveTextContent("函数调用");
   });
 
   it("renders stdin, file (with visible attachments), and callable (python/bash) specs", () => {

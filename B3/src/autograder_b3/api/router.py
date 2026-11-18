@@ -651,7 +651,7 @@ def get_version_endpoint(request: Request, question_version_id: uuid.UUID) -> di
 def _visible_fixtures_of_version(dependencies: B3Dependencies, version) -> list:
     from ..infra.repositories import QuestionBankRepository
 
-    with dependencies.database.app_session() as session:
+    with dependencies.database.protected_session() as session:
         rows = QuestionBankRepository(session).list_visible_fixtures(version.question_version_id)
         for row in rows:
             session.expunge(row)
