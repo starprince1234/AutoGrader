@@ -82,6 +82,7 @@ function routes(
     roster?: string[];
     gradeRows?: GradeRow[];
     commentary?: ReturnType<typeof evaluationCommentary>;
+    exportFilename?: string;
   } = {},
 ): StubbedRoute[] {
   const roster = options.roster ?? [STUDENT_ONE, STUDENT_TWO, STUDENT_THREE];
@@ -144,7 +145,7 @@ function routes(
         binaryResponse({
           body: "student_number,score\n20260001,90\n",
           contentType: "text/csv",
-          filename: "grades.csv",
+          filename: options.exportFilename ?? "grades.csv",
         }),
     },
   ];
@@ -314,5 +315,79 @@ describe("P11 成绩筛选、身份关联、导出与深链", () => {
       expect(request?.url.searchParams.get("question_version_id")).toBe(UUID_A);
     });
     stub.restore();
+  });
+
+  it("R4：学号/姓名查询在授权名单内过滤并支持清空恢复；学生视图不显示查询框", async () => {
+    const teacher = await openGrades("teacher");
+    const queryInput = screen.getByTestId("grades-student-query");
+    expect(screen.getByText("张三")).toBeInTheDocument();
+    expect(screen.getByText("李四")).toBeInTheDocument();
+
+    await teacher.user.type(queryInput, "20260002");
+    expect(screen.queryByText("张三")).toBeNull();
+    expect(screen.getByText("李四")).toBeInTheDocument();
+
+    await teacher.user.clear(queryInput);
+    await teacher.user.type(queryInput, "张三");
+    expect(screen.getByText("张三")).toBeInTheDocument();
+    expect(screen.queryByText("李四")).toBeNull();
+
+    await teacher.user.clear(queryInput);
+    expect(screen.getByText("张三")).toBeInTheDocument();
+    expect(screen.getByText("李四")).toBeInTheDocument();
+    teacher.stub.restore();
+
+    const student = await openGrades("student");
+    expect(screen.queryByTestId("grades-student-query")).toBeNull();
+    student.stub.restore();
+  });
+
+  it("R4：导出覆盖整门课程（无 section_id），文件名含课程", async () => {
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:mock-r4");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+
+    const courseScope = await openGrades("teacher", {
+      exportFilename: "grades-OS-2026-all.csv",
+    });
+    await courseScope.user.click(screen.getByTestId("open-export"));
+    await courseScope.user.click(
+      within(await screen.findByTestId("export-drawer")).getByTestId("download-export"),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("export-success")).toHaveTextContent("grades-OS-2026-all.csv"),
+    );
+    const wholeCourseReq = courseScope.stub.requests
+      .filter((item) => item.url.pathname.endsWith("/grades/export"))
+      .at(-1);
+    expect(wholeCourseReq?.url.searchParams.get("course_id")).toBe(UUID_A);
+    expect(wholeCourseReq?.url.searchParams.get("section_id")).toBeNull();
+    courseScope.stub.restore();
+  });
+
+  it("R4：导出覆盖当前课序号与带时间/题目版本筛选，文件名含课程与课序号", async () => {
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:mock-r4-2");
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+
+    const filteredScope = await openGrades("teacher", {
+      exportFilename: "grades-OS-2026-01.xlsx",
+    });
+    await filteredScope.user.selectOptions(screen.getByLabelText("课序"), UUID_B);
+    await filteredScope.user.selectOptions(screen.getByLabelText("题目"), UUID_A);
+    await filteredScope.user.type(screen.getByLabelText("起始时间"), "2026-11-01");
+    await filteredScope.user.click(screen.getByTestId("open-export"));
+    await filteredScope.user.click(
+      within(await screen.findByTestId("export-drawer")).getByTestId("download-export"),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("export-success")).toHaveTextContent("grades-OS-2026-01.xlsx"),
+    );
+    const filteredReq = filteredScope.stub.requests
+      .filter((item) => item.url.pathname.endsWith("/grades/export"))
+      .at(-1);
+    expect(filteredReq?.url.searchParams.get("course_id")).toBe(UUID_A);
+    expect(filteredReq?.url.searchParams.get("section_id")).toBe(UUID_B);
+    expect(filteredReq?.url.searchParams.get("question_version_id")).toBe(UUID_A);
+    expect(filteredReq?.url.searchParams.get("from")).toBeTruthy();
+    filteredScope.stub.restore();
   });
 });

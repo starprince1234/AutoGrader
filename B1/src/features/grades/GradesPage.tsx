@@ -109,6 +109,7 @@ export function GradesPage({
   const [questionVersionId, setQuestionVersionId] = useState("");
   const [fromInput, setFromInput] = useState("");
   const [toInput, setToInput] = useState("");
+  const [studentQuery, setStudentQuery] = useState("");
   const [drilldownRunId, setDrilldownRunId] = useState<string | null>(initialRunId);
   const [tab, setTab] = useState<GradesTab>("detail");
   const [exportOpen, setExportOpen] = useState(false);
@@ -191,21 +192,29 @@ export function GradesPage({
   const identities = useGradeIdentities(sectionIds, cohortView);
 
   const displayRows = useMemo<DisplayRow[]>(() => {
-    const rows = loaded.map((row) => ({
-      row,
-      identity: cohortView
-        ? (identities.bySectionAndStudent.get(
-            identityKey(row.section_id ?? "", row.student_id),
-          ) ?? null)
-        : null,
-    }));
+    const query = cohortView ? studentQuery.trim().toLowerCase() : "";
+    const rows = loaded
+      .map((row) => ({
+        row,
+        identity: cohortView
+          ? (identities.bySectionAndStudent.get(
+              identityKey(row.section_id ?? "", row.student_id),
+            ) ?? null)
+          : null,
+      }))
+      .filter((entry) => {
+        if (!query) return true;
+        const number = (entry.identity?.studentNumber ?? entry.row.student_number ?? "").toLowerCase();
+        const name = (entry.identity?.displayName ?? entry.row.display_name ?? "").toLowerCase();
+        return number.includes(query) || name.includes(query);
+      });
     return rows.sort((a, b) => {
       const numberA = a.identity?.studentNumber ?? a.row.student_number ?? "";
       const numberB = b.identity?.studentNumber ?? b.row.student_number ?? "";
       if (numberA !== numberB) return numberA.localeCompare(numberB);
       return a.row.student_id.localeCompare(b.row.student_id);
     });
-  }, [loaded, identities.bySectionAndStudent, cohortView]);
+  }, [loaded, identities.bySectionAndStudent, cohortView, studentQuery]);
 
   const rowsForSummary = useMemo(() => loaded, [loaded]);
   const summary = useMemo(() => summarizeLoadedRows(rowsForSummary), [rowsForSummary]);
@@ -246,6 +255,7 @@ export function GradesPage({
     questionVersionId !== "" ||
     fromInput !== "" ||
     toInput !== "" ||
+    studentQuery.trim() !== "" ||
     activeRunId !== null;
 
   const clearFilters = () => {
@@ -253,6 +263,7 @@ export function GradesPage({
     setQuestionVersionId("");
     setFromInput("");
     setToInput("");
+    setStudentQuery("");
     if (activeRunId !== null) {
       setDrilldownRunId(null);
       onRunChange?.(null);
@@ -643,6 +654,7 @@ export function GradesPage({
                 setQuestionVersionId("");
                 setFromInput("");
                 setToInput("");
+                setStudentQuery("");
               }}
             >
               {courseOptions.length === 0 && effectiveCourseId === "" ? (
@@ -696,6 +708,17 @@ export function GradesPage({
                     </option>
                   ))}
                 </Select>
+              </Field>
+
+              <Field label="学号 / 姓名查询" htmlFor="grades-student-query">
+                <input
+                  id="grades-student-query"
+                  type="search"
+                  data-testid="grades-student-query"
+                  placeholder="输入学号或姓名"
+                  value={studentQuery}
+                  onChange={(event) => setStudentQuery(event.target.value)}
+                />
               </Field>
 
               <Field
