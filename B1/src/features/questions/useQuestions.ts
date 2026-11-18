@@ -9,6 +9,7 @@ import {
 } from "@tanstack/react-query";
 import { apiRequest } from "../../api/client";
 import type {
+  IoType,
   QuestionPage,
   QuestionPublic,
   QuestionTagCoverage,
@@ -28,6 +29,8 @@ export type QuestionListPage = { items: QuestionPublic[]; nextCursor: string | n
 export type QuestionListFilter = {
   /** 契约 `published_only` 默认为 `true`：新建的草稿默认不在列表里。 */
   publishedOnly: boolean;
+  /** IO 类型筛选：命令行输入 / 文件读取 / 接口调用。 */
+  ioType?: IoType;
   /** 契约 `tags`（`style: form, explode: true`）：**all-of** 匹配，不是 any-of。 */
   tags: string[];
   /**
@@ -76,6 +79,7 @@ export function useQuestionList(
     queryKey: [
       ...queryKeys.questions(courseId),
       filter.publishedOnly,
+      filter.ioType ?? "",
       filter.tags,
       filter.query ?? "",
     ] as const,
@@ -89,6 +93,7 @@ export function useQuestionList(
           limit: QUESTION_PAGE_SIZE,
           course_id: courseId ?? undefined,
           published_only: filter.publishedOnly,
+          ...(filter.ioType ? { io_type: filter.ioType } : {}),
           tags: filter.tags,
           // 片段检索：服务端对标题与题干做子串匹配，与其它筛选是"与"关系。
           ...(filter.query ? { q: filter.query } : {}),

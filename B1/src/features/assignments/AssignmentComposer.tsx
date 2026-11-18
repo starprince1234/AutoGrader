@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { t } from "../../i18n";
-import type { CreateAssignmentRequest, QuestionVersionSummary } from "../../api/types";
+import type { CreateAssignmentRequest, IoType, QuestionVersionSummary } from "../../api/types";
+import { IoTypeBadge } from "../questions/IoTypeBadge";
 import { isApiError } from "../../api/problem";
 import {
   courseLabel,
@@ -28,7 +29,7 @@ import "./composerLayout.css";
  * 另一门课的题目混进来，最终由服务端拒绝）。
  */
 
-type PublishedVersion = QuestionVersionSummary & { questionTitle: string };
+type PublishedVersion = QuestionVersionSummary & { questionTitle: string; ioType?: IoType };
 
 function localInputToIso(value: string): string | undefined {
   if (!value) return undefined;
@@ -97,7 +98,7 @@ export function AssignmentComposer({
       for (const question of page.items) {
         for (const version of question.versions ?? []) {
           if (version.status === "published") {
-            rows.push({ ...version, questionTitle: question.title });
+            rows.push({ ...version, questionTitle: question.title, ioType: question.io_type });
           }
         }
       }
@@ -397,7 +398,8 @@ export function AssignmentComposer({
                           }
                         />
                         <span>
-                          {version.questionTitle} · v{version.version}
+                          {version.questionTitle} · v{version.version}{" "}
+                          {version.ioType ? <IoTypeBadge ioType={version.ioType} /> : null}
                         </span>
                       </label>
                     </li>

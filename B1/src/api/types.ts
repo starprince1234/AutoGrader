@@ -27,6 +27,7 @@ export type ProblemDetails = CommonSchemas["ProblemDetails"];
 export type Role = CommonSchemas["Role"];
 export type CourseScope = CommonSchemas["CourseScope"];
 export type Language = CommonSchemas["Language"];
+export type IoType = CommonSchemas["IoType"];
 
 /* ------------------------------------------------------------------------ B4（身份） */
 

@@ -36,6 +36,7 @@ import {
 import { useStudentAssignmentProgress } from "../assignments/useAssignmentProgress";
 import { CommentarySection } from "../commentary/CommentarySection";
 import { SafeMarkdown } from "../questions/SafeMarkdown";
+import { IoSpecPanel, IoTypeBadge } from "../questions/IoTypeBadge";
 import { useQuestionAsset } from "../questions/useQuestionAsset";
 import { useQuestionVersionRows } from "../questions/useQuestions";
 import { EmailSubmissionPanel } from "./EmailSubmissionPanel";
@@ -686,6 +687,12 @@ export function AssignmentWorkspace({
                       {currentRow.question?.title ?? t("questions.titleUnavailable")}
                     </h2>
                     <span className="lc-lang-badge">{version.language}</span>
+                    {version.io_type ? (
+                      <IoTypeBadge
+                        ioType={version.io_type}
+                        testId="workspace-question-io-type"
+                      />
+                    ) : null}
                   </div>
                   {version.status !== "published" ? (
                     <Banner tone="warn" testId="workspace-version-not-published">
@@ -698,6 +705,16 @@ export function AssignmentWorkspace({
                       <StemAsset questionId={version.question_id} asset={asset} />
                     </div>
                   ))}
+                  {version.io_type ? (
+                    <IoSpecPanel
+                      ioType={version.io_type}
+                      language={version.language}
+                      questionVersionId={version.question_version_id}
+                      ioSpec={version.io_spec}
+                      visibleFixtures={version.visible_fixtures}
+                      testId="workspace-io-spec"
+                    />
+                  ) : null}
                 </div>
               )}
             </div>

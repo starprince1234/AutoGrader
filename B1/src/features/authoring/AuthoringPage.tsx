@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { t } from "../../i18n";
 import { courseLabel as formatCourseLabel, loadedCourses, useCourses } from "../../api/directory";
-import type { QuestionDraftProposal } from "../../api/types";
+import type { IoType, QuestionDraftProposal } from "../../api/types";
+import { IO_TYPE_OPTIONS, ioTypeDescription, ioTypeLabel } from "../questions/ioType";
+import { FixtureEditor } from "./FixtureEditor";
 import {
   Banner,
   ErrorState,
@@ -527,6 +529,31 @@ export function AuthoringPage({
                     ))}
                   </Select>
                 </Field>
+                <Field
+                  label="题目 IO 类型"
+                  htmlFor="authoring-io-type"
+                  hint={
+                    questionId !== null
+                      ? "题目 IO 类型创建后不可修改（如需更换类型请新建题目）。"
+                      : ioTypeDescription(form.adapterKind)
+                  }
+                >
+                  <Select
+                    id="authoring-io-type"
+                    data-testid="authoring-io-type"
+                    disabled={questionId !== null}
+                    value={form.adapterKind}
+                    onChange={(event) =>
+                      setForm({ ...form, adapterKind: event.target.value as IoType })
+                    }
+                  >
+                    {IO_TYPE_OPTIONS.map((opt) => (
+                      <option key={opt} value={opt}>
+                        {ioTypeLabel(opt)}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
                 <Field label={t("authoring.tags")} htmlFor="authoring-tags">
                   <input
                     id="authoring-tags"
@@ -548,6 +575,79 @@ export function AuthoringPage({
                 <Banner tone="warn" testId="authoring-tags-invalid">
                   {t("authoring.tagsInvalid", { tags: parsed.invalid.join(", ") })}
                 </Banner>
+              ) : null}
+
+              {form.adapterKind === "callable" ? (
+                <div className="form-grid" data-testid="authoring-callable-fields">
+                  <Field
+                    label="入口模块名"
+                    htmlFor="authoring-callable-module"
+                    hint={
+                      form.language === "python"
+                        ? "例如 main（对应提交文件 main.py）"
+                        : "例如 main（对应提交文件 main.sh，平台将 source ./main.sh）"
+                    }
+                  >
+                    <input
+                      id="authoring-callable-module"
+                      data-testid="authoring-callable-module"
+                      value={form.callableModule}
+                      placeholder="main"
+                      onChange={(event) =>
+                        setForm({ ...form, callableModule: event.target.value })
+                      }
+                    />
+                  </Field>
+                  <Field
+                    label={form.language === "python" ? "函数/可调用属性名" : "Shell 函数名"}
+                    htmlFor="authoring-callable-attribute"
+                  >
+                    <input
+                      id="authoring-callable-attribute"
+                      data-testid="authoring-callable-attribute"
+                      value={form.callableAttribute}
+                      placeholder="solve"
+                      onChange={(event) =>
+                        setForm({ ...form, callableAttribute: event.target.value })
+                      }
+                    />
+                  </Field>
+                  <Field
+                    label="默认调用参数（JSON 数组，可选）"
+                    htmlFor="authoring-callable-args"
+                  >
+                    <input
+                      id="authoring-callable-args"
+                      data-testid="authoring-callable-args"
+                      value={form.callableArgumentsJson}
+                      placeholder='["arg1", 2]'
+                      onChange={(event) =>
+                        setForm({ ...form, callableArgumentsJson: event.target.value })
+                      }
+                    />
+                  </Field>
+                </div>
+              ) : null}
+
+              {form.adapterKind === "file" ? (
+                <div className="stack" data-testid="authoring-file-fields">
+                  <FixtureEditor
+                    versionId={savedVersionId ?? (newestVersionStatus === "draft" ? newestVersionId : null)}
+                    questionId={questionId}
+                    fixtures={form.fixtures}
+                    onChange={(fixtures) => setForm({ ...form, fixtures })}
+                    disabled={
+                      (savedVersionId ?? (newestVersionStatus === "draft" ? newestVersionId : null)) ===
+                      null
+                    }
+                    disabledReason={
+                      newestVersionStatus === "published" && savedVersionId === null
+                        ? "已发布版本不可修改附件，请先保存为新版本草稿后再上传。"
+                        : "请先保存草稿生成版本后，再上传输入/期望输出附件。"
+                    }
+                    onlyInputMounts={false}
+                  />
+                </div>
               ) : null}
               {questionId === null && (courses.hasNextPage || courses.isFetchingNextPage) ? (
                 // 只在还有下一页时给入口；到末页什么都不显示（不再出现「已到末页」那行字）。

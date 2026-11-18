@@ -21,7 +21,9 @@ import {
 } from "../../ui/components";
 import { Select } from "../../ui/Select";
 import { Toast } from "../../ui/Toast";
-import type { QuestionPublic, QuestionVersionBatchResult } from "../../api/types";
+import type { IoType, QuestionPublic, QuestionVersionBatchResult } from "../../api/types";
+import { IO_TYPE_OPTIONS, ioTypeLabel } from "./ioType";
+import { IoTypeBadge } from "./IoTypeBadge";
 import type { QuestionListPage as QuestionListPageData } from "./useQuestions";
 import { usePublishQuestionVersion, useVerifyReferenceAnswer } from "../authoring/useAuthoring";
 import { QuestionCoveragePanel } from "./QuestionCoveragePanel";
@@ -183,6 +185,7 @@ export function QuestionListPage() {
   const [stemQuery, setStemQuery] = useState("");
   // 2.0/3.1：发布状态筛选。默认「全部状态」：题库首页要能一次看到自己所有的题（含草稿）。
   const [publishedState, setPublishedState] = useState<"all" | "published" | "draft">("all");
+  const [ioTypeFilter, setIoTypeFilter] = useState<"" | IoType>("");
 
   const verify = useVerifyReferenceAnswer();
   const publish = usePublishQuestionVersion();
@@ -242,6 +245,7 @@ export function QuestionListPage() {
     {
       // 契约只有 published_only 布尔量：只有"已发布"这一档能在请求上表达。
       publishedOnly: publishedState === "published",
+      ...(ioTypeFilter !== "" ? { ioType: ioTypeFilter } : {}),
       tags: tagValue === "" ? [] : [tagValue],
       query: debouncedStemQuery.trim(),
     },
@@ -590,6 +594,25 @@ export function QuestionListPage() {
               <option value="draft">{t("questions.stateDraft")}</option>
             </Select>
           </Field>
+          <Field label="IO 类型" htmlFor="question-io-type-filter">
+            <Select
+              id="question-io-type-filter"
+              value={ioTypeFilter}
+              onChange={(event) => {
+                const next = event.target.value;
+                setIoTypeFilter(
+                  next === "stdin" || next === "file" || next === "callable" ? next : "",
+                );
+              }}
+            >
+              <option value="">全部类型</option>
+              {IO_TYPE_OPTIONS.map((opt) => (
+                <option key={opt} value={opt}>
+                  {ioTypeLabel(opt)}
+                </option>
+              ))}
+            </Select>
+          </Field>
           <Field label={t("questions.tagFilter")} htmlFor="question-tag-filter">
             <Select
               id="question-tag-filter"
@@ -812,6 +835,16 @@ export function QuestionListPage() {
                 key: "language",
                 header: t("questions.language"),
                 render: (row) => t(`questions.language.${row.language}`),
+              },
+              {
+                key: "io_type",
+                header: "IO 类型",
+                render: (row) =>
+                  row.io_type ? (
+                    <IoTypeBadge ioType={row.io_type} />
+                  ) : (
+                    <span className="muted">未指定</span>
+                  ),
               },
               {
                 key: "status",

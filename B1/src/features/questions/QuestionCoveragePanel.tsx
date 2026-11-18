@@ -2,6 +2,7 @@ import { t } from "../../i18n";
 import { isApiError } from "../../api/problem";
 import type { QuestionTagCoverage, TagCoverageRow } from "../../api/types";
 import { Banner, Panel, Spinner, StatusPill, Table } from "../../ui/components";
+import { ioTypeLabel, ioTypeTone } from "./ioType";
 import { useQuestionCoverage } from "./useQuestions";
 
 /**
@@ -138,6 +139,20 @@ function CoverageBody({
           tone="warn"
         />
       </div>
+
+      {(coverage.by_io_type?.length ?? 0) > 0 && (
+        <div className="count-grid" data-testid="coverage-by-io-type">
+          {coverage.by_io_type?.map((entry) => (
+            <CoverageCount
+              key={entry.io_type}
+              label={ioTypeLabel(entry.io_type)}
+              value={entry.question_count}
+              testId={`coverage-io-${entry.io_type}`}
+              tone={ioTypeTone(entry.io_type)}
+            />
+          ))}
+        </div>
+      )}
 
       <CoverageTags coverage={coverage} onSelectTag={onSelectTag} />
     </div>

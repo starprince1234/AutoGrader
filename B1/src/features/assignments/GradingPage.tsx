@@ -20,6 +20,7 @@ import {
   Table,
 } from "../../ui/components";
 import { SafeMarkdown } from "../questions/SafeMarkdown";
+import { IoTypeBadge } from "../questions/IoTypeBadge";
 import { useQuestionVersionRows } from "../questions/useQuestions";
 import { GradeDrilldown } from "../grades/GradeDrilldown";
 import { answerFileName } from "../submission/validation";
@@ -673,6 +674,12 @@ export function GradingPage({
                     <span className="muted">
                       {t(`questions.language.${currentRow?.version?.language ?? "python"}`)}
                     </span>
+                    {currentRow?.question?.io_type ? (
+                      <IoTypeBadge
+                        ioType={currentRow.question.io_type}
+                        testId="grading-question-io-type"
+                      />
+                    ) : null}
                   </div>
                   <h2 className="panel__title" data-testid="grading-question-title">
                     {currentRow?.question?.title ?? t("questions.titleUnavailable")}

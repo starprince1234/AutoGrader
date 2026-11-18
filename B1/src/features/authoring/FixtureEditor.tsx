@@ -53,6 +53,7 @@ export function FixtureEditor({
   const inputRef = useRef<HTMLInputElement>(null);
   const [path, setPath] = useState("");
   const [mount, setMount] = useState<FixtureMount>("input");
+  const [studentVisible, setStudentVisible] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
 
@@ -93,7 +94,12 @@ export function FixtureEditor({
       }
       const base64 = result.slice(result.indexOf(",") + 1);
       upload.mutate(
-        { path, mount, student_visible: false, content_base64: base64 },
+        {
+          path,
+          mount,
+          student_visible: mount === "input" ? studentVisible : false,
+          content_base64: base64,
+        },
         {
           onSuccess: (fixture) => {
             onChange([
@@ -148,6 +154,17 @@ export function FixtureEditor({
           </Select>
         </Field>
       </div>
+      {mount === "input" && (
+        <label className="inline" style={{ cursor: "pointer" }}>
+          <input
+            type="checkbox"
+            checked={studentVisible}
+            data-testid="fixture-student-visible"
+            onChange={(event) => setStudentVisible(event.target.checked)}
+          />
+          <span>学生可见样例附件（允许学生在题目页与作答页下载）</span>
+        </label>
+      )}
       <p className="muted">{t("authoring.fixture.pathHint")}</p>
 
       <div className="inline">

@@ -1485,7 +1485,6 @@ export interface components {
             /** @description The version's digest at the moment of verification. The attestation binds to it, so editing the question invalidates the record. */
             content_digest: components["schemas"]["Sha256"];
             language: components["schemas"]["Language"];
-            io_type?: components["schemas"]["IoType"];
             /**
              * @description Taken from the version's own declaration, never inferred from the reference answer.
              * @enum {string}
@@ -2099,16 +2098,6 @@ export interface components {
          * @enum {string}
          */
         Language: "python" | "bash";
-        /**
-         * @description Question I/O specification (RQ-B-3-40/50/60):
-         *     - `stdin`: command-line arguments + standard input
-         *     - `file`: workspace input/output files
-         *     - `callable`: module/function imported (python) or sourced (bash) by platform harness
-         *     Immutable per question and equal to every version's `adapter.kind`.
-         *     Course-language-type matrix: PYTHON course -> `python`, UNIX course -> `bash`; all three types are open for both courses.
-         * @enum {string}
-         */
-        IoType: "stdin" | "file" | "callable";
     };
     responses: {
         /** @description Missing, malformed or expired credentials. Does not reveal whether the principal exists. */

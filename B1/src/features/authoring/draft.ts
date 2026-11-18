@@ -1135,6 +1135,7 @@ export function buildDraftInput(
         title: form.title,
         stem_markdown: form.stemMarkdown,
         language: form.language,
+        io_type: form.adapterKind,
         adapter,
         ...referencePayload,
         ...(cases === null ? {} : { cases }),

@@ -16,6 +16,7 @@ import {
 } from "../../ui/components";
 import { useDraftContent, usePublishQuestionVersion } from "../authoring/useAuthoring";
 import { SafeMarkdown } from "./SafeMarkdown";
+import { IoSpecPanel, IoTypeBadge } from "./IoTypeBadge";
 import { useDeleteQuestionVersion, useQuestion, useQuestionVersion } from "./useQuestions";
 
 /**
@@ -95,6 +96,9 @@ export function QuestionDetailPage({
         <span className="muted">
           {t("questions.language")}：{t(`questions.language.${shown.language}`)}
         </span>
+        {shown.io_type ? (
+          <IoTypeBadge ioType={shown.io_type} testId="question-io-type-badge" />
+        ) : null}
         <StatusPill
           tone={
             shown.status === "published" ? "ok" : shown.status === "draft" ? "warn" : "idle"
@@ -148,6 +152,16 @@ export function QuestionDetailPage({
       <Panel title={t("questions.stemTitle")} testId="question-stem">
         <SafeMarkdown source={shown.stem_markdown} testId="question-stem-body" />
       </Panel>
+
+      {(version.data?.io_type ?? shown.io_type) ? (
+        <IoSpecPanel
+          ioType={version.data?.io_type ?? shown.io_type}
+          language={version.data?.language ?? shown.language}
+          questionVersionId={version.data?.question_version_id ?? effectiveId}
+          ioSpec={version.data?.io_spec}
+          visibleFixtures={version.data?.visible_fixtures}
+        />
+      ) : null}
 
       {/* 「提交答案」原本长在版本卡里；版本卡删除后仍保留这个入口。作答现在是「作业范围内提交」，
           所以只把学生带到「我的作业」，不再直接链到 /submit。 */}
