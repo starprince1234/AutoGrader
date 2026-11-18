@@ -1,5 +1,4 @@
 import { t } from "../i18n";
-import { ThemeToggle } from "../ui/ThemeToggle";
 import { useCurrentUser } from "../api/currentUser";
 import { useSession } from "../auth/sessionContext";
 import { GooeyButton } from "../ui/components";
@@ -32,7 +31,6 @@ export function AccountMenu({
         {isStudentOnly && displayName ? ` ${displayName}` : ""}
         {isStudentOnly && studentNumber ? ` (${studentNumber})` : ""}
       </span>
-      <ThemeToggle />
       <GooeyButton
         className="account__logout"
         data-testid="account-logout"

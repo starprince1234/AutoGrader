@@ -24,6 +24,7 @@ import { AuthLayout } from "./AuthLayout";
 import { isMainNavActive, mainNavIndex, mainNavItems, type MainNavItem } from "./navigation";
 import { Drawer } from "../ui/components";
 import { GeminiGlow } from "../ui/GeminiGlow";
+import { ThemeToggle } from "../ui/ThemeToggle";
 
 /** 不需要登录的路径：导览页、注册、忘记密码，以及只做重定向的旧 `/login`。 */
 const PUBLIC_PATHS = new Set(["/", "/login", "/register", "/forgot-password"]);
@@ -241,9 +242,10 @@ export function AppShell() {
             <span />
           </span>
         </button>
-        <Link to="/assignments" className="app-brand">
+        <Link to="/assignments" className="app-brand" style={{ fontSize: "1.75rem" }}>
           {t("app.brand")}
         </Link>
+        <ThemeToggle />
         <div className="app-header__spacer" />
         <AccountMenu signingOut={signingOut} onSignOut={switchAccount} />
       </header>
