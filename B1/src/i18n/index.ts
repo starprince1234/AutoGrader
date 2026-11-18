@@ -1946,6 +1946,8 @@ export const messages = {
     "opsLogs.tab.audit": "审计记录",
     "opsLogs.overview.lastLog": "最近日志",
     "opsLogs.overview.noLogs": "暂无日志",
+    "opsLogs.overview.eventDriven": "按需触发",
+    "opsLogs.overview.eventDrivenHint": "事件驱动（仅在调用一致性审计时产生日志，暂无日志属正常）",
     "opsLogs.overview.silentAlert": "静默 {minutes} 分钟",
     "opsLogs.overview.warn1h": "近 1h 警告",
     "opsLogs.overview.error1h": "近 1h 错误",

@@ -212,23 +212,33 @@ export function OpsLogsPage({
 
               <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "1rem" }}>
                 {summaryQuery.data.modules.map((mod) => {
-                  const isSilent = mod.silent_minutes !== null && mod.silent_minutes >= 60;
+                  const isEventDriven = mod.producer === "B5";
+                  const isSilent = !isEventDriven && mod.silent_minutes !== null && mod.silent_minutes >= 60;
                   return (
                     <Panel key={mod.producer} title={mod.producer} testId={`ops-module-card-${mod.producer}`}>
                       <div className="inline" style={{ justifyContent: "space-between", marginBottom: "0.5rem" }}>
                         <StatusPill tone={mod.ready ? "ok" : "bad"}>
                           {mod.ready ? "ready" : "not-ready"}
                         </StatusPill>
-                        {isSilent && (
-                          <StatusPill tone="bad">
-                            {t("opsLogs.overview.silentAlert", { minutes: mod.silent_minutes ?? 0 })}
+                        {isEventDriven ? (
+                          <StatusPill tone="idle">
+                            {t("opsLogs.overview.eventDriven")}
                           </StatusPill>
+                        ) : (
+                          isSilent && (
+                            <StatusPill tone="bad">
+                              {t("opsLogs.overview.silentAlert", { minutes: mod.silent_minutes ?? 0 })}
+                            </StatusPill>
+                          )
                         )}
                       </div>
                       <p className="muted">
                         {t("opsLogs.overview.lastLog")}:{" "}
                         {mod.last_log_at ? formatDateTime(mod.last_log_at, "-") : t("opsLogs.overview.noLogs")}
                       </p>
+                      {isEventDriven && !mod.last_log_at && (
+                        <p className="muted">{t("opsLogs.overview.eventDrivenHint")}</p>
+                      )}
                       <p className="muted">
                         {t("opsLogs.overview.warn1h")}: {mod.warn_1h} / {t("opsLogs.overview.error1h")}: {mod.error_1h}
                       </p>

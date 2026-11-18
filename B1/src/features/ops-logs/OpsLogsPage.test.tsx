@@ -48,6 +48,17 @@ vi.mock("./api", () => ({
         ready: true,
         silent_minutes: 2,
       },
+      {
+        producer: "B5",
+        last_log_at: null,
+        warn_1h: 0,
+        error_1h: 0,
+        warn_24h: 0,
+        error_24h: 0,
+        total_24h: 0,
+        ready: true,
+        silent_minutes: 120,
+      },
     ],
     dropped_total: 0,
     db_degraded: false,
@@ -159,6 +170,9 @@ describe("OpsLogsPage and visibility", () => {
     await waitFor(() => {
       expect(screen.getByTestId("ops-module-card-B1")).toBeInTheDocument();
       expect(screen.getByTestId("ops-module-card-B2")).toBeInTheDocument();
+      const b5Card = screen.getByTestId("ops-module-card-B5");
+      expect(b5Card).toHaveTextContent("按需触发");
+      expect(b5Card).not.toHaveTextContent("静默 120 分钟");
     });
 
     await user.click(screen.getByTestId("ops-logs-tab-search"));
