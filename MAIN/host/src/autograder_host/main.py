@@ -37,6 +37,7 @@ from autograder_host.logs import (
     normalize_uuid,
     reset_request_context,
 )
+from autograder_host.logs.router import build_ops_logs_router, install_ops_log_exception_handler
 
 _host_logger = logging.getLogger("autograder_host")
 
@@ -239,6 +240,8 @@ def create_app() -> FastAPI:
     app.state.contexts = contexts
     for module in modules:
         app.include_router(module.router(contexts[module.descriptor.module]))
+    app.include_router(build_ops_logs_router())
+    install_ops_log_exception_handler(app)
 
     # App-level hooks run after every router is included. Order is the capability order,
     # so it is deterministic; see PlatformModule.configure_app for why a shared exception

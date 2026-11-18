@@ -119,7 +119,8 @@ FORBIDDEN_KEY_FRAGMENTS: tuple[str, ...] = (
     "databaseurl",
     "sqlalchemyurl",
     "source",
-    "code",
+    "sourcecode",
+    "studentcode",
     "referenceanswer",
     "answerkey",
     "hiddencase",
@@ -211,6 +212,8 @@ def sanitize_text(value: str, *, max_length: int = MAX_FIELD_STRING_LENGTH, chec
 
 def _is_forbidden_key(key: str) -> bool:
     norm = "".join(ch for ch in key.lower() if ch.isalnum())
+    if norm == "code":
+        return True
     return any(frag in norm for frag in FORBIDDEN_KEY_FRAGMENTS)
 
 
