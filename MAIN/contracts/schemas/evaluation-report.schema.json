@@ -21,6 +21,7 @@
     "evaluation_run_id": { "type": "string", "format": "uuid" },
     "submission_id": { "type": "string", "format": "uuid" },
     "question_version_id": { "type": "string", "format": "uuid" },
+    "io_type": { "type": "string", "enum": ["stdin", "file", "callable"] },
     "state": {
       "type": "string",
       "enum": ["completed", "rejected", "failed"],

@@ -12,6 +12,24 @@
 
 ---
 
+## 0.42.0 — 题目 IO 类型（`io_type`）与可见附件 / 用例级文件
+
+- **类型**：题目级不可变类型 + 附件可见性 + 用例级文件 + 废弃 `adapter_kind_changed` 移除
+- **状态**：有效
+- **变更**：
+  - 新增 `schemas/io-type.schema.json` 与 `common.yaml#/components/schemas/IoType`（`stdin | file | callable`）。
+  - `schemas/evaluation-package.schema.json`：`adapter.files[]` 新增 `student_visible`（默认 `false`）；`tests[]` 新增可选 `files`（用例级输入/期望产出文件）；`adapter.callable` 明确 bash `source` 约定。
+  - `schemas/evaluation-report.schema.json`：新增可选 `io_type`。
+  - `openapi/b3.yaml`：
+    - `QuestionPublic`、`QuestionVersionPublic`、`QuestionLearningContext` 新增 `io_type`；`QuestionVersionPublic` 新增 `visible_fixtures`、`io_spec`；`QuestionDraftInput` 支持可选 `io_type`（必须等于 `adapter.kind`）；
+    - `listQuestions` 新增 `io_type` 过滤参数；`QuestionTagCoverage` 新增 `by_io_type` 分组统计；
+    - `AssignmentPublic` 新增 `question_items`（含 `question_version_id`, `question_id`, `title`, `language`, `io_type`）；
+    - `FixtureUploadInput` / `FixtureUploadResult` / `FixtureContentItem` 新增 `student_visible` 与可选 `test_case_id`；`TestCaseInput` 新增可选 `files`；
+    - 新增 `GET /api/v1/question-versions/{question_version_id}/fixtures/{fixture_id}/download`（仅下载 `student_visible=true` 的 `input` 附件）；
+    - **移除** `RevisionDiff.adapter_kind_changed`（改为新建版本变更 `adapter.kind` 直接拒绝）。
+  - `openapi/b2.yaml`：`ReferenceVerification` 增加 `io_type`。
+  - 全部契约版本同步至 `0.42.0`。
+
 ## 0.41.0 — 统一日志中心契约（`log-record.schema.json` 与 `openapi/ops.yaml`）
 
 - **类型**：最小新增（新增共享日志信封 schema 与 `ops` OpenAPI 契约，无破坏性字段删除）

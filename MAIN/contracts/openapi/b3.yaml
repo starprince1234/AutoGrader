@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AutoGrader B3 Question Bank API
-  version: 0.41.0
+  version: 0.42.0
   description: |
     Question bank: stems with graphics, reference answers, immutable question
     versions, assignments, three test-suite adapters and de-identified statistics.
@@ -1878,7 +1878,8 @@ components:
         language: {$ref: './common.yaml#/components/schemas/Language'}
         io_type: {$ref: './common.yaml#/components/schemas/IoType'}
         adapter_kind:
-          $ref: './common.yaml#/components/schemas/IoType'
+          type: string
+          enum: [stdin, file, callable]
           description: "Which of the three test frameworks the version uses (RQ-B-3-40/50/60). Must equal question io_type."
         visible_fixtures:
           type: array

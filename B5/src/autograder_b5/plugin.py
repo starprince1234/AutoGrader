@@ -23,12 +23,13 @@ from .api import install_error_handlers, router as conformance_router
 from .config import Settings, current_settings, set_settings
 from .contracts import contract_paths
 from .errors import B5Error
+from .logging import configure_logging
 
 
 class B5Module:
     descriptor = ModuleDescriptor(
         module="B5",
-        contract_version="0.40.0",
+        contract_version="0.42.0",
         provides=("b5-conformance",),
         # `b4-auth` because the contract's endpoint is bearer-protected and B5 verifies the
         # token locally. `b2-submissions` / `b3-questions` because the report is *about* the
@@ -42,6 +43,7 @@ class B5Module:
     )
 
     def router(self, context) -> APIRouter:
+        configure_logging()
         set_settings(_settings_from(context))
         return conformance_router
 

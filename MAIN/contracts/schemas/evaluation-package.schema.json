@@ -108,14 +108,15 @@
             "properties": {
               "path": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$", "maxLength": 200 },
               "content_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-              "mount": { "type": "string", "enum": ["input", "expected_output"] }
+              "mount": { "type": "string", "enum": ["input", "expected_output"] },
+              "student_visible": { "type": "boolean", "default": false }
             },
             "additionalProperties": false
           }
         },
         "callable": {
           "type": "object",
-          "description": "Entry point resolved inside the workspace (relevant for kind=callable). Loading from arbitrary absolute paths or over the network is forbidden.",
+          "description": "Entry point resolved inside the workspace (relevant for kind=callable). For Python, module is dotted module name and attribute is callable name; for bash, module is script basename (e.g. 'main' -> main.sh) and attribute is shell function name. Loading from arbitrary absolute paths or over the network is forbidden.",
           "required": ["module", "attribute"],
           "properties": {
             "module": { "type": "string", "maxLength": 200 },
@@ -145,6 +146,21 @@
           "expected_stdout": { "type": ["string", "null"] },
           "expected_stderr": { "type": ["string", "null"] },
           "expected_exit_code": { "type": ["integer", "null"] },
+          "files": {
+            "type": "array",
+            "description": "Per-case input or expected_output fixtures for this case only. Materialised into the sandbox for this case without leaking to other cases.",
+            "items": {
+              "type": "object",
+              "required": ["path", "content_sha256", "mount"],
+              "properties": {
+                "path": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$", "maxLength": 200 },
+                "content_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+                "mount": { "type": "string", "enum": ["input", "expected_output"] },
+                "student_visible": { "type": "boolean", "default": false }
+              },
+              "additionalProperties": false
+            }
+          },
           "segment": {
             "type": "integer",
             "minimum": 0,

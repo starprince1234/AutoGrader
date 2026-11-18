@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autograder.local/contracts/io-type.schema.json",
+  "title": "Question I/O type",
+  "description": "The three I/O specifications a question must belong to (RQ-B-3-40/50/60): stdin (argv + stdin), file (workspace input/output files), callable (module/function imported or sourced by harness). Immutable at the question level and equal to version adapter.kind.",
+  "type": "string",
+  "enum": ["stdin", "file", "callable"]
+}
