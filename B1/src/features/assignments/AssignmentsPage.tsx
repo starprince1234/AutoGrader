@@ -282,7 +282,7 @@ function TeacherAssignmentList({
           key: "due_at",
           header: t("assignments.col.due"),
           render: (row) => (
-            <span className="stack" data-testid={`due-${row.assignment_id}`}>
+            <span className="stack" style={{ gap: 2 }} data-testid={`due-${row.assignment_id}`}>
               <span className="muted">
                 {t("assignments.windowStart")}：
                 {formatDateTime(row.created_at, t("common.none"))}
