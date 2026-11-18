@@ -168,6 +168,11 @@ export function AssignmentWorkspace({
   );
 
   const versions = assignment.question_version_ids;
+  const assignmentEnded =
+    assignment.status !== "open" ||
+    (assignment.due_at !== null &&
+      assignment.due_at !== undefined &&
+      Date.parse(assignment.due_at) <= Date.now());
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(() => {
     if (initialQuestionVersionId !== null && versions.includes(initialQuestionVersionId)) {
       return initialQuestionVersionId;
@@ -673,10 +678,18 @@ export function AssignmentWorkspace({
               {currentRow === null ? (
                 <p className="muted">{t("assignments.noVersions")}</p>
               ) : currentRow.error ? (
-                <ErrorState
-                  error={currentRow.error}
-                  testId={`workspace-version-error-${currentOrdinal}`}
-                />
+                isApiError(currentRow.error) && currentRow.error.status === 403 ? (
+                  <Banner tone="warn" testId="workspace-version-unpublished">
+                    {assignmentEnded
+                      ? t("workspace.assignmentEnded")
+                      : t("submit.versionNotPublished")}
+                  </Banner>
+                ) : (
+                  <ErrorState
+                    error={currentRow.error}
+                    testId={`workspace-version-error-${currentOrdinal}`}
+                  />
+                )
               ) : currentRow.isPending || version === null ? (
                 <InlineLoader />
               ) : (
