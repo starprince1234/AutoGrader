@@ -9,6 +9,7 @@
 | [ADR-0003](ADR-0003-public-internal-dto-separation.md) | 公开/内部 DTO 分离与受保护字段永不外泄 | `接受` | `RQ-B-3-10` |
 | [ADR-0004](ADR-0004-public-internal-dto-module-boundary.md) | 公开/内部 DTO 模块边界冻结与序列化白名单 | `接受`（2026-09-15 冻结） | `RQ-B-3-10`、`RQ-B-3-20` |
 | [ADR-0005](ADR-0005-package-compiler-and-adapter-interface-freeze.md) | package 编译器签名与 adapter 转换接口冻结 | `接受`（2026-09-15 冻结） | `RQ-B-3-40/50/60` |
+| [ADR-0006](ADR-0006-immutable-question-io-type.md) | 题目级 `io_type` 等于 `adapter.kind` 且创建后不可变 | `接受` | `RQ-B-3-40/50/60` |
 
 - ADR-0001/0002/0003 原为 `提议`，2026-09-15 随 WP-B3-A/B 实现落地转为 `接受`：三条决策均**不使用** MAIN 未授权的扩展（package 结构、事件 subject、DTO 字段一律以 `MAIN/contracts/**` 为准），因此不需要契约变更即可接受。
 - ADR-0004/0005 是 `workpackages.md` 三个"待冻结"串行点的冻结结果，具体签名见 [../collaboration/frozen-interfaces.md](../collaboration/frozen-interfaces.md)。
