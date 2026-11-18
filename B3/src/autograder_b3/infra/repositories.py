@@ -849,6 +849,27 @@ class QuestionBankRepository:
         )
         return self.session.execute(statement).first() is not None
 
+    def assignment_question_items(
+        self, version_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, tuple[uuid.UUID, str, str, str]]:
+        if not version_ids:
+            return {}
+        rows = self.session.execute(
+            select(
+                QuestionVersion.question_version_id,
+                Question.question_id,
+                Question.title,
+                QuestionVersion.language,
+                Question.io_type,
+            )
+            .join(Question, Question.question_id == QuestionVersion.question_id)
+            .where(QuestionVersion.question_version_id.in_(list(version_ids)))
+        ).all()
+        return {
+            row.question_version_id: (row.question_id, row.title, row.language, row.io_type)
+            for row in rows
+        }
+
 
 class ProtectedContentRepository:
     """Protected reads/writes. Requires the internal database role."""

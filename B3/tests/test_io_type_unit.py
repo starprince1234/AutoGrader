@@ -250,3 +250,36 @@ def test_compile_package_and_content_digest_include_visibility_and_case_files() 
     cw = content_wire(vc)
     assert any(f.get("student_visible") is True for f in cw["fixtures"])
     assert any(f.get("test_case_id") == str(cid) for f in cw["fixtures"])
+
+
+def test_assignment_serializer_includes_question_items_with_io_type() -> None:
+    from autograder_b3.api.serializers import assignment_to_public
+    from autograder_b3.dto.public import AssignmentQuestionItemPublic
+
+    now = datetime.now(UTC)
+    aid = uuid.uuid4()
+    cid = uuid.uuid4()
+    vid = uuid.uuid4()
+    qid = uuid.uuid4()
+    row = SimpleNamespace(
+        assignment_id=aid,
+        course_id=cid,
+        title="Sample Assignment",
+        status="open",
+        due_at=None,
+        notification_state="scheduled",
+        created_at=now,
+        updated_at=now,
+    )
+    items = [
+        AssignmentQuestionItemPublic(
+            question_version_id=vid,
+            question_id=qid,
+            title="File Task",
+            language="bash",
+            io_type="file",
+        )
+    ]
+    pub = serialize_public(assignment_to_public(row, [vid], ((), ()), items))
+    assert pub["question_items"][0]["io_type"] == "file"
+    assert pub["question_items"][0]["language"] == "bash"

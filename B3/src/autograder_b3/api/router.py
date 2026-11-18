@@ -855,7 +855,7 @@ def download_fixture_endpoint(
         principal=context.principal,
         question_version_id=question_version_id,
         fixture_id=fixture_id,
-        authorization_directory=dependencies.authorization_directory,
+        authorization_directory=dependencies.b4_authorization,
     )
     filename = PurePosixPath(path).name
     return Response(
@@ -1036,7 +1036,40 @@ def reference_answer_endpoint(request: Request, question_version_id: uuid.UUID) 
 # --------------------------------------------------------------------------
 
 
-def _assignment_public(view: AssignmentView, *, reader: Principal | None) -> AssignmentPublic:
+def _assignment_question_items(
+    dependencies: B3Dependencies, version_ids: tuple[uuid.UUID, ...] | list[uuid.UUID]
+) -> list:
+    from ..dto.public import AssignmentQuestionItemPublic
+    from ..infra.repositories import QuestionBankRepository
+
+    if not version_ids:
+        return []
+    with dependencies.database.app_session() as session:
+        mapping = QuestionBankRepository(session).assignment_question_items(list(version_ids))
+    items = []
+    for vid in version_ids:
+        entry = mapping.get(vid)
+        if entry is None:
+            continue
+        qid, title, language, io_type = entry
+        items.append(
+            AssignmentQuestionItemPublic(
+                question_version_id=vid,
+                question_id=qid,
+                title=title,
+                language=language,  # type: ignore[arg-type]
+                io_type=io_type,  # type: ignore[arg-type]
+            )
+        )
+    return items
+
+
+def _assignment_public(
+    view: AssignmentView,
+    *,
+    reader: Principal | None,
+    dependencies: B3Dependencies | None = None,
+) -> AssignmentPublic:
     """Project one assignment view for the caller who is reading it.
 
     The ordered question list and the target are passed explicitly because both live in
@@ -1053,8 +1086,16 @@ def _assignment_public(view: AssignmentView, *, reader: Principal | None) -> Ass
     if _is_student_reader(reader):
         own = _principal_uuid(reader)
         student_ids = tuple(item for item in student_ids if item == own)
+    q_items = (
+        _assignment_question_items(dependencies, view.question_version_ids)
+        if dependencies is not None
+        else []
+    )
     return assignment_to_public(
-        view.assignment, list(view.question_version_ids), (section_ids, student_ids)
+        view.assignment,
+        list(view.question_version_ids),
+        (section_ids, student_ids),
+        q_items,
     )
 
 
@@ -1106,7 +1147,7 @@ def list_assignments_endpoint(
         directory=dependencies.b4_authorization,
         after=after,
     )
-    items = [serialize_public(_assignment_public(view, reader=context.principal)) for view in views]
+    items = [serialize_public(_assignment_public(view, reader=context.principal, dependencies=dependencies)) for view in views]
     next_cursor = None
     if has_more and views:
         last = views[-1].assignment
@@ -1155,7 +1196,7 @@ def create_assignment_endpoint(request: Request, payload: AssignmentCreateInputM
         target_student_count=len(view.student_ids),
         status_code=201,
     )
-    return serialize_public(_assignment_public(view, reader=context.principal))
+    return serialize_public(_assignment_public(view, reader=context.principal, dependencies=dependencies))
 
 
 @router.get("/api/v1/assignments/{assignment_id}")
@@ -1169,7 +1210,7 @@ def get_assignment_endpoint(request: Request, assignment_id: uuid.UUID) -> dict:
         assignment_id=assignment_id,
         directory=dependencies.b4_authorization,
     )
-    return serialize_public(_assignment_public(view, reader=context.principal))
+    return serialize_public(_assignment_public(view, reader=context.principal, dependencies=dependencies))
 
 
 @router.post("/api/v1/assignments/{assignment_id}/notifications")
@@ -1206,7 +1247,7 @@ def schedule_assignment_notifications_endpoint(
         course_id=str(view.assignment.course_id),
         status_code=200,
     )
-    return serialize_public(_assignment_public(view, reader=context.principal))
+    return serialize_public(_assignment_public(view, reader=context.principal, dependencies=dependencies))
 
 
 @router.post("/api/v1/assignments/{assignment_id}/close")
@@ -1234,7 +1275,7 @@ def close_assignment_endpoint(request: Request, assignment_id: uuid.UUID) -> dic
         course_id=str(view.assignment.course_id),
         status_code=200,
     )
-    return serialize_public(_assignment_public(view, reader=context.principal))
+    return serialize_public(_assignment_public(view, reader=context.principal, dependencies=dependencies))
 
 
 @router.get("/api/v1/assignment-audiences/{assignment_id}")
