@@ -1,6 +1,7 @@
 import {
   useInfiniteQuery,
   useMutation,
+  useQueries,
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
@@ -66,16 +67,30 @@ export function useSections(courseId: string | null) {
   return useQuery({
     queryKey: queryKeys.sections(courseId ?? ""),
     enabled: Boolean(courseId),
-    queryFn: async (): Promise<SectionOption[]> => {
-      const payload = await apiRequest<SectionListBody>(
-        `/api/v1/courses/${encodeURIComponent(courseId as string)}/sections`,
-      );
-      return (payload.items ?? []).map((row) => ({
-        sectionId: row.section_id,
-        label: sectionLabel(row),
-        row,
-      }));
-    },
+    queryFn: async (): Promise<SectionOption[]> => fetchSections(courseId as string),
+  });
+}
+
+async function fetchSections(courseId: string): Promise<SectionOption[]> {
+  const payload = await apiRequest<SectionListBody>(
+    `/api/v1/courses/${encodeURIComponent(courseId)}/sections`,
+  );
+  return (payload.items ?? []).map((row) => ({
+    sectionId: row.section_id,
+    label: sectionLabel(row),
+    row,
+  }));
+}
+
+/** 一次为多门课取课序名称（邮件记录等跨课程列表用；查询键与 `useSections` 相同，可复用缓存）。 */
+export function useSectionsForCourses(courseIds: readonly string[]) {
+  return useQueries({
+    queries: [...new Set(courseIds)]
+      .filter((courseId) => courseId !== "")
+      .map((courseId) => ({
+        queryKey: queryKeys.sections(courseId),
+        queryFn: async (): Promise<SectionOption[]> => fetchSections(courseId),
+      })),
   });
 }
 

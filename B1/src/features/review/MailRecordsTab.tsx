@@ -8,6 +8,7 @@ import {
   loadedCourses,
   useCourses,
   useSections,
+  useSectionsForCourses,
   type SectionOption,
 } from "../../api/directory";
 import { useAllAssignments } from "../assignments/useAssignments";
@@ -79,8 +80,7 @@ const CATEGORY_EMPTY: Record<MailRecordCategory, MessageKey> = {
 
 function courseText(course: { course_code: string | null; title: string } | undefined, courseId: string): string {
   if (course === undefined) return shortenId(courseId);
-  const code = (course.course_code ?? "").trim();
-  return code === "" ? course.title : code;
+  return formatCourseLabel(course);
 }
 
 function scopeText(
@@ -166,6 +166,20 @@ export function MailRecordsTab({
     },
   });
   const rows = useMemo(() => loadedMailRecords(query.data?.pages), [query.data]);
+  // 列表没有课程筛选时，行可能来自多门课；按行里的 course_id 补取课序名称，
+  // 否则跨课程记录只能显示课序 UUID 的前几位。
+  const rowCourseIds = useMemo(
+    () => [...new Set(rows.map((row) => row.course_id).filter((id): id is string => id !== null))],
+    [rows],
+  );
+  const rowSectionQueries = useSectionsForCourses(rowCourseIds);
+  const allSectionMap = useMemo(() => {
+    const merged = new Map(sectionMap);
+    for (const entry of rowSectionQueries) {
+      for (const section of entry.data ?? []) merged.set(section.sectionId, section.label);
+    }
+    return merged;
+  }, [sectionMap, rowSectionQueries]);
 
   // 处置动作（打回 / 作废）：这一页曾经只读，导致"有待处理记录却处理不了"。
   // `processed` 行是已经落库的提交，没有可处置的隔离记录，因此不提供动作。
@@ -348,7 +362,7 @@ export function MailRecordsTab({
               key: "scope",
               header: t("review.col.scope"),
               render: (row) => (
-                <span title={row.course_id ?? ""}>{scopeText(row, courseMap, sectionMap)}</span>
+                <span title={row.course_id ?? ""}>{scopeText(row, courseMap, allSectionMap)}</span>
               ),
             },
             {
