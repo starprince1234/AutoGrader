@@ -1012,6 +1012,7 @@ export const messages = {
 "assignments.col.question": "题目",
 "assignments.col.section": "课序",
 "assignments.status.open": "进行中",
+"assignments.status.pastDue": "已截止",
 "assignments.status.closed": "已结束",
 "assignments.status.archived": "已归档",
 "assignments.due": "截止时间",

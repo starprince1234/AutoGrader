@@ -54,10 +54,6 @@ import { Select } from "../../ui/Select";
 
 type AssignmentStatus = AssignmentPublic["status"];
 
-function assignmentStatusTone(status: AssignmentStatus): "ok" | "idle" {
-  return status === "open" ? "ok" : "idle";
-}
-
 function isOverdue(dueAt: string | null | undefined, now: number): boolean {
   if (!dueAt) return false;
   const due = Date.parse(dueAt);
@@ -111,11 +107,19 @@ function StudentAssignmentList({
         {
           key: "status",
           header: t("assignments.col.status"),
-          render: (row) => (
-            <StatusPill tone={assignmentStatusTone(row.status)}>
-              {t(`assignments.status.${row.status}`)}
-            </StatusPill>
-          ),
+          render: (row) => {
+            const overdue = isOverdue(row.due_at, now);
+            const ended = isEnded(row.status);
+            return (
+              <StatusPill tone={ended || overdue ? "idle" : "ok"}>
+                {ended
+                  ? t(`assignments.status.${row.status}`)
+                  : overdue
+                    ? t("assignments.status.pastDue")
+                    : t("assignments.status.open")}
+              </StatusPill>
+            );
+          },
         },
         {
           key: "due_at",
@@ -178,6 +182,9 @@ function StudentAssignmentList({
           render: (row) => {
             // 判定未就绪时不渲染动作：动作标签（"作答"/"继续作答"）本身就是进度结论。
             if (myProgress !== "ready") return <span className="muted">{t("common.none")}</span>;
+            if (isEnded(row.status) || isOverdue(row.due_at, now)) {
+              return <span className="muted">{t("assignments.closeDone")}</span>;
+            }
             const own = buildOwnProgress({
               grades: gradeRows,
               questionVersionIds: row.question_version_ids ?? [],
@@ -272,11 +279,19 @@ function TeacherAssignmentList({
         {
           key: "status",
           header: t("assignments.col.status"),
-          render: (row) => (
-            <StatusPill tone={isEnded(row.status) ? "idle" : "ok"}>
-              {isEnded(row.status) ? t("assignments.state.ended") : t("assignments.state.running")}
-            </StatusPill>
-          ),
+          render: (row) => {
+            const ended = isEnded(row.status);
+            const overdue = !ended && isOverdue(row.due_at, Date.now());
+            return (
+              <StatusPill tone={ended || overdue ? "idle" : "ok"}>
+                {ended
+                  ? t("assignments.state.ended")
+                  : overdue
+                    ? t("assignments.status.pastDue")
+                    : t("assignments.state.running")}
+              </StatusPill>
+            );
+          },
         },
         {
           key: "due_at",
@@ -467,7 +482,10 @@ export function AssignmentsPage() {
     const rows = assignments.assignments;
     if (statusFilter === "all") return rows;
     const wantEnded = statusFilter === "ended";
-    return rows.filter((row) => isEnded(row.status) === wantEnded);
+    return rows.filter(
+      (row) =>
+        (isEnded(row.status) || isOverdue(row.due_at, Date.now())) === wantEnded,
+    );
   }, [assignments.assignments, statusFilter]);
   /**
    * 「邮件记录」入口旁的数字：必须和点进去看到的「待处理」列表是**同一批**——
