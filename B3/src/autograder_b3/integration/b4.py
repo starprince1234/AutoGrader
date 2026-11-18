@@ -44,6 +44,7 @@ from collections.abc import Callable, Mapping
 from uuid import UUID
 
 AUTHORIZATION_PATH = "/api/v1/internal/users/{user_id}/authorization"
+COURSE_PATH = "/api/v1/internal/courses/{course_id}"
 COURSE_TARGET_PATH = "/api/v1/internal/course-targets/validate"
 NOTIFICATION_PATH = "/api/v1/internal/assignment-notifications"
 
@@ -520,6 +521,61 @@ def _wire_timestamp(value: datetime) -> str:
     if value.tzinfo is None:
         value = value.replace(tzinfo=UTC)
     return value.astimezone(UTC).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+class CourseDirectoryUnavailable(Exception):
+    """The B4 course metadata endpoint could not produce a usable answer."""
+
+
+class CourseNotFound(Exception):
+    """B4 reported that the requested course does not exist."""
+
+
+class CourseDirectory(Protocol):
+    """Port for fetching authoritative course_code from B4."""
+
+    def get_course_code(self, course_id: UUID) -> str | None: ...
+
+
+@dataclass
+class B4CourseDirectory:
+    """HTTP client for ``GET /api/v1/internal/courses/{course_id}``."""
+
+    base_url: str
+    service_token: str
+    timeout_seconds: float = 10.0
+    opener: Opener | None = None
+
+    def get_course_code(self, course_id: UUID) -> str | None:
+        request = urllib.request.Request(
+            self.base_url.rstrip("/") + COURSE_PATH.format(course_id=course_id),
+            headers={
+                "Authorization": f"Bearer {self.service_token}",
+                "Accept": "application/json",
+            },
+            method="GET",
+        )
+        open_request = self.opener or _open
+        try:
+            with open_request(request, self.timeout_seconds) as response:
+                status = int(getattr(response, "status", 0))
+                body = response.read()
+        except Exception as error:  # noqa: BLE001
+            raise CourseDirectoryUnavailable(
+                f"the course directory is unreachable ({type(error).__name__})"
+            ) from error
+        if status == 404:
+            raise CourseNotFound(f"course {course_id} not found")
+        if status != 200:
+            raise CourseDirectoryUnavailable(f"the course directory answered HTTP {status}")
+        try:
+            data = json.loads(body.decode("utf-8"))
+        except Exception as error:  # noqa: BLE001
+            raise CourseDirectoryUnavailable("the course directory answered invalid JSON") from error
+        if not isinstance(data, dict):
+            raise CourseDirectoryUnavailable("the course directory answered a non-object body")
+        code = data.get("course_code")
+        return str(code) if isinstance(code, str) else None
 
 
 def _open(request: urllib.request.Request, timeout: float) -> Any:

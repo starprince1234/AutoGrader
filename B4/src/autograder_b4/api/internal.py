@@ -41,7 +41,7 @@ from sqlalchemy import Connection, func, select
 from ..api.dependencies import B4State, Dependencies
 from ..api.problem import ProblemRoute
 from ..classes import authorization_for_user, validate_course_target
-from ..db.tables import users
+from ..db.tables import courses, users
 from ..errors import conflict, not_found, unauthenticated, unprocessable
 from ..notifications import materialise
 from ..registration import normalize_email
@@ -156,6 +156,26 @@ def build_internal_router(state: B4State, dependencies: Dependencies) -> APIRout
             },
         )
         return document
+
+    @router.get("/api/v1/internal/courses/{course_id}")
+    def get_internal_course(
+        course_id: uuid.UUID,
+        _caller: None = Depends(require_service_token),
+        connection: Connection = Depends(dependencies.connection),
+    ) -> dict[str, object]:
+        """Return authoritative course metadata (`course_code`, `title`) for internal callers."""
+        row = connection.execute(
+            select(courses.c.course_id, courses.c.course_code, courses.c.title).where(
+                courses.c.course_id == course_id
+            )
+        ).one_or_none()
+        if row is None:
+            raise not_found("No course exists with that id.")
+        return {
+            "course_id": str(row.course_id),
+            "course_code": row.course_code,
+            "title": row.title,
+        }
 
     @router.post("/api/v1/internal/course-targets/validate")
     def validate_course_targets(

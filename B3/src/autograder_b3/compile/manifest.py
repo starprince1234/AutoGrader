@@ -996,7 +996,6 @@ def validate_course_language_io_type(
     language: str,
     io_type: str,
     course_code: str | None = None,
-    course_title: str | None = None,
 ) -> None:
     """Enforce the course <-> language <-> io_type matrix (D6)."""
     allowed = ALLOWED_IO_TYPES_BY_LANGUAGE.get(language)
@@ -1008,14 +1007,6 @@ def validate_course_language_io_type(
             field="io_type",
         )
     expected_lang = COURSE_EXPECTED_LANGUAGE_BY_CODE.get((course_code or "").strip())
-    if expected_lang is None and course_title:
-        lowered = course_title.lower()
-        is_python = "python" in lowered
-        is_unix = "unix" in lowered or "linux" in lowered
-        if is_python and not is_unix:
-            expected_lang = "python"
-        elif is_unix and not is_python:
-            expected_lang = "bash"
     if expected_lang is not None and language != expected_lang:
         raise ManifestInvalid(
             f"course requires language {expected_lang!r}, got {language!r}",

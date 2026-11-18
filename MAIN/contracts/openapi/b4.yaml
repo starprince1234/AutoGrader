@@ -587,6 +587,26 @@ paths:
         '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
         '404': {$ref: './common.yaml#/components/responses/NotFound'}
 
+  /api/v1/internal/courses/{course_id}:
+    parameters:
+      - {name: course_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    get:
+      operationId: getInternalCourse
+      summary: Authoritative course code and title for one course (internal)
+      description: |
+        B3 uses this internal endpoint on question creation, revision and publication to fetch
+        the authoritative `course_code` for the course-language-io_type matrix check.
+      tags: [internal]
+      security: [{serviceToken: []}]
+      responses:
+        '200':
+          description: The course metadata.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/InternalCourse'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
   /api/v1/internal/course-targets/validate:
     post:
       operationId: validateCourseTargets
@@ -1716,6 +1736,16 @@ components:
               section_id: {$ref: './common.yaml#/components/schemas/Uuid'}
               class_id: {$ref: './common.yaml#/components/schemas/Uuid'}
             additionalProperties: false
+      additionalProperties: false
+
+    InternalCourse:
+      type: object
+      description: Authoritative course metadata for internal service-to-service validation.
+      required: [course_id, title]
+      properties:
+        course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        course_code: {type: [string, "null"]}
+        title: {type: string}
       additionalProperties: false
 
     AssignmentNotificationRequest:

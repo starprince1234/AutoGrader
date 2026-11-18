@@ -1823,7 +1823,9 @@ components:
               content_type: {type: string}
               alt_text: {type: [string, "null"]}
             additionalProperties: false
-        language: {$ref: './common.yaml#/components/schemas/Language'}
+        language:
+          $ref: './common.yaml#/components/schemas/Language'
+          description: "Programming language. Enforced against course_code matrix: 08 -> python, 07 -> bash (both allow stdin, file, callable)."
         io_type: {$ref: './common.yaml#/components/schemas/IoType'}
         status: {type: string, enum: [draft, published, archived]}
         tags:
@@ -1875,7 +1877,9 @@ components:
         question_id: {$ref: './common.yaml#/components/schemas/Uuid'}
         version: {type: integer, minimum: 1}
         status: {type: string, enum: [draft, published, archived]}
-        language: {$ref: './common.yaml#/components/schemas/Language'}
+        language:
+          $ref: './common.yaml#/components/schemas/Language'
+          description: "Programming language. Enforced against course_code matrix: 08 -> python, 07 -> bash (both allow stdin, file, callable)."
         io_type: {$ref: './common.yaml#/components/schemas/IoType'}
         adapter_kind:
           type: string
@@ -1988,7 +1992,9 @@ components:
       properties:
         title: {type: string, minLength: 1, maxLength: 300}
         stem_markdown: {type: string, minLength: 1}
-        language: {$ref: './common.yaml#/components/schemas/Language'}
+        language:
+          $ref: './common.yaml#/components/schemas/Language'
+          description: "Programming language. Enforced against course_code matrix: 08 -> python, 07 -> bash (both allow stdin, file, callable)."
         io_type:
           $ref: './common.yaml#/components/schemas/IoType'
           description: "Immutable question I/O type. Optional on create (defaults to adapter.kind); if provided must equal adapter.kind and existing question io_type."

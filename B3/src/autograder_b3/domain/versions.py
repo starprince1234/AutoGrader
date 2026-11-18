@@ -32,7 +32,10 @@ from datetime import datetime
 
 from ..auth import Principal, require_course_write
 from ..compile.compiler import compile_evaluation_package
+from ..compile.manifest import validate_course_language_io_type
 from ..dto.internal import PublishedVersionSnapshot
+from ..integration.b4 import CourseDirectory
+from .questions import resolve_course_code
 from ..errors import (
     B3Error,
     Conflict,
@@ -99,6 +102,7 @@ def publish_version(
     *,
     principal: Principal | None,
     question_version_id: uuid.UUID,
+    course_directory: CourseDirectory | None = None,
     now: datetime,
     correlation_id: uuid.UUID,
 ) -> tuple[QuestionVersion, str, str]:
@@ -127,6 +131,12 @@ def publish_version(
                 f"publish rejected: version adapter.kind {manifest.kind!r} does not match question io_type {question.io_type!r}",
                 field="adapter.kind",
             )
+        course_code = resolve_course_code(course_directory, question.course_id)
+        validate_course_language_io_type(
+            language=question.language,
+            io_type=question.io_type or manifest.kind,
+            course_code=course_code,
+        )
         if not version.stem_markdown.strip():
             raise ProtectedContentMissing("publish rejected: the version has an empty stem")
 

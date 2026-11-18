@@ -250,6 +250,7 @@ def create_question_endpoint(
         execution_supplied="execution" in payload.model_fields_set,
         grading_prompt_supplied="grading_prompt" in payload.model_fields_set,
         generation_id=generation_id,
+        course_directory=dependencies.b4_courses,
         now=dependencies.now,
     )
     log_event(
@@ -340,6 +341,7 @@ def update_question_endpoint(
         cases_supplied="cases" in payload.model_fields_set,
         execution_supplied="execution" in payload.model_fields_set,
         grading_prompt_supplied="grading_prompt" in payload.model_fields_set,
+        course_directory=dependencies.b4_courses,
         now=dependencies.now,
     )
     log_event(
@@ -780,6 +782,7 @@ def publish_version_endpoint(request: Request, question_version_id: uuid.UUID) -
         dependencies.database,
         principal=context.principal,
         question_version_id=question_version_id,
+        course_directory=dependencies.b4_courses,
         now=dependencies.now,
         correlation_id=context.correlation_id,
     )

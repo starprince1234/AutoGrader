@@ -340,3 +340,23 @@ def test_an_unknown_field_is_refused(client, roster) -> None:
         },
     )
     assert response.status_code == 422
+
+
+def test_internal_course_returns_course_code_and_requires_service_token(client, roster) -> None:
+    response = client.get(
+        f"/api/v1/internal/courses/{roster['course_id']}",
+        headers=_service_headers(),
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["course_id"] == str(roster["course_id"])
+    assert body["course_code"] == "CS101"
+
+    assert (
+        client.get(
+            f"/api/v1/internal/courses/{uuid.uuid4()}",
+            headers=_service_headers(),
+        ).status_code
+        == 404
+    )
+    assert client.get(f"/api/v1/internal/courses/{roster['course_id']}").status_code == 401

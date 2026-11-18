@@ -33,7 +33,9 @@ from ..integration.b4 import (
     AuthorizationDirectory,
     B4AssignmentNotifier,
     B4AuthorizationClient,
+    B4CourseDirectory,
     B4CourseTargetValidator,
+    CourseDirectory,
     CourseTargetValidator,
 )
 
@@ -60,6 +62,7 @@ class B3Dependencies:
     #: needs no roster fact, so there is nothing to confirm. Storing an unverified target would
     #: be a silent audience change, which is the one outcome nobody notices.
     b4_targets: CourseTargetValidator | None = None
+    b4_courses: CourseDirectory | None = None
     clock: Callable[[], datetime] = field(
         default_factory=lambda: lambda: datetime.now(UTC)
     )
@@ -85,6 +88,7 @@ def build_dependencies(
     b4_authorization: AuthorizationDirectory | None = None,
     b4_notifier: AssignmentNotifier | None = None,
     b4_targets: CourseTargetValidator | None = None,
+    b4_courses: CourseDirectory | None = None,
     clock: Callable[[], datetime] | None = None,
 ) -> B3Dependencies:
     resolved = settings or Settings.from_env()
@@ -112,6 +116,11 @@ def build_dependencies(
                 base_url=resolved.b4_base_url,
                 service_token=resolved.b4_service_token,
             )
+        if b4_courses is None:
+            b4_courses = B4CourseDirectory(
+                base_url=resolved.b4_base_url,
+                service_token=resolved.b4_service_token,
+            )
     return B3Dependencies(
         settings=resolved,
         database=database or Database(resolved),
@@ -129,6 +138,7 @@ def build_dependencies(
         b4_authorization=b4_authorization,
         b4_notifier=b4_notifier,
         b4_targets=b4_targets,
+        b4_courses=b4_courses,
         clock=clock or (lambda: datetime.now(UTC)),
     )
 

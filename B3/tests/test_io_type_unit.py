@@ -20,8 +20,10 @@ from autograder_b3.compile.manifest import (
     validate_course_language_io_type,
 )
 from autograder_b3.domain.catalog import LearningContext, TagCoverage
+from autograder_b3.domain.questions import resolve_course_code
 from autograder_b3.domain.revisions import REVISION_DIFF_KEYS, compute_revision_diff
-from autograder_b3.errors import ManifestInvalid
+from autograder_b3.errors import ManifestInvalid, NotFound, ServiceUnavailable
+from autograder_b3.integration.b4 import CourseDirectoryUnavailable, CourseNotFound
 
 
 def test_resolve_question_io_type_defaults_and_rejects_mismatch() -> None:
@@ -46,6 +48,30 @@ def test_validate_course_language_io_type_matrix() -> None:
 
     with pytest.raises(ManifestInvalid):
         validate_course_language_io_type(language="python", io_type="unknown")
+
+    with pytest.raises(TypeError):
+        validate_course_language_io_type(  # type: ignore[call-arg]
+            language="bash", io_type="stdin", course_title="Python Programming"
+        )
+
+
+def test_resolve_course_code_translates_directory_outcomes() -> None:
+    class _StubDir:
+        def __init__(self, result):
+            self._result = result
+
+        def get_course_code(self, course_id: uuid.UUID) -> str | None:
+            if isinstance(self._result, Exception):
+                raise self._result
+            return self._result
+
+    cid = uuid.uuid4()
+    assert resolve_course_code(None, cid) is None
+    assert resolve_course_code(_StubDir("08"), cid) == "08"
+    with pytest.raises(NotFound):
+        resolve_course_code(_StubDir(CourseNotFound("missing")), cid)
+    with pytest.raises(ServiceUnavailable):
+        resolve_course_code(_StubDir(CourseDirectoryUnavailable("down")), cid)
 
 
 def test_revision_diff_excludes_adapter_kind_changed() -> None:

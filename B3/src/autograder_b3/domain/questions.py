@@ -63,6 +63,12 @@ from ..errors import (
     ManifestInvalid,
     NotFound,
     RevisionNoteMisuse,
+    ServiceUnavailable,
+)
+from ..integration.b4 import (
+    CourseDirectory,
+    CourseDirectoryUnavailable,
+    CourseNotFound,
 )
 from ..infra.db import Database
 from ..infra.models import Question, QuestionVersion
@@ -414,6 +420,20 @@ def _write_protected_content(
     )
 
 
+def resolve_course_code(
+    course_directory: CourseDirectory | None, course_id: uuid.UUID
+) -> str | None:
+    """Fetch authoritative ``course_code`` from B4 when configured."""
+    if course_directory is None:
+        return None
+    try:
+        return course_directory.get_course_code(course_id)
+    except CourseNotFound as error:
+        raise NotFound(str(error)) from error
+    except CourseDirectoryUnavailable as error:
+        raise ServiceUnavailable(str(error)) from error
+
+
 def create_question(
     database: Database,
     settings: Settings,
@@ -426,6 +446,7 @@ def create_question(
     execution_supplied: bool | None = None,
     grading_prompt_supplied: bool | None = None,
     generation_id: uuid.UUID | None = None,
+    course_directory: CourseDirectory | None = None,
     now: datetime,
 ) -> tuple[Question, QuestionVersion]:
     """Create a question and its first draft version.
@@ -451,7 +472,10 @@ def create_question(
     validate_stem_markdown(payload.stem_markdown, max_chars=settings.max_stem_chars)
     manifest = validate_adapter_manifest(payload.adapter)
     io_type = resolve_question_io_type(payload.io_type, manifest.kind)
-    validate_course_language_io_type(language=payload.language, io_type=io_type)
+    course_code = resolve_course_code(course_directory, course_id)
+    validate_course_language_io_type(
+        language=payload.language, io_type=io_type, course_code=course_code
+    )
     tags = validate_tags(payload.tags)
     cases_provided = _cases_supplied(payload, cases_supplied)
     _validate_ordinals(payload)
@@ -550,6 +574,7 @@ def update_question(
     cases_supplied: bool | None = None,
     execution_supplied: bool | None = None,
     grading_prompt_supplied: bool | None = None,
+    course_directory: CourseDirectory | None = None,
     now: datetime,
 ) -> tuple[Question, QuestionVersion]:
     """Edit the current draft, or branch a new draft version (never edit in place).
@@ -576,7 +601,6 @@ def update_question(
     validate_stem_markdown(payload.stem_markdown, max_chars=settings.max_stem_chars)
     manifest = validate_adapter_manifest(payload.adapter)
     io_type = resolve_question_io_type(payload.io_type, manifest.kind)
-    validate_course_language_io_type(language=payload.language, io_type=io_type)
     tags = validate_tags(payload.tags)
     cases_provided = _cases_supplied(payload, cases_supplied)
     _validate_ordinals(payload)
@@ -607,6 +631,11 @@ def update_question(
                     "as_new_version=true so the move is recorded as a new version"
                 )
             require_course_write(principal, target_course_id)
+        effective_course_id = target_course_id if moving_course and target_course_id is not None else question.course_id
+        course_code = resolve_course_code(course_directory, effective_course_id)
+        validate_course_language_io_type(
+            language=payload.language, io_type=io_type, course_code=course_code
+        )
 
         latest = bank.latest_version(question_id)
         if latest is None:  # pragma: no cover - every question has a version
