@@ -66,6 +66,7 @@ const A1 = assignmentPublic({
   course_id: COURSE,
   title: "第一次作业",
   question_version_ids: [V1, V2],
+  due_at: "2099-10-01T07:59:00Z",
 });
 const A2 = assignmentPublic({
   assignment_id: UUID_C,
