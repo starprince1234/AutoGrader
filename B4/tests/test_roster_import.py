@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
+from pathlib import Path
 
 import pytest
 from sqlalchemy import select
@@ -26,7 +27,7 @@ from autograder_b4.db.tables import (
     roster_import_rows,
     roster_imports,
 )
-from tests.documents import xlsx_bytes
+from tests.documents import roster_pdf_bytes, xlsx_bytes
 
 PASSWORD = "correct horse battery staple"
 CHINESE_HEADER = ["学号", "姓名", "课程编号", "课序号"]
@@ -800,3 +801,130 @@ def test_an_account_name_mismatch_is_rejected_instead_of_merged(
     assert "20230001" not in linked
     assert linked["20230002"] is None
     assert account  # the account exists and is simply not linked
+
+
+# ------------------------------------------------------------------------------- XLS & PDF
+
+
+FIXTURE_XLS = Path(__file__).resolve().parent / "fixtures" / "synthetic_course_roster.xls"
+
+
+def test_xls_roster_upload_preview_and_confirm_writes_only_student_number_and_name(
+    client, sign_in_as, factory, engine
+) -> None:
+    """F1: real PostgreSQL integration for .xls upload, header row, course match, and commit."""
+    teacher = factory.user(username="xls_teacher", password=PASSWORD, roles=("teacher",))
+    course_id = factory.course(code="304064030", title="软件工程测试", created_by=teacher)
+    factory.grant(user_id=teacher, course_id=course_id, role="teacher")
+    section_id = factory.section(course_id=course_id, code="04", term="2026-2027学年秋")
+    target = {
+        "teacher": teacher,
+        "course_id": course_id,
+        "section_id": section_id,
+        "class_id": factory.default_class(section_id),
+    }
+
+    headers = sign_in_as("xls_teacher").headers
+    content = FIXTURE_XLS.read_bytes()
+    response = _upload(client, headers, None, content, "synthetic_course_roster.xls", target)
+    assert response.status_code == 202, response.text
+    body = response.json()
+    assert body["status"] == "previewed"
+    assert body["header_row_number"] == 7
+    assert body["course_verification"]["status"] == "matched"
+    assert body["course_verification"]["file_course_code"] == "304064030"
+    assert body["course_verification"]["file_section_code"] == "04"
+    assert len(body["accepted_rows"]) == 3
+
+    with engine.connect() as connection:
+        pre_count = connection.execute(
+            select(enrollments.c.enrollment_id).where(enrollments.c.course_id == course_id)
+        ).fetchall()
+    assert pre_count == []
+
+    confirmed = _confirm(client, headers, body["roster_import_id"])
+    assert confirmed.status_code == 202, confirmed.text
+    confirm_body = confirmed.json()
+    assert confirm_body["status"] == "committed"
+    assert len(confirm_body["accepted_rows"]) == 3
+
+    with engine.connect() as connection:
+        rows = connection.execute(
+            select(enrollments.c.student_number, enrollments.c.display_name).where(
+                enrollments.c.course_id == course_id
+            )
+        ).fetchall()
+    assert {(row.student_number, row.display_name) for row in rows} == {
+        ("20260001", "测试甲"),
+        ("20260002", "测试乙"),
+        ("00260003", "测试丙"),
+    }
+
+
+def test_xls_roster_wrong_section_blocks_confirm_without_writing(
+    client, sign_in_as, factory, engine
+) -> None:
+    """F1: uploading .xls to the wrong section flags mismatch and blocks confirm with 422."""
+    teacher = factory.user(username="xls_wrong_teacher", password=PASSWORD, roles=("teacher",))
+    course_id = factory.course(code="304064030", title="软件工程测试", created_by=teacher)
+    factory.grant(user_id=teacher, course_id=course_id, role="teacher")
+    wrong_section_id = factory.section(course_id=course_id, code="05", term="2026-2027学年秋")
+    target = {
+        "teacher": teacher,
+        "course_id": course_id,
+        "section_id": wrong_section_id,
+        "class_id": factory.default_class(wrong_section_id),
+    }
+
+    headers = sign_in_as("xls_wrong_teacher").headers
+    content = FIXTURE_XLS.read_bytes()
+    response = _upload(client, headers, None, content, "synthetic_course_roster.xls", target)
+    assert response.status_code == 202, response.text
+    body = response.json()
+    assert body["header_row_number"] == 7
+    assert body["course_verification"]["status"] == "mismatched"
+    assert body["course_verification"]["file_section_code"] == "04"
+    assert body["course_verification"]["selected_section_code"] == "05"
+
+    confirmed = _confirm(client, headers, body["roster_import_id"])
+    assert confirmed.status_code == 422, confirmed.text
+
+    with engine.connect() as connection:
+        rows = connection.execute(
+            select(enrollments.c.enrollment_id).where(enrollments.c.course_id == course_id)
+        ).fetchall()
+    assert rows == []
+
+
+def test_pdf_roster_upload_and_confirm_writes_enrollments(
+    client, course, sign_in_as, engine
+) -> None:
+    """F1: real PostgreSQL integration for text-based PDF roster upload and commit."""
+    headers = sign_in_as("teacher").headers
+    content = roster_pdf_bytes(
+        [("20230001", "Alice"), ("20230002", "Bob")],
+        course_code="CS101",
+        section_code="01",
+    )
+    response = _upload(client, headers, None, content, "roster.pdf", course)
+    assert response.status_code == 202, response.text
+    body = response.json()
+    assert body["status"] == "previewed"
+    assert body["header_row_number"] == 1
+    assert body["course_verification"]["status"] == "matched"
+    assert len(body["accepted_rows"]) == 2
+
+    confirmed = _confirm(client, headers, body["roster_import_id"])
+    assert confirmed.status_code == 202, confirmed.text
+    assert confirmed.json()["status"] == "committed"
+
+    with engine.connect() as connection:
+        rows = connection.execute(
+            select(enrollments.c.student_number, enrollments.c.display_name).where(
+                enrollments.c.course_id == course["course_id"]
+            )
+        ).fetchall()
+    assert {(row.student_number, row.display_name) for row in rows} == {
+        ("20230001", "Alice"),
+        ("20230002", "Bob"),
+    }
