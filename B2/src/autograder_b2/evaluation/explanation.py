@@ -101,7 +101,7 @@ def _sentence(evidence: CaseEvidence, mode: str) -> str:
     if category == "output_mismatch":
         return _mismatch_sentence(evidence)
     if category == "import_error":
-        return "本用例的 callable 入口无法在工作区内解析：模块导入失败，或声明的属性不可调用。"
+        return "本用例的 callable 入口无法在工作区内解析：模块导入/source 失败，或声明的函数/属性不可调用。"
     if category == "crash":
         return _crash_sentence(evidence)
     if category == "infrastructure_error":

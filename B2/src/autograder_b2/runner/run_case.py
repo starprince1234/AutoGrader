@@ -932,7 +932,7 @@ def run_case(
             raise SandboxUnavailableError(f"sandbox unavailable: {availability.reason}")
         active_launcher = launcher_for(policy) if launcher is None else launcher
         workspace = Path(submission.workspace)
-        fixture_problems = materialize_fixtures(package, workspace, fixture_provider)
+        fixture_problems = materialize_fixtures(package, workspace, fixture_provider, case=case)
         entry = adapter.callable
         problems = list(fixture_problems)
         if not problems:

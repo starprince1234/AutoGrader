@@ -20,7 +20,7 @@ from typing import Protocol
 from autograder_b2.domain.clock import sha256_hex
 from autograder_b2.domain.evidence import SandboxUnavailableError
 from autograder_b2.runner.adapters import workspace_path
-from autograder_b2.runner.package import EvaluationPackage
+from autograder_b2.runner.package import EvaluationPackage, PackageCase
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +31,7 @@ class FixtureContent:
     content_sha256: str
     size_bytes: int
     content: bytes = field(repr=False)
+    test_case_id: str | None = None
 
 
 class FixtureProvider(Protocol):
@@ -48,6 +49,8 @@ def materialize_fixtures(
     package: EvaluationPackage,
     workspace: Path,
     provider: FixtureProvider | None,
+    *,
+    case: PackageCase | None = None,
 ) -> tuple[str, ...]:
     """把 package 声明的 input fixture 物化进工作区；返回问题清单（空 = 全部就绪）。
 
@@ -61,14 +64,15 @@ def materialize_fixtures(
 
     `SandboxUnavailableError` 照旧抛出（它是"拒绝执行"的唯一合法表达，不是 fixture 问题）。
     """
-    fixtures = tuple(item for item in package.adapter.files if item.mount == "input")
-    if not fixtures:
+    version_fixtures = [item for item in package.adapter.files if item.mount == "input"]
+    case_fixtures = [item for item in case.files if item.mount == "input"] if case is not None else []
+    declared_pairs = [
+        *((None, item) for item in version_fixtures),
+        *((case.case_id, item) for item in case_fixtures if case is not None),
+    ]
+    if not declared_pairs:
         return ()
     if provider is None:
-        # 没有物化通道时**不做**任何事（不是"静默成功"）：工作区里预先就位的 fixture 由
-        # `runner.adapters.prepare_case_workspace` 按 package 声明逐字节校验（旧行为不变）；
-        # 缺失/摘要不符仍会在那里被判 `infrastructure_error`。这样接线未注入 provider 的
-        # 部署不会被误判为"新包一律技术故障"，而真正的交付失败也不会被吞掉。
         return ()
     try:
         items = provider.fetch_inputs(question_version_id=package.question_version_id)
@@ -77,15 +81,16 @@ def materialize_fixtures(
     except Exception as error:  # noqa: BLE001 - 依赖失败 ⇒ 技术故障证据，不吞成学生失败
         return (f"input fixture provider unavailable: {type(error).__name__}",)
 
-    delivered: dict[str, FixtureContent] = {}
+    delivered: dict[tuple[str | None, str], FixtureContent] = {}
     problems: list[str] = []
     for item in items:
-        if item.path in delivered:
+        key = (getattr(item, "test_case_id", None), item.path)
+        if key in delivered:
             problems.append(f"input fixture provider returned duplicate path: {item.path}")
             continue
-        delivered[item.path] = item
+        delivered[key] = item
 
-    for declared in fixtures:
+    for expected_case_id, declared in declared_pairs:
         try:
             target = workspace_path(workspace, declared.path)
         except ValueError:
@@ -94,7 +99,9 @@ def materialize_fixtures(
         if target.exists() or target.is_symlink():
             problems.append(f"input fixture path already exists in the workspace: {declared.path}")
             continue
-        item = delivered.get(declared.path)
+        item = delivered.get((expected_case_id, declared.path))
+        if item is None and expected_case_id is not None:
+            item = delivered.get((None, declared.path))
         if item is None:
             problems.append(f"input fixture missing: {declared.path}")
             continue

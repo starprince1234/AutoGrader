@@ -297,11 +297,24 @@ class ReferenceVerificationService:
             ),
         )
 
+    @staticmethod
+    def _reference_entry_name(view: PackageView, language: str) -> str:
+        adapter = getattr(view, "adapter_handle", None)
+        if adapter is None and getattr(view, "handle", None) is not None:
+            adapter = getattr(view.handle, "adapter", None)
+        if getattr(adapter, "kind", None) == "callable":
+            callable_cfg = getattr(adapter, "callable", None)
+            module = getattr(callable_cfg, "module", None)
+            if isinstance(module, str) and module:
+                ext = ".py" if language == "python" else ".sh"
+                return module.replace(".", "/") + ext
+        return entry_name_for(language)
+
     def _run_per_case(
         self, verification_id: str, answer: ReferenceAnswerView, view: PackageView
     ) -> tuple[VerificationCase, ...]:
         """`per_case`：逐用例一份新工作区、一次 `run_case`（既有行为）。"""
-        entry_name = entry_name_for(answer.language)
+        entry_name = self._reference_entry_name(view, answer.language)
         files = self._answer_files(answer, entry_name)
         observed: list[VerificationCase] = []
         for case in view.ordered_cases():
@@ -319,7 +332,7 @@ class ReferenceVerificationService:
         与学生评测的计数语义 `invocation_count=1` 冲突）。一次调用也意味着 `security_blocked`
         出现在某条证据上时不存在"后续用例"可停止——见模块 docstring 的裁决说明。
         """
-        entry_name = entry_name_for(answer.language)
+        entry_name = self._reference_entry_name(view, answer.language)
         files = self._answer_files(answer, entry_name)
         workspace = self._workspaces.prepare_batch(
             verification_id=verification_id,

@@ -119,7 +119,8 @@ _REQUIRED_PACKAGE_FIELDS = (
 )
 _ADAPTER_FIELDS = {"kind", "args", "stdin", "expect_exit_code", "comparison", "files", "callable"}
 _COMPARISON_FIELDS = {"stdout", "stderr", "numeric_tolerance"}
-_FIXTURE_FIELDS = {"path", "content_sha256", "mount"}
+_FIXTURE_FIELDS = {"path", "content_sha256", "mount", "student_visible"}
+_REQUIRED_FIXTURE_FIELDS = ("path", "content_sha256", "mount")
 _CALLABLE_FIELDS = {"module", "attribute", "arguments_json"}
 _CASE_FIELDS = {
     "case_id",
@@ -132,6 +133,7 @@ _CASE_FIELDS = {
     "expected_stdout",
     "expected_stderr",
     "expected_exit_code",
+    "files",
     "segment",
     "file_checks",
     "ssh_check",
@@ -188,6 +190,7 @@ class PackageFixture:
     path: str
     content_sha256: str
     mount: FixtureMount
+    student_visible: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -287,6 +290,7 @@ class PackageCase:
     expected_stdout: str | None
     expected_stderr: str | None
     expected_exit_code: int | None
+    files: tuple[PackageFixture, ...] = ()
     segment: int | None = None
     file_checks: tuple[PackageFileCheck, ...] = ()
     ssh_check: SshCheck | None = None
@@ -417,16 +421,16 @@ def _parse_comparison(payload: object) -> PackageComparison:
     )
 
 
-def _parse_fixtures(payload: object) -> tuple[PackageFixture, ...]:
+def _parse_fixtures(payload: object, *, where_prefix: str = "adapter.files") -> tuple[PackageFixture, ...]:
     if not isinstance(payload, list):
-        _reject("invalid_fixture", "adapter.files must be an array")
+        _reject("invalid_fixture", f"{where_prefix} must be an array")
     fixtures: list[PackageFixture] = []
     seen: set[str] = set()
     for index, item in enumerate(payload):
-        where = f"adapter.files[{index}]"
+        where = f"{where_prefix}[{index}]"
         fixture = _require_mapping(item, where)
         _reject_unknown(fixture, _FIXTURE_FIELDS, where)
-        for name in _FIXTURE_FIELDS:
+        for name in _REQUIRED_FIXTURE_FIELDS:
             if name not in fixture:
                 _reject("invalid_fixture", f"{where} missing required field: {name}")
         path = _require_str(fixture["path"], f"{where}.path", 200)
@@ -441,7 +445,17 @@ def _parse_fixtures(payload: object) -> tuple[PackageFixture, ...]:
         mount = fixture["mount"]
         if mount not in ("input", "expected_output"):
             _reject("invalid_fixture", f"{where}.mount must be input or expected_output, got {mount!r}")
-        fixtures.append(PackageFixture(path=path, content_sha256=digest, mount=mount))
+        student_visible = fixture.get("student_visible", False)
+        if not isinstance(student_visible, bool):
+            _reject("invalid_fixture", f"{where}.student_visible must be a boolean")
+        fixtures.append(
+            PackageFixture(
+                path=path,
+                content_sha256=digest,
+                mount=mount,
+                student_visible=student_visible,
+            )
+        )
     return tuple(fixtures)
 
 
@@ -538,6 +552,11 @@ def _parse_tests(payload: object) -> tuple[PackageCase, ...]:
                 expected_stderr=_optional_str(case.get("expected_stderr"), f"{where}.expected_stderr"),
                 expected_exit_code=_optional_int(
                     case.get("expected_exit_code"), f"{where}.expected_exit_code"
+                ),
+                files=(
+                    _parse_fixtures(case["files"], where_prefix=f"{where}.files")
+                    if case.get("files") is not None
+                    else ()
                 ),
                 segment=segment,
                 file_checks=_parse_file_checks(case.get("file_checks", []), where),

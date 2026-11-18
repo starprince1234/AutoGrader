@@ -581,11 +581,15 @@ def _parse_fixture_item(item: object, *, seen_paths: set[str]) -> FixtureContent
         raise PackageUnavailableError("fixture contents item size does not match its content")
     if hashlib.sha256(payload).hexdigest() != declared_digest:
         raise PackageUnavailableError("fixture contents item digest does not match its content")
+    test_case_id = item.get("test_case_id")
+    if test_case_id is not None and not isinstance(test_case_id, str):
+        raise PackageUnavailableError("fixture contents item test_case_id is not a string")
     return FixtureContent(
         path=path,
         content_sha256=declared_digest,
         size_bytes=size_bytes,
         content=payload,
+        test_case_id=test_case_id,
     )
 
 

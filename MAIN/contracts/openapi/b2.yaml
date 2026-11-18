@@ -1871,7 +1871,6 @@ components:
           allOf: [{$ref: './common.yaml#/components/schemas/Sha256'}]
           description: "The version's digest at the moment of verification. The attestation binds to it, so editing the question invalidates the record."
         language: {$ref: './common.yaml#/components/schemas/Language'}
-        io_type: {$ref: './common.yaml#/components/schemas/IoType'}
         adapter_kind:
           type: string
           enum: [stdin, file, callable]
