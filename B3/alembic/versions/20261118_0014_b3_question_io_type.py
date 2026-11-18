@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlalchemy as sa
 from alembic import op
 
@@ -38,24 +39,39 @@ def upgrade() -> None:
 
     before_count = bind.execute(sa.text(f"SELECT count(*) FROM {SCHEMA}.questions")).scalar_one()
 
-    # Backfill from the latest version's adapter_manifest->>'kind'.
-    bind.execute(
+    # Backfill from the latest version's adapter_manifest['kind'] in Python so both
+    # jsonb objects and double-encoded jsonb strings are handled uniformly.
+    version_rows = bind.execute(
         sa.text(
             f"""
-            UPDATE {SCHEMA}.questions AS q
-            SET io_type = latest.kind
-            FROM (
-                SELECT DISTINCT ON (question_id)
-                    question_id,
-                    adapter_manifest->>'kind' AS kind
-                FROM {SCHEMA}.question_versions
-                ORDER BY question_id, version DESC
-            ) AS latest
-            WHERE q.question_id = latest.question_id
-              AND q.io_type IS NULL
+            SELECT DISTINCT ON (question_id)
+                question_id,
+                adapter_manifest
+            FROM {SCHEMA}.question_versions
+            ORDER BY question_id, version DESC
             """
         )
-    )
+    ).fetchall()
+    for row in version_rows:
+        manifest = row.adapter_manifest
+        if isinstance(manifest, str):
+            try:
+                manifest = json.loads(manifest)
+            except json.JSONDecodeError:
+                manifest = None
+        kind = manifest.get("kind") if isinstance(manifest, dict) else None
+        if kind in VALID_IO_TYPES:
+            bind.execute(
+                sa.text(
+                    f"""
+                    UPDATE {SCHEMA}.questions
+                    SET io_type = :kind
+                    WHERE question_id = :qid
+                      AND (io_type IS NULL OR io_type = '')
+                    """
+                ),
+                {"kind": kind, "qid": row.question_id},
+            )
 
     after_count = bind.execute(sa.text(f"SELECT count(*) FROM {SCHEMA}.questions")).scalar_one()
     if before_count != after_count:
