@@ -83,42 +83,76 @@ def upgrade() -> None:
             f"before={before_count}, after={after_count}"
         )
 
-    bad_rows = bind.execute(
+    bad_versioned_rows = bind.execute(
         sa.text(
             f"""
-            SELECT question_id, title, io_type
-            FROM {SCHEMA}.questions
-            WHERE io_type IS NULL OR io_type NOT IN ('stdin', 'file', 'callable')
-            ORDER BY created_at, question_id
+            SELECT q.question_id, q.title, q.io_type
+            FROM {SCHEMA}.questions q
+            WHERE (q.io_type IS NULL OR q.io_type NOT IN ('stdin', 'file', 'callable'))
+              AND EXISTS (
+                  SELECT 1 FROM {SCHEMA}.question_versions qv WHERE qv.question_id = q.question_id
+              )
+            ORDER BY q.created_at, q.question_id
             """
         )
     ).fetchall()
-    if bad_rows:
+    if bad_versioned_rows:
         sample_manifest = (
             f"version_rows={len(version_rows)}, updated={updated_count}, "
             f"sample={repr(version_rows[0].adapter_manifest)[:120] if version_rows else 'empty'}"
         )
         summary = "; ".join(
-            f"{row.question_id} ({row.title!r}): io_type={row.io_type!r}" for row in bad_rows[:20]
+            f"{row.question_id} ({row.title!r}): io_type={row.io_type!r}"
+            for row in bad_versioned_rows[:20]
         )
         raise RuntimeError(
-            f"Aborting migration: {len(bad_rows)} question(s) have missing or invalid io_type "
-            f"({sample_manifest}): {summary}"
+            f"Aborting migration: {len(bad_versioned_rows)} versioned question(s) have missing or "
+            f"invalid io_type ({sample_manifest}): {summary}"
         )
 
-    op.alter_column(
-        "questions",
-        "io_type",
-        existing_type=sa.String(length=16),
-        nullable=False,
-        schema=SCHEMA,
-    )
-    op.create_check_constraint(
-        "ck_questions_io_type",
-        "questions",
-        "io_type IN ('stdin', 'file', 'callable')",
-        schema=SCHEMA,
-    )
+    versionless_rows = bind.execute(
+        sa.text(
+            f"""
+            SELECT q.question_id, q.title, q.deleted_at
+            FROM {SCHEMA}.questions q
+            WHERE q.io_type IS NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM {SCHEMA}.question_versions qv WHERE qv.question_id = q.question_id
+              )
+            ORDER BY q.created_at, q.question_id
+            """
+        )
+    ).fetchall()
+    if versionless_rows:
+        summary = "; ".join(
+            f"{row.question_id} ({row.title!r}, deleted_at={row.deleted_at})"
+            for row in versionless_rows
+        )
+        print(
+            f"[b3-migration-0014] WARNING (R3): {len(versionless_rows)} versionless question(s) "
+            f"have no question_versions row to backfill io_type; leaving io_type=NULL without "
+            f"silent default: {summary}"
+        )
+        op.create_check_constraint(
+            "ck_questions_io_type",
+            "questions",
+            "io_type IS NULL OR io_type IN ('stdin', 'file', 'callable')",
+            schema=SCHEMA,
+        )
+    else:
+        op.alter_column(
+            "questions",
+            "io_type",
+            existing_type=sa.String(length=16),
+            nullable=False,
+            schema=SCHEMA,
+        )
+        op.create_check_constraint(
+            "ck_questions_io_type",
+            "questions",
+            "io_type IN ('stdin', 'file', 'callable')",
+            schema=SCHEMA,
+        )
     op.create_index("ix_questions_io_type", "questions", ["io_type"], schema=SCHEMA)
 
 

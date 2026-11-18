@@ -79,7 +79,8 @@ class Question(Base):
             "language IN ('python', 'bash')", name="ck_questions_language"
         ),
         CheckConstraint(
-            "io_type IN ('stdin', 'file', 'callable')", name="ck_questions_io_type"
+            "io_type IS NULL OR io_type IN ('stdin', 'file', 'callable')",
+            name="ck_questions_io_type",
         ),
         CheckConstraint(
             "status IN ('draft', 'published', 'archived')", name="ck_questions_status"
@@ -108,7 +109,7 @@ class Question(Base):
     title: Mapped[str] = mapped_column(Text, nullable=False)
     stem_markdown: Mapped[str] = mapped_column(Text, nullable=False)
     language: Mapped[str] = mapped_column(String(16), nullable=False)
-    io_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    io_type: Mapped[str | None] = mapped_column(String(16), nullable=True)
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="draft")
     tags: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list)
     created_by: Mapped[uuid.UUID | None] = mapped_column(Uuid, nullable=True)

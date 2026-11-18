@@ -141,7 +141,7 @@ class TagCountPublic(BaseModel):
 class IoTypeCountPublic(BaseModel):
     model_config = _PUBLIC_CONFIG
 
-    io_type: IoType
+    io_type: IoType | None = None
     question_count: int = Field(ge=0)
 
 
@@ -192,7 +192,7 @@ class QuestionPublic(BaseModel):
     stem_markdown: str
     stem_assets: tuple[StemAssetPublic, ...] = ()
     language: Language
-    io_type: IoType
+    io_type: IoType | None = None
     status: QuestionStatus
     tags: tuple[str, ...] = ()
     #: Full version history (draft + published + archived), newest first. Required for
@@ -228,7 +228,7 @@ class QuestionVersionPublic(BaseModel):
     version: int
     status: QuestionStatus
     language: Language
-    io_type: IoType
+    io_type: IoType | None = None
     adapter_kind: AdapterKind
     visible_fixtures: tuple[VisibleFixturePublic, ...] = ()
     io_spec: IoSpecPublic | None = None
@@ -276,7 +276,7 @@ class QuestionLearningContextPublic(BaseModel):
     stem_markdown: str
     language: Language
     tags: tuple[str, ...] = ()
-    io_type: IoType
+    io_type: IoType | None = None
     adapter_kind: AdapterKind
 
 
@@ -319,7 +319,7 @@ class AssignmentQuestionItemPublic(BaseModel):
     question_id: UUID
     title: str
     language: Language
-    io_type: IoType
+    io_type: IoType | None = None
 
 
 class AssignmentPublic(BaseModel):
