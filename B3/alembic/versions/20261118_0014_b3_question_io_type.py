@@ -45,33 +45,36 @@ def upgrade() -> None:
         sa.text(
             f"""
             SELECT DISTINCT ON (question_id)
-                question_id,
+                question_id::text AS qid_text,
                 adapter_manifest
             FROM {SCHEMA}.question_versions
             ORDER BY question_id, version DESC
             """
         )
     ).fetchall()
+    updated_count = 0
     for row in version_rows:
         manifest = row.adapter_manifest
-        if isinstance(manifest, str):
+        while isinstance(manifest, str):
             try:
                 manifest = json.loads(manifest)
             except json.JSONDecodeError:
                 manifest = None
+                break
         kind = manifest.get("kind") if isinstance(manifest, dict) else None
         if kind in VALID_IO_TYPES:
-            bind.execute(
+            res = bind.execute(
                 sa.text(
                     f"""
                     UPDATE {SCHEMA}.questions
                     SET io_type = :kind
-                    WHERE question_id = :qid
-                      AND (io_type IS NULL OR io_type = '')
+                    WHERE question_id = CAST(:qid AS uuid)
+                      AND (io_type IS NULL OR btrim(io_type) = '')
                     """
                 ),
-                {"kind": kind, "qid": row.question_id},
+                {"kind": kind, "qid": row.qid_text},
             )
+            updated_count += res.rowcount or 0
 
     after_count = bind.execute(sa.text(f"SELECT count(*) FROM {SCHEMA}.questions")).scalar_one()
     if before_count != after_count:
@@ -91,12 +94,16 @@ def upgrade() -> None:
         )
     ).fetchall()
     if bad_rows:
+        sample_manifest = (
+            f"version_rows={len(version_rows)}, updated={updated_count}, "
+            f"sample={repr(version_rows[0].adapter_manifest)[:120] if version_rows else 'empty'}"
+        )
         summary = "; ".join(
             f"{row.question_id} ({row.title!r}): io_type={row.io_type!r}" for row in bad_rows[:20]
         )
         raise RuntimeError(
             f"Aborting migration: {len(bad_rows)} question(s) have missing or invalid io_type "
-            f"(no silent default allowed): {summary}"
+            f"({sample_manifest}): {summary}"
         )
 
     op.alter_column(
