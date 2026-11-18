@@ -158,6 +158,12 @@ def main(argv: list[str] | None = None) -> int:
     for key in ("DATABASE_URL", "NATS_URL"):
         if "B2_" + key in settings:
             settings[key] = settings["B2_" + key]
+    try:
+        from autograder_host.logs import attach_log_sink, flush_log_sink
+
+        attach_log_sink(process="worker")
+    except ImportError:
+        flush_log_sink = None  # type: ignore[assignment]
     runtime = build_b2_runtime(settings)
     if runtime.evaluator is None:
         print(f"evaluation chain unavailable: {runtime.evaluation_reason}", file=sys.stderr)
@@ -177,6 +183,9 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:  # pragma: no cover - interactive stop
         log_event(logger, "worker.stopped")
         return 0
+    finally:
+        if flush_log_sink is not None:
+            flush_log_sink()
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry point

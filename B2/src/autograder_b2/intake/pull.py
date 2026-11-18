@@ -63,32 +63,42 @@ def main(argv: list[str] | None = None) -> int:
     for key in ("DATABASE_URL", "NATS_URL"):
         if "B2_" + key in settings:
             settings[key] = settings["B2_" + key]
-    runtime = build_b2_runtime(settings)
-    if runtime.email is None:
-        # Not configured is a legitimate state (the platform reports `not-configured`); the
-        # CLI says so on stderr and exits 2 so the timer's status is honest.
-        print(f"mail intake unavailable: {runtime.email_unavailable_reason}", file=sys.stderr)
-        # 定时器场景下"邮箱未配置"是正常状态；命令行的默认语义仍是 2（明确不可用）。
-        return 0 if arguments.allow_unconfigured else 2
+    try:
+        from autograder_host.logs import attach_log_sink, flush_log_sink
 
-    while True:
-        report = runtime.email.pull()
-        log_event(
-            logger,
-            "intake.pull",
-            processed=len(getattr(report, "processed", ()) or ()),
-            quarantined=len(getattr(report, "quarantined", ()) or ()),
-            skipped=len(getattr(report, "skipped", ()) or ()),
-            failed=len(getattr(report, "failed", ()) or ()),
-        )
-        if arguments.once:
-            return 0
-        if arguments.idle_exit and not any(
-            getattr(report, name, ())
-            for name in ("processed", "quarantined", "skipped", "failed")
-        ):
-            return 0
-        time.sleep(arguments.idle_seconds)
+        attach_log_sink(process="intake")
+    except ImportError:
+        flush_log_sink = None  # type: ignore[assignment]
+    try:
+        runtime = build_b2_runtime(settings)
+        if runtime.email is None:
+            # Not configured is a legitimate state (the platform reports `not-configured`); the
+            # CLI says so on stderr and exits 2 so the timer's status is honest.
+            print(f"mail intake unavailable: {runtime.email_unavailable_reason}", file=sys.stderr)
+            # 定时器场景下"邮箱未配置"是正常状态；命令行的默认语义仍是 2（明确不可用）。
+            return 0 if arguments.allow_unconfigured else 2
+
+        while True:
+            report = runtime.email.pull()
+            log_event(
+                logger,
+                "intake.pull",
+                processed=len(getattr(report, "processed", ()) or ()),
+                quarantined=len(getattr(report, "quarantined", ()) or ()),
+                skipped=len(getattr(report, "skipped", ()) or ()),
+                failed=len(getattr(report, "failed", ()) or ()),
+            )
+            if arguments.once:
+                return 0
+            if arguments.idle_exit and not any(
+                getattr(report, name, ())
+                for name in ("processed", "quarantined", "skipped", "failed")
+            ):
+                return 0
+            time.sleep(arguments.idle_seconds)
+    finally:
+        if flush_log_sink is not None:
+            flush_log_sink()
 
 
 if __name__ == "__main__":  # pragma: no cover - CLI entry point

@@ -20,7 +20,9 @@ edge case are recorded in `MAIN/docs/adr/ADR-0008-module-settings-view.md`.
 from __future__ import annotations
 
 import importlib.metadata
+import logging
 import os
+import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from urllib.parse import urlsplit
@@ -28,6 +30,15 @@ from urllib.parse import urlsplit
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from autograder_platform import HealthReport, ModuleContext, ModuleDescriptor, PlatformModule
+
+from autograder_host.logs import (
+    attach_log_sink,
+    bind_request_context,
+    normalize_uuid,
+    reset_request_context,
+)
+
+_host_logger = logging.getLogger("autograder_host")
 
 _CORS_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE"]
 _CORS_HEADERS = [
@@ -158,8 +169,54 @@ def _load_modules() -> list[PlatformModule]:
     return ordered
 
 
+class _RequestContextMiddleware:
+    """Ensure every HTTP request carries a single canonical UUID ``X-Request-ID``."""
+
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        headers = list(scope.get("headers") or [])
+        raw_req_id: str | None = None
+        filtered_headers = []
+        for k, v in headers:
+            if k.lower() == b"x-request-id":
+                if raw_req_id is None:
+                    raw_req_id = v.decode("latin-1", errors="ignore")
+            else:
+                filtered_headers.append((k, v))
+
+        request_id = normalize_uuid(raw_req_id) or str(uuid.uuid4())
+        filtered_headers.append((b"x-request-id", request_id.encode("ascii")))
+        scope["headers"] = filtered_headers
+        state = scope.setdefault("state", {})
+        state["request_id"] = request_id
+
+        async def send_with_request_id(message) -> None:
+            if message["type"] == "http.response.start":
+                resp_headers = [
+                    (k, v)
+                    for k, v in (message.get("headers") or [])
+                    if k.lower() != b"x-request-id"
+                ]
+                resp_headers.append((b"x-request-id", request_id.encode("ascii")))
+                message["headers"] = resp_headers
+            await send(message)
+
+        tokens = bind_request_context(request_id=request_id)
+        try:
+            await self.app(scope, receive, send_with_request_id)
+        finally:
+            reset_request_context(tokens)
+
+
 def create_app() -> FastAPI:
     environ = dict(os.environ)
+    sink = attach_log_sink(process="host")
     app = FastAPI(title="AutoGrader MAIN Composition Host", version="0.1.0")
     app.add_middleware(
         CORSMiddleware,
@@ -169,6 +226,7 @@ def create_app() -> FastAPI:
         allow_headers=_CORS_HEADERS,
         expose_headers=_CORS_EXPOSE_HEADERS,
     )
+    app.add_middleware(_RequestContextMiddleware)
     modules = _load_modules()
     contexts: dict[str, HostContext] = {
         module.descriptor.module: HostContext(
@@ -201,6 +259,15 @@ def create_app() -> FastAPI:
             "ready": all(report.healthy for report in reports),
             "modules": [report.__dict__ for report in reports],
         }
+
+    _host_logger.info(
+        "platform.host.started",
+        extra={
+            "event": "platform.host.started",
+            "module_count": len(modules),
+            "db_sink_enabled": sink.db_sink_enabled,
+        },
+    )
 
     return app
 

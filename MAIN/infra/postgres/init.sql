@@ -29,6 +29,7 @@
 CREATE SCHEMA IF NOT EXISTS b2;
 CREATE SCHEMA IF NOT EXISTS b3;
 CREATE SCHEMA IF NOT EXISTS b4;
+CREATE SCHEMA IF NOT EXISTS logs;
 
 -- Roles ---------------------------------------------------------------------------
 -- B2: one role. It owns nothing; it is granted DML on the b2 tables after migration.

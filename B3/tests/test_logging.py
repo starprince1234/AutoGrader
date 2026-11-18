@@ -1,7 +1,7 @@
 """TC-LOG-01: structured, redacted JSON logs (``RQ-B-3-99``).
 
 Redaction is key-based, so it can be tested exhaustively: any value under a
-protected key becomes ``[redacted]`` no matter who logged it or how deeply it is
+protected key becomes ``[REDACTED]`` no matter who logged it or how deeply it is
 nested. The tests also assert the fields the requirement names explicitly:
 ``producer=B3``, ``request_id`` and ``question_version_id`` when it exists.
 """
@@ -88,7 +88,7 @@ def test_protected_values_are_redacted(key):
     payload = emit([make_record(**{key: "SECRET-VALUE"})])[0]
     rendered = json.dumps(payload)
     assert "SECRET-VALUE" not in rendered
-    assert "[redacted]" in rendered
+    assert "[REDACTED]" in rendered
     assert is_protected_key(key)
 
 
@@ -156,7 +156,7 @@ def test_oversized_and_exotic_values_are_clamped():
     assert redact_value(list(range(100)))[-1].startswith("...")
     deep = redact_value({"a": {"b": {"c": {"d": {"e": {"f": {"g": {"h": "SECRET"}}}}}}}})
     assert "SECRET" not in json.dumps(deep)
-    assert "[redacted]" in json.dumps(deep)
+    assert "[REDACTED]" in json.dumps(deep)
 
 
 def test_configure_logging_is_idempotent():

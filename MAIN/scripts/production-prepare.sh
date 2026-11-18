@@ -56,3 +56,6 @@ done
 
 printf '[autograder] provisioning B4 least-privilege role\n'
 "$PYTHON" -m autograder_b4.ops.provision
+
+printf '[autograder] provisioning unified logs schema and roles\n'
+"$PYTHON" -m autograder_host.logs.provision

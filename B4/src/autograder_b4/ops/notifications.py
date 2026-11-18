@@ -66,6 +66,12 @@ def main(argv: list[str] | None = None) -> int:
 
     configure_logging()
     try:
+        from autograder_host.logs import attach_log_sink, flush_log_sink
+
+        attach_log_sink(process="notifier")
+    except ImportError:
+        flush_log_sink = None  # type: ignore[assignment]
+    try:
         engine = create_engine_from_settings(settings)
         report = send_pass(
             engine,
@@ -77,6 +83,9 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as error:  # noqa: BLE001 - the pass reports, it does not crash-loop
         print(json.dumps({"error": type(error).__name__}))
         return EXIT_INFRASTRUCTURE
+    finally:
+        if flush_log_sink is not None:
+            flush_log_sink()
 
     print(json.dumps(report.as_dict(), sort_keys=True))
     return EXIT_OK

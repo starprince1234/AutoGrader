@@ -29,7 +29,7 @@ from typing import Any
 from collections.abc import Mapping, MutableMapping
 
 PRODUCER = "B3"
-REDACTED = "[redacted]"
+REDACTED = "[REDACTED]"
 MAX_STRING_CHARS = 512
 MAX_SEQUENCE_ITEMS = 20
 
