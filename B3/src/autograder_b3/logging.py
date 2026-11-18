@@ -78,12 +78,25 @@ PROTECTED_LOG_KEY_FRAGMENTS: tuple[str, ...] = (
 )
 
 
+SAFE_LOG_KEYS: frozenset[str] = frozenset(
+    {
+        "statuscode",
+        "errorcode",
+        "reasoncode",
+        "expectedexitcode",
+        "exitcode",
+    }
+)
+
+
 def _normalize(key: str) -> str:
     return "".join(ch for ch in key.lower() if ch.isalnum())
 
 
 def is_protected_key(key: str) -> bool:
     normalized = _normalize(key)
+    if normalized in SAFE_LOG_KEYS:
+        return False
     return any(fragment in normalized for fragment in PROTECTED_LOG_KEY_FRAGMENTS)
 
 

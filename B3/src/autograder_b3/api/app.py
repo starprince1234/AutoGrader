@@ -54,6 +54,8 @@ def install_error_handlers(app: FastAPI) -> None:
             "request.failed",
             level=40,
             request_id=_request_id(request),
+            method=request.method,
+            path=_sanitize_request_path(request.url.path),
             error_type=type(exc).__name__,
             status_code=500,
         )
@@ -79,6 +81,8 @@ def _problem_response(request: Request, error: B3Error) -> JSONResponse:
             "request.failed",
             level=40,
             request_id=_request_id(request),
+            method=request.method,
+            path=_sanitize_request_path(request.url.path),
             reason=error.slug,
             status_code=error.status,
         )
@@ -94,6 +98,27 @@ def _request_id(request: Request) -> str:
     return request.headers.get("X-Request-ID") or "-"
 
 
+def _sanitize_request_path(path: str) -> str:
+    """Strip query string and replace UUID or numeric-ID segments with placeholders."""
+    base = path.split("?", 1)[0]
+    parts = []
+    for segment in base.split("/"):
+        if not segment:
+            parts.append(segment)
+            continue
+        try:
+            uuid.UUID(segment)
+            parts.append("{id}")
+            continue
+        except ValueError:
+            pass
+        if segment.isdigit() and len(segment) >= 5:
+            parts.append("{id}")
+        else:
+            parts.append(segment)
+    return "/".join(parts)
+
+
 def install_request_logging(app: FastAPI) -> None:
     @app.middleware("http")
     async def _log_request(request: Request, call_next):
@@ -106,6 +131,8 @@ def install_request_logging(app: FastAPI) -> None:
             get_logger("api"),
             "request.completed",
             request_id=request_id,
+            method=request.method,
+            path=_sanitize_request_path(request.url.path),
             status_code=response.status_code,
             duration_ms=duration_ms,
             outcome=request.method,

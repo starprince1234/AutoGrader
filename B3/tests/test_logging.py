@@ -291,3 +291,16 @@ def test_failures_are_logged_not_swallowed(client, auth_headers):
     logger.handlers[0].flush()
     lines = [json.loads(line) for line in stream.getvalue().splitlines() if line.strip()]
     assert any(line["message"] == "request.completed" for line in lines)
+
+
+def test_request_log_preserves_status_code_and_sanitizes_path():
+    from autograder_b3.api.app import _sanitize_request_path
+    from autograder_b3.logging import redact_value
+
+    redacted = redact_value({"status_code": 200, "source_code": "print(1)", "token": "abc"})
+    assert redacted["status_code"] == 200
+    assert redacted["source_code"] == REDACTED
+    assert redacted["token"] == REDACTED
+
+    assert _sanitize_request_path("/api/v1/questions/123e4567-e89b-12d3-a456-426614174000?secret=1") == "/api/v1/questions/{id}"
+    assert _sanitize_request_path("/api/v1/students/20260001/grades") == "/api/v1/students/{id}/grades"

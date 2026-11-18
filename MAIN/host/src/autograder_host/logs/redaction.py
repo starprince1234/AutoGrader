@@ -278,6 +278,19 @@ def infer_producer(raw_producer: Any, logger_name: str | None) -> str:
     return "MAIN"
 
 
+_UUID_PATH_RE = re.compile(
+    r"(?<=/)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?=/|$)",
+    re.IGNORECASE,
+)
+_NUMERIC_ID_PATH_RE = re.compile(r"(?<=/)\d{5,}(?=/|$)")
+
+
+def _sanitize_path_value(value: str) -> str:
+    base = value.split("?", 1)[0]
+    base = _UUID_PATH_RE.sub("{id}", base)
+    return _NUMERIC_ID_PATH_RE.sub("{id}", base)
+
+
 def _sanitize_field_value(key: str, value: Any) -> tuple[Any, bool]:
     """Return (sanitized_scalar_or_none, was_truncated)."""
     if value is None:
@@ -291,6 +304,8 @@ def _sanitize_field_value(key: str, value: Any) -> tuple[Any, bool]:
             return None, False
         return value, False
     if isinstance(value, str):
+        if key == "path":
+            value = _sanitize_path_value(value)
         sanitized = sanitize_text(
             value,
             max_length=MAX_FIELD_STRING_LENGTH,
