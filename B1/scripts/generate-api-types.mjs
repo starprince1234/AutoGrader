@@ -27,6 +27,7 @@ const targets = [
   { name: "b2", source: "openapi/b2.yaml" },
   { name: "b3", source: "openapi/b3.yaml" },
   { name: "b4", source: "openapi/b4.yaml" },
+  { name: "ops", source: "openapi/ops.yaml" },
 ];
 
 const header = (source) =>

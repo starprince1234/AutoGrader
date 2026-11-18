@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://autograder.local/contracts/log-record.schema.json",
+  "title": "UnifiedLogRecord",
+  "description": "Normalized operational log envelope persisted by MAIN host into logs.log_events.",
+  "type": "object",
+  "required": ["timestamp", "level", "event", "producer", "process"],
+  "properties": {
+    "timestamp": {"type": "string", "format": "date-time"},
+    "level": {"type": "string", "enum": ["info", "warn", "error"]},
+    "event": {"type": "string", "minLength": 1, "maxLength": 100},
+    "producer": {"type": "string", "enum": ["B1", "B2", "B3", "B4", "B5", "MAIN"]},
+    "process": {"type": "string", "enum": ["host", "worker", "intake", "notifier", "browser"]},
+    "request_id": {"type": "string", "format": "uuid"},
+    "correlation_id": {"type": "string", "format": "uuid"},
+    "course_id": {"type": "string", "format": "uuid"},
+    "assignment_id": {"type": "string", "format": "uuid"},
+    "submission_id": {"type": "string", "format": "uuid"},
+    "evaluation_run_id": {"type": "string", "format": "uuid"},
+    "question_version_id": {"type": "string", "format": "uuid"},
+    "actor_id": {"type": "string", "format": "uuid"},
+    "stage": {"type": "string", "minLength": 1, "maxLength": 64},
+    "fields": {
+      "type": "object",
+      "description": "Whitelisted, redacted flat key-value metadata (<= 2048 bytes serialized).",
+      "additionalProperties": true
+    },
+    "truncated": {"type": "boolean"}
+  },
+  "additionalProperties": false
+}

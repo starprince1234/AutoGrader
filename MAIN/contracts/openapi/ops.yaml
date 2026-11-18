@@ -1,0 +1,344 @@
+openapi: 3.1.0
+info:
+  title: AutoGrader MAIN Operational Log Center API
+  version: 0.41.0
+  description: |
+    Unified operational log center served by the MAIN composition host.
+    Provides log search, cross-module trace timeline, module health summary,
+    bounded streaming export (JSONL/CSV), and authenticated browser log ingestion.
+  license:
+    name: Course project (internal)
+servers:
+  - url: /
+    description: Served by the MAIN composition host.
+
+security:
+  - bearerAuth: []
+
+paths:
+  /api/v1/ops/logs:
+    get:
+      operationId: listOpsLogs
+      summary: Search normalized operational logs with cursor pagination
+      tags: [ops-logs]
+      parameters:
+        - $ref: './common.yaml#/components/parameters/RequestId'
+        - name: from
+          in: query
+          required: false
+          schema: {$ref: './common.yaml#/components/schemas/Timestamp'}
+        - name: to
+          in: query
+          required: false
+          schema: {$ref: './common.yaml#/components/schemas/Timestamp'}
+        - name: producer
+          in: query
+          required: false
+          schema: {$ref: '#/components/schemas/LogProducer'}
+        - name: level
+          in: query
+          required: false
+          schema: {$ref: '#/components/schemas/LogLevel'}
+        - name: event
+          in: query
+          required: false
+          schema: {type: string, maxLength: 100}
+        - name: request_id
+          in: query
+          required: false
+          schema: {$ref: './common.yaml#/components/schemas/Uuid'}
+        - name: correlation_id
+          in: query
+          required: false
+          schema: {$ref: './common.yaml#/components/schemas/Uuid'}
+        - name: submission_id
+          in: query
+          required: false
+          schema: {$ref: './common.yaml#/components/schemas/Uuid'}
+        - name: course_id
+          in: query
+          required: false
+          schema: {$ref: './common.yaml#/components/schemas/Uuid'}
+        - name: io_type
+          in: query
+          required: false
+          schema: {type: string, maxLength: 32}
+        - name: q
+          in: query
+          required: false
+          schema: {type: string, maxLength: 100}
+        - name: cursor
+          in: query
+          required: false
+          schema: {type: string, maxLength: 256}
+        - name: limit
+          in: query
+          required: false
+          schema: {type: integer, minimum: 1, maximum: 200, default: 50}
+      responses:
+        '200':
+          description: Cursor page of normalized log records.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OpsLogPage'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+
+  /api/v1/ops/logs/trace/{trace_id}:
+    get:
+      operationId: getOpsLogTrace
+      summary: Fetch chronological cross-module trace by request_id, correlation_id, or submission_id
+      tags: [ops-logs]
+      parameters:
+        - $ref: './common.yaml#/components/parameters/RequestId'
+        - name: trace_id
+          in: path
+          required: true
+          schema: {$ref: './common.yaml#/components/schemas/Uuid'}
+      responses:
+        '200':
+          description: Chronological trace timeline across modules.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OpsLogTrace'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+
+  /api/v1/ops/logs/summary:
+    get:
+      operationId: getOpsLogSummary
+      summary: Operational log overview per module, storage budget, and drop counters
+      tags: [ops-logs]
+      parameters:
+        - $ref: './common.yaml#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: Module log health and storage summary.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OpsLogSummary'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+
+  /api/v1/ops/logs/exports:
+    post:
+      operationId: exportOpsLogs
+      summary: Stream bounded operational logs as JSONL or CSV (audited)
+      tags: [ops-logs]
+      parameters:
+        - $ref: './common.yaml#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OpsLogExportRequest'}
+      responses:
+        '200':
+          description: Exported log stream (JSONL or CSV) with filter header metadata.
+          headers:
+            Content-Disposition:
+              schema: {type: string}
+          content:
+            application/x-ndjson:
+              schema: {type: string}
+            text/csv:
+              schema: {type: string}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+
+  /api/v1/logs/client:
+    post:
+      operationId: ingestClientLogs
+      summary: Ingest bounded browser structured logs for authenticated callers
+      tags: [ops-logs]
+      parameters:
+        - $ref: './common.yaml#/components/parameters/RequestId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/ClientLogBatchRequest'}
+      responses:
+        '202':
+          description: Accepted for asynchronous persistence.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ClientLogIngestResponse'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
+        '429':
+          description: Rate limit exceeded for client log ingestion.
+          content:
+            application/problem+json:
+              schema: {$ref: './common.yaml#/components/schemas/ProblemDetails'}
+
+components:
+  schemas:
+    LogLevel:
+      type: string
+      enum: [info, warn, error]
+
+    LogProducer:
+      type: string
+      enum: [B1, B2, B3, B4, B5, MAIN]
+
+    LogProcess:
+      type: string
+      enum: [host, worker, intake, notifier, browser]
+
+    OpsLogRecord:
+      type: object
+      required: [log_id, timestamp, level, event, producer, process]
+      properties:
+        log_id: {type: integer, format: int64}
+        timestamp: {$ref: './common.yaml#/components/schemas/Timestamp'}
+        level: {$ref: '#/components/schemas/LogLevel'}
+        event: {type: string, minLength: 1, maxLength: 100}
+        producer: {$ref: '#/components/schemas/LogProducer'}
+        process: {$ref: '#/components/schemas/LogProcess'}
+        request_id: {type: [string, "null"], format: uuid}
+        correlation_id: {type: [string, "null"], format: uuid}
+        course_id: {type: [string, "null"], format: uuid}
+        assignment_id: {type: [string, "null"], format: uuid}
+        submission_id: {type: [string, "null"], format: uuid}
+        evaluation_run_id: {type: [string, "null"], format: uuid}
+        question_version_id: {type: [string, "null"], format: uuid}
+        actor_id: {type: [string, "null"], format: uuid}
+        stage: {type: [string, "null"], maxLength: 64}
+        fields:
+          type: object
+          additionalProperties: true
+        truncated: {type: boolean}
+      additionalProperties: false
+
+    OpsLogPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/OpsLogRecord'}
+        next_cursor: {type: [string, "null"]}
+      additionalProperties: false
+
+    OpsLogTrace:
+      type: object
+      required: [trace_id, items, truncated]
+      properties:
+        trace_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        items:
+          type: array
+          items: {$ref: '#/components/schemas/OpsLogRecord'}
+        truncated: {type: boolean}
+      additionalProperties: false
+
+    OpsModuleLogHealth:
+      type: object
+      required:
+        - producer
+        - last_log_at
+        - warn_1h
+        - error_1h
+        - warn_24h
+        - error_24h
+        - total_24h
+        - ready
+        - silent_minutes
+      properties:
+        producer: {$ref: '#/components/schemas/LogProducer'}
+        last_log_at:
+          oneOf:
+            - {$ref: './common.yaml#/components/schemas/Timestamp'}
+            - {type: "null"}
+        warn_1h: {type: integer, minimum: 0}
+        error_1h: {type: integer, minimum: 0}
+        warn_24h: {type: integer, minimum: 0}
+        error_24h: {type: integer, minimum: 0}
+        total_24h: {type: integer, minimum: 0}
+        ready: {type: boolean}
+        silent_minutes: {type: [integer, "null"], minimum: 0}
+      additionalProperties: false
+
+    OpsLogSummary:
+      type: object
+      required:
+        - generated_at
+        - modules
+        - dropped_total
+        - db_degraded
+        - storage_bytes
+        - storage_limit_bytes
+        - retention_info_days
+        - retention_warn_error_days
+      properties:
+        generated_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+        modules:
+          type: array
+          items: {$ref: '#/components/schemas/OpsModuleLogHealth'}
+        dropped_total: {type: integer, minimum: 0}
+        db_degraded: {type: boolean}
+        storage_bytes: {type: integer, minimum: 0}
+        storage_limit_bytes: {type: integer, minimum: 1}
+        retention_info_days: {type: integer, minimum: 1}
+        retention_warn_error_days: {type: integer, minimum: 1}
+      additionalProperties: false
+
+    OpsLogExportRequest:
+      type: object
+      required: [format]
+      properties:
+        format:
+          type: string
+          enum: [jsonl, csv]
+        from: {$ref: './common.yaml#/components/schemas/Timestamp'}
+        to: {$ref: './common.yaml#/components/schemas/Timestamp'}
+        producer: {$ref: '#/components/schemas/LogProducer'}
+        level: {$ref: '#/components/schemas/LogLevel'}
+        event: {type: string, maxLength: 100}
+        request_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        correlation_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        submission_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+        io_type: {type: string, maxLength: 32}
+        q: {type: string, maxLength: 100}
+        limit: {type: integer, minimum: 1, maximum: 5000, default: 2000}
+      additionalProperties: false
+
+    ClientLogItem:
+      type: object
+      required: [timestamp, level, event]
+      properties:
+        timestamp: {$ref: './common.yaml#/components/schemas/Timestamp'}
+        level:
+          type: string
+          enum: [debug, info, warn, error]
+        event: {type: string, minLength: 1, maxLength: 100}
+        request_id: {type: [string, "null"]}
+        correlation_id: {type: [string, "null"]}
+        course_id: {type: [string, "null"]}
+        assignment_id: {type: [string, "null"]}
+        submission_id: {type: [string, "null"]}
+        stage: {type: [string, "null"], maxLength: 64}
+      additionalProperties: true
+
+    ClientLogBatchRequest:
+      type: object
+      required: [lines]
+      properties:
+        lines:
+          type: array
+          minItems: 1
+          maxItems: 50
+          items: {$ref: '#/components/schemas/ClientLogItem'}
+      additionalProperties: false
+
+    ClientLogIngestResponse:
+      type: object
+      required: [accepted, dropped]
+      properties:
+        accepted: {type: integer, minimum: 0}
+        dropped: {type: integer, minimum: 0}
+      additionalProperties: false

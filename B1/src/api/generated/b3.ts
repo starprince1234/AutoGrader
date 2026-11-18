@@ -715,6 +715,33 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/question-versions/{question_version_id}/fixtures/{fixture_id}/download": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                question_version_id: components["schemas"]["Uuid"];
+                fixture_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Download a student-visible input fixture attachment (RQ-B-3-50)
+         * @description Serves raw bytes for an input fixture explicitly marked `student_visible: true`.
+         *     Hidden fixtures (`student_visible: false`) and `mount=expected_output` fixtures are
+         *     always refused (403/404) so hidden evaluation data never leaks.
+         *     Authorization: staff in the question's course scope, or students enrolled in the
+         *     course when this version is part of an open/published assignment.
+         */
+        get: operations["downloadVersionFixture"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/question-versions/{question_version_id}/fixture-contents": {
         parameters: {
             query?: {
@@ -1061,6 +1088,13 @@ export interface components {
              * @enum {string}
              */
             mount: "input" | "expected_output";
+            /**
+             * @description Whether students may download this input fixture as a sample attachment. Never allowed for mount=expected_output.
+             * @default false
+             */
+            student_visible: boolean;
+            /** @description Optional test case id when this fixture belongs to a specific case rather than the whole version. */
+            test_case_id?: components["schemas"]["Uuid"] | null;
             content_base64: string;
         };
         /** @description Stored fixture metadata. The bytes themselves are never returned. */
@@ -1070,6 +1104,8 @@ export interface components {
             path: string;
             /** @enum {string} */
             mount: "input" | "expected_output";
+            student_visible: boolean;
+            test_case_id?: components["schemas"]["Uuid"] | null;
             content_sha256: string;
             size_bytes: number;
         };
@@ -1363,8 +1399,8 @@ export interface components {
             stem_markdown: string;
             language: components["schemas"]["Language"];
             tags: string[];
-            /** @enum {string} */
-            adapter_kind: "stdin" | "file" | "callable";
+            adapter_kind: components["schemas"]["IoType"];
+            io_type: components["schemas"]["IoType"];
         };
         /**
          * @description Structural delta between two consecutive question versions (CHG-0013). Every field is
@@ -1379,7 +1415,6 @@ export interface components {
             fixtures_changed?: boolean | null;
             stem_length_before?: number | null;
             stem_length_after?: number | null;
-            adapter_kind_changed?: boolean | null;
             size_limits_changed?: boolean | null;
             /** @description Digest only -- the answer itself never leaves the protected store. */
             reference_answer_digest_before?: components["schemas"]["Sha256"] | null;
@@ -1429,6 +1464,11 @@ export interface components {
                 /** @description Questions carrying this tag. Never zero: a tag with no questions is absent from the list rather than present with a 0. */
                 question_count: number;
             }[];
+            /** @description Question counts grouped by io_type in this scope (RQ-B-3-30). */
+            by_io_type?: {
+                io_type: components["schemas"]["IoType"];
+                question_count: number;
+            }[];
         };
         /**
          * @description PUBLIC representation. Reference answers, hidden test cases and expected
@@ -1449,6 +1489,7 @@ export interface components {
                 alt_text?: string | null;
             }[];
             language: components["schemas"]["Language"];
+            io_type: components["schemas"]["IoType"];
             /** @enum {string} */
             status: "draft" | "published" | "archived";
             /**
@@ -1493,11 +1534,22 @@ export interface components {
             /** @enum {string} */
             status: "draft" | "published" | "archived";
             language: components["schemas"]["Language"];
-            /**
-             * @description Which of the three test frameworks the version uses (RQ-B-3-40/50/60).
-             * @enum {string}
-             */
-            adapter_kind: "stdin" | "file" | "callable";
+            io_type: components["schemas"]["IoType"];
+            /** @description Which of the three test frameworks the version uses (RQ-B-3-40/50/60). Must equal question io_type. */
+            adapter_kind: components["schemas"]["IoType"];
+            /** @description Publicly downloadable input fixture attachments (only student_visible=true, mount=input). Never contains hidden fixtures or expected_output. */
+            visible_fixtures?: {
+                fixture_id: components["schemas"]["Uuid"];
+                path: string;
+                content_sha256: components["schemas"]["Sha256"];
+                size_bytes: number;
+                test_case_id?: components["schemas"]["Uuid"] | null;
+            }[];
+            io_spec?: {
+                callable_module?: string | null;
+                callable_attribute?: string | null;
+                expected_output_paths?: string[];
+            } | null;
             /** @description Bound into every evaluation, so a change to the question cannot silently alter past results. */
             content_digest?: components["schemas"]["Sha256"];
             /**
@@ -1571,6 +1623,8 @@ export interface components {
             title: string;
             stem_markdown: string;
             language: components["schemas"]["Language"];
+            /** @description Immutable question I/O type. Optional on create (defaults to adapter.kind); if provided must equal adapter.kind and existing question io_type. */
+            io_type?: components["schemas"]["IoType"];
             /**
              * @description PROTECTED. Never leaves the question bank. Omitted or blank keeps the stored
              *     answer unchanged (CHG-0017); omission never removes it.
@@ -1711,6 +1765,15 @@ export interface components {
             /** @description PROTECTED. */
             expected_stderr?: string | null;
             expected_exit_code?: number | null;
+            /** @description PROTECTED. Optional per-case input or expected_output fixtures. */
+            files?: {
+                path: string;
+                content_sha256: components["schemas"]["Sha256"];
+                /** @enum {string} */
+                mount: "input" | "expected_output";
+                /** @default false */
+                student_visible: boolean;
+            }[];
             /** @description single_run only: which delimiter-separated stdout segment this case compares. Declared values must be exactly 0..N-1. */
             segment?: number | null;
             /** @description Post-run assertions on final workspace files (bytes and permission bits). The evaluator never judges these from student stdout. */
@@ -1854,6 +1917,14 @@ export interface components {
             status: "open" | "closed" | "archived";
             due_at?: components["schemas"]["Timestamp"] | null;
             question_version_ids: components["schemas"]["Uuid"][];
+            /** @description Ordered assignment question metadata including io_type and language for UI/B4 display. */
+            question_items?: {
+                question_version_id: components["schemas"]["Uuid"];
+                question_id: components["schemas"]["Uuid"];
+                title: string;
+                language: components["schemas"]["Language"];
+                io_type: components["schemas"]["IoType"];
+            }[];
             /** @enum {string} */
             notification_state: "pending" | "scheduled" | "unavailable";
             created_at?: components["schemas"]["Timestamp"] | null;
@@ -2008,6 +2079,7 @@ export interface components {
             content_sha256: components["schemas"]["Sha256"];
             size_bytes: number;
             content_base64: string;
+            test_case_id?: components["schemas"]["Uuid"] | null;
         };
         /**
          * @description PROTECTED. Bounded delivery of a version's `mount=input` fixture bytes. Refused with
@@ -2028,6 +2100,16 @@ export interface components {
          * @enum {string}
          */
         Language: "python" | "bash";
+        /**
+         * @description Question I/O specification (RQ-B-3-40/50/60):
+         *     - `stdin`: command-line arguments + standard input
+         *     - `file`: workspace input/output files
+         *     - `callable`: module/function imported (python) or sourced (bash) by platform harness
+         *     Immutable per question and equal to every version's `adapter.kind`.
+         *     Course-language-type matrix: PYTHON course -> `python`, UNIX course -> `bash`; all three types are open for both courses.
+         * @enum {string}
+         */
+        IoType: "stdin" | "file" | "callable";
         /** @description Cursor pagination envelope. Offset pagination is forbidden for large tables. */
         CursorPage: {
             items: unknown[];
@@ -2158,8 +2240,10 @@ export interface components {
                     content_sha256: string;
                     /** @enum {string} */
                     mount: "input" | "expected_output";
+                    /** @default false */
+                    student_visible: boolean;
                 }[];
-                /** @description Entry point resolved inside the workspace (relevant for kind=callable). Loading from arbitrary absolute paths or over the network is forbidden. */
+                /** @description Entry point resolved inside the workspace (relevant for kind=callable). For Python, module is dotted module name and attribute is callable name; for bash, module is script basename (e.g. 'main' -> main.sh) and attribute is shell function name. Loading from arbitrary absolute paths or over the network is forbidden. */
                 callable?: {
                     module: string;
                     attribute: string;
@@ -2185,6 +2269,15 @@ export interface components {
                 expected_stdout?: string | null;
                 expected_stderr?: string | null;
                 expected_exit_code?: number | null;
+                /** @description Per-case input or expected_output fixtures for this case only. Materialised into the sandbox for this case without leaking to other cases. */
+                files?: {
+                    path: string;
+                    content_sha256: string;
+                    /** @enum {string} */
+                    mount: "input" | "expected_output";
+                    /** @default false */
+                    student_visible: boolean;
+                }[];
                 /** @description single_run only: which delimiter-separated stdout segment this case compares. The declared segment values must be exactly 0..N-1, one per segment case; a case is only ever compared against its own segment. */
                 segment?: number;
                 /** @description Assertions the evaluator makes directly on final workspace files after the run (never on the student's stdout). Used by the vi part of a file-editing question: the edited bytes and the permission bits are both checked, so printing a fabricated `stat` line cannot pass. */
@@ -2351,6 +2444,7 @@ export interface operations {
                 limit?: components["parameters"]["Limit"];
                 course_id?: components["schemas"]["Uuid"];
                 language?: components["schemas"]["Language"];
+                io_type?: components["schemas"]["IoType"];
                 published_only?: boolean;
                 /**
                  * @description Case-insensitive **substring** search over the question's title and stem
@@ -3019,6 +3113,32 @@ export interface operations {
             409: components["responses"]["Conflict"];
             413: components["responses"]["PayloadTooLarge"];
             422: components["responses"]["UnprocessableEntity"];
+        };
+    };
+    downloadVersionFixture: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                question_version_id: components["schemas"]["Uuid"];
+                fixture_id: components["schemas"]["Uuid"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Fixture attachment bytes. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": string;
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            404: components["responses"]["NotFound"];
         };
     };
     getVersionFixtureContents: {

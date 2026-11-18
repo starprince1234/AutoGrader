@@ -12,6 +12,15 @@
 
 ---
 
+## 0.41.0 — 统一日志中心契约（`log-record.schema.json` 与 `openapi/ops.yaml`）
+
+- **类型**：最小新增（新增共享日志信封 schema 与 `ops` OpenAPI 契约，无破坏性字段删除）
+- **状态**：有效
+- **变更**：
+  - 新增 `schemas/log-record.schema.json`：定义 B1–B5 与 MAIN 统一入库的运行日志信封（`timestamp`/`level`/`event`/`producer`/`process` 必填，`request_id`/`correlation_id`/UUID 主体/`stage`/`fields`/`truncated` 可选）。
+  - 新增 `openapi/ops.yaml`：定义 `GET /api/v1/ops/logs`（游标检索）、`GET /api/v1/ops/logs/trace/{trace_id}`（跨模块链路追踪）、`GET /api/v1/ops/logs/summary`（总览与丢弃/容量状态）、`POST /api/v1/ops/logs/exports`（JSONL/CSV 流式导出）、`POST /api/v1/logs/client`（已登录会话浏览器日志批量上报）。
+  - 版本 `0.40.0 → 0.41.0`：`common.yaml`、`b2.yaml`、`b3.yaml`、`b4.yaml`、`b5.yaml`、`ops.yaml` 与 `asyncapi/events.yaml` 同步。
+
 ## 0.40.0
 
 - **`PATCH /api/v1/questions/{question_id}` 新增 `course_id` 查询参数（B3）**：「另存为新版本」时

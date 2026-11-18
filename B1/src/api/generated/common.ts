@@ -66,6 +66,16 @@ export interface components {
          */
         Language: "python" | "bash";
         /**
+         * @description Question I/O specification (RQ-B-3-40/50/60):
+         *     - `stdin`: command-line arguments + standard input
+         *     - `file`: workspace input/output files
+         *     - `callable`: module/function imported (python) or sourced (bash) by platform harness
+         *     Immutable per question and equal to every version's `adapter.kind`.
+         *     Course-language-type matrix: PYTHON course -> `python`, UNIX course -> `bash`; all three types are open for both courses.
+         * @enum {string}
+         */
+        IoType: "stdin" | "file" | "callable";
+        /**
          * @description How a question version's cases are produced, declared explicitly on the version and
          *     carried in the evaluation package. `per_case` (the legacy default) runs one sandbox per
          *     case; `single_run` runs once and splits one bounded stdout into per-case segments;

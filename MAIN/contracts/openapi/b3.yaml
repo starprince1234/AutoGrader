@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AutoGrader B3 Question Bank API
-  version: 0.40.0
+  version: 0.41.0
   description: |
     Question bank: stems with graphics, reference answers, immutable question
     versions, assignments, three test-suite adapters and de-identified statistics.
@@ -39,6 +39,7 @@ paths:
         - $ref: './common.yaml#/components/parameters/Limit'
         - {name: course_id, in: query, required: false, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
         - {name: language, in: query, required: false, schema: {$ref: './common.yaml#/components/schemas/Language'}}
+        - {name: io_type, in: query, required: false, schema: {$ref: './common.yaml#/components/schemas/IoType'}}
         - {name: published_only, in: query, required: false, schema: {type: boolean, default: true}}
         - name: q
           in: query
@@ -891,6 +892,29 @@ paths:
         '413': {$ref: './common.yaml#/components/responses/PayloadTooLarge'}
         '422': {$ref: './common.yaml#/components/responses/UnprocessableEntity'}
 
+  /api/v1/question-versions/{question_version_id}/fixtures/{fixture_id}/download:
+    parameters:
+      - {name: question_version_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+      - {name: fixture_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
+    get:
+      operationId: downloadVersionFixture
+      summary: Download a student-visible input fixture attachment (RQ-B-3-50)
+      description: |
+        Serves raw bytes for an input fixture explicitly marked `student_visible: true`.
+        Hidden fixtures (`student_visible: false`) and `mount=expected_output` fixtures are
+        always refused (403/404) so hidden evaluation data never leaks.
+        Authorization: staff in the question's course scope, or students enrolled in the
+        course when this version is part of an open/published assignment.
+      tags: [questions]
+      responses:
+        '200':
+          description: Fixture attachment bytes.
+          content:
+            application/octet-stream: {schema: {type: string, format: binary}}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '404': {$ref: './common.yaml#/components/responses/NotFound'}
+
   /api/v1/question-versions/{question_version_id}/fixture-contents:
     parameters:
       - {name: question_version_id, in: path, required: true, schema: {$ref: './common.yaml#/components/schemas/Uuid'}}
@@ -1254,6 +1278,13 @@ components:
           enum: [input, expected_output]
           default: input
           description: "`input` is a fixture handed to the code; `expected_output` is a file the code must produce."
+        student_visible:
+          type: boolean
+          default: false
+          description: "Whether students may download this input fixture as a sample attachment. Never allowed for mount=expected_output."
+        test_case_id:
+          anyOf: [{$ref: './common.yaml#/components/schemas/Uuid'}, {type: "null"}]
+          description: "Optional test case id when this fixture belongs to a specific case rather than the whole version."
         content_base64:
           type: string
           contentEncoding: base64
@@ -1262,12 +1293,14 @@ components:
     FixtureUploadResult:
       type: object
       description: "Stored fixture metadata. The bytes themselves are never returned."
-      required: [fixture_id, question_version_id, path, mount, content_sha256, size_bytes]
+      required: [fixture_id, question_version_id, path, mount, student_visible, content_sha256, size_bytes]
       properties:
         fixture_id: {$ref: './common.yaml#/components/schemas/Uuid'}
         question_version_id: {$ref: './common.yaml#/components/schemas/Uuid'}
         path: {type: string}
         mount: {type: string, enum: [input, expected_output]}
+        student_visible: {type: boolean}
+        test_case_id: {anyOf: [{$ref: './common.yaml#/components/schemas/Uuid'}, {type: "null"}]}
         content_sha256: {type: string, pattern: '^[0-9a-f]{64}$'}
         size_bytes: {type: integer, minimum: 0}
       additionalProperties: false
@@ -1661,7 +1694,7 @@ components:
         completed run, and this is the only question context that generation is allowed to
         see. A separate schema is what makes "the hint generator cannot be handed the answer"
         a property of the contract instead of a habit.
-      required: [question_version_id, title, stem_markdown, language, tags, adapter_kind]
+      required: [question_version_id, title, stem_markdown, language, tags, adapter_kind, io_type]
       properties:
         question_version_id: {$ref: './common.yaml#/components/schemas/Uuid'}
         title: {type: string, minLength: 1, maxLength: 300}
@@ -1670,7 +1703,8 @@ components:
         tags:
           type: array
           items: {type: string, minLength: 1, maxLength: 40, pattern: '^[a-z0-9][a-z0-9-]*$'}
-        adapter_kind: {type: string, enum: [stdin, file, callable]}
+        adapter_kind: {$ref: './common.yaml#/components/schemas/IoType'}
+        io_type: {$ref: './common.yaml#/components/schemas/IoType'}
       additionalProperties: false
 
     RevisionDiff:
@@ -1687,7 +1721,6 @@ components:
         fixtures_changed: {type: ["boolean", "null"]}
         stem_length_before: {type: ["integer", "null"], minimum: 0}
         stem_length_after: {type: ["integer", "null"], minimum: 0}
-        adapter_kind_changed: {type: ["boolean", "null"]}
         size_limits_changed: {type: ["boolean", "null"]}
         reference_answer_digest_before:
           anyOf: [{$ref: './common.yaml#/components/schemas/Sha256'}, {type: "null"}]
@@ -1752,6 +1785,16 @@ components:
               tag: {type: string, minLength: 1, maxLength: 40, pattern: '^[a-z0-9][a-z0-9-]*$'}
               question_count: {type: integer, minimum: 1, description: "Questions carrying this tag. Never zero: a tag with no questions is absent from the list rather than present with a 0."}
             additionalProperties: false
+        by_io_type:
+          type: array
+          description: "Question counts grouped by io_type in this scope (RQ-B-3-30)."
+          items:
+            type: object
+            required: [io_type, question_count]
+            properties:
+              io_type: {$ref: './common.yaml#/components/schemas/IoType'}
+              question_count: {type: integer, minimum: 0}
+            additionalProperties: false
       additionalProperties: false
 
     QuestionPublic:
@@ -1761,7 +1804,7 @@ components:
         outputs are intentionally absent from this schema; a contract test asserts
         their absence in real responses. Adding any of them here would be a P3
         contract violation.
-      required: [question_id, course_id, title, stem_markdown, language, status]
+      required: [question_id, course_id, title, stem_markdown, language, io_type, status]
       properties:
         question_id: {$ref: './common.yaml#/components/schemas/Uuid'}
         course_id: {$ref: './common.yaml#/components/schemas/Uuid'}
@@ -1781,6 +1824,7 @@ components:
               alt_text: {type: [string, "null"]}
             additionalProperties: false
         language: {$ref: './common.yaml#/components/schemas/Language'}
+        io_type: {$ref: './common.yaml#/components/schemas/IoType'}
         status: {type: string, enum: [draft, published, archived]}
         tags:
           type: array
@@ -1825,17 +1869,42 @@ components:
     QuestionVersionPublic:
       type: object
       description: "PUBLIC representation of an immutable question version."
-      required: [question_version_id, question_id, version, status, language, adapter_kind, stem_markdown]
+      required: [question_version_id, question_id, version, status, language, io_type, adapter_kind, stem_markdown]
       properties:
         question_version_id: {$ref: './common.yaml#/components/schemas/Uuid'}
         question_id: {$ref: './common.yaml#/components/schemas/Uuid'}
         version: {type: integer, minimum: 1}
         status: {type: string, enum: [draft, published, archived]}
         language: {$ref: './common.yaml#/components/schemas/Language'}
+        io_type: {$ref: './common.yaml#/components/schemas/IoType'}
         adapter_kind:
-          type: string
-          enum: [stdin, file, callable]
-          description: "Which of the three test frameworks the version uses (RQ-B-3-40/50/60)."
+          $ref: './common.yaml#/components/schemas/IoType'
+          description: "Which of the three test frameworks the version uses (RQ-B-3-40/50/60). Must equal question io_type."
+        visible_fixtures:
+          type: array
+          description: "Publicly downloadable input fixture attachments (only student_visible=true, mount=input). Never contains hidden fixtures or expected_output."
+          items:
+            type: object
+            required: [fixture_id, path, content_sha256, size_bytes]
+            properties:
+              fixture_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+              path: {type: string}
+              content_sha256: {$ref: './common.yaml#/components/schemas/Sha256'}
+              size_bytes: {type: integer, minimum: 0}
+              test_case_id: {anyOf: [{$ref: './common.yaml#/components/schemas/Uuid'}, {type: "null"}]}
+            additionalProperties: false
+        io_spec:
+          anyOf:
+            - type: object
+              description: "Public I/O specification metadata for rendering student/teacher instructions without leaking hidden cases."
+              properties:
+                callable_module: {type: [string, "null"]}
+                callable_attribute: {type: [string, "null"]}
+                expected_output_paths:
+                  type: array
+                  items: {type: string}
+              additionalProperties: false
+            - type: "null"
         content_digest:
           allOf: [{$ref: './common.yaml#/components/schemas/Sha256'}]
           description: "Bound into every evaluation, so a change to the question cannot silently alter past results."
@@ -1919,6 +1988,9 @@ components:
         title: {type: string, minLength: 1, maxLength: 300}
         stem_markdown: {type: string, minLength: 1}
         language: {$ref: './common.yaml#/components/schemas/Language'}
+        io_type:
+          $ref: './common.yaml#/components/schemas/IoType'
+          description: "Immutable question I/O type. Optional on create (defaults to adapter.kind); if provided must equal adapter.kind and existing question io_type."
         reference_answer:
           type: string
           description: |
@@ -2100,6 +2172,18 @@ components:
         expected_stdout: {type: [string, "null"], description: "PROTECTED."}
         expected_stderr: {type: [string, "null"], description: "PROTECTED."}
         expected_exit_code: {type: [integer, "null"]}
+        files:
+          type: array
+          description: "PROTECTED. Optional per-case input or expected_output fixtures."
+          items:
+            type: object
+            required: [path, content_sha256, mount]
+            properties:
+              path: {type: string, pattern: '^[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*$', maxLength: 200}
+              content_sha256: {$ref: './common.yaml#/components/schemas/Sha256'}
+              mount: {type: string, enum: [input, expected_output]}
+              student_visible: {type: boolean, default: false}
+            additionalProperties: false
         segment:
           type: [integer, "null"]
           minimum: 0
@@ -2272,6 +2356,19 @@ components:
         question_version_ids:
           type: array
           items: {$ref: './common.yaml#/components/schemas/Uuid'}
+        question_items:
+          type: array
+          description: "Ordered assignment question metadata including io_type and language for UI/B4 display."
+          items:
+            type: object
+            required: [question_version_id, question_id, title, language, io_type]
+            properties:
+              question_version_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+              question_id: {$ref: './common.yaml#/components/schemas/Uuid'}
+              title: {type: string}
+              language: {$ref: './common.yaml#/components/schemas/Language'}
+              io_type: {$ref: './common.yaml#/components/schemas/IoType'}
+            additionalProperties: false
         notification_state: {type: string, enum: [pending, scheduled, unavailable]}
         created_at: {anyOf: [{$ref: './common.yaml#/components/schemas/Timestamp'}, {type: "null"}]}
         updated_at: {anyOf: [{$ref: './common.yaml#/components/schemas/Timestamp'}, {type: "null"}]}
@@ -2466,6 +2563,7 @@ components:
         content_sha256: {$ref: './common.yaml#/components/schemas/Sha256'}
         size_bytes: {type: integer, minimum: 0}
         content_base64: {type: string, minLength: 1}
+        test_case_id: {anyOf: [{$ref: './common.yaml#/components/schemas/Uuid'}, {type: "null"}]}
       additionalProperties: false
 
     FixtureContentBundle:
