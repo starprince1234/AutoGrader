@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -40,14 +41,6 @@ _CHAT_SUFFIX = "/chat/completions"
 #: Upper bound for one call. The composed request is a few kilobytes; the answer is a JSON
 #: object, so this only stops a runaway generation, not a legitimate one.
 MAX_OUTPUT_TOKENS = 12288
-
-#: Chunk size for reading a response body.
-#:
-#: Reading in chunks is what makes ``timeout_seconds`` a **total** budget: ``urlopen(timeout=...)``
-#: bounds a single socket operation, so a provider that trickles a large JSON keeps resetting it.
-#: Measured in production: a 55 s ceiling became a 146 s request (and an edge 524) because the
-#: body arrived slowly while every individual read stayed inside its own socket timeout.
-_BODY_CHUNK_BYTES = 64 * 1024
 
 #: Failure categories worth a single fast retry inside multi-stage generation.
 _RETRYABLE_CATEGORIES = frozenset(
@@ -175,26 +168,43 @@ def build_request_body(
     }
 
 
-def _read_body_with_deadline(response: Any, *, timeout_seconds: float) -> bytes:
-    """Read the whole body, refusing to exceed ``timeout_seconds`` of wall-clock time.
+def _exchange_with_deadline(request: urllib.request.Request, *, timeout_seconds: float) -> bytes:
+    """Run the whole HTTP exchange in a worker thread and enforce a wall-clock bound.
 
-    ``urlopen(timeout=...)`` only bounds one socket operation; a slow trickle of a large JSON
-    resets it indefinitely, which is how a request with a 55 s ceiling ran for 146 s in
-    production and died at the edge (524) instead of returning a retryable error. Checking the
-    clock after every chunk makes the ceiling mean what it says without pulling in a second HTTP
-    client library.
+    ``urlopen(timeout=...)`` bounds a single socket operation and nothing else: the name lookup,
+    the TLS handshake and a body that trickles each of them can outlive it. Measured in
+    production: an exchange with an 85 s budget ran 171 s (the teacher got an edge `524`, and the
+    backend logged the failure long after), and an earlier 55 s ceiling became a 146 s request.
+    Waiting on a worker thread with ``join(timeout)`` is the only way to bound every phase of the
+    exchange without adding a second HTTP library.
+
+    The worker is a daemon and owns the response object, so an abandoned attempt closes its socket
+    when the exchange finally ends (the socket timeout is the same value, so it cannot linger
+    forever).
     """
-    deadline = time.monotonic() + timeout_seconds
-    chunks: list[bytes] = []
-    while True:
-        chunk = response.read(_BODY_CHUNK_BYTES)
-        if not chunk:
-            return b"".join(chunks)
-        chunks.append(chunk)
-        if time.monotonic() > deadline:
-            raise TimeoutError(
-                f"the provider did not finish its answer within {timeout_seconds:.0f} s"
-            )
+    outcome: dict[str, object] = {}
+
+    def worker() -> None:
+        try:
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                outcome["body"] = response.read()
+        except BaseException as exc:  # noqa: BLE001 - re-raised in the calling thread
+            outcome["error"] = exc
+
+    thread = threading.Thread(target=worker, name="llm-exchange", daemon=True)
+    thread.start()
+    thread.join(timeout_seconds)
+    if thread.is_alive():
+        raise TimeoutError(
+            f"the provider exchange did not finish within {timeout_seconds:.0f} s"
+        )
+    error = outcome.get("error")
+    if isinstance(error, BaseException):
+        raise error
+    body = outcome.get("body")
+    if not isinstance(body, bytes):  # pragma: no cover - the worker either sets body or error
+        raise OSError("the provider exchange produced no body")
+    return body
 
 
 def _is_timeout_error(exc: BaseException) -> bool:
@@ -235,10 +245,7 @@ def _complete_json_once(
     )
     effective_timeout = config.timeout_seconds if timeout_seconds is None else timeout_seconds
     try:
-        with urllib.request.urlopen(request, timeout=effective_timeout) as response:
-            raw = _read_body_with_deadline(response, timeout_seconds=effective_timeout).decode(
-                "utf-8"
-            )
+        raw = _exchange_with_deadline(request, timeout_seconds=effective_timeout).decode("utf-8")
     except urllib.error.HTTPError as exc:
         raise LlmCallError(f"http_{exc.code}", f"the provider answered HTTP {exc.code}") from exc
     except (TimeoutError, urllib.error.URLError, http.client.HTTPException, OSError) as exc:
@@ -312,7 +319,7 @@ def complete_json(
         per_attempt = timeout_seconds
         if deadline is not None:
             remaining = deadline - time.monotonic()
-            if remaining <= 1.0:
+            if remaining <= 0.0:
                 raise LlmCallError(
                     "timeout",
                     "the provider budget was exhausted before another attempt could start",

@@ -379,6 +379,34 @@ def test_a_retry_inside_the_deadline_gets_the_remaining_budget(monkeypatch):
     assert timeouts[1] is not None and timeouts[1] <= 60.0
 
 
+def test_a_stalled_exchange_is_cut_off_at_the_deadline(monkeypatch):
+    """A stalled lookup/handshake must not outlive the budget.
+
+    `urlopen(timeout=...)` only starts counting once a connection exists, so a blocked name lookup
+    or TLS handshake is invisible to it: production logged a 171 s exchange under an 85 s budget.
+    The exchange therefore runs in a worker thread that the caller stops waiting for.
+    """
+    import time as _time
+
+    from autograder_b3 import llm_client
+
+    def hanging_urlopen(_request, timeout=None):  # noqa: ARG001
+        _time.sleep(5)
+        raise OSError("the test never reaches the network")
+
+    monkeypatch.setattr(llm_client.urllib.request, "urlopen", hanging_urlopen)
+    started = _time.monotonic()
+    with pytest.raises(LlmCallError) as error:
+        complete_json(
+            config=LlmConfig(base_url="https://api.xiaomimimo.com", model="m", api_key="k"),
+            system_prompt="SYS",
+            user_prompt="USER",
+            deadline_seconds=0.3,
+        )
+    assert error.value.category == "timeout"
+    assert _time.monotonic() - started < 3.0
+
+
 def test_urlerror_wrapping_timeout_is_classified_as_timeout(monkeypatch):
     import urllib.error
     from autograder_b3 import llm_client
