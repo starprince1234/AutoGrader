@@ -143,8 +143,12 @@
 单次调用**总预算 85 s（含重试）**：慢就变成一次可重试的 `502`，而不是一个读不到的边缘超时；
 重试只在预算还剩足够时间时才发起（`MIN_RETRY_SECONDS`），否则立刻返回第一次的失败分类。
 
-这个上限是**墙钟**意义上的：`urlopen(timeout=)` 只管单次 socket 操作，慢速吐出的响应会不断重置它
-（实测把 55 s 的上限变成了过 146 s 的请求），因此读循环里按块核对时钟，`llm_client` 是唯一实现处。
+这个上限是**墙钟**意义上的，而不是 `urlopen(timeout=)` 那个数字：后者只管单次 socket 操作，
+且要从「连上之后」才开始计时——DNS 解析与 TLS 握手都在它之外，慢速吐出的响应还会不断重置它
+（实测：55 s 的上限变成过 146 s 的请求，85 s 的预算下出现过 171 s 的失败）。因此整次交换
+（解析/连接/TLS/请求/读响应）在 worker 线程里跑，调用方按预算 `join`，超时即按 `timeout` 处理，
+统一由 `llm_client` 实现（唯一实现处）。
+
 缺字段不再触发"再调一次模型"，而是由 `normalize_proposal` 变成 `needs_review` 的字段级 warning
 （教师侧补比再等一轮快）。`DRAFT_PROMPT_VERSION` 随之升到 `b3-draft-generation-v4-single-pass`，
 provenance 里可区分。
