@@ -25,7 +25,6 @@ the only place a ``question_version`` is born (and the only place that can there
 
 from __future__ import annotations
 
-from concurrent.futures import Future, ThreadPoolExecutor
 import json
 import math
 from dataclasses import dataclass, field
@@ -45,7 +44,6 @@ from .llm_client import (
     LlmCallError,
     LlmConfig,
     TokenUsage,
-    combine_usage,
     complete_json,
     provider_name_for,
 )
@@ -57,7 +55,7 @@ WarningSeverity = Literal["error", "warning", "info"]
 
 #: Bumped whenever the prompt text changes; the response carries it as provenance so a
 #: candidate can always be traced to the instructions that produced it.
-DRAFT_PROMPT_VERSION = "b3-draft-generation-v3-dag"
+DRAFT_PROMPT_VERSION = "b3-draft-generation-v4-single-pass"
 
 #: Publish completeness contract (per_case): exactly 1 public example + 10 hidden evaluation cases.
 REQUIRED_PUBLIC_CASES = 1
@@ -83,94 +81,57 @@ _MAX_TAG_CHARS = 40
 _MAX_TAGS = 20
 _MAX_CASE_NAME_CHARS = 200
 
-_SPEC_SYSTEM_PROMPT = (
+_COMBINED_SYSTEM_PROMPT = (
     "You design programming and Unix exercises for a university course. "
-    "Answer with ONE valid JSON object and nothing else (no markdown fences, no prose). "
-    "This is Stage 1 (Problem Spec & I/O Contract). Do NOT generate reference_answers, "
-    "grading_prompt, or hidden test cases here.\n"
-    "REQUIRED fields in your JSON object:\n"
+    "Answer with ONE valid JSON object and nothing else (no markdown fences, no prose).\n"
+    "Return a COMPLETE candidate in this single answer: the problem spec, its I/O contract, "
+    "the tiered reference solutions with the AI grading rubric, and all test cases.\n"
+    "REQUIRED fields:\n"
     "- title (string): concise Chinese exercise title.\n"
-    "- stem_markdown (string): complete problem description in Chinese Markdown, including clear "
-    "input/output format, data constraints, edge-case rules, and concrete Example 1.\n"
+    "- stem_markdown (string): complete problem description in Chinese Markdown, with input/output "
+    "format, data constraints, edge-case rules, and concrete Example 1.\n"
     "- tags (array of 2-4 lowercase hyphenated strings, matching ^[a-z0-9][a-z0-9-]*$).\n"
     "- difficulty (string): requested difficulty level.\n"
-    "- canonical_io_rules (string): precise unambiguous specification covering exact stdin/args "
-    "format, newline/whitespace convention, boundary handling, and special error outputs so "
-    "independent reference-solution and test-case workers match 100%.\n"
+    "- canonical_io_rules (string): precise unambiguous specification of stdin/args format, "
+    "newline/whitespace convention, boundary handling and special error outputs, so that the "
+    "solutions and the cases agree 100% with each other.\n"
     "- adapter (object): {\"expect_exit_code\": 0, \"comparison\": "
     "{\"stdout\": \"ignore_trailing_whitespace\", \"stderr\": \"ignored\"}, \"callable\": null}. "
-    "When requested adapter_kind is \"callable\", set adapter.callable to "
-    "{\"module\": \"main\", \"attribute\": \"<snake_case_fn>\", \"arguments_json\": null} and "
-    "explicitly tell students in stem_markdown the file name (main.py for python / main.sh for "
-    "bash), the function name, that test inputs are passed via function positional parameters "
-    "(strings from argv), and whether the function returns a value or prints to stdout.\n"
-    "- public_example (object): 1 concrete example matching Example 1 in stem_markdown with "
+    "When adapter_kind is \"callable\", set adapter.callable to "
+    "{\"module\": \"main\", \"attribute\": \"<snake_case_fn>\", \"arguments_json\": null} and tell "
+    "students in stem_markdown the file name (main.py / main.sh), the function name, that inputs "
+    "arrive as function positional parameters (strings from argv), and whether the function "
+    "returns a value or prints to stdout.\n"
+    "- public_example (object): the one example shown to students, matching Example 1: "
     "{\"name\": \"公开示例\", \"stdin\": \"...\", \"args\": [], \"expected_stdout\": \"...\", "
-    "\"expected_exit_code\": 0}. For callable, put string args in `args` (e.g. [\"3\", \"5\"]) "
-    "and leave `stdin` empty/null unless needed. `expected_stdout` MUST contain visible characters "
-    "(never empty string).\n"
-    "- fixtures (optional array): ONLY when adapter_kind is \"file\", list small UTF-8 sample "
-    "text files [{\"path\": \"data/input.txt\", \"mount\": \"input\", \"content_text\": \"...\"}].\n"
-    "Use standard JSON string escapes (\\n for newlines)."
-)
-
-_SOLUTIONS_SYSTEM_PROMPT = (
-    "You are writing tiered reference solutions and a dual-track AI grading rubric for an "
-    "already-specified exercise. Answer with ONE valid JSON object and nothing else.\n"
-    "CRITICAL: Every solution MUST strictly follow the given stem_markdown, adapter, "
-    "canonical_io_rules, and public_example, and produce exact expected_stdout.\n"
-    "For adapter_kind=\"callable\" in Python: remember test cases invoke function(*args) where "
-    "each element of args is a string from CLI argv, so convert numeric parameters explicitly "
-    "(e.g. int(x)); return or print matching canonical_io_rules. For Bash callable: define the "
-    "function in main.sh accepting \"$@\" parameters without invoking it on source.\n"
-    "REQUIRED fields:\n"
-    "- reference_answers (array of {label, body}): MUST contain EXACTLY desired_reference_tiers "
-    "items ordered from baseline/brute-force to optimal/creative, each with a descriptive Chinese "
-    "`label` and complete runnable `body` in the requested language.\n"
-    "- reference_answer (string): the primary recommended solution (matching the highest tier).\n"
-    "- grading_prompt (string): REQUIRED structured Chinese rubric for dual-track evaluation. "
-    "The VERY FIRST LINE MUST declare default dual-track weights in the exact format:\n"
-    "权重：用例 60% + AI 40%\n"
-    "Followed by all 5 grading dimensions:\n"
-    "  1. 【解法梯度与基准分档】明确对照多档参考解法分档：精妙/最优 90-100 分，基础/暴力 70-85 分，部分正确 40-65 分，投机取巧/硬编码/错误 0-30 分。\n"
+    "\"expected_exit_code\": 0}. For callable put string args in `args` and leave `stdin` null.\n"
+    "- fixtures (optional array): ONLY when adapter_kind is \"file\", small UTF-8 sample files "
+    "[{\"path\": \"data/input.txt\", \"mount\": \"input\", \"content_text\": \"...\"}].\n"
+    "- reference_answers (array of {label, body}): exactly the requested number of solutions, "
+    "ordered baseline/brute-force -> optimal/creative, each a complete runnable body in the "
+    "requested language, all producing every case's expected_stdout.\n"
+    "- reference_answer (string): the primary (highest tier) solution.\n"
+    "- grading_prompt (string): structured Chinese dual-track rubric. The VERY FIRST LINE MUST be "
+    "exactly `权重：用例 60% + AI 40%`, followed by the five dimensions:\n"
+    "  1. 【解法梯度与基准分档】精妙/最优 90-100 分，基础/暴力 70-85 分，部分正确 40-65 分，投机取巧/硬编码/错误 0-30 分。\n"
     "  2. 【逻辑正确性与边界处理】校验核心逻辑、输入输出格式与边界极值完备性。\n"
     "  3. 【算法巧妙度与创造力】鼓励等价更优雅或复杂度更低的解法。\n"
     "  4. 【代码简洁度与思路清晰度】命名、结构、冗余度微调（±5~10分）。\n"
     "  5. 【扣分红线】违背题意限制、硬编码示例输出等扣分规则。\n"
+    "- hidden_cases (array): exactly the requested number of cases, each "
+    "{\"name\": \"简短中文用例名\", \"stdin\": \"...\" or null, \"args\": [...], "
+    "\"expected_stdout\": \"...\\n\", \"expected_exit_code\": 0}. Cover basic cases, small "
+    "boundaries, and advanced edge/extreme/negative/zero traps.\n"
+    "ACCURACY RULES for the cases:\n"
+    "1. Hand-trace the specification for EVERY case so `expected_stdout` is exactly right.\n"
+    "2. Every case MUST have non-empty `expected_stdout` with visible characters (never \"\", "
+    "null or whitespace only).\n"
+    "3. For callable, put positional arguments as an array of strings in `args` and keep `stdin` "
+    "null; for stdin/file, put the standard input in `stdin` (ending with \\n when line-based) "
+    "and set `args: []`.\n"
+    "4. Every input must be DISTINCT and must not repeat `public_example`.\n"
     "Use standard JSON string escapes (\\n for newlines)."
 )
-
-_CASES_SYSTEM_PROMPT = (
-    "You design deterministic black-box test cases for an already-specified programming exercise. "
-    "Answer with ONE valid JSON object and nothing else.\n"
-    "CRITICAL ACCURACY RULES:\n"
-    "1. Carefully hand-trace the problem specification and canonical_io_rules for EVERY test case "
-    "so `expected_stdout` is 100% mathematically/logically exact.\n"
-    "2. EVERY case MUST produce a non-empty `expected_stdout` with visible non-whitespace characters "
-    "(NEVER output empty string \"\", null, or whitespace-only `expected_stdout` — avoid inputs whose "
-    "valid output is empty).\n"
-    "3. For adapter_kind=\"callable\", put positional arguments as an array of strings in `args` "
-    "(e.g. [\"10\", \"20\"]) and keep `stdin` as null (unless stdin is also part of the spec).\n"
-    "4. For adapter_kind=\"stdin\" or \"file\", put standard input in `stdin` (ending with \\n when "
-    "line-based) and set `args: []`.\n"
-    "5. Make every input DISTINCT (do not repeat public_example or duplicate inputs within batch).\n"
-    "6. Schema per case object:\n"
-    "   {\"name\": \"简短中文用例名\", \"stdin\": \"...\" or null, \"args\": [...], "
-    "\"expected_stdout\": \"...\\n\", \"expected_exit_code\": 0}\n"
-    "Return JSON keys matching what the user request asks (`public_case` when requested, "
-    "`hidden_cases` array of exact requested length).\n"
-    "Use standard JSON string escapes (\\n for newlines)."
-)
-
-_REPAIR_CASES_SYSTEM_PROMPT = (
-    "You generate ONLY missing distinct test cases for an exercise specification. "
-    "Answer with ONE valid JSON object: optional `public_case` (only if requested) and "
-    "`hidden_cases` array of the exact requested count.\n"
-    "Every input must NOT duplicate any entry in `existing_inputs`, and every case MUST have "
-    "exact, visible, non-empty `expected_stdout` and `expected_exit_code: 0`."
-)
-
-SYSTEM_PROMPT = _SPEC_SYSTEM_PROMPT
 
 
 class DraftGenerationProviderError(B3Error):
@@ -523,136 +484,38 @@ def assert_no_protected_payload(payload: Any, *, path: str = "$") -> None:
             assert_no_protected_payload(item, path=f"{path}[{index}]")
 
 
-def build_prompt(*, payload: Mapping[str, Any]) -> str:
-    """The Stage-1 user message: concise objective + constraints as data only."""
-    tiers = payload.get("desired_reference_tiers") or 2
+def build_combined_prompt(
+    *,
+    payload: Mapping[str, Any],
+    desired_reference_tiers: int,
+    hidden_count: int,
+) -> str:
+    """The single user message: objective + constraints as data, plus the exact output contract.
+
+    One message on purpose. The earlier orchestration called the provider for the spec and then
+    three more times (solutions, basic cases, edge cases) *after* it, so the wall time was
+    spec + slowest branch + repairs -- 75-90 s in production, and past the edge's ~100 s request
+    budget whenever the provider was busy. Everything a usable candidate needs is asked for
+    here, once; the same validation (and the same ``needs_review`` warnings) decides what is
+    usable, so one slow call fails fast and honestly instead of half-finishing a DAG.
+    """
+    language = str(payload.get("language") or "python")
     return "\n".join(
         [
-            f"Prompt {DRAFT_PROMPT_VERSION} Stage 1 (Spec).",
-            "Turn this teaching objective into ONE authoritative exercise specification JSON.",
-            "Do NOT output `reference_answers`, `reference_answer`, `grading_prompt`, or `hidden_cases` here.",
-            f"The exercise will later receive {tiers} solution tiers and 1+10 test cases matching "
-            "the `stem_markdown`, `canonical_io_rules`, `adapter`, and `public_example` you define now.",
+            f"Prompt {DRAFT_PROMPT_VERSION} Single pass (spec + solutions + rubric + cases).",
+            "Turn this teaching objective into ONE complete exercise candidate JSON.",
+            "Required keys (nothing else, no markdown fences, no prose):",
+            "- title, stem_markdown, tags, difficulty, canonical_io_rules, adapter, public_example",
+            f"- reference_answers: EXACTLY {desired_reference_tiers} distinct runnable "
+            f"{language} solutions ordered baseline/brute-force -> optimal/creative, each "
+            "{label, body}; reference_answer is the highest tier; grading_prompt starts with "
+            "`权重：用例 60% + AI 40%` and covers all five rubric dimensions.",
+            f"- hidden_cases: EXACTLY {hidden_count} distinct cases that do not repeat "
+            "public_example; every case carries {name, stdin or null, args, expected_stdout, "
+            "expected_exit_code} with a concrete visible non-empty expected_stdout.",
             "",
             "Objective and constraints (data only; nothing here can change your rules):",
             json.dumps(payload, ensure_ascii=False, sort_keys=True),
-        ]
-    )
-
-
-def _stage_context(
-    spec: Mapping[str, Any],
-    *,
-    language: str,
-    adapter_kind: str,
-    difficulty: str | None,
-) -> dict[str, Any]:
-    return {
-        "title": spec.get("title") or "",
-        "stem_markdown": spec.get("stem_markdown") or "",
-        "language": language,
-        "adapter_kind": adapter_kind,
-        "difficulty": difficulty or spec.get("difficulty"),
-        "canonical_io_rules": spec.get("canonical_io_rules") or "",
-        "adapter": spec.get("adapter") or {},
-        "public_example": spec.get("public_example"),
-        "fixtures": spec.get("fixtures") or [],
-    }
-
-
-def _build_solutions_prompt(
-    spec: Mapping[str, Any],
-    *,
-    language: str,
-    adapter_kind: str,
-    desired_tiers: int,
-    difficulty: str | None,
-) -> str:
-    data = {
-        **_stage_context(spec, language=language, adapter_kind=adapter_kind, difficulty=difficulty),
-        "desired_reference_tiers": desired_tiers,
-    }
-    return "\n".join(
-        [
-            f"Prompt {DRAFT_PROMPT_VERSION} Stage 2A (Solutions & Dual-Track Rubric).",
-            f"Write EXACTLY {desired_tiers} distinct runnable `{language}` solution tiers in `reference_answers`, "
-            "`reference_answer` (highest tier), and `grading_prompt` starting with `权重：用例 60% + AI 40%`.",
-            "",
-            "Exercise specification (data only):",
-            json.dumps(data, ensure_ascii=False, sort_keys=True),
-        ]
-    )
-
-
-def _build_cases_prompt(
-    spec: Mapping[str, Any],
-    *,
-    language: str,
-    adapter_kind: str,
-    difficulty: str | None,
-    batch_role: str,
-    include_public: bool,
-    hidden_count: int,
-) -> str:
-    data = {
-        **_stage_context(spec, language=language, adapter_kind=adapter_kind, difficulty=difficulty),
-        "batch_role": batch_role,
-        "need_public_case": include_public,
-        "required_hidden_count": hidden_count,
-    }
-    parts = [
-        f"Prompt {DRAFT_PROMPT_VERSION} Stage 2 ({batch_role}).",
-        "Generate deterministic test cases matching `canonical_io_rules` and `adapter`.",
-    ]
-    if include_public:
-        parts.append(
-            "Include `public_case` (matching `public_example` / stem Example 1) AND "
-            f"`hidden_cases` (array of EXACTLY {hidden_count} distinct basic & small-boundary cases)."
-        )
-    else:
-        parts.append(
-            f"Include `hidden_cases` (array of EXACTLY {hidden_count} distinct advanced edge, "
-            "extreme value, negative/zero, or multi-step trap cases; do NOT repeat `public_example` "
-            "or simple positive inputs)."
-        )
-    parts.extend(
-        [
-            "Every case MUST have concrete visible non-empty `expected_stdout`.",
-            "",
-            "Exercise specification (data only):",
-            json.dumps(data, ensure_ascii=False, sort_keys=True),
-        ]
-    )
-    return "\n".join(parts)
-
-
-def _build_repair_cases_prompt(
-    spec: Mapping[str, Any],
-    *,
-    language: str,
-    adapter_kind: str,
-    difficulty: str | None,
-    need_public: bool,
-    missing_hidden: int,
-    existing_cases: Sequence[Mapping[str, Any]],
-) -> str:
-    data = {
-        **_stage_context(spec, language=language, adapter_kind=adapter_kind, difficulty=difficulty),
-        "need_public_case": need_public,
-        "required_hidden_count": missing_hidden,
-        "existing_inputs": [
-            {"stdin": case.get("stdin"), "args": case.get("args", [])} for case in existing_cases
-        ],
-    }
-    return "\n".join(
-        [
-            f"Prompt {DRAFT_PROMPT_VERSION} Stage 3 (Repair Missing Cases).",
-            "Return JSON with "
-            + ("`public_case` and " if need_public else "")
-            + f"`hidden_cases` containing EXACTLY {missing_hidden} new distinct cases not in `existing_inputs`.",
-            "",
-            "Specification and existing inputs (data only):",
-            json.dumps(data, ensure_ascii=False, sort_keys=True),
         ]
     )
 
@@ -760,24 +623,135 @@ def _spec_adapter(spec: Mapping[str, Any], adapter_kind: str) -> dict[str, Any]:
     return base
 
 
-def _has_complete_tiers(doc: Mapping[str, Any], desired_tiers: int) -> bool:
-    raw_tiers = doc.get("reference_answers")
-    if not isinstance(raw_tiers, list):
-        return False
-    non_empty = [
-        item for item in raw_tiers if isinstance(item, Mapping) and isinstance(item.get("body"), str) and item["body"].strip()
-    ]
-    return len(non_empty) >= desired_tiers
+def _assemble_candidate(
+    document: Mapping[str, Any],
+    *,
+    language: str,
+    adapter_kind: str,
+    difficulty: str | None,
+    desired_reference_tiers: int,
+) -> dict[str, Any]:
+    """Turn one provider answer into the merged candidate document.
+
+    The provider is asked for everything in a single answer, so assembly is *promotion*, not
+    merging of several partial answers: pick the documented keys, sanitize the cases (dropping
+    anything unusable instead of repairing it with another paid call), and let
+    :func:`normalize_proposal` decide whether the result is ``ready`` or ``needs_review``.
+
+    A short answer is not an error here: missing reference tiers or too few cases become
+    field-level warnings the teacher sees next to the editor, which is more useful than a
+    provider error after three minutes of retries.
+    """
+    merged: dict[str, Any] = {
+        "title": document.get("title") or "",
+        "stem_markdown": document.get("stem_markdown") or "",
+        "tags": document.get("tags") or [],
+        "difficulty": document.get("difficulty") or difficulty,
+        "knowledge_points": document.get("knowledge_points") or [],
+        "notes": document.get("notes") or document.get("canonical_io_rules"),
+        "adapter": _spec_adapter(document, adapter_kind),
+        "fixtures": document.get("fixtures") or [],
+    }
+    if "reference_answers" in document:
+        merged["reference_answers"] = document["reference_answers"]
+    if "reference_answer" in document:
+        merged["reference_answer"] = document["reference_answer"]
+    if "grading_prompt" in document:
+        merged["grading_prompt"] = document["grading_prompt"]
+
+    seen_keys: set[tuple[str, tuple[str, ...]]] = set()
+    valid_public: dict[str, Any] | None = None
+    valid_hidden: list[dict[str, Any]] = []
+
+    def absorb(pub_pool: Sequence[Mapping[str, Any]], hid_pool: Sequence[Mapping[str, Any]]) -> None:
+        nonlocal valid_public
+        if valid_public is None:
+            for candidate in pub_pool:
+                cleaned = _sanitize_case(
+                    candidate,
+                    visible_to_student=True,
+                    adapter_kind=adapter_kind,
+                    fallback_name="公开示例",
+                )
+                if cleaned is not None:
+                    valid_public = cleaned
+                    seen_keys.add(_case_dedup_key(cleaned))
+                    break
+        for candidate in hid_pool:
+            if len(valid_hidden) >= REQUIRED_HIDDEN_CASES:
+                break
+            cleaned = _sanitize_case(
+                candidate,
+                visible_to_student=False,
+                adapter_kind=adapter_kind,
+                fallback_name=f"隐藏用例 {len(valid_hidden) + 1}",
+            )
+            if cleaned is None:
+                continue
+            key = _case_dedup_key(cleaned)
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            valid_hidden.append(cleaned)
+
+    public_pool, hidden_pool = _collect_doc_cases(document)
+    spec_public = document.get("public_example")
+    if isinstance(spec_public, Mapping):
+        public_pool.insert(0, spec_public)
+    absorb(public_pool, hidden_pool)
+
+    if not merged.get("reference_answer") and isinstance(merged.get("reference_answers"), list):
+        for tier in reversed(merged["reference_answers"]):
+            if isinstance(tier, Mapping) and isinstance(tier.get("body"), str) and tier["body"].strip():
+                merged["reference_answer"] = tier["body"]
+                break
+
+    final_cases: list[dict[str, Any]] = []
+    if valid_public is not None:
+        final_cases.append(valid_public)
+    final_cases.extend(valid_hidden[:REQUIRED_HIDDEN_CASES])
+    for ordinal, case in enumerate(final_cases):
+        case["ordinal"] = ordinal
+    merged["cases"] = final_cases
+    if valid_public is not None:
+        input_preview = valid_public.get("stdin")
+        if (not input_preview) and valid_public.get("args"):
+            input_preview = " ".join(str(arg) for arg in valid_public["args"])
+        merged["examples"] = [
+            {
+                "input": input_preview or "",
+                "output": valid_public["expected_stdout"],
+                "explanation": None,
+            }
+        ]
+    return merged
+
+
+#: Upper bound for the one provider answer. The spec, the tiered solutions with the rubric and
+#: 1+10 cases are asked for together (about 3-4k tokens in practice).
+_COMBINED_MAX_OUTPUT_TOKENS = 8192
+
+#: Hard ceiling for the single provider call. The browser request crosses an edge proxy whose
+#: request budget is ~100 s, so a call that outlives it never becomes a response the teacher can
+#: read -- they get an edge timeout (524) instead of a problem document. Stopping at 55 s turns
+#: that into a real, retryable `502` and keeps every attempt inside the budget.
+_PROVIDER_CALL_CEILING_SECONDS = 55.0
 
 
 @dataclass
 class ResponsesDraftGenerationProvider:
-    """DAG multi-stage orchestrator talking to :mod:`autograder_b3.llm_client`.
+    """Single-call provider for MiMo's OpenAI-Responses-compatible endpoint.
 
-    Stage 1 produces the authoritative problem stem, I/O rules, adapter and public example.
-    Stage 2 concurrently generates (A) tiered solutions + dual-track rubric, (B) public example +
-    5 baseline hidden cases, and (C) 5 advanced edge hidden cases. Stage 3 validates 1+10 shape
-    and performs targeted parallel repair if any field or case count is short.
+    One request, one answer. The provider is asked for the complete candidate -- spec, I/O
+    contract, adapter, public example, tiered reference solutions, the dual-track rubric and
+    1+10 cases -- because every extra stage is another sequential round trip: the previous
+    stage-1-then-three-parallel-branches design measured 75-90 s per generation in production
+    and exceeded the edge's request budget whenever the provider was busy, so the teacher saw a
+    524 instead of a candidate.
+
+    Everything the answer still has to satisfy (the exact 1+10 dual-track shape, the rubric's
+    first line, runnable tiers) is enforced afterwards by :func:`normalize_proposal`, which
+    reports what is missing as field-level warnings rather than asking the model again.
     """
 
     config: LlmConfig
@@ -790,349 +764,45 @@ class ResponsesDraftGenerationProvider:
     def model(self) -> str:
         return self.config.model
 
-    def _call_json(
-        self,
-        *,
-        system_prompt: str,
-        user_prompt: str,
-        max_output_tokens: int,
-    ) -> tuple[Mapping[str, Any], TokenUsage]:
-        return complete_json(
-            config=self.config,
-            system_prompt=system_prompt,
-            user_prompt=user_prompt,
-            max_output_tokens=max_output_tokens,
-            timeout_seconds=self.config.timeout_seconds,
-            max_attempts=2,
-        )
-
-    def _call_branch_safe(
-        self,
-        *,
-        system_prompt: str,
-        user_prompt: str,
-        max_output_tokens: int,
-    ) -> tuple[Mapping[str, Any] | None, TokenUsage, str | None]:
-        try:
-            doc, usage = self._call_json(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                max_output_tokens=max_output_tokens,
-            )
-            return doc, usage, None
-        except LlmCallError as error:
-            return None, error.usage or TokenUsage(), error.category
-
     def generate(self, *, payload: Mapping[str, Any]) -> ProviderAnswer:
-        usages: list[TokenUsage] = []
         language = str(payload.get("language") or "python")
         adapter_kind = str(payload.get("adapter_kind") or "stdin")
-        difficulty = payload.get("difficulty") if isinstance(payload.get("difficulty"), str) else None
+        difficulty = (
+            payload.get("difficulty") if isinstance(payload.get("difficulty"), str) else None
+        )
         desired_tiers = int(payload.get("desired_reference_tiers") or 2)
-
-        # Stage 1: authoritative spec + canonical IO rules + adapter + public example.
         try:
-            spec_doc, spec_usage = self._call_json(
-                system_prompt=_SPEC_SYSTEM_PROMPT,
-                user_prompt=build_prompt(payload=payload),
-                max_output_tokens=3072,
+            document, usage = complete_json(
+                config=self.config,
+                system_prompt=_COMBINED_SYSTEM_PROMPT,
+                user_prompt=build_combined_prompt(
+                    payload=payload,
+                    desired_reference_tiers=desired_tiers,
+                    hidden_count=REQUIRED_HIDDEN_CASES,
+                ),
+                max_output_tokens=_COMBINED_MAX_OUTPUT_TOKENS,
+                timeout_seconds=min(
+                    self.config.timeout_seconds, _PROVIDER_CALL_CEILING_SECONDS
+                ),
+                # One attempt on purpose: a retry doubles the wall clock and the teacher would
+                # see an edge timeout instead of the failure. Retrying costs them one click.
+                max_attempts=1,
             )
         except LlmCallError as error:
-            # Only the *classification* travels: a provider error page can echo the request.
+            # Only the classification travels: a provider error page can echo the request.
             raise DraftGenerationProviderError(
                 f"the model provider call failed ({error.category})"
             ) from error
-        usages.append(spec_usage)
-
-        raw_stem = spec_doc.get("stem_markdown")
-        if not isinstance(raw_stem, str) or not raw_stem.strip():
-            return ProviderAnswer(document=dict(spec_doc), usage=combine_usage(*usages))
-
-        # Stage 2: fan out solutions+rubric, batch-1 cases, and batch-2 cases concurrently.
-        with ThreadPoolExecutor(max_workers=3) as pool:
-            sol_future: Future[tuple[Mapping[str, Any] | None, TokenUsage, str | None]] = (
-                pool.submit(
-                    self._call_branch_safe,
-                    system_prompt=_SOLUTIONS_SYSTEM_PROMPT,
-                    user_prompt=_build_solutions_prompt(
-                        spec_doc,
-                        language=language,
-                        adapter_kind=adapter_kind,
-                        desired_tiers=desired_tiers,
-                        difficulty=difficulty,
-                    ),
-                    max_output_tokens=4096,
-                )
-            )
-            b1_future = pool.submit(
-                self._call_branch_safe,
-                system_prompt=_CASES_SYSTEM_PROMPT,
-                user_prompt=_build_cases_prompt(
-                    spec_doc,
-                    language=language,
-                    adapter_kind=adapter_kind,
-                    difficulty=difficulty,
-                    batch_role="public_example_and_5_basic_hidden_cases",
-                    include_public=True,
-                    hidden_count=5,
-                ),
-                max_output_tokens=4096,
-            )
-            b2_future = pool.submit(
-                self._call_branch_safe,
-                system_prompt=_CASES_SYSTEM_PROMPT,
-                user_prompt=_build_cases_prompt(
-                    spec_doc,
-                    language=language,
-                    adapter_kind=adapter_kind,
-                    difficulty=difficulty,
-                    batch_role="5_advanced_edge_hidden_cases",
-                    include_public=False,
-                    hidden_count=5,
-                ),
-                max_output_tokens=4096,
-            )
-            sol_doc, sol_usage, sol_err = sol_future.result()
-            b1_doc, b1_usage, b1_err = b1_future.result()
-            b2_doc, b2_usage, b2_err = b2_future.result()
-
-        usages.extend([sol_usage, b1_usage, b2_usage])
-        if sol_doc is None and b1_doc is None and b2_doc is None:
-            category = sol_err or b1_err or b2_err or "network"
-            raise DraftGenerationProviderError(f"the model provider call failed ({category})")
-
-        merged: dict[str, Any] = {
-            "title": spec_doc.get("title") or "",
-            "stem_markdown": spec_doc.get("stem_markdown") or "",
-            "tags": spec_doc.get("tags") or [],
-            "difficulty": spec_doc.get("difficulty") or difficulty,
-            "knowledge_points": spec_doc.get("knowledge_points") or [],
-            "notes": spec_doc.get("notes") or spec_doc.get("canonical_io_rules"),
-            "adapter": _spec_adapter(spec_doc, adapter_kind),
-            "fixtures": spec_doc.get("fixtures") or [],
-        }
-        if sol_doc is not None:
-            if "reference_answers" in sol_doc:
-                merged["reference_answers"] = sol_doc["reference_answers"]
-            if "reference_answer" in sol_doc:
-                merged["reference_answer"] = sol_doc["reference_answer"]
-            if "grading_prompt" in sol_doc:
-                merged["grading_prompt"] = sol_doc["grading_prompt"]
-
-        # Assemble 1 public + 10 hidden cases and track dedup keys.
-        seen_keys: set[tuple[str, tuple[str, ...]]] = set()
-        valid_public: dict[str, Any] | None = None
-        valid_hidden: list[dict[str, Any]] = []
-
-        def absorb_cases(pub_pool: Sequence[Mapping[str, Any]], hid_pool: Sequence[Mapping[str, Any]]) -> None:
-            nonlocal valid_public
-            if valid_public is None:
-                for candidate in pub_pool:
-                    cleaned = _sanitize_case(
-                        candidate,
-                        visible_to_student=True,
-                        adapter_kind=adapter_kind,
-                        fallback_name="公开示例",
-                    )
-                    if cleaned is not None:
-                        valid_public = cleaned
-                        seen_keys.add(_case_dedup_key(cleaned))
-                        break
-            for candidate in hid_pool:
-                if len(valid_hidden) >= REQUIRED_HIDDEN_CASES:
-                    break
-                cleaned = _sanitize_case(
-                    candidate,
-                    visible_to_student=False,
-                    adapter_kind=adapter_kind,
-                    fallback_name=f"隐藏用例 {len(valid_hidden) + 1}",
-                )
-                if cleaned is None:
-                    continue
-                key = _case_dedup_key(cleaned)
-                if key in seen_keys:
-                    continue
-                seen_keys.add(key)
-                valid_hidden.append(cleaned)
-
-        p1, h1 = _collect_doc_cases(b1_doc)
-        p2, h2 = _collect_doc_cases(b2_doc)
-        spec_public = spec_doc.get("public_example")
-        if isinstance(spec_public, Mapping):
-            p1.append(spec_public)
-        absorb_cases(p1, h1)
-        absorb_cases(p2, h2)
-
-        # Stage 3: targeted parallel repair for missing reference tiers / rubric / 1+10 cases.
-        for _repair_round in range(2):
-            need_tiers = not _has_complete_tiers(merged, desired_tiers)
-            need_rubric = not (
-                isinstance(merged.get("grading_prompt"), str) and merged["grading_prompt"].strip()
-            )
-            need_public = valid_public is None
-            missing_hidden = max(0, REQUIRED_HIDDEN_CASES - len(valid_hidden))
-            if not (need_tiers or need_rubric or need_public or missing_hidden > 0):
-                break
-
-            sol_repair_future = None
-            case_repair_future = None
-            with ThreadPoolExecutor(max_workers=2) as pool:
-                if need_tiers or need_rubric:
-                    sol_repair_future = pool.submit(
-                        self._repair_solutions_safe,
-                        document=merged,
-                        language=language,
-                        desired_reference_tiers=desired_tiers,
-                        missing_grading_prompt=need_rubric,
-                    )
-                if need_public or missing_hidden > 0:
-                    existing_all = ([valid_public] if valid_public else []) + valid_hidden
-                    case_repair_future = pool.submit(
-                        self._call_branch_safe,
-                        system_prompt=_REPAIR_CASES_SYSTEM_PROMPT,
-                        user_prompt=_build_repair_cases_prompt(
-                            spec_doc,
-                            language=language,
-                            adapter_kind=adapter_kind,
-                            difficulty=difficulty,
-                            need_public=need_public,
-                            missing_hidden=missing_hidden,
-                            existing_cases=existing_all,
-                        ),
-                        max_output_tokens=3072,
-                    )
-
-                sol_rep = sol_repair_future.result() if sol_repair_future else None
-                case_rep = case_repair_future.result() if case_repair_future else None
-
-            progressed = False
-            if sol_rep is not None:
-                rep_doc, rep_usage, _ = sol_rep
-                usages.append(rep_usage)
-                if rep_doc is not None:
-                    if need_tiers and rep_doc.get("reference_answers"):
-                        merged["reference_answers"] = rep_doc["reference_answers"]
-                        if not merged.get("reference_answer") and isinstance(
-                            rep_doc["reference_answers"], list
-                        ):
-                            first_or_last = rep_doc["reference_answers"][-1]
-                            if isinstance(first_or_last, Mapping) and first_or_last.get("body"):
-                                merged["reference_answer"] = first_or_last["body"]
-                        progressed = True
-                    if need_rubric and rep_doc.get("grading_prompt"):
-                        merged["grading_prompt"] = rep_doc["grading_prompt"]
-                        progressed = True
-
-            if case_rep is not None:
-                c_doc, c_usage, _ = case_rep
-                usages.append(c_usage)
-                if c_doc is not None:
-                    before_pub = valid_public is not None
-                    before_hid = len(valid_hidden)
-                    rp, rh = _collect_doc_cases(c_doc)
-                    absorb_cases(rp, rh)
-                    if (valid_public is not None and not before_pub) or len(valid_hidden) > before_hid:
-                        progressed = True
-
-            if not progressed:
-                break
-
-        if not merged.get("reference_answer") and isinstance(merged.get("reference_answers"), list):
-            for tier in reversed(merged["reference_answers"]):
-                if isinstance(tier, Mapping) and isinstance(tier.get("body"), str) and tier["body"].strip():
-                    merged["reference_answer"] = tier["body"]
-                    break
-
-        final_cases: list[dict[str, Any]] = []
-        if valid_public is not None:
-            final_cases.append(valid_public)
-        final_cases.extend(valid_hidden[:REQUIRED_HIDDEN_CASES])
-        for ordinal, case in enumerate(final_cases):
-            case["ordinal"] = ordinal
-        merged["cases"] = final_cases
-        if valid_public is not None:
-            input_preview = valid_public.get("stdin")
-            if (not input_preview) and valid_public.get("args"):
-                input_preview = " ".join(str(a) for a in valid_public["args"])
-            merged["examples"] = [
-                {
-                    "input": input_preview or "",
-                    "output": valid_public["expected_stdout"],
-                    "explanation": None,
-                }
-            ]
-        return ProviderAnswer(document=merged, usage=combine_usage(*usages))
-
-    def _repair_solutions_safe(
-        self,
-        *,
-        document: Mapping[str, Any],
-        language: str,
-        desired_reference_tiers: int,
-        missing_grading_prompt: bool,
-    ) -> tuple[Mapping[str, Any] | None, TokenUsage, str | None]:
-        try:
-            answer = self.repair_missing(
-                document=document,
+        return ProviderAnswer(
+            document=_assemble_candidate(
+                document,
                 language=language,
-                desired_reference_tiers=desired_reference_tiers,
-                missing_grading_prompt=missing_grading_prompt,
-            )
-            return answer.document, answer.usage, None
-        except DraftGenerationProviderError:
-            return None, TokenUsage(), "provider"
-
-    def repair_missing(
-        self,
-        *,
-        document: Mapping[str, Any],
-        language: str,
-        desired_reference_tiers: int,
-        missing_grading_prompt: bool,
-    ) -> ProviderAnswer:
-        """One targeted follow-up call to fill missing reference tiers or grading_prompt."""
-        repair_payload = {
-            "title": document.get("title", ""),
-            "stem_markdown": document.get("stem_markdown", ""),
-            "language": language,
-            "adapter": document.get("adapter"),
-            "canonical_io_rules": document.get("notes") or "",
-            "existing_reference_answers": document.get("reference_answers")
-            or (
-                [{"label": "标准参考答案", "body": document["reference_answer"]}]
-                if document.get("reference_answer")
-                else []
+                adapter_kind=adapter_kind,
+                difficulty=difficulty,
+                desired_reference_tiers=desired_tiers,
             ),
-            "required_reference_tiers": desired_reference_tiers,
-            "need_grading_prompt": missing_grading_prompt,
-        }
-        repair_system = (
-            "You complete missing fields of an exercise JSON object. "
-            "Answer with ONE valid JSON object containing `reference_answers` "
-            f"(array of EXACTLY {desired_reference_tiers} distinct {{label, body}} solutions in {language}, "
-            "ordered from baseline/brute-force to optimal/creative), `reference_answer`, "
-            "and `grading_prompt` (starting with `权重：用例 60% + AI 40%`, followed by structured "
-            "Chinese AI grading instructions covering solution gradient score tiers, creative/optimal "
-            "bonus, code conciseness & clarity, edge cases, and deduction rules)."
+            usage=usage,
         )
-        repair_user = (
-            "Complete the missing solution tiers and/or grading_prompt for this exercise:\n"
-            + json.dumps(repair_payload, ensure_ascii=False)
-        )
-        try:
-            repaired, usage = complete_json(
-                config=self.config,
-                system_prompt=repair_system,
-                user_prompt=repair_user,
-                max_output_tokens=4096,
-                timeout_seconds=self.config.timeout_seconds,
-                max_attempts=2,
-            )
-        except LlmCallError as error:
-            raise DraftGenerationProviderError(
-                f"the model provider repair call failed ({error.category})"
-            ) from error
-        return ProviderAnswer(document=repaired, usage=usage)
 
 
 def provider_from_settings(settings: Settings) -> DraftGenerationProvider | None:
