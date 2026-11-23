@@ -10,7 +10,7 @@ import {
   StatusPill,
 } from "../../ui/components";
 import { SafeMarkdown } from "../questions/SafeMarkdown";
-import { fieldLabel, parseTags, type DraftForm } from "./draft";
+import { courseDefaultLanguage, fieldLabel, parseTags, type DraftForm } from "./draft";
 import { courseLabel as formatCourseLabel } from "../../api/directory";
 import {
   useCreateGeneration,
@@ -73,6 +73,9 @@ function ProposalPreview({
       : proposal.reference_answer
         ? [{ label: t("authoring.referenceDefaultTier"), body: proposal.reference_answer }]
         : [];
+  const proposedCases = proposal.cases ?? [];
+  const publicCaseCount = proposedCases.filter((item) => item.visible_to_student).length;
+  const hiddenCaseCount = proposedCases.filter((item) => !item.visible_to_student).length;
   return (
     <div className="stack" data-testid="generation-proposal">
       <div className="generation-preview__head">
@@ -128,6 +131,22 @@ function ProposalPreview({
         )}
       </section>
 
+      <section className="case-card stack" data-testid="generation-card-cases">
+        <h4>
+          {t("authoring.generation.cardCasesTitle", {
+            publicCount: publicCaseCount,
+            hiddenCount: hiddenCaseCount,
+          })}
+        </h4>
+        <p className="muted">
+          {t("authoring.generation.cardCasesSummary", {
+            total: proposedCases.length,
+            publicCount: publicCaseCount,
+            hiddenCount: hiddenCaseCount,
+          })}
+        </p>
+      </section>
+
       {proposal.notes ? <p className="muted">{proposal.notes}</p> : null}
 
       <div className="inline">
@@ -176,6 +195,15 @@ export function GenerationPanel({
   const [discardedId, setDiscardedId] = useState<string | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const appliedOnce = useRef<string | null>(null);
+
+  const selectedCourseCode =
+    courses.find((course) => course.course_id === courseId)?.course_code ?? null;
+  const lockedCourseLanguage = courseDefaultLanguage(selectedCourseCode);
+  useEffect(() => {
+    if (lockedCourseLanguage) {
+      setLanguage(lockedCourseLanguage);
+    }
+  }, [lockedCourseLanguage]);
 
   useEffect(() => {
     if (!create.isPending) {

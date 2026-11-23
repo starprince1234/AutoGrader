@@ -253,6 +253,42 @@ export type DraftForm = {
 
 export type DraftIssue = { key: MessageKey; params?: MessageParams };
 
+/** 根据课程编号推导默认编程语言（`07` → Bash，`08` → Python；其余课程返回 `null`）。 */
+export function courseDefaultLanguage(courseCode: string | null | undefined): Language | null {
+  const code = (courseCode ?? "").trim();
+  if (code === "07") return "bash";
+  if (code === "08") return "python";
+  return null;
+}
+
+/** 生成「1 个公开示例 + 10 个隐藏评测用例」的双轨标准空白模板（分值合计 100）。 */
+export function defaultDualTrackCases(): CaseForm[] {
+  const publicExample: CaseForm = {
+    ...emptyCase(),
+    name: "公开示例",
+    weight: "10",
+    visibleToStudent: true,
+  };
+  const hiddenCases: CaseForm[] = Array.from({ length: 10 }, (_item, index) => ({
+    ...emptyCase(),
+    name: `隐藏用例 ${index + 1}`,
+    weight: "9",
+    visibleToStudent: false,
+  }));
+  return [publicExample, ...hiddenCases];
+}
+
+function isSyntheticPlaceholderCase(item: TestCaseInputWithExecution): boolean {
+  return (
+    item.name === "AI 逻辑与代码质量评测" &&
+    item.ordinal === 0 &&
+    item.visible_to_student === true &&
+    item.expected_stdout === null &&
+    item.expected_stderr === null &&
+    (item.stdin === null || item.stdin === undefined)
+  );
+}
+
 /** 空用例：`ordinal` 由提交顺序决定，因此表单里不存它。 */
 export function emptyCase(): CaseForm {
   return {
@@ -430,8 +466,21 @@ export function applyProposal(form: DraftForm, proposal: QuestionDraftProposal):
     comparisonStderr,
     numericTolerance:
       tolerance === null || tolerance === undefined ? "" : String(tolerance),
-    // 统一采用 AI 逻辑评分模式，应用草稿不再导入测试用例清单。
-    cases: [],
+    cases: (proposal.cases ?? []).map((item) => ({
+      name: item.name,
+      weight:
+        item.weight === null || item.weight === undefined ? "" : String(item.weight),
+      visibleToStudent: Boolean(item.visible_to_student),
+      stdin: item.stdin ?? "",
+      args: (item.args ?? []).join(" "),
+      expectedStdout: item.expected_stdout ?? "",
+      expectedStderr: item.expected_stderr ?? "",
+      expectedExitCode:
+        item.expected_exit_code === null || item.expected_exit_code === undefined
+          ? "0"
+          : String(item.expected_exit_code),
+      ...emptyCaseExecution(),
+    })),
     fixtures: form.fixtures,
     confirmCaseReplacement: form.confirmCaseReplacement,
   };
@@ -1021,12 +1070,15 @@ export function applyProtectedContent(form: DraftForm, content: QuestionDraftCon
       ? loadedTiers
       : [{ label: "标准参考答案", body: fallbackBody }];
   const primaryBody = content.reference_answer ?? referenceAnswers[0]?.body ?? "";
+  const loadedCases = (content.cases ?? [])
+    .filter((item) => !isSyntheticPlaceholderCase(item as TestCaseInputWithExecution))
+    .map((item) => caseFormFrom(item as TestCaseInputWithExecution));
   return {
     ...declared,
     referenceAnswer: primaryBody,
     referenceAnswers,
     gradingPrompt: content.grading_prompt ?? "",
-    cases: [],
+    cases: loadedCases,
     confirmCaseReplacement: true,
   };
 }

@@ -20,6 +20,7 @@ import { SafeMarkdown } from "../questions/SafeMarkdown";
 import { useQuestion, useQuestionVersion } from "../questions/useQuestions";
 import { AuthoringAssistancePanel, ComparisonDiagnosticsPanel } from "./AuthoringSignals";
 import { AiAuthoringView } from "./AiAuthoringView";
+import { CaseEditor } from "./CaseEditor";
 import { ImageUploader } from "./ImageUploader";
 import { StepNav } from "./StepNav";
 import { STEPS, isStepComplete, type StepId } from "./steps";
@@ -30,6 +31,8 @@ import {
   applyProtectedContent,
   buildDraftInput,
   buildDraftSkeleton,
+  courseDefaultLanguage,
+  defaultDualTrackCases,
   deriveTags,
   draftFormFrom,
   emptyDraftForm,
@@ -106,6 +109,20 @@ export function AuthoringPage({
   const [savedVersionId, setSavedVersionId] = useState<string | null>(null);
   const [leaveConfirm, setLeaveConfirm] = useState(false);
   const [step, setStep] = useState<StepId>("basic");
+
+  const handleCourseChange = useCallback(
+    (nextCourseId: string) => {
+      setCourseId(nextCourseId);
+      if (questionId === null) {
+        const matched = courseOptions.find((course) => course.course_id === nextCourseId);
+        const defaultLang = courseDefaultLanguage(matched?.course_code);
+        if (defaultLang) {
+          setForm((prev) => ({ ...prev, language: defaultLang }));
+        }
+      }
+    },
+    [courseOptions, questionId],
+  );
   // 一条红色提示（2.0：原本常驻在顶部白框里的提示改成屏幕中间一闪而过）。`key` 让同一句话
   // 再次触发时重新计时，而不是"看起来没反应"。
   const [toast, setToast] = useState<{ key: number; message: string } | null>(null);
@@ -360,6 +377,16 @@ export function AuthoringPage({
   );
 
   const publishDisabled = saveDisabled || !completed.reference;
+  const publicCaseCount = form.cases.filter((item) => item.visibleToStudent).length;
+  const hiddenCases = form.cases.filter((item) => !item.visibleToStudent);
+  const hiddenCaseCount = hiddenCases.length;
+  const dualTrackCasesReady =
+    form.executionMode !== "per_case" ||
+    (publicCaseCount === 1 &&
+      hiddenCaseCount === 10 &&
+      hiddenCases.every(
+        (item) => item.expectedStdout !== "" || item.expectedStderr !== "" || form.adapterKind === "file",
+      ));
 
   if (questionId !== null && question.isPending) return <Spinner />;
   if (questionId !== null && question.isError) return <ErrorState error={question.error} />;
@@ -369,7 +396,7 @@ export function AuthoringPage({
       <AiAuthoringView
         courseId={courseId === "" ? null : courseId}
         courses={courseOptions}
-        onCourseChange={setCourseId}
+        onCourseChange={handleCourseChange}
         form={form}
         generationId={generationId}
         onGenerationId={onGenerationId}
@@ -484,7 +511,7 @@ export function AuthoringPage({
                     data-testid="authoring-course"
                     searchable
                     value={courseId}
-                    onChange={(event) => setCourseId(event.target.value)}
+                    onChange={(event) => handleCourseChange(event.target.value)}
                   >
                     <option value="">{t("common.selectPrompt")}</option>
                     {courseOptions.map((course) => (
@@ -831,6 +858,52 @@ export function AuthoringPage({
                 />
               </Field>
 
+              <details
+                className="panel"
+                data-testid="authoring-cases-section"
+                open={form.cases.length > 0}
+              >
+                <summary className="panel__title">
+                  {t("authoring.casesSectionTitle", { count: form.cases.length })}
+                </summary>
+                <div className="stack">
+                  <div className="inline">
+                    <button
+                      type="button"
+                      className="button button--ghost"
+                      data-testid="cases-fill-dual-track"
+                      onClick={() =>
+                        setForm({
+                          ...form,
+                          cases: defaultDualTrackCases(),
+                          confirmCaseReplacement: true,
+                        })
+                      }
+                    >
+                      {t("authoring.casesFillTemplate")}
+                    </button>
+                    <span className="muted" data-testid="cases-summary-hint">
+                      {t("authoring.casesDualTrackHint", {
+                        publicCount: publicCaseCount,
+                        hiddenCount: hiddenCaseCount,
+                      })}
+                    </span>
+                  </div>
+                  <CaseEditor
+                    cases={form.cases}
+                    executionMode={form.executionMode}
+                    onChange={(nextCases) =>
+                      setForm({
+                        ...form,
+                        cases: nextCases,
+                        confirmCaseReplacement:
+                          questionId === null ? form.confirmCaseReplacement : true,
+                      })
+                    }
+                  />
+                </div>
+              </details>
+
               <details className="panel" data-testid="runtime-config">
                 <summary className="panel__title">{t("authoring.advancedOptions")}</summary>
                 <div className="form-grid">
@@ -933,6 +1006,21 @@ export function AuthoringPage({
                   ) : (
                     <pre className="preview-prose">{form.gradingPrompt}</pre>
                   )}
+                </div>
+                <div className="stack" data-testid="preview-cases-summary">
+                  <strong>{t("authoring.preview.casesTitle")}</strong>
+                  <p className="muted">
+                    {t("authoring.preview.casesSummary", {
+                      total: form.cases.length,
+                      publicCount: publicCaseCount,
+                      hiddenCount: hiddenCaseCount,
+                    })}
+                  </p>
+                  {!dualTrackCasesReady && form.cases.length > 0 ? (
+                    <Banner tone="warn" testId="preview-cases-incomplete">
+                      {t("authoring.preview.casesIncomplete")}
+                    </Banner>
+                  ) : null}
                 </div>
               </section>
 

@@ -94,8 +94,8 @@ class Settings:
     llm_model: str | None = None
     llm_api_key: str | None = None
     #: A teacher waits on this synchronously, and the public edge closes the connection at
-    #: around 100s, so the ceiling is well under that rather than "as long as it takes".
-    llm_timeout_seconds: float = 60.0
+    #: around 100s, so individual DAG sub-calls stay well under that ceiling with headroom.
+    llm_timeout_seconds: float = 90.0
 
     #: AI-FLOW-01A structured draft generation. The **provider** is not configured
     #: separately: generation rides on the ``LLM_*`` block above, so a deployment has one
@@ -183,7 +183,7 @@ class Settings:
             llm_base_url=value("LLM_BASE_URL", None),
             llm_model=value("LLM_MODEL_NAME", None),
             llm_api_key=value("LLM_APIKEY", None),
-            llm_timeout_seconds=seconds("LLM_TIMEOUT_SECONDS", 60.0),
+            llm_timeout_seconds=seconds("LLM_TIMEOUT_SECONDS", 90.0),
             draft_generation_max_objective_chars=count(
                 "B3_DRAFT_GENERATION_MAX_OBJECTIVE_CHARS", 4_000
             ),

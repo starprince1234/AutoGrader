@@ -12,6 +12,8 @@ import {
   buildDraftInput,
   caseExecutionIssues,
   caseFormFrom,
+  courseDefaultLanguage,
+  defaultDualTrackCases,
   draftFormFrom,
   emptyDraftForm,
   emptyFileCheck,
@@ -413,10 +415,33 @@ describe("AI 候选应用到表单（AI-FLOW-01A）", () => {
     expect(applied.language).toBe("bash");
   });
 
-  it("统一 AI 逻辑评分后不再从 AI 候选写入测试用例", () => {
+  it("应用 AI 候选时完整保留 1 公开 + 10 隐藏测试用例，并将空权重保持为空待补", () => {
     const applied = applyProposal(validForm(), proposal);
-    expect(applied.cases).toHaveLength(0);
+    expect(applied.cases).toHaveLength(2);
+    expect(applied.cases[0]).toMatchObject({
+      name: "三行",
+      weight: "2",
+      visibleToStudent: true,
+      stdin: "a\nb\nc\n",
+      expectedStdout: "3\n",
+      expectedExitCode: "0",
+    });
+    expect(applied.cases[1]).toMatchObject({
+      name: "权重待填",
+      weight: "",
+      visibleToStudent: false,
+    });
     expect(applied.referenceAnswers.length).toBeGreaterThan(0);
+  });
+
+  it("按课程编号推导默认语言（07 -> bash, 08 -> python）并提供 1+10 用例模板", () => {
+    expect(courseDefaultLanguage("07")).toBe("bash");
+    expect(courseDefaultLanguage("08")).toBe("python");
+    expect(courseDefaultLanguage("OS-2026")).toBeNull();
+    const template = defaultDualTrackCases();
+    expect(template).toHaveLength(11);
+    expect(template.filter((item) => item.visibleToStudent)).toHaveLength(1);
+    expect(template.filter((item) => !item.visibleToStudent)).toHaveLength(10);
   });
 
   it("候选没给比较策略时用「忽略行尾空白」，而不是精确匹配", () => {
@@ -889,7 +914,14 @@ describe("评分方式 / 执行声明（Unix 作业扩展）", () => {
     expect(form.executionMode).toBe("single_run");
     expect(form.segmentDelimiter).toBe("===== SEGMENT =====");
     expect(form.referenceAnswer).toBe("print(1)");
-    expect(form.cases).toHaveLength(0);
+    expect(form.cases).toHaveLength(2);
+    expect(form.cases[0]).toMatchObject({
+      name: "第一段",
+      segmentScored: true,
+      segment: "0",
+      expectedStdout: "a\n",
+    });
+    expect(form.cases[1].fileChecks).toHaveLength(1);
   });
 
   it("读回 ssh_session 的练习配置；缺失执行声明时回落 per_case", () => {

@@ -23,12 +23,14 @@ request, and the request carries the teacher's own text.
 
 from __future__ import annotations
 
+import http.client
 import json
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from typing import Any
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 #: Suffix this module appends to a configured base URL. The deployment's secret is a *base*
 #: (``https://api.xiaomimimo.com`` or ``.../v1``); the endpoint is always ``/responses``.
@@ -37,7 +39,12 @@ _CHAT_SUFFIX = "/chat/completions"
 
 #: Upper bound for one call. The composed request is a few kilobytes; the answer is a JSON
 #: object, so this only stops a runaway generation, not a legitimate one.
-MAX_OUTPUT_TOKENS = 8192
+MAX_OUTPUT_TOKENS = 12288
+
+#: Failure categories worth a single fast retry inside multi-stage generation.
+_RETRYABLE_CATEGORIES = frozenset(
+    {"timeout", "network", "http_429", "http_502", "http_503", "http_504", "incomplete", "not_json"}
+)
 
 
 @dataclass(frozen=True)
@@ -49,12 +56,27 @@ class TokenUsage:
     total_tokens: int | None = None
 
 
+def combine_usage(*usages: TokenUsage) -> TokenUsage:
+    """Sum reported token counts across DAG stages/retries; stay ``None`` when none reported."""
+
+    def sum_field(values: Sequence[int | None]) -> int | None:
+        reported = [value for value in values if value is not None]
+        return sum(reported) if reported else None
+
+    return TokenUsage(
+        prompt_tokens=sum_field([item.prompt_tokens for item in usages]),
+        completion_tokens=sum_field([item.completion_tokens for item in usages]),
+        total_tokens=sum_field([item.total_tokens for item in usages]),
+    )
+
+
 class LlmCallError(RuntimeError):
     """The call failed. ``category`` is safe to log; the body never travels with it."""
 
-    def __init__(self, category: str, detail: str) -> None:
+    def __init__(self, category: str, detail: str, *, usage: TokenUsage | None = None) -> None:
         super().__init__(detail)
         self.category = category
+        self.usage = usage
 
 
 @dataclass(frozen=True)
@@ -64,7 +86,7 @@ class LlmConfig:
     base_url: str
     model: str
     api_key: str | None = None
-    timeout_seconds: float = 60.0
+    timeout_seconds: float = 90.0
     provider_name: str = "openai-compatible"
 
     def endpoint(self) -> str:
@@ -141,19 +163,23 @@ def build_request_body(
     }
 
 
-def complete_json(
+def _is_timeout_error(exc: BaseException) -> bool:
+    if isinstance(exc, TimeoutError):
+        return True
+    reason = getattr(exc, "reason", None)
+    if isinstance(reason, TimeoutError):
+        return True
+    return "timed out" in str(reason or exc).lower()
+
+
+def _complete_json_once(
     *,
     config: LlmConfig,
     system_prompt: str,
     user_prompt: str,
-    max_output_tokens: int = MAX_OUTPUT_TOKENS,
+    max_output_tokens: int,
+    timeout_seconds: float | None,
 ) -> tuple[Mapping[str, Any], TokenUsage]:
-    """Call the provider once and return ``(json object, usage)``.
-
-    Failures raise :class:`LlmCallError` with a *classification*, never with the response
-    body: ``configuration`` / ``network`` / ``timeout`` / ``http_<status>`` / ``response_error``
-    / ``incomplete`` / ``not_json``.
-    """
     body = json.dumps(
         build_request_body(
             config=config,
@@ -173,14 +199,15 @@ def complete_json(
     request = urllib.request.Request(  # noqa: S310 - configured provider endpoint
         config.endpoint(), data=body, headers=headers, method="POST"
     )
+    effective_timeout = config.timeout_seconds if timeout_seconds is None else timeout_seconds
     try:
-        with urllib.request.urlopen(request, timeout=config.timeout_seconds) as response:
+        with urllib.request.urlopen(request, timeout=effective_timeout) as response:
             raw = response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         raise LlmCallError(f"http_{exc.code}", f"the provider answered HTTP {exc.code}") from exc
-    except (TimeoutError, urllib.error.URLError, OSError) as exc:
-        raise LlmCallError("timeout" if isinstance(exc, TimeoutError) else "network",
-                           f"the provider call failed ({type(exc).__name__})") from exc
+    except (TimeoutError, urllib.error.URLError, http.client.HTTPException, OSError) as exc:
+        category = "timeout" if _is_timeout_error(exc) else "network"
+        raise LlmCallError(category, f"the provider call failed ({type(exc).__name__})") from exc
 
     try:
         document = json.loads(raw)
@@ -190,24 +217,75 @@ def complete_json(
     if not isinstance(document, Mapping):
         raise LlmCallError("not_json", "the provider answered with something that is not an object")
 
+    usage = usage_from(document)
     error = document.get("error")
     if error:
         code = error.get("code") if isinstance(error, Mapping) else None
-        raise LlmCallError("response_error", f"the provider reported an error ({code or 'unknown'})")
+        raise LlmCallError(
+            "response_error", f"the provider reported an error ({code or 'unknown'})", usage=usage
+        )
 
     status = document.get("status")
     if status in {"failed", "incomplete", "cancelled"}:
         reason = document.get("incomplete_details")
         reason_text = reason.get("reason") if isinstance(reason, Mapping) else None
         raise LlmCallError(
-            "incomplete", f"the provider response is {status} ({reason_text or 'no reason given'})"
+            "incomplete",
+            f"the provider response is {status} ({reason_text or 'no reason given'})",
+            usage=usage,
         )
 
     text = response_text(document)
     if text.strip() == "":
-        raise LlmCallError("not_json", "the provider response contains no output text")
+        raise LlmCallError(
+            "not_json", "the provider response contains no output text", usage=usage
+        )
 
-    return extract_json_object(text), usage_from(document)
+    try:
+        return extract_json_object(text), usage
+    except LlmCallError as exc:
+        raise LlmCallError(exc.category, str(exc), usage=usage) from exc
+
+
+def complete_json(
+    *,
+    config: LlmConfig,
+    system_prompt: str,
+    user_prompt: str,
+    max_output_tokens: int = MAX_OUTPUT_TOKENS,
+    timeout_seconds: float | None = None,
+    max_attempts: int = 1,
+) -> tuple[Mapping[str, Any], TokenUsage]:
+    """Call the provider and return ``(json object, usage)``.
+
+    Failures raise :class:`LlmCallError` with a *classification*, never with the response
+    body: ``configuration`` / ``network`` / ``timeout`` / ``http_<status>`` / ``response_error``
+    / ``incomplete`` / ``not_json``.
+    """
+    attempts = max(1, max_attempts)
+    accumulated: list[TokenUsage] = []
+    for attempt in range(1, attempts + 1):
+        try:
+            document, usage = _complete_json_once(
+                config=config,
+                system_prompt=system_prompt,
+                user_prompt=user_prompt,
+                max_output_tokens=max_output_tokens,
+                timeout_seconds=timeout_seconds,
+            )
+            accumulated.append(usage)
+            return document, combine_usage(*accumulated)
+        except LlmCallError as exc:
+            if exc.usage is not None:
+                accumulated.append(exc.usage)
+            if attempt >= attempts or exc.category not in _RETRYABLE_CATEGORIES:
+                raise LlmCallError(
+                    exc.category,
+                    str(exc),
+                    usage=combine_usage(*accumulated) if accumulated else exc.usage,
+                ) from exc
+            time.sleep(0.5 if exc.category == "http_429" else 0.15)
+    raise AssertionError("unreachable")  # pragma: no cover
 
 
 def response_text(document: Mapping[str, Any]) -> str:

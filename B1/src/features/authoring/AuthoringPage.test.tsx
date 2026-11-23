@@ -2153,3 +2153,160 @@ describe("另存为新版本：题目标题可以换行、可以定位光标", (
     expect(title.value).toBe(`${before}${longTitle} 继续`);
   });
 });
+
+describe("AI 出题双轨 1+10 用例与直接发布闭环", () => {
+  it("AI 生成 1 个公开示例 + 10 个隐藏用例后写入编辑器，可直接保存并发布；选 07 课自动切到 bash", async () => {
+    const dualCases = [
+      {
+        name: "公开示例",
+        ordinal: 0,
+        weight: 10,
+        visible_to_student: true,
+        stdin: "3 + 5\n",
+        args: [],
+        expected_stdout: "8\n",
+        expected_exit_code: 0,
+      },
+      ...Array.from({ length: 10 }, (_item, index) => ({
+        name: `隐藏用例 ${index + 1}`,
+        ordinal: index + 1,
+        weight: 9,
+        visible_to_student: false,
+        stdin: `${index + 1} + 2\n`,
+        args: [],
+        expected_stdout: `${index + 3}\n`,
+        expected_exit_code: 0,
+      })),
+    ];
+    const fullGeneration = questionDraftGeneration({
+      generation_id: UUID_A,
+      status: "ready",
+      warnings: [],
+      proposal: {
+        title: "四则运算",
+        stem_markdown: "输入表达式，输出结果。",
+        language: "bash",
+        adapter_kind: "stdin",
+        tags: ["bash", "stdin"],
+        reference_answer: "read a op b\necho $((a + b))",
+        reference_answers: [
+          { label: "解法一：算术展开", body: "read a op b\necho $((a + b))" },
+          { label: "解法二：expr/awk", body: "awk '{print $1 + $3}'" },
+        ],
+        grading_prompt: "权重：用例 60% + AI 40%\n1. 正确完成四则运算。",
+        adapter: {
+          expect_exit_code: 0,
+          comparison: { stdout: "ignore_trailing_whitespace", stderr: "ignored" },
+        },
+        cases: dualCases,
+      },
+    });
+
+    stub = installFetchStub(
+      baseRoutes([
+        {
+          path: "/api/v1/courses",
+          respond: () =>
+            jsonResponse(
+              coursePage([
+                courseSummary({ course_id: UUID_A, course_code: "07", title: "Unix操作系统作业" }),
+              ]),
+            ),
+        },
+        {
+          path: "/api/v1/question-draft-generations/capabilities",
+          respond: () => jsonResponse(generationCapabilities()),
+        },
+        {
+          method: "POST",
+          path: "/api/v1/question-draft-generations",
+          respond: () => jsonResponse(fullGeneration),
+        },
+        {
+          method: "GET",
+          path: `/api/v1/question-draft-generations/${UUID_A}`,
+          respond: () => jsonResponse(fullGeneration),
+        },
+        {
+          method: "POST",
+          path: "/api/v1/questions",
+          respond: () =>
+            jsonResponse(
+              questionPublic({
+                status: "draft",
+                versions: [
+                  {
+                    question_version_id: NEW_VERSION,
+                    version: 1,
+                    status: "draft",
+                    published_at: null,
+                  },
+                ],
+              }),
+            ),
+        },
+        {
+          method: "POST",
+          path: `/api/v1/question-versions/${NEW_VERSION}/publish`,
+          respond: () =>
+            jsonResponse(
+              questionVersionPublic({
+                question_version_id: NEW_VERSION,
+                version: 1,
+                status: "published",
+              }),
+            ),
+        },
+      ]),
+    );
+
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    renderAuthoring(null);
+    await openAi(user);
+    await selectCourseInAiPanel(user);
+
+    // 选了 07 课程后，AI 面板的题目语言自动切为 bash。
+    expect(screen.getByLabelText("题目语言")).toHaveValue("bash");
+
+    await user.type(screen.getByLabelText("教学目标"), "编写 Shell 加法器");
+    await user.click(screen.getByTestId("generation-generate"));
+
+    expect(await screen.findByTestId("step-preview")).toBeInTheDocument();
+    expect(screen.getByTestId("preview-cases-summary")).toHaveTextContent(
+      "共 11 个（1 个公开示例 + 10 个隐藏评测用例）",
+    );
+    expect(screen.queryByTestId("preview-cases-incomplete")).toBeNull();
+
+    await user.click(screen.getByTestId("authoring-save-publish"));
+
+    const createReq = await waitFor(() => {
+      const found = stub?.requests.find(
+        (item) => item.method === "POST" && item.url.pathname === "/api/v1/questions",
+      );
+      if (!found) throw new Error("尚未发出创建题目请求");
+      return found;
+    });
+    const body = createReq.body as {
+      language: string;
+      cases: Array<{ visible_to_student: boolean; expected_stdout: string | null }>;
+    };
+    expect(body.language).toBe("bash");
+    expect(body.cases).toHaveLength(11);
+    expect(body.cases.filter((c) => c.visible_to_student)).toHaveLength(1);
+    expect(body.cases.filter((c) => !c.visible_to_student)).toHaveLength(10);
+    expect(body.cases.every((c) => (c.expected_stdout ?? "").length > 0)).toBe(true);
+
+    const publishReq = await waitFor(() => {
+      const found = stub?.requests.find(
+        (item) =>
+          item.method === "POST" &&
+          item.url.pathname === `/api/v1/question-versions/${NEW_VERSION}/publish`,
+      );
+      if (!found) throw new Error("尚未发出发布请求");
+      return found;
+    });
+    expect(publishReq).toBeDefined();
+    expect(await screen.findByText("detail target")).toBeInTheDocument();
+  });
+});

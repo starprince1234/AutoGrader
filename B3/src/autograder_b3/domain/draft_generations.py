@@ -275,32 +275,8 @@ def request_generation(
         adapter_kind=payload.adapter_kind,
         limits=settings,
         desired_reference_tiers=payload.desired_reference_tiers,
+        require_dual_track_cases=isinstance(resolved, ResponsesDraftGenerationProvider),
     )
-    if isinstance(resolved, ResponsesDraftGenerationProvider) and outcome.proposal is not None:
-        target_tiers = payload.desired_reference_tiers or 2
-        need_tiers = len(outcome.proposal.reference_answers) < target_tiers
-        need_rubric = outcome.proposal.grading_prompt is None
-        if need_tiers or need_rubric:
-            try:
-                repaired = resolved.repair_missing(
-                    document=document,
-                    language=payload.language,
-                    desired_reference_tiers=target_tiers,
-                    missing_grading_prompt=need_rubric,
-                )
-                if need_tiers and repaired.document.get("reference_answers"):
-                    document["reference_answers"] = repaired.document["reference_answers"]
-                if need_rubric and repaired.document.get("grading_prompt"):
-                    document["grading_prompt"] = repaired.document["grading_prompt"]
-                outcome = normalize_proposal(
-                    document,
-                    language=payload.language,
-                    adapter_kind=payload.adapter_kind,
-                    limits=settings,
-                    desired_reference_tiers=payload.desired_reference_tiers,
-                )
-            except DraftGenerationProviderError:
-                pass
 
     with database.protected_session() as session:
         from ..infra.repositories import DraftGenerationRepository
@@ -344,6 +320,7 @@ def request_generation(
             course_id=str(course_id),
             generation_id=str(row.generation_id),
             outcome=outcome.status,
+            case_count=0 if outcome.proposal is None else len(outcome.proposal.cases),
             attempt_count=len(outcome.warnings),
             duration_ms=elapsed_ms,
         )

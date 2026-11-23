@@ -249,9 +249,69 @@ def test_an_unreachable_endpoint_is_a_network_failure_not_a_configuration_change
     with pytest.raises(LlmCallError) as error:
         complete_json(
             config=LlmConfig(
-                base_url="http://127.0.0.1:1/v1", model="m", api_key="k", timeout_seconds=2
+                base_url="http://127.0.0.1:1/v1", model="m", api_key="k", timeout_seconds=5
             ),
             system_prompt="SYS",
             user_prompt="USER",
         )
     assert error.value.category == "network"
+
+
+def test_complete_json_retries_transient_incomplete_and_accumulates_usage(monkeypatch):
+    from autograder_b3 import llm_client
+
+    responses = [
+        {
+            "status": "incomplete",
+            "incomplete_details": {"reason": "max_output_tokens"},
+            "usage": {"input_tokens": 100, "output_tokens": 50, "total_tokens": 150},
+        },
+        {
+            "status": "completed",
+            "output_text": '{"ok": true}',
+            "usage": {"input_tokens": 110, "output_tokens": 40, "total_tokens": 150},
+        },
+    ]
+
+    class _FakeResp:
+        def __init__(self, payload: dict) -> None:
+            self._raw = json.dumps(payload).encode("utf-8")
+
+        def read(self) -> bytes:
+            return self._raw
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+    def fake_urlopen(_request, timeout=None):  # noqa: ARG001
+        return _FakeResp(responses.pop(0))
+
+    monkeypatch.setattr(llm_client.urllib.request, "urlopen", fake_urlopen)
+    doc, usage = complete_json(
+        config=LlmConfig(base_url="https://api.xiaomimimo.com", model="m", api_key="k"),
+        system_prompt="SYS",
+        user_prompt="USER",
+        max_attempts=2,
+    )
+    assert doc == {"ok": True}
+    assert (usage.prompt_tokens, usage.completion_tokens, usage.total_tokens) == (210, 90, 300)
+
+
+def test_urlerror_wrapping_timeout_is_classified_as_timeout(monkeypatch):
+    import urllib.error
+    from autograder_b3 import llm_client
+
+    def fake_urlopen(_request, timeout=None):  # noqa: ARG001
+        raise urllib.error.URLError(TimeoutError("timed out"))
+
+    monkeypatch.setattr(llm_client.urllib.request, "urlopen", fake_urlopen)
+    with pytest.raises(LlmCallError) as error:
+        complete_json(
+            config=LlmConfig(base_url="https://api.xiaomimimo.com", model="m", api_key="k"),
+            system_prompt="SYS",
+            user_prompt="USER",
+        )
+    assert error.value.category == "timeout"
