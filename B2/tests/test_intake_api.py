@@ -3072,6 +3072,94 @@ def test_mail_record_processed_is_scoped_by_the_token_course_scope(
     assert {item["record_id"] for item in admin_items} == {mine, foreign}
 
 
+def test_a_decided_record_leaves_pending_and_shows_as_processed(
+    client: TestClient,
+    engine: Engine,
+    signer: _Signer,
+    student: tuple[str, str, str, str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """打回/作废后记录必须离开「待处理」（线上 bug：刷新后仍留在待处理里）。
+
+    处置是队列的终点：`pending` 的语义是"真实提交尝试**且还没有被老师处置**"。被决定的记录进入
+    `processed`，并保留收件时的原因码——页面据此说明"为什么它没成为提交"，而不是假装它是一份提交。
+    """
+    token = _auth(_staff_token(signer, student))
+    scope = {"scope_course_id": student[1], "scope_section_id": student[2]}
+    assignment_id = str(uuid.uuid4())
+    rejected = _seed_quarantine(
+        engine,
+        uid=1,
+        reason_code="no_attachments",
+        format_valid=True,
+        sender_associated=False,
+        assignment_id=assignment_id,
+        subject="正确正文但没有附件",
+        **scope,
+    )
+    dismissed = _seed_quarantine(
+        engine,
+        uid=2,
+        reason_code="email_body_mismatch",
+        format_valid=False,
+        sender_associated=True,
+        **scope,
+    )
+    untouched = _seed_quarantine(
+        engine, uid=3, reason_code="no_attachments", format_valid=True, **scope
+    )
+    # 投递本身不是本用例的对象：只关心"处置是否让记录离开待处理"。
+    monkeypatch.setattr(
+        "autograder_b2.intake.quarantine.send_submission_rejection_email",
+        lambda *, recipient_email, note=None: False,
+    )
+
+    pending_before = _mail_record_items(
+        client, token, category="pending", course_id=student[1]
+    )
+    assert {item["record_id"] for item in pending_before} == {
+        rejected,
+        dismissed,
+        untouched,
+    }
+
+    assert (
+        client.post(
+            REJECT.format(quarantine=rejected), json={"note": "没有附件"}, headers=token
+        ).status_code
+        == 200
+    )
+    assert (
+        client.post(
+            DISMISS.format(quarantine=dismissed), json={}, headers=token
+        ).status_code
+        == 200
+    )
+
+    after = _mail_record_items(client, token, category="pending", course_id=student[1])
+    assert {item["record_id"] for item in after} == {untouched}
+
+    processed = {
+        item["record_id"]: item
+        for item in _mail_record_items(
+            client, token, category="processed", course_id=student[1]
+        )
+    }
+    assert set(processed) == {rejected, dismissed}
+    assert processed[rejected]["category"] == "processed"
+    # 处置不重写收件事实：原因码、证明过的作业都还在，页面才能说清"为什么没成为提交"。
+    assert processed[rejected]["reason_code"] == "no_attachments"
+    assert processed[rejected]["assignment_id"] == assignment_id
+    assert processed[rejected]["subject"] == "正确正文但没有附件"
+    assert processed[dismissed]["reason_code"] == "email_body_mismatch"
+    # 已经处置的行不再出现在「其他」：三态仍然互斥。
+    other = _mail_record_items(client, token, category="other", course_id=student[1])
+    assert {item["record_id"] for item in other} == set()
+    # 行级作用域照旧：别的课程的 staff 看不到这些已处置记录。
+    foreign = _mail_record_items(client, _foreign_token(signer), category="processed")
+    assert {item["record_id"] for item in foreign} == set()
+
+
 def test_mail_record_pending_and_other_follow_the_stored_facts(
     client: TestClient,
     engine: Engine,
@@ -3165,7 +3253,9 @@ def test_mail_record_pending_and_other_follow_the_stored_facts(
         historical_other,
     }
 
-    # 两个类别互斥且覆盖全部隔离行（同一行不会出现在两个 tab）。
+    # 两个类别互斥（同一行不会同时出现在两个 tab）。已人工处置的行归 `processed`，
+    # 因此它们既不在这里的 pending 也不在 other —— 见
+    # `test_a_decided_record_leaves_pending_and_shows_as_processed`。
     assert (
         {item["record_id"] for item in pending}
         & {item["record_id"] for item in other}

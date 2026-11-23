@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AutoGrader MAIN Operational Log Center API
-  version: 0.43.0
+  version: 0.44.0
   description: |
     Unified operational log center served by the MAIN composition host.
     Provides log search, cross-module trace timeline, module health summary,

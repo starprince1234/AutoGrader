@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AutoGrader B2 Evaluation API
-  version: 0.43.0
+  version: 0.44.0
   description: |
     Submission intake (API and email), content-addressed storage, static legality,
     security confirmation, sandboxed dynamic execution, explainable and replayable
@@ -728,20 +728,29 @@ paths:
         intake do with the messages it read?" -- so every message the intake path decided is
         readable here in exactly one of three states:
 
-        * `processed`: the message carried a valid one-time verification code and was accepted as
-          the student's assignment submission(s). `assignment_id` and `student_id` are the keys a
-          teacher uses to open the submission in the assignment workspace; the record itself never
-          carries the answer.
-        * `pending`: a genuine submission attempt that did **not** become part of the assignment.
-          A record is `pending` when either (a) the machine-readable five-line body passed format
-          validation -- every required field present, the declared 作业编号 equal to the assignment
-          the code was issued for, and the declared 姓名/学号 equal to the account's registered
-          values when the sender is the challenge owner -- or (b) the sender address belongs to a
-          registered account, so the message is a student's mail rather than spam even when its
-          body is malformed. `reason_code` names why it was not accepted (e.g.
-          `email_verification_expired` for an expired code).
+        * `processed`: the message has been handled and will never become a submission. Two cases
+          land here: (a) the message carried a valid one-time verification code and was accepted as
+          the student's assignment submission(s) -- `reason_code` is `null`, and `assignment_id` /
+          `student_id` open the submission in the assignment workspace; (b) a teacher already
+          decided the record (打回 / 作废, i.e. `rejected` / `dismissed`, or the legacy manual
+          attribution) -- `reason_code` keeps the intake reason so the page can say *why* it never
+          became a submission. The record itself never carries the answer.
+        * `pending`: a genuine submission attempt that did **not** become part of the assignment
+          **and has not been decided by a teacher yet** -- the teacher's to-do queue. A record is
+          `pending` when either (a) the machine-readable five-line body passed format validation --
+          every required field present, the declared 作业编号 equal to the assignment the code was
+          issued for, and the declared 姓名/学号 equal to the account's registered values when the
+          sender is the challenge owner -- or (b) the sender address belongs to a registered
+          account, so the message is a student's mail rather than spam even when its body is
+          malformed. `reason_code` names why it was not accepted (e.g. `email_verification_expired`
+          for an expired code).
         * `other`: every remaining record: advertising/spam, messages without a verification code
           or with an unknown one, malformed bodies, and envelope/attachment gate rejections.
+
+        A record leaves `pending` the moment a teacher decides it: disposition is terminal for the
+        queue, so a rejected or discarded record moves to `processed` instead of sitting in the
+        to-do list forever. That move never rewrites the intake facts -- the reason code, course
+        association and (where proven) assignment/student stay exactly as they were recorded.
 
         The classification is decided when the message is read (it is stored with the record), so
         it does not depend on a later interpretation of the text. Old records written before the
@@ -752,7 +761,8 @@ paths:
 
         Authorization uses the same row-level course scope as `listIntakeQuarantines`:
 
-        * `processed` rows are scoped by the `course_id/section_id` the submission belongs to;
+        * `processed` rows are scoped by the `course_id/section_id` the submission belongs to, and --
+          for a record a teacher decided -- by the record's own verified course association;
         * `pending`/`other` rows are scoped by the record's own verified course association, and
           rows without one are administrator-only;
         * staff naming a course/section outside the token scope get `403`, never an empty page, and
@@ -1646,32 +1656,38 @@ components:
         course_id:
           anyOf: [{$ref: './common.yaml#/components/schemas/Uuid'}, {type: "null"}]
           description: |
-            The record's verified course association: the submissions' course for `processed`, the
-            intake record's scope for `pending`/`other`. `null` when no association could be proven
-            (such rows are administrator-only).
+            The record's verified course association: the submissions' course for an accepted
+            `processed` record, and the record's own scope for `pending`/`other` and for a
+            `processed` record a teacher decided. `null` when no association could be proven (such
+            rows are administrator-only).
         section_id:
           anyOf: [{$ref: './common.yaml#/components/schemas/Uuid'}, {type: "null"}]
           description: "The matching section; null exactly when `course_id` is null."
         assignment_id:
           anyOf: [{$ref: './common.yaml#/components/schemas/Uuid'}, {type: "null"}]
           description: |
-            The assignment the message belongs to: the submissions' assignment for `processed`, the
-            challenge's assignment for a `pending` record whose code was located, and `null` when no
+            The assignment the message belongs to: the submissions' assignment for an accepted
+            `processed` record, the challenge's assignment for a `pending` record -- and for a
+            `processed` record a teacher decided -- whose code was located, and `null` when no
             assignment can be proven (spam, no code, or an envelope rejection before any code was
-            read). It is informational only and never an authorization basis.
+            read). It is informational only and never an authorization basis; for a decided record
+            it is the assignment the rejected mail *attempted*, not one that holds a submission.
         student_id:
           anyOf: [{$ref: './common.yaml#/components/schemas/Uuid'}, {type: "null"}]
           description: |
-            The platform user id the code proved: the submission owner for `processed`, and the
-            challenge owner for `pending` records whose code was located. `null` otherwise -- in
-            particular a `pending` row admitted only because its sender address belongs to a
-            registered account carries no student id, because the address alone is not proof of
-            authorship.
+            The platform user id the code proved: the submission owner for an accepted `processed`
+            record, and the challenge owner for `pending` records (and decided `processed` records)
+            whose code was located. `null` otherwise -- in particular a `pending` row admitted only
+            because its sender address belongs to a registered account carries no student id,
+            because the address alone is not proof of authorship.
         reason_code:
           anyOf: [{$ref: '#/components/schemas/IntakeReasonCode'}, {type: "null"}]
           description: |
-            Why a `pending`/`other` record was not accepted; `null` for `processed`. The UI maps it
-            to a human sentence.
+            Why the record was not accepted: the intake reason for a `pending`/`other` record, and
+            for a `processed` record that a teacher decided (打回/作废) the reason the message
+            never became a submission. `null` for a `processed` record that **is** an accepted
+            submission, which is how a consumer tells the two sources of that category apart. The
+            UI maps it to a human sentence.
       additionalProperties: false
 
     AppealPack:

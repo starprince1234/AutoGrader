@@ -1691,6 +1691,8 @@ export const messages = {
 "review.scopeUnknown": "未提供",
 "review.assignmentUnknown": "（未关联作业）",
 "review.viewAssignment": "查看作业",
+// 已处理里的"人工处置"行：没有提交可看，只有「为什么没成为提交」。
+"review.disposed": "已处置（未成为提交）",
 "review.empty.processed": "还没有已处理的邮件记录。",
 "review.empty.pending": "没有待处理的邮件记录。",
 "review.empty.other": "没有其他邮件记录。",

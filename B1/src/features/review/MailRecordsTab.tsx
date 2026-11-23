@@ -47,9 +47,11 @@ import { Select } from "../../ui/Select";
  *
  * 三态的语义（与服务端判定一致，界面不自行推导）：
  *
- * 1. `processed`（已处理）：邮件已经成功变成作业提交，可以从作业界面点进去查看；
- * 2. `pending`（待处理）：收到了真实提交，但没有列入作业（例如核验码过期；或发件地址属于
- *    已注册账号——它是学生的信，即使正文格式不对也不会被当成垃圾）；
+ * 1. `processed`（已处理）：已经**有结论**的邮件，两个来源——(a) 已经成功变成作业提交，可以从
+ *    作业界面点进去查看（`reason_code` 为 null）；(b) 老师已经打回/作废过的记录，没有提交可看，
+ *    只显示"为什么没成为提交"（`reason_code` 非空）。
+ * 2. `pending`（待处理）：收到了真实提交、但还没有列入作业**也还没有被老师处置**——这是待办队列。
+ *    打回或作废之后它就不再属于这里（处置是队列的终点），因此队列会真的被排空。
  * 3. `other`（其他）：剩余全部——广告垃圾、没有按格式提交、报文/附件被拒绝等。
  *
  * 三条来自真实授权的约束原样保留：
@@ -280,7 +282,20 @@ export function MailRecordsTab({
         </div>
       );
     }
-    // 已处理：显示作业标题；找不到标题时显示短 id（不能把"还没取到"写成"没有作业"）。
+    // 已处理有**两个来源**：真正变成提交的邮件（`reason_code` 为 null），以及老师已经打回/作废
+    // 过的记录（`reason_code` 保留收件原因）。后者没有提交可看，所以只说明"为什么没成为提交"，
+    // 不渲染"查看作业"——那个链接会把人带到一份并不存在的提交上。
+    if (row.reason_code !== null) {
+      return (
+        <div>
+          <div className="muted">{t("review.disposed")}</div>
+          <div data-testid={`review-reason-${row.record_id}`}>
+            {reasonText(row.reason_code)}
+          </div>
+        </div>
+      );
+    }
+    // 变成提交的邮件：显示作业标题；找不到标题时显示短 id（不能把"还没取到"写成"没有作业"）。
     const assignmentId = row.assignment_id;
     const title =
       assignmentId === null
