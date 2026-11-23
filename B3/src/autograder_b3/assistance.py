@@ -46,7 +46,7 @@ TOPICS: tuple[Topic, ...] = (
 
 #: Bumped whenever the prompt text changes: the response carries it as provenance, so a
 #: suggestion can always be traced to the instructions that produced it.
-PROMPT_VERSION = "b3-authoring-v1"
+PROMPT_VERSION = "b3-authoring-v2"
 
 #: Shown with every response. The contract requires a non-empty list and clients must
 #: render it, because advice that looks like a verdict eventually gets treated as one.
@@ -60,7 +60,8 @@ DISCLAIMERS: tuple[str, ...] = (
 #: teacher's input: the draft view travels as data in the user message.
 ADVICE_SYSTEM_PROMPT = (
     "You advise teachers on exercise design. You never produce "
-    "expected outputs and you never claim a question is correct."
+    "expected outputs and you never claim a question is correct. "
+    "Write every suggestion in Simplified Chinese (简体中文)."
 )
 
 
@@ -193,6 +194,7 @@ def build_prompt(*, payload: Mapping[str, Any], topics: Sequence[Topic]) -> str:
     lines = [
         f"Prompt {PROMPT_VERSION}. You are advising a teacher who is writing an exercise.",
         "Return a JSON object {\"suggestions\": [{\"topic\": ..., \"message\": ...}]}.",
+        "Write every suggestion message in Simplified Chinese (简体中文).",
         "Advise only. Do not rewrite the question, do not produce expected outputs, "
         "and do not claim the question is correct.",
         "",
