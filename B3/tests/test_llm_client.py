@@ -276,9 +276,18 @@ def test_complete_json_retries_transient_incomplete_and_accumulates_usage(monkey
     class _FakeResp:
         def __init__(self, payload: dict) -> None:
             self._raw = json.dumps(payload).encode("utf-8")
+            self._offset = 0
 
-        def read(self) -> bytes:
-            return self._raw
+        def read(self, size: int = -1) -> bytes:
+            # The client reads in chunks so it can enforce a wall-clock budget, so the fake has
+            # to behave like a stream: hand out a slice per call and return b"" at the end.
+            if size is None or size < 0:
+                chunk = self._raw[self._offset :]
+                self._offset = len(self._raw)
+                return chunk
+            chunk = self._raw[self._offset : self._offset + size]
+            self._offset += len(chunk)
+            return chunk
 
         def __enter__(self):
             return self
@@ -298,6 +307,76 @@ def test_complete_json_retries_transient_incomplete_and_accumulates_usage(monkey
     )
     assert doc == {"ok": True}
     assert (usage.prompt_tokens, usage.completion_tokens, usage.total_tokens) == (210, 90, 300)
+
+
+def test_a_deadline_shorter_than_a_retry_reports_the_first_failure(monkeypatch):
+    """A retry that cannot fit in the remaining budget is not attempted.
+
+    This is the difference between "slow" and "unreachable": before the shared deadline, a
+    retried exchange ran 155 s in production and the browser got an edge 524 instead of a
+    502 it could retry.
+    """
+    from autograder_b3 import llm_client
+
+    calls: list[float | None] = []
+
+    def fake_once(*, config, system_prompt, user_prompt, max_output_tokens, timeout_seconds):  # noqa: ARG001
+        calls.append(timeout_seconds)
+        raise LlmCallError("not_json", "the provider answered with something that is not JSON")
+
+    monkeypatch.setattr(llm_client, "_complete_json_once", fake_once)
+    monkeypatch.setattr(llm_client.time, "monotonic", lambda: next(clock))
+
+    # 10 s deadline, a 5 s first attempt, and a 3 s verdict that leaves 5 s: too little for the
+    # MIN_RETRY_SECONDS floor, so the first failure is what the caller sees.
+    clock = iter([0.0, 0.0, 5.0, 7.0, 7.0])
+    with pytest.raises(LlmCallError) as error:
+        complete_json(
+            config=LlmConfig(base_url="https://api.xiaomimimo.com", model="m", api_key="k"),
+            system_prompt="SYS",
+            user_prompt="USER",
+            max_attempts=2,
+            deadline_seconds=10.0,
+        )
+    assert error.value.category == "not_json"
+    assert len(calls) == 1
+    # The single attempt was capped by the remaining budget, not by any configured timeout.
+    assert calls[0] is not None and calls[0] <= 10.0
+
+
+def test_a_retry_inside_the_deadline_gets_the_remaining_budget(monkeypatch):
+    from autograder_b3 import llm_client
+
+    timeouts: list[float | None] = []
+    outcomes = [
+        LlmCallError("incomplete", "the provider response is incomplete"),
+        ({"ok": True}, llm_client.TokenUsage(1, 1, 2)),
+    ]
+
+    def fake_once(*, config, system_prompt, user_prompt, max_output_tokens, timeout_seconds):  # noqa: ARG001
+        timeouts.append(timeout_seconds)
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, LlmCallError):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(llm_client, "_complete_json_once", fake_once)
+    # Deadlines: start 0.0; first attempt starts at 0.0; retry check at 20.0 (60 s left).
+    clock = iter([0.0, 0.0, 20.0, 20.0])
+    monkeypatch.setattr(llm_client.time, "monotonic", lambda: next(clock))
+
+    document, _usage = complete_json(
+        config=LlmConfig(base_url="https://api.xiaomimimo.com", model="m", api_key="k"),
+        system_prompt="SYS",
+        user_prompt="USER",
+        max_attempts=2,
+        deadline_seconds=80.0,
+    )
+    assert document == {"ok": True}
+    assert len(timeouts) == 2
+    assert timeouts[0] is not None and timeouts[0] <= 80.0
+    # Second attempt: whatever is left of the 80 s budget from the 20 s mark.
+    assert timeouts[1] is not None and timeouts[1] <= 60.0
 
 
 def test_urlerror_wrapping_timeout_is_classified_as_timeout(monkeypatch):

@@ -54,6 +54,10 @@ _RETRYABLE_CATEGORIES = frozenset(
     {"timeout", "network", "http_429", "http_502", "http_503", "http_504", "incomplete", "not_json"}
 )
 
+#: A retry shorter than this is a guaranteed second timeout, so it is not attempted: reporting
+#: the first failure immediately is what keeps a synchronous request inside its own budget.
+MIN_RETRY_SECONDS = 40.0
+
 
 @dataclass(frozen=True)
 class TokenUsage:
@@ -287,23 +291,40 @@ def complete_json(
     max_output_tokens: int = MAX_OUTPUT_TOKENS,
     timeout_seconds: float | None = None,
     max_attempts: int = 1,
+    deadline_seconds: float | None = None,
 ) -> tuple[Mapping[str, Any], TokenUsage]:
     """Call the provider and return ``(json object, usage)``.
+
+    ``timeout_seconds`` bounds one attempt (one HTTP exchange); ``deadline_seconds`` bounds the
+    **whole call, retries included**. The second one is what a synchronous request needs: a fast
+    retry only helps when there is time left for it, and a slow attempt must not eat the budget a
+    second attempt was supposed to have (measured in production: without a shared deadline a
+    retried call ran 155 s and the browser saw an edge `524` instead of any answer).
 
     Failures raise :class:`LlmCallError` with a *classification*, never with the response
     body: ``configuration`` / ``network`` / ``timeout`` / ``http_<status>`` / ``response_error``
     / ``incomplete`` / ``not_json``.
     """
     attempts = max(1, max_attempts)
+    deadline = None if deadline_seconds is None else time.monotonic() + deadline_seconds
     accumulated: list[TokenUsage] = []
     for attempt in range(1, attempts + 1):
+        per_attempt = timeout_seconds
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 1.0:
+                raise LlmCallError(
+                    "timeout",
+                    "the provider budget was exhausted before another attempt could start",
+                )
+            per_attempt = remaining if per_attempt is None else min(per_attempt, remaining)
         try:
             document, usage = _complete_json_once(
                 config=config,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 max_output_tokens=max_output_tokens,
-                timeout_seconds=timeout_seconds,
+                timeout_seconds=per_attempt,
             )
             accumulated.append(usage)
             return document, combine_usage(*accumulated)
@@ -314,6 +335,14 @@ def complete_json(
                 raise LlmCallError(
                     exc.category,
                     str(exc),
+                    usage=combine_usage(*accumulated) if accumulated else exc.usage,
+                ) from exc
+            if deadline is not None and deadline - time.monotonic() < MIN_RETRY_SECONDS:
+                # A retry shorter than MIN_RETRY_SECONDS is a guaranteed second timeout; report
+                # the first failure now so the caller can answer inside its own budget.
+                raise LlmCallError(
+                    exc.category,
+                    f"{exc} (no budget left for a retry)",
                     usage=combine_usage(*accumulated) if accumulated else exc.usage,
                 ) from exc
             time.sleep(0.5 if exc.category == "http_429" else 0.15)

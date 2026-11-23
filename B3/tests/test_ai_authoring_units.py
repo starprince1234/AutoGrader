@@ -268,11 +268,11 @@ def test_single_pass_provider_builds_the_whole_candidate_in_one_call(monkeypatch
     answer = provider.generate(payload=payload)
 
     assert len(calls) == 1
-    assert calls[0]["max_attempts"] == 1
+    assert calls[0]["max_attempts"] == 2
     assert calls[0]["max_output_tokens"] == 8192
-    # The configured per-call timeout is only an upper bound; the request must stay inside the
-    # edge's budget so a slow provider becomes a retryable 502 rather than an unreachable 524.
-    assert calls[0]["timeout_seconds"] <= 80.0
+    # The whole exchange (retries included) is bounded by one deadline, and it must stay inside
+    # the edge's request budget so a slow provider becomes a retryable 502, never a 524.
+    assert calls[0]["deadline_seconds"] <= 90.0
     assert "Single pass" in calls[0]["user_prompt"]
     assert "计算两个整数之和" in calls[0]["user_prompt"]
     assert (answer.usage.prompt_tokens, answer.usage.completion_tokens, answer.usage.total_tokens) == (

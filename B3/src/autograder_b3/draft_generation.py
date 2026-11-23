@@ -731,11 +731,18 @@ def _assemble_candidate(
 #: 1+10 cases are asked for together (about 3-4k tokens in practice).
 _COMBINED_MAX_OUTPUT_TOKENS = 8192
 
-#: Hard ceiling for the single provider call. The browser request crosses an edge proxy whose
-#: request budget is ~100 s, so a call that outlives it never becomes a response the teacher can
-#: read -- they get an edge timeout (524) instead of a problem document. Stopping at 80 s turns
-#: that into a real, retryable `502` and keeps every attempt inside the budget.
-_PROVIDER_CALL_CEILING_SECONDS = 80.0
+#: Hard deadline for the whole provider exchange, retries included. The browser request crosses
+#: an edge proxy whose request budget is ~100 s, so a call that outlives it never becomes a
+#: response the teacher can read -- they get an edge timeout (524) instead of a problem document.
+#: Stopping at 85 s turns that into a real, retryable `502` and keeps every attempt inside the
+#: budget. It is a *wall-clock* budget: :mod:`autograder_b3.llm_client` reads the body in chunks
+#: and checks the clock after each one, because `urlopen(timeout=...)` only bounds a single
+#: socket operation (measured: a 55 s ceiling became a 146 s request).
+_PROVIDER_DEADLINE_SECONDS = 85.0
+
+#: One retry, but only inside the deadline above. A cut-off or malformed answer is worth a second
+#: try; a retry with no budget left is not (`MIN_RETRY_SECONDS` in ``llm_client`` declines it).
+_PROVIDER_MAX_ATTEMPTS = 2
 
 
 @dataclass
@@ -781,12 +788,11 @@ class ResponsesDraftGenerationProvider:
                     hidden_count=REQUIRED_HIDDEN_CASES,
                 ),
                 max_output_tokens=_COMBINED_MAX_OUTPUT_TOKENS,
-                timeout_seconds=min(
-                    self.config.timeout_seconds, _PROVIDER_CALL_CEILING_SECONDS
-                ),
-                # One attempt on purpose: a retry doubles the wall clock and the teacher would
-                # see an edge timeout instead of the failure. Retrying costs them one click.
-                max_attempts=1,
+                # One shared deadline for every attempt: a retry only runs while a second try
+                # still fits, so a slow first attempt cannot push the whole request past the
+                # edge's budget (that is what produced the 524 the teacher saw).
+                deadline_seconds=_PROVIDER_DEADLINE_SECONDS,
+                max_attempts=_PROVIDER_MAX_ATTEMPTS,
             )
         except LlmCallError as error:
             # Only the classification travels: a provider error page can echo the request.
