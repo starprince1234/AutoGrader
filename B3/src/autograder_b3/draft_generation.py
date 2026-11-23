@@ -733,9 +733,9 @@ _COMBINED_MAX_OUTPUT_TOKENS = 8192
 
 #: Hard ceiling for the single provider call. The browser request crosses an edge proxy whose
 #: request budget is ~100 s, so a call that outlives it never becomes a response the teacher can
-#: read -- they get an edge timeout (524) instead of a problem document. Stopping at 55 s turns
+#: read -- they get an edge timeout (524) instead of a problem document. Stopping at 80 s turns
 #: that into a real, retryable `502` and keeps every attempt inside the budget.
-_PROVIDER_CALL_CEILING_SECONDS = 55.0
+_PROVIDER_CALL_CEILING_SECONDS = 80.0
 
 
 @dataclass

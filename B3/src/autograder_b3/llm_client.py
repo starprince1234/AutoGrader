@@ -41,6 +41,14 @@ _CHAT_SUFFIX = "/chat/completions"
 #: object, so this only stops a runaway generation, not a legitimate one.
 MAX_OUTPUT_TOKENS = 12288
 
+#: Chunk size for reading a response body.
+#:
+#: Reading in chunks is what makes ``timeout_seconds`` a **total** budget: ``urlopen(timeout=...)``
+#: bounds a single socket operation, so a provider that trickles a large JSON keeps resetting it.
+#: Measured in production: a 55 s ceiling became a 146 s request (and an edge 524) because the
+#: body arrived slowly while every individual read stayed inside its own socket timeout.
+_BODY_CHUNK_BYTES = 64 * 1024
+
 #: Failure categories worth a single fast retry inside multi-stage generation.
 _RETRYABLE_CATEGORIES = frozenset(
     {"timeout", "network", "http_429", "http_502", "http_503", "http_504", "incomplete", "not_json"}
@@ -163,6 +171,28 @@ def build_request_body(
     }
 
 
+def _read_body_with_deadline(response: Any, *, timeout_seconds: float) -> bytes:
+    """Read the whole body, refusing to exceed ``timeout_seconds`` of wall-clock time.
+
+    ``urlopen(timeout=...)`` only bounds one socket operation; a slow trickle of a large JSON
+    resets it indefinitely, which is how a request with a 55 s ceiling ran for 146 s in
+    production and died at the edge (524) instead of returning a retryable error. Checking the
+    clock after every chunk makes the ceiling mean what it says without pulling in a second HTTP
+    client library.
+    """
+    deadline = time.monotonic() + timeout_seconds
+    chunks: list[bytes] = []
+    while True:
+        chunk = response.read(_BODY_CHUNK_BYTES)
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+        if time.monotonic() > deadline:
+            raise TimeoutError(
+                f"the provider did not finish its answer within {timeout_seconds:.0f} s"
+            )
+
+
 def _is_timeout_error(exc: BaseException) -> bool:
     if isinstance(exc, TimeoutError):
         return True
@@ -202,7 +232,9 @@ def _complete_json_once(
     effective_timeout = config.timeout_seconds if timeout_seconds is None else timeout_seconds
     try:
         with urllib.request.urlopen(request, timeout=effective_timeout) as response:
-            raw = response.read().decode("utf-8")
+            raw = _read_body_with_deadline(response, timeout_seconds=effective_timeout).decode(
+                "utf-8"
+            )
     except urllib.error.HTTPError as exc:
         raise LlmCallError(f"http_{exc.code}", f"the provider answered HTTP {exc.code}") from exc
     except (TimeoutError, urllib.error.URLError, http.client.HTTPException, OSError) as exc:
