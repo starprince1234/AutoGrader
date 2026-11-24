@@ -260,6 +260,10 @@ class SinkHandler(logging.Handler):
                 "event": "logs.sink.degraded",
                 "outcome": "degraded",
                 "error_type": type(error).__name__,
+                # Which database role the failing writer connected as. A permission error is a
+                # fact about the *role*, so a report without it leaves the operator guessing
+                # between "grants were revoked" and "the wrong DSN reached this process".
+                "db_user": getattr(getattr(self._engine, "url", None), "username", None),
                 # `detail` is the field the log normalizer keeps as free text; a custom
                 # `error_detail` key is dropped by redaction, which is how the first version of
                 # this event reported a type but no reason.
