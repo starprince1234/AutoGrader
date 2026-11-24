@@ -128,13 +128,20 @@ export function RegistrationAllowlistPanel() {
                     }
                   >
                     <span className="allowlist-batch__name">
-                      <span aria-hidden="true">{expanded === batch.batch_id ? "▾" : "▸"}</span>{" "}
-                      {batch.class_name}
+                      <span className="allowlist-batch__chevron" aria-hidden="true">
+                        {expanded === batch.batch_id ? "▾" : "▸"}
+                      </span>
+                      <span className="allowlist-batch__label" title={batch.class_name}>
+                        {batch.class_name}
+                      </span>
                     </span>
-                    <span className="muted" data-testid={`allowlist-count-${batch.batch_id}`}>
+                    <span
+                      className="muted allowlist-batch__count"
+                      data-testid={`allowlist-count-${batch.batch_id}`}
+                    >
                       {t("allowlist.students", { count: batch.row_count })}
                     </span>
-                    <span className="muted">
+                    <span className="muted allowlist-batch__time">
                       {formatDateTime(batch.uploaded_at, t("common.none"))}
                     </span>
                   </button>

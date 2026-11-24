@@ -3685,8 +3685,9 @@ samp {
 /* 每一步底部的「保存草稿」：右下角对齐，说明文字在按钮左边。 */
 
 /* 注册名单：一班一行。
-   班级 / 人数 / 时间 三个字段在一行内均匀分开（space-between），删除按钮固定在右侧；
-   除删除按钮外整行都是展开开关，所以可点击区域与看起来可点的区域一致。 */
+   名称 / 人数 / 导入时间 用 grid 固定成三列：名称列占满剩余宽度、过长时省略；人数与时间各占
+   定宽列并右对齐。因此无论班级名长短，各行的「人数」「导入时间」都从同一列开始，不会错位；
+   删除按钮固定在行尾。除删除按钮外整行都是展开开关，所以可点击区域与看起来可点的区域一致。 */
 .allowlist-batches {
   list-style: none;
   margin: 0;
@@ -3704,10 +3705,10 @@ samp {
 
 .allowlist-batch__toggle {
   flex: 1 1 auto;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 5.5em 12em;
   align-items: center;
-  justify-content: space-between;
-  gap: 16px;
+  column-gap: 16px;
   min-height: 40px;
   padding: 6px 12px;
   border: 1px solid var(--color-border);
@@ -3725,7 +3726,31 @@ samp {
 }
 
 .allowlist-batch__name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
   font-weight: 600;
+}
+
+/* 箭头单独占一格固定宽度：展开/收起时 ▾/▸ 的宽度差异不会把班级名左右推动。 */
+.allowlist-batch__chevron {
+  flex: 0 0 1em;
+  text-align: center;
+}
+
+/* 名单名可能来自任意文件名：过长时省略而不是撑破列，完整名字留在 title 上。 */
+.allowlist-batch__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.allowlist-batch__count,
+.allowlist-batch__time {
+  justify-self: end;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 .allowlist-batch__delete {
@@ -3975,6 +4000,18 @@ samp {
 @media (max-width: 520px) {
   .auth-page__head {
     padding: 16px var(--space-4);
+  }
+
+  /* 注册名单：窄屏放不下三列时把导入时间落到第二行，
+     班级名与人数仍是固定两列，不会因为名字长短而错位。 */
+  .allowlist-batch__toggle {
+    grid-template-columns: minmax(0, 1fr) auto;
+    row-gap: 2px;
+  }
+
+  .allowlist-batch__time {
+    grid-column: 1 / -1;
+    justify-self: start;
   }
 
   .auth-page__main {
