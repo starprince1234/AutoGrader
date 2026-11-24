@@ -118,7 +118,9 @@ describe("P14 工作区：标签与查询", () => {
     expect(screen.getByTestId("admin-tab-panel").className).toBe("admin-tab-panel");
     await user.click(screen.getByRole("tab", { name: "注册名单" }));
 
-    expect(await screen.findByTestId("allowlist-empty")).toHaveTextContent("还没有任何班级名单，点「添加名单」选择 CSV 文件。");
+    expect(await screen.findByTestId("allowlist-empty")).toHaveTextContent(
+      "还没有任何班级名单，点「添加名单」选择名单文件（CSV / XLSX / XLS / PDF）。",
+    );
     // 切到右侧标签：内容面板向右滑入（自左向右移动），标签按钮本身不带动画类。
     expect(screen.getByTestId("admin-tab-panel").className).toContain(
       "admin-tab-panel--slide-right",
