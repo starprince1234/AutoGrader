@@ -58,7 +58,7 @@ def main(argv: list[str]) -> int:
 
     try:
         from autograder_b3.config import Settings
-        from autograder_b3.llm_client import (
+        from autograder_platform.llm_client import (
             LlmCallError,
             LlmConfig,
             complete_json,

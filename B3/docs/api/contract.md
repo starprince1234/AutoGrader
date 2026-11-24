@@ -147,7 +147,7 @@
 且要从「连上之后」才开始计时——DNS 解析与 TLS 握手都在它之外，慢速吐出的响应还会不断重置它
 （实测：55 s 的上限变成过 146 s 的请求，85 s 的预算下出现过 171 s 的失败）。因此整次交换
 （解析/连接/TLS/请求/读响应）在 worker 线程里跑，调用方按预算 `join`，超时即按 `timeout` 处理，
-统一由 `llm_client` 实现（唯一实现处）。
+统一由 `autograder_platform.llm_client` 实现（唯一实现处）。
 
 缺字段不再触发"再调一次模型"，而是由 `normalize_proposal` 变成 `needs_review` 的字段级 warning
 （教师侧补比再等一轮快）。`DRAFT_PROMPT_VERSION` 随之升到 `b3-draft-generation-v4-single-pass`，

@@ -15,7 +15,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
 
-from autograder_b3.llm_client import (
+from autograder_platform.llm_client import (
     LlmCallError,
     LlmConfig,
     build_request_body,
@@ -258,7 +258,7 @@ def test_an_unreachable_endpoint_is_a_network_failure_not_a_configuration_change
 
 
 def test_complete_json_retries_transient_incomplete_and_accumulates_usage(monkeypatch):
-    from autograder_b3 import llm_client
+    from autograder_platform import llm_client
 
     responses = [
         {
@@ -316,7 +316,7 @@ def test_a_deadline_shorter_than_a_retry_reports_the_first_failure(monkeypatch):
     retried exchange ran 155 s in production and the browser got an edge 524 instead of a
     502 it could retry.
     """
-    from autograder_b3 import llm_client
+    from autograder_platform import llm_client
 
     calls: list[float | None] = []
 
@@ -345,7 +345,7 @@ def test_a_deadline_shorter_than_a_retry_reports_the_first_failure(monkeypatch):
 
 
 def test_a_retry_inside_the_deadline_gets_the_remaining_budget(monkeypatch):
-    from autograder_b3 import llm_client
+    from autograder_platform import llm_client
 
     timeouts: list[float | None] = []
     outcomes = [
@@ -388,7 +388,7 @@ def test_a_stalled_exchange_is_cut_off_at_the_deadline(monkeypatch):
     """
     import time as _time
 
-    from autograder_b3 import llm_client
+    from autograder_platform import llm_client
 
     def hanging_urlopen(_request, timeout=None):  # noqa: ARG001
         _time.sleep(5)
@@ -409,7 +409,7 @@ def test_a_stalled_exchange_is_cut_off_at_the_deadline(monkeypatch):
 
 def test_urlerror_wrapping_timeout_is_classified_as_timeout(monkeypatch):
     import urllib.error
-    from autograder_b3 import llm_client
+    from autograder_platform import llm_client
 
     def fake_urlopen(_request, timeout=None):  # noqa: ARG001
         raise urllib.error.URLError(TimeoutError("timed out"))

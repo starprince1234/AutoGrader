@@ -1,8 +1,11 @@
 """The one place that talks to the model provider.
 
-Both AI features in B3 -- structured draft generation (``AI-FLOW-01A``) and prose advice
-(``RQ-T-10``) -- send the same shape of request to the same endpoint with the same
-credential, so the request construction lives here and nowhere else.
+Every AI feature sends the same shape of request to the same endpoint with the same credential,
+so the request construction lives here and nowhere else: the two B3 features -- structured draft
+generation (``AI-FLOW-01A``) and prose advice (``RQ-T-10``) -- and the host's operational
+status report (``ops-insights``), which runs in a different process from B3. That is why this
+module belongs to the Platform SDK rather than to a module: the provider is platform
+infrastructure, not one module's private detail.
 
 The provider is **MiMo's OpenAI-Responses-compatible API**
 (``https://api.xiaomimimo.com/v1/responses``). Two facts from that specification decide the

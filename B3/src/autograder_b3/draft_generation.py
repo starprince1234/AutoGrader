@@ -40,7 +40,7 @@ from .compile.validation import (
     validate_workspace_path,
 )
 from .config import Settings
-from .llm_client import (
+from autograder_platform.llm_client import (
     LlmCallError,
     LlmConfig,
     TokenUsage,
@@ -735,7 +735,7 @@ _COMBINED_MAX_OUTPUT_TOKENS = 8192
 #: an edge proxy whose request budget is ~100 s, so a call that outlives it never becomes a
 #: response the teacher can read -- they get an edge timeout (524) instead of a problem document.
 #: Stopping at 85 s turns that into a real, retryable `502` and keeps every attempt inside the
-#: budget. It is a *wall-clock* budget: :mod:`autograder_b3.llm_client` reads the body in chunks
+#: budget. It is a *wall-clock* budget: :mod:`autograder_platform.llm_client` bounds the exchange
 #: and checks the clock after each one, because `urlopen(timeout=...)` only bounds a single
 #: socket operation (measured: a 55 s ceiling became a 146 s request).
 _PROVIDER_DEADLINE_SECONDS = 85.0

@@ -12,6 +12,39 @@
 
 ---
 
+## 0.45.0 — 运维播报：把各模块的运维信息变成分层、说人话的状态报告
+
+- **类型**：新增端点与 schema（`openapi/ops.yaml`），无字段删除、无迁移
+- **状态**：有效
+- **背景**：日志中心（0.42.0）给运维的是原料——计数、静默时长、存储占用、事件流。要据此判断
+  "到底坏没坏、有多严重、下一步做什么"，仍然要靠会看日志的人。新增 `POST /api/v1/ops/insights`：
+  一次点击，服务端把各模块的健康与近期错误聚成事实，交给模型写一份**非工程师也能读**的状态报告。
+- **变更**：
+  - 新端点 `POST /api/v1/ops/insights`（`operationId: generateOpsInsight`，标签 `ops-insights`，
+    权限与日志读取相同：管理员看全平台，教师只看自己课程范围）。
+  - 新 schema：`OpsInsightReport`、`OpsInsightLayers`、`OpsInsightFinding`、`OpsInsightLayer`。
+  - 全部契约版本同步至 `0.45.0`。
+- **语义**：
+  - 四层按**紧迫程度**降序：`critical` > `warning` > `notice` > `healthy`；层内为空是**空数组**
+    （不是 `null`、不是缺键），前端据此直接显示"无"。
+  - **每个模块（B1..B5、MAIN）在四层里恰好出现一次**：模型漏掉的模块由服务端补成 `healthy`，
+    重复的只保留第一次出现。因此"严重告警为空"说的是平台没有严重问题，而不是模型没提到。
+  - 严重度按**对用户的影响**判定，不按日志级别：模块不可用 / 可能丢数据 / 日志存储耗尽 /
+    日志管道本身在丢记录 → `critical`；用户会察觉但不阻塞、可重试的失败 → `warning`；
+    趋势、接近上限、一次性失败 → `notice`；窗口内无异常证据 → `healthy`。
+  - `status: unavailable` 表示本部署没配模型，是**部署事实而不是错误**（此时 `layers` 全空、
+    `summary` 说明原因）；模型调用失败才是 `502`（`application/problem+json`，只带分类，绝不回显响应体）。
+  - 报告是**建议**：不改路由、不改重试、不改任何已发布状态。
+- **影响**：
+  - **MAIN**：新增 `POST /api/v1/ops/insights`（`autograder_host/logs/insights.py` + 路由），
+    事实来自插件健康报告与 `logs.log_events`；模型客户端从 B3 移到 Platform SDK
+    （`autograder_platform.llm_client`），因为宿主与 B3 两个进程现在共用同一个 provider 合约。
+  - **B1**：日志中心新增「AI 运维播报」面板与按钮，按四层渲染，空层显示"无"。
+  - B2/B3/B4/B5：无接口影响；B3 只是把 `llm_client` 的导入来源换成 SDK（行为不变、
+    `DRAFT_PROMPT_VERSION` 不变）。
+
+---
+
 ## 0.44.0 — 邮件记录：人工处置过的记录离开「待处理」
 
 - **类型**：语义修正（`MailRecordCategory` 的 `processed`/`pending` 判定；无字段删除、无迁移、无历史回填）

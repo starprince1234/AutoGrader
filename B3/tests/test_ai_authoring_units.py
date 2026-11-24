@@ -202,7 +202,7 @@ def test_single_pass_provider_builds_the_whole_candidate_in_one_call(monkeypatch
         ResponsesDraftGenerationProvider,
         build_generation_payload,
     )
-    from autograder_b3.llm_client import LlmConfig, TokenUsage
+    from autograder_platform.llm_client import LlmConfig, TokenUsage
     import autograder_b3.draft_generation as dg_mod
 
     calls: list[dict] = []
@@ -311,7 +311,7 @@ def test_single_pass_provider_drops_unusable_cases_instead_of_paying_for_a_repai
         ResponsesDraftGenerationProvider,
         build_generation_payload,
     )
-    from autograder_b3.llm_client import LlmConfig, TokenUsage
+    from autograder_platform.llm_client import LlmConfig, TokenUsage
     import autograder_b3.draft_generation as dg_mod
 
     calls: list[dict] = []
