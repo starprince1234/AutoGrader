@@ -327,6 +327,8 @@ type OpsLogsSearch = {
   tab?: "overview" | "search" | "trace" | "audit";
   trace?: string;
   producer?: "B1" | "B2" | "B3" | "B4" | "B5" | "MAIN";
+  /** 深链：从成绩详情「查看相关日志」带过来的提交 id，检索页据此只留这条提交的日志。 */
+  submission_id?: string;
 };
 
 function validateOpsLogsSearch(search: Record<string, unknown>): OpsLogsSearch {
@@ -341,6 +343,9 @@ function validateOpsLogsSearch(search: Record<string, unknown>): OpsLogsSearch {
   }
   if (typeof search.trace === "string" && search.trace !== "") {
     result.trace = search.trace;
+  }
+  if (typeof search.submission_id === "string" && search.submission_id !== "") {
+    result.submission_id = search.submission_id;
   }
   if (
     search.producer === "B1" ||

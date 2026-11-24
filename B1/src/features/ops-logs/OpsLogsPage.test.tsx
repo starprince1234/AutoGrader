@@ -88,6 +88,31 @@ vi.mock("./api", () => ({
         fields: { io_type: "stdin", error_category: "timeout" },
         truncated: false,
       },
+      {
+        log_id: 102,
+        timestamp: "2026-11-18T09:59:30.000Z",
+        level: "info",
+        event: "request.completed",
+        producer: "B1",
+        process: "api",
+        request_id: "33333333-3333-4333-8333-333333333333",
+        correlation_id: "44444444-4444-4444-8444-444444444444",
+        course_id: null,
+        assignment_id: null,
+        submission_id: "99999999-9999-4999-8999-999999999999",
+        evaluation_run_id: null,
+        question_version_id: null,
+        actor_id: null,
+        stage: "request",
+        fields: {
+          io_type: "stdin",
+          password: "hunter2-should-not-leak",
+          token: "tok-should-not-leak",
+          reference_answer: "print('secret answer')",
+          cases: [{ expected_stdout: "SECRET-EXPECTED" }],
+        },
+        truncated: false,
+      },
     ],
     next_cursor: null,
   }),
@@ -261,5 +286,80 @@ describe("OpsLogsPage and visibility", () => {
 
     // A healthy module is listed too, so the report accounts for the whole platform.
     expect(screen.getByTestId("ops-insight-finding-healthy-B1")).toHaveTextContent("B1 未见异常");
+  });
+});
+
+describe("运维日志：模糊检索 / 抽屉 / 脱敏 / 深链", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  async function openSearch() {
+    const user = userEvent.setup();
+    renderWithQuery(<OpsLogsPage tab="search" />);
+    await screen.findByTestId("ops-log-row-101");
+    return user;
+  }
+
+  it("事件名是模糊检索：输入片段/不同大小写都能命中", async () => {
+    const user = await openSearch();
+    const input = screen.getByPlaceholderText("事件名（支持片段，模糊匹配）");
+
+    await user.type(input, "requ");
+    await waitFor(() => expect(screen.queryByTestId("ops-log-row-101")).toBeNull());
+    expect(screen.getByTestId("ops-log-row-102")).toBeInTheDocument();
+
+    await user.clear(input);
+    await user.type(input, "EVAL");
+    await waitFor(() => expect(screen.getByTestId("ops-log-row-101")).toBeInTheDocument());
+    expect(screen.queryByTestId("ops-log-row-102")).toBeNull();
+  });
+
+  it("点行弹出右侧抽屉，展示脱敏后的完整 JSON；点遮罩或按 Esc 收起", async () => {
+    const user = await openSearch();
+
+    await user.click(screen.getByTestId("ops-log-row-102"));
+    const drawer = screen.getByTestId("ops-log-drawer");
+    expect(drawer.className).toContain("drawer");
+
+    const json = screen.getByTestId("ops-log-drawer-json").textContent ?? "";
+    // 敏感值一个都不能出现在抽屉里。
+    expect(json).not.toContain("hunter2-should-not-leak");
+    expect(json).not.toContain("tok-should-not-leak");
+    expect(json).not.toContain("print('secret answer')");
+    expect(json).not.toContain("SECRET-EXPECTED");
+    // 该脱敏的字段被替换成 [REDACTED]。
+    expect((json.match(/\[REDACTED\]/g) ?? []).length).toBeGreaterThanOrEqual(4);
+    // 非敏感字段照旧可读。
+    expect(json).toContain("request.completed");
+
+    // 点遮罩收起。
+    await user.click(screen.getByTestId("ops-log-drawer-backdrop"));
+    expect(screen.queryByTestId("ops-log-drawer")).toBeNull();
+
+    // Esc 收起。
+    await user.click(screen.getByTestId("ops-log-row-102"));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByTestId("ops-log-drawer")).toBeNull();
+
+    // 关闭按钮收起。
+    await user.click(screen.getByTestId("ops-log-row-102"));
+    await user.click(screen.getByTestId("ops-log-drawer-close"));
+    expect(screen.queryByTestId("ops-log-drawer")).toBeNull();
+  });
+
+  it("submission_id 深链只留这条提交的日志，并且可以一键看全部", async () => {
+    renderWithQuery(
+      <OpsLogsPage tab="search" initialSubmissionId="99999999-9999-4999-8999-999999999999" />,
+    );
+
+    await waitFor(() => expect(screen.getByTestId("ops-log-row-102")).toBeInTheDocument());
+    expect(screen.queryByTestId("ops-log-row-101")).toBeNull();
+    expect(screen.getByTestId("ops-submission-filter")).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId("ops-submission-clear"));
+    await waitFor(() => expect(screen.getByTestId("ops-log-row-101")).toBeInTheDocument());
+    expect(screen.queryByTestId("ops-submission-filter")).toBeNull();
   });
 });

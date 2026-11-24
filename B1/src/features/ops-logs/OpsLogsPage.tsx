@@ -26,6 +26,7 @@ import {
   type OpsLogRecord,
   type OpsLogsSearchParams,
 } from "./api";
+import { matchesFuzzy, redactSensitive } from "./redact";
 
 export type OpsLogsTab = "overview" | "search" | "trace" | "audit";
 
@@ -33,6 +34,8 @@ export type OpsLogsPageProps = {
   tab?: OpsLogsTab;
   initialTraceId?: string;
   initialProducer?: LogProducer;
+  /** 深链：`?submission_id=` —— 只留这条提交的日志（成绩详情「查看相关日志」）。 */
+  initialSubmissionId?: string;
   onTabChange?: (tab: OpsLogsTab) => void;
   onTraceChange?: (traceId: string) => void;
 };
@@ -61,11 +64,16 @@ export function OpsLogsPage({
   tab = "overview",
   initialTraceId = "",
   initialProducer,
+  initialSubmissionId = "",
   onTabChange,
   onTraceChange,
 }: OpsLogsPageProps) {
   const [activeTab, setActiveTab] = useState<OpsLogsTab>(tab);
   const [selectedRecord, setSelectedRecord] = useState<OpsLogRecord | null>(null);
+  // 深链带来的提交 id：作为检索条件之一（服务端没有这个筛选维度，所以在已加载的行上过滤）。
+  const [submissionFilter, setSubmissionFilter] = useState(initialSubmissionId);
+  // 事件名输入做防抖，避免每敲一个字母就重查一次；匹配本身是"包含"。
+  const [eventDebounced, setEventDebounced] = useState("");
 
   // Search filters
   const [producer, setProducer] = useState<LogProducer | "">(initialProducer ?? "");
@@ -93,6 +101,25 @@ export function OpsLogsPage({
     }
   }, [initialTraceId]);
 
+  useEffect(() => {
+    setSubmissionFilter(initialSubmissionId);
+  }, [initialSubmissionId]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setEventDebounced(eventFilter.trim()), 250);
+    return () => window.clearTimeout(timer);
+  }, [eventFilter]);
+
+  // Esc 收起抽屉。
+  useEffect(() => {
+    if (!selectedRecord) return undefined;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSelectedRecord(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedRecord]);
+
   const switchTab = (next: OpsLogsTab) => {
     setActiveTab(next);
     onTabChange?.(next);
@@ -110,10 +137,11 @@ export function OpsLogsPage({
     mutationFn: fetchOpsInsight,
   });
 
+  // `event` 不再作为服务端条件：契约里的 event 是精确匹配，输入片段会一条都查不到。
+  // 片段匹配在前端对已加载的行做（见下面的 `visibleRows`），这样"打前几个字母就能命中"。
   const searchParams: OpsLogsSearchParams = {
     producer: producer || undefined,
     level: level || undefined,
-    event: eventFilter.trim() || undefined,
     correlation_id: traceFilter.trim() || undefined,
     io_type: ioTypeFilter.trim() || undefined,
     q: keyword.trim() || undefined,
@@ -138,6 +166,15 @@ export function OpsLogsPage({
       });
     }
   }, [searchQuery.data, cursor]);
+
+  // 事件名是**模糊匹配**（片段、大小写不敏感）；提交 id 深链在整条记录里找。
+  // 两者都只作用于已加载的行，和分页语义不冲突。
+  const submissionNeedle = submissionFilter.trim().toLocaleLowerCase();
+  const visibleRows = accumulated.filter((row) => {
+    if (!matchesFuzzy(row.event, eventDebounced)) return false;
+    if (submissionNeedle === "") return true;
+    return JSON.stringify(row).toLocaleLowerCase().includes(submissionNeedle);
+  });
 
   const traceQuery = useQuery({
     queryKey: ["ops-logs", "trace", activeTraceId],
@@ -428,11 +465,28 @@ export function OpsLogsPage({
 
           {searchQuery.isPending && !cursor && <InlineLoader />}
           {searchQuery.error && <ErrorState error={searchQuery.error} />}
-          {!searchQuery.isPending && accumulated.length === 0 && (
+          {submissionFilter ? (
+            <div className="inline" data-testid="ops-submission-filter">
+              <span className="muted">
+                {t("opsLogs.search.submissionFilter")}
+                <code>{submissionFilter}</code>
+              </span>
+              <button
+                type="button"
+                className="button button-secondary"
+                data-testid="ops-submission-clear"
+                onClick={() => setSubmissionFilter("")}
+              >
+                {t("opsLogs.search.submissionClear")}
+              </button>
+            </div>
+          ) : null}
+
+          {!searchQuery.isPending && visibleRows.length === 0 && (
             <EmptyState>{t("opsLogs.search.empty")}</EmptyState>
           )}
 
-          {accumulated.length > 0 && (
+          {visibleRows.length > 0 && (
             <table className="table">
               <thead>
                 <tr>
@@ -445,7 +499,7 @@ export function OpsLogsPage({
                 </tr>
               </thead>
               <tbody>
-                {accumulated.map((row) => (
+                {visibleRows.map((row) => (
                   <tr
                     key={row.log_id}
                     onClick={() => setSelectedRecord(row)}
@@ -583,23 +637,23 @@ export function OpsLogsPage({
 
       {selectedRecord && (
         <div
-          className="card"
+          className="drawer-backdrop"
+          data-testid="ops-log-drawer-backdrop"
+          onMouseDown={(event) => {
+            // 点抽屉外部（遮罩）收起；抽屉内部的点击不会冒泡到这里。
+            if (event.target === event.currentTarget) setSelectedRecord(null);
+          }}
+        />
+      )}
+      {selectedRecord && (
+        <aside
+          className="card drawer"
           role="dialog"
+          aria-modal="true"
           aria-label={t("opsLogs.drawer.title")}
           data-testid="ops-log-drawer"
-          style={{
-            position: "fixed",
-            right: "1rem",
-            bottom: "1rem",
-            width: "min(560px, 92vw)",
-            maxHeight: "75vh",
-            overflow: "auto",
-            zIndex: 50,
-            padding: "1rem",
-            boxShadow: "0 8px 30px rgba(0,0,0,0.2)",
-          }}
         >
-          <div className="inline" style={{ justifyContent: "space-between", marginBottom: "0.5rem" }}>
+          <div className="inline drawer__head">
             <div className="inline" style={{ gap: "0.5rem" }}>
               <strong>{t("opsLogs.drawer.title")}</strong>
               <StatusPill tone="ok">{t("opsLogs.drawer.redactedBadge")}</StatusPill>
@@ -607,6 +661,7 @@ export function OpsLogsPage({
             <button
               type="button"
               className="button button-secondary"
+              data-testid="ops-log-drawer-close"
               onClick={() => setSelectedRecord(null)}
             >
               {t("opsLogs.drawer.close")}
@@ -624,10 +679,11 @@ export function OpsLogsPage({
               {t("opsLogs.drawer.traceAction")}
             </button>
           )}
-          <pre style={{ fontSize: "0.8rem", overflowX: "auto" }}>
-            {JSON.stringify(selectedRecord, null, 2)}
+          {/* 敏感字段（密码、令牌、参考答案、用例内容…）统一显示 [REDACTED]。 */}
+          <pre className="drawer__json" data-testid="ops-log-drawer-json">
+            {JSON.stringify(redactSensitive(selectedRecord), null, 2)}
           </pre>
-        </div>
+        </aside>
       )}
     </div>
   );

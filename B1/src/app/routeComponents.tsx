@@ -223,7 +223,7 @@ export function ReviewRoute() {
 }
 
 export function OpsLogsRoute() {
-  const { tab, trace, producer } = useSearch({ from: "/ops/logs" });
+  const { tab, trace, producer, submission_id } = useSearch({ from: "/ops/logs" });
   const navigate = useNavigate();
   const normalizedTab: OpsLogsTab =
     tab === "search" || tab === "trace" || tab === "audit" ? tab : "overview";
@@ -231,9 +231,10 @@ export function OpsLogsRoute() {
     <RequireAuth>
       <RequirePermission allow={canViewOpsLogs} allowedRoles={["teacher", "admin"]}>
         <OpsLogsPage
-          tab={normalizedTab}
+          tab={submission_id ? "search" : normalizedTab}
           initialTraceId={trace ?? ""}
           initialProducer={producer}
+          initialSubmissionId={submission_id ?? ""}
           onTabChange={(next) => {
             void navigate({
               to: "/ops/logs",

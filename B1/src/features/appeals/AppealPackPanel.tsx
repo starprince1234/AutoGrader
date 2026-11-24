@@ -111,7 +111,7 @@ export function AppealPackPanel({ runId }: { runId: string }) {
             {view === "teacher" && (
               <a
                 className="button button--ghost"
-                href={`/app/ops/logs?tab=trace&trace=${encodeURIComponent(data.pack.report.submission_id ?? runId)}`}
+                href={`/app/ops/logs?tab=search&submission_id=${encodeURIComponent(data.pack.report.submission_id ?? runId)}`}
                 data-testid="appeal-view-related-logs"
               >
                 {t("opsLogs.deepLink.viewLogs")}
