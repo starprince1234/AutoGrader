@@ -1970,7 +1970,7 @@ export const messages = {
     "opsLogs.overview.retentionPolicy": "保留策略：info {infoDays} 天 / warn·error {warnDays} 天",
     "opsLogs.overview.dbDegraded": "日志库当前处于降级状态（仅输出 stdout），恢复后将自动续写。",
     "opsLogs.insight.title": "AI 运维播报",
-    "opsLogs.insight.hint": "把各模块的健康、近期错误和日志管道状态交给模型，生成一份不看日志也读得懂的状态报告；报告只是建议，不会改动任何配置。",
+    "opsLogs.insight.hint": "汇总模块健康、报错、日志管道状态，生成运维报告。",
     "opsLogs.insight.generate": "生成运维播报",
     "opsLogs.insight.generating": "正在分析…",
     "opsLogs.insight.generatedAt": "生成于 {at} · 模型 {model} · 统计窗口 {hours} 小时",
