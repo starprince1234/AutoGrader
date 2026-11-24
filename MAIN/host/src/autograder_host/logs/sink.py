@@ -17,6 +17,8 @@ from .provision import resolve_logs_dsn
 from .redaction import normalize_log_record, normalize_raw_dict
 from .schema import log_events
 
+_sink_logger = logging.getLogger("autograder_host.logs.sink")
+
 DEFAULT_QUEUE_CAPACITY = 2048
 DEFAULT_BATCH_SIZE = 100
 DEFAULT_FLUSH_INTERVAL_SEC = 1.0
@@ -61,6 +63,8 @@ class SinkHandler(logging.Handler):
         self._lock = threading.Lock()
         self._dropped_count = 0
         self._db_degraded = False
+        self._db_degraded_reason: str | None = None
+        self._degraded_logged = False
         self._stop_event = threading.Event()
         self._wake_event = threading.Event()
 
@@ -102,6 +106,11 @@ class SinkHandler(logging.Handler):
     @property
     def db_degraded(self) -> bool:
         return self._db_degraded
+
+    @property
+    def db_degraded_reason(self) -> str | None:
+        """Why the last write failed, for operators. Never contains a log row."""
+        return self._db_degraded_reason
 
     @property
     def db_sink_enabled(self) -> bool:
@@ -187,7 +196,20 @@ class SinkHandler(logging.Handler):
             conn.execute(log_events.insert(), rows)
 
     def flush(self) -> None:
-        """Drain queued records in batches. Never raises."""
+        """Drain queued records in batches. Never raises.
+
+        Two behaviours matter to whoever reads the log center's "degraded" banner:
+
+        * a batch that fails is **put back** and counted when the queue cannot hold it, because a
+          transient database error must not silently lose rows;
+        * the reason is remembered and reported once per episode, so "why is it orange?" has an
+          answer (the ``logs.sink.degraded`` event) instead of only a banner.
+
+        Because the failed batch stays queued, the worker retries it on the next tick: the flag
+        therefore means "there are rows not yet in the database", and it clears as soon as they
+        are written -- not "some write failed at some point", which is what made the banner
+        linger after a hiccup.
+        """
         if not self.db_sink_enabled:
             return
         while True:
@@ -201,11 +223,51 @@ class SinkHandler(logging.Handler):
                 break
             try:
                 self._write_fn(batch)
-                self._db_degraded = False
-            except Exception:
-                self._db_degraded = True
+                self._clear_degraded()
+            except Exception as error:
+                self._mark_degraded(error)
+                self._requeue(batch)
                 # Best-effort: do not loop endlessly on a dead DB during one flush.
                 break
+
+    def _requeue(self, batch: list[dict[str, Any]]) -> None:
+        """Return a failed batch to the front of the queue, dropping the oldest if it cannot fit."""
+        with self._lock:
+            overflow = len(batch) + len(self._queue) - self._capacity
+            keep = batch
+            if overflow > 0:
+                dropped_from_batch = min(overflow, len(batch))
+                self._dropped_count += dropped_from_batch
+                keep = batch[dropped_from_batch:]
+                overflow -= dropped_from_batch
+            while overflow > 0 and self._queue:
+                self._queue.popleft()
+                self._dropped_count += 1
+                overflow -= 1
+            self._queue.extendleft(reversed(keep))
+
+    def _mark_degraded(self, error: BaseException) -> None:
+        self._db_degraded = True
+        self._db_degraded_reason = f"{type(error).__name__}: {error}"[:200]
+        if self._degraded_logged:
+            return
+        self._degraded_logged = True
+        # Logged once per episode: this record travels through the same sink, so repeating it
+        # while the database is down would push real traffic out of the queue.
+        _sink_logger.warning(
+            "logs.sink.degraded",
+            extra={
+                "event": "logs.sink.degraded",
+                "outcome": "degraded",
+                "error_type": type(error).__name__,
+                "error_detail": str(error)[:160],
+            },
+        )
+
+    def _clear_degraded(self) -> None:
+        self._db_degraded = False
+        self._db_degraded_reason = None
+        self._degraded_logged = False
 
     def _run_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -270,12 +332,14 @@ def get_sink_stats() -> dict[str, Any]:
         return {
             "dropped_count": 0,
             "db_degraded": False,
+            "db_degraded_reason": None,
             "db_sink_enabled": False,
             "queue_depth": 0,
         }
     return {
         "dropped_count": sink.dropped_count,
         "db_degraded": sink.db_degraded,
+        "db_degraded_reason": sink.db_degraded_reason,
         "db_sink_enabled": sink.db_sink_enabled,
         "queue_depth": sink.queue_depth,
     }

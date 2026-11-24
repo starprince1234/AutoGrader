@@ -125,6 +125,77 @@ def test_secondary_redaction_blocks_sensitive_data_and_injection() -> None:
     assert "\n" not in norm["event"]
 
 
+def test_a_failed_batch_is_retried_not_lost_and_says_why() -> None:
+    """A transient database error must not silently eat a batch of log rows.
+
+    The "degraded" banner in the log center is driven by this flag, and the old behaviour lost
+    the batch it could not write while showing nothing but the banner: no reason, no row count,
+    no way to tell a hiccup from an outage.
+    """
+    written: list[dict] = []
+    failures = {"count": 1}
+
+    def flaky_writer(batch: list[dict]) -> None:
+        if failures["count"] > 0:
+            failures["count"] -= 1
+            raise RuntimeError("connection reset by peer")
+        written.extend(batch)
+
+    sink = SinkHandler(
+        process="host", capacity=10, batch_size=2, flush_interval=0.05, write_fn=flaky_writer
+    )
+    try:
+        sink.enqueue_raw({"level": "info", "event": "evt.retry"}, fallback_producer="MAIN")
+        sink.flush()
+        assert sink.db_degraded is True
+        assert "RuntimeError" in (sink.db_degraded_reason or "")
+        assert sink.dropped_count == 0
+
+        # The same rows are still queued, so the next flush writes them -- nothing was lost.
+        sink.flush()
+        assert [row["event"] for row in written] == ["evt.retry"]
+        assert sink.db_degraded is False
+        assert sink.db_degraded_reason is None
+    finally:
+        sink.close()
+
+
+def test_degraded_means_rows_are_still_pending_not_that_a_write_once_failed() -> None:
+    """What the banner means now.
+
+    Before, a failed batch was dropped and the flag only cleared on the *next* successful write,
+    so on a quiet platform the banner described a failure that had already passed. Now the batch
+    stays queued: the flag is true exactly while rows are undelivered, and the retry that writes
+    them clears it.
+    """
+    written: list[dict] = []
+    broken = {"on": True}
+
+    def writer(batch: list[dict]) -> None:
+        if broken["on"]:
+            raise OSError("connection refused")
+        written.extend(batch)
+
+    sink = SinkHandler(
+        process="host", capacity=10, batch_size=10, flush_interval=0.05, write_fn=writer
+    )
+    try:
+        sink.enqueue_raw({"level": "info", "event": "evt.pending"}, fallback_producer="MAIN")
+        sink.flush()
+        assert sink.db_degraded is True
+        # The row was not lost: it is queued and will be retried on the next tick.
+        assert sink.queue_depth == 1
+        assert sink.dropped_count == 0
+
+        broken["on"] = False
+        sink.flush()
+        assert [row["event"] for row in written] == ["evt.pending"]
+        assert sink.queue_depth == 0
+        assert sink.db_degraded is False
+    finally:
+        sink.close()
+
+
 def test_sink_drops_oldest_when_full_and_degrades_on_db_failure() -> None:
     written: list[dict] = []
 

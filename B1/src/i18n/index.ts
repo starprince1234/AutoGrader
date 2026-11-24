@@ -1967,7 +1967,7 @@ export const messages = {
     "opsLogs.overview.droppedTotal": "队列累计丢弃",
     "opsLogs.overview.storageUsed": "日志存储占用",
     "opsLogs.overview.retentionPolicy": "保留策略：info {infoDays} 天 / warn·error {warnDays} 天",
-    "opsLogs.overview.dbDegraded": "日志库当前处于降级状态（仅输出 stdout），恢复后将自动续写。",
+    "opsLogs.overview.dbDegraded": "日志库写入暂时失败：日志留在队列里，恢复后会自动补写。若持续出现，可在「日志检索」按事件 logs.sink.degraded 查看失败原因。",
     "opsLogs.insight.title": "AI 运维播报",
     "opsLogs.insight.hint": "汇总模块健康、报错、日志管道状态，生成运维报告。",
     "opsLogs.insight.generate": "生成运维播报",
