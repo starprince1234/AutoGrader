@@ -209,6 +209,9 @@ def test_the_report_accounts_for_every_module_exactly_once(api, monkeypatch):
     assert report["window_hours"] == insights.WINDOW_HOURS
     assert report["model"] == "mimo-v2.6-flash"
     assert report["summary"]
+    # `generated_at` is a required contract field: the panel renders "生成于 {at}", so a report
+    # without it shows a dash even though everything else worked.
+    assert report["generated_at"].endswith("Z")
 
     layers = report["layers"]
     assert set(layers) == {"critical", "warning", "notice", "healthy"}

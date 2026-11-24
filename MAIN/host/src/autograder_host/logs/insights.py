@@ -24,6 +24,7 @@ from autograder_platform.llm_client import (
 )
 
 from .auth import LogPrincipal, OpsLogAuthError
+from .redaction import rfc3339_millis
 from .schema import log_events
 
 WINDOW_HOURS = 24
@@ -56,6 +57,7 @@ def generate_report(
     if config is None:
         return {
             "status": "unavailable",
+            "generated_at": rfc3339_millis(datetime.now(UTC)),
             "prompt_version": OPS_INSIGHT_PROMPT_VERSION,
             "window_hours": WINDOW_HOURS,
             "model": None,
@@ -99,6 +101,7 @@ def generate_report(
             )
     return {
         "status": "ready",
+        "generated_at": rfc3339_millis(datetime.now(UTC)),
         "prompt_version": OPS_INSIGHT_PROMPT_VERSION,
         "window_hours": WINDOW_HOURS,
         "model": config.model,
