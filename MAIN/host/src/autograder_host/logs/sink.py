@@ -254,20 +254,17 @@ class SinkHandler(logging.Handler):
         self._degraded_logged = True
         # Logged once per episode: this record travels through the same sink, so repeating it
         # while the database is down would push real traffic out of the queue.
+        # A permission error is a fact about the *role*, so the role goes into the free-text
+        # `detail` field: a `db_user`/`db_role` key would be dropped by redaction (it looks like
+        # PII), which is how the first version of this event reported a type but no reason.
+        role = getattr(getattr(self._engine, "url", None), "username", None) or "?"
         _sink_logger.warning(
             "logs.sink.degraded",
             extra={
                 "event": "logs.sink.degraded",
                 "outcome": "degraded",
                 "error_type": type(error).__name__,
-                # Which database role the failing writer connected as. A permission error is a
-                # fact about the *role*, so a report without it leaves the operator guessing
-                # between "grants were revoked" and "the wrong DSN reached this process".
-                "db_user": getattr(getattr(self._engine, "url", None), "username", None),
-                # `detail` is the field the log normalizer keeps as free text; a custom
-                # `error_detail` key is dropped by redaction, which is how the first version of
-                # this event reported a type but no reason.
-                "detail": str(error)[:280],
+                "detail": f"角色 {role} 写入 logs.log_events 失败：{error}"[:280],
             },
         )
 
