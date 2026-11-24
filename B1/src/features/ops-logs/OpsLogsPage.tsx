@@ -219,7 +219,6 @@ export function OpsLogsPage({
       <div className="panel__head">
         <div>
           <PageTitle>{t("opsLogs.title")}</PageTitle>
-          <p className="muted">{t("opsLogs.subtitle")}</p>
         </div>
       </div>
 

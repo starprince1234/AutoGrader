@@ -1951,7 +1951,6 @@ export const messages = {
     "theme.switchToDark": "切换到黑夜模式",
     "nav.opsLogs": "运维日志",
     "opsLogs.title": "运维日志中心",
-    "opsLogs.subtitle": "跨模块运行日志检索、链路追踪、健康总览与合规导出",
     "opsLogs.tab.overview": "总览",
     "opsLogs.tab.search": "日志检索",
     "opsLogs.tab.trace": "链路追踪",
