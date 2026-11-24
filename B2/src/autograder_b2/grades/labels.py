@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import urllib.error
 import urllib.request
 from collections.abc import Iterable, Mapping
@@ -22,6 +23,7 @@ from typing import Any
 DEFAULT_TIMEOUT_SECONDS = 10.0
 RESPONSE_LIMIT_BYTES = 2 * 1024 * 1024
 PAGE_LIMIT = 200
+logger = logging.getLogger("autograder_b2.grades.labels")
 
 
 class ExportLabelResolver:
@@ -139,7 +141,9 @@ class ExportLabelResolver:
         """单次查询失败只让该列回退 ID，不把整份标签结果清空。"""
         try:
             return self._get_json(url, headers)
-        except Exception:  # noqa: BLE001 - optional enrichment, never fail the export
+        except Exception as error:  # noqa: BLE001 - optional enrichment, never fail the export
+            # 不记录 Authorization；URL 里只有课程/作业/题目 ID，用于定位是哪一类查询失败。
+            logger.warning("grade export label lookup failed: %s (%s)", url, error)
             return None
 
     def _get_json(self, url: str, headers: Mapping[str, str]) -> Any:

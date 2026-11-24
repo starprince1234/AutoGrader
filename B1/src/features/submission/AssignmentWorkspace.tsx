@@ -825,9 +825,6 @@ export function AssignmentWorkspace({
             <div className="stack">
               <div className="lc-editor-toolbar">
                 <div className="lc-editor-toolbar__file">
-                  <span className="lc-editor-file-pill">
-                    {answerFileName(currentOrdinal)}
-                  </span>
                   <span
                     className="muted workspace-answer__mapping"
                     data-testid="workspace-file-mapping"
@@ -850,7 +847,6 @@ export function AssignmentWorkspace({
                 </button>
 
                 <label className="lc-editor-upload-btn">
-                  <span className="muted">{t("workspace.chooseFile")}</span>
                   <input
                     type="file"
                     accept=".txt,text/plain"
