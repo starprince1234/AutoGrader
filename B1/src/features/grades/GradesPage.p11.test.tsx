@@ -247,14 +247,14 @@ describe("P11 成绩筛选、身份关联、导出与深链", () => {
     const drawer = await screen.findByTestId("export-drawer");
     expect(within(drawer).getByTestId("export-required-columns").textContent).toContain("学号");
     await user.click(within(drawer).getByTestId("export-column-state"));
-    await user.click(within(drawer).getByTestId("export-column-is_pass"));
+    await user.click(within(drawer).getByTestId("export-column-evaluation_run_id"));
     await user.click(within(drawer).getByTestId("download-export"));
 
     await waitFor(() => expect(objectUrlSpy).toHaveBeenCalledTimes(1));
     const exportRequest = stub.requests.find((item) =>
       item.url.pathname.endsWith("/grades/export"),
     );
-    expect(exportRequest?.url.searchParams.get("columns")).toBe("state,is_pass");
+    expect(exportRequest?.url.searchParams.get("columns")).toBe("state,evaluation_run_id");
     stub.restore();
   });
 

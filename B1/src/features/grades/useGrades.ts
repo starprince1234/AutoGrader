@@ -168,12 +168,10 @@ const REQUIRED_EXPORT_FIELDS = [
   "display_name",
   "course_id",
   "section_id",
-  "assignment_id",
   "question_version_id",
   "score",
   "max_score",
   "submitted_at",
-  "evaluation_run_id",
 ] as const;
 /** 从 `Content-Disposition` 取文件名（优先 RFC 5987 的 `filename*`），不做兜底猜测以外的推断。 */
 export function filenameFromDisposition(

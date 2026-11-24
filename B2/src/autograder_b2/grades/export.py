@@ -93,32 +93,24 @@ GRADE_EXPORT_COLUMNS: tuple[tuple[str, str], ...] = (
     ("security_status", "安全检查结论"),
 )
 
-#: **不可取消**的列（`RQ-B-1-60` + CHG-0032）：学号、姓名、课程、课序、**作业**、题目、得分、满分、
-#: 提交时间、评测 ID。它们承载"这是谁、哪门课哪个作业哪道题、多少分、哪次评测"这些成绩单必须回答
-#: 的问题；缺任何一个，文件就不再是可用的成绩单（而是一份看起来成功的残缺文件）。`columns` 参数只能
-#: **增选**可选列，永远不能删除它们。历史行的作业ID为空单元格（没有归属，不是"作业ID 为空字符串"）。
+#: **不可取消**的列：学号、姓名、课程、课序、题目、得分、满分、提交时间。
 REQUIRED_EXPORT_COLUMNS: tuple[str, ...] = (
     "student_number",
     "display_name",
     "course_id",
     "section_id",
-    "assignment_id",
     "question_version_id",
     "score",
     "max_score",
     "submitted_at",
-    "evaluation_run_id",
 )
 
 #: 可选附加列（契约 `exportGrades.columns` 允许的取值）。
 OPTIONAL_EXPORT_COLUMNS: tuple[str, ...] = (
+    "evaluation_run_id",
     "submission_id",
     "student_id",
     "state",
-    "is_pass",
-    # CHG-0024：导出必须能回答"这个分谁给的"（机器/人工/待评分），因此这两列可显式增选。
-    "grade_status",
-    "score_source",
     "security_status",
 )
 

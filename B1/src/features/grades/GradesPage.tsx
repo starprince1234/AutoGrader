@@ -936,7 +936,6 @@ export function GradesPage({
                   "score",
                   "maxScore",
                   "submittedAt",
-                  "evaluationRun",
                 ].map((key) => (
                   <li key={key}>
                     <label>
