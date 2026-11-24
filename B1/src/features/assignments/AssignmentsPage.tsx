@@ -129,7 +129,6 @@ function StudentAssignmentList({
         {
           key: "questions",
           header: t("assignments.col.questions"),
-          align: "right",
           render: (row) => (row.question_version_ids ?? []).length,
         },
         {
@@ -323,7 +322,6 @@ function TeacherAssignmentList({
         {
           key: "questions",
           header: t("assignments.col.questions"),
-          align: "right",
           render: (row) => (
             <Link
               to="/assignments/$assignmentId/grading"
@@ -396,7 +394,7 @@ function MyMembershipsPanel() {
             </span>
             {registeredClasses.length > 0 ? (
               <span className="muted" data-testid="my-registered-classes">
-                {t("assignments.myRegisteredClasses")}：{registeredClasses.join("、")}
+                {t("assignments.classLabel")}：{registeredClasses.join("、")}
               </span>
             ) : null}
           </div>
@@ -545,9 +543,6 @@ export function AssignmentsPage() {
               </Select>
             </Field>
           </div>
-        ) : null}
-        {!cohortView ? (
-          <p className="muted">{t("assignments.studentHint")}</p>
         ) : null}
         {!cohortView && currentUser.isPending ? (
           <Spinner label={t("assignments.membershipLoading")} />

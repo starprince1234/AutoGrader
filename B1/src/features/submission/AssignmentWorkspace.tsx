@@ -552,7 +552,7 @@ export function AssignmentWorkspace({
   const completedCount = progress.questions.filter(
     (question) => question.state === "completed",
   ).length;
-  const lineCount = Math.max(14, content.split("\n").length);
+  const lineCount = Math.max(1, content.split("\n").length);
   const currentReply = selectedVersionId ? (assistantReplies[selectedVersionId] ?? null) : null;
 
   return (
@@ -936,6 +936,7 @@ export function AssignmentWorkspace({
                     data-testid="workspace-answer-text"
                     disabled={submit.isPending}
                     value={content}
+                    wrap="off"
                     placeholder={t("workspace.answerPlaceholder")}
                     onKeyDown={handleEditorKeyDown}
                     onScroll={(event) => {
