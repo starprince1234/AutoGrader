@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import { t, type MessageKey } from "../../i18n";
@@ -70,6 +71,7 @@ export function OpsLogsPage({
 }: OpsLogsPageProps) {
   const [activeTab, setActiveTab] = useState<OpsLogsTab>(tab);
   const [selectedRecord, setSelectedRecord] = useState<OpsLogRecord | null>(null);
+  const drawerRef = useRef<HTMLElement | null>(null);
   // 深链带来的提交 id：作为检索条件之一（服务端没有这个筛选维度，所以在已加载的行上过滤）。
   const [submissionFilter, setSubmissionFilter] = useState(initialSubmissionId);
   // 事件名输入做防抖，避免每敲一个字母就重查一次；匹配本身是"包含"。
@@ -110,14 +112,19 @@ export function OpsLogsPage({
     return () => window.clearTimeout(timer);
   }, [eventFilter]);
 
-  // Esc 收起抽屉。
+  // 抽屉打开时把焦点移进去（它现在挂在 body 上，不移动焦点键盘用户会被留在页面里）；Esc 收起。
   useEffect(() => {
     if (!selectedRecord) return undefined;
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    drawerRef.current?.focus();
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") setSelectedRecord(null);
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      previous?.focus();
+    };
   }, [selectedRecord]);
 
   const switchTab = (next: OpsLogsTab) => {
@@ -222,14 +229,33 @@ export function OpsLogsPage({
         </div>
       </div>
 
-      <div className="tabs" role="tablist">
+      {/*
+        分段控件（与 `ui/components.tsx` 的 Tabs 同形）：外层 `.tabs` 是轨道，选中项是白面。
+        这里保留页面自己的 state 与深链，只把外观换成本项目的按钮词汇。
+      */}
+      <div
+        className="tabs"
+        role="tablist"
+        aria-label={t("opsLogs.title")}
+        onKeyDown={(event) => {
+          if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+          event.preventDefault();
+          const order: OpsLogsTab[] = ["overview", "search", "trace", "audit"];
+          const index = order.indexOf(activeTab);
+          const delta = event.key === "ArrowRight" ? 1 : -1;
+          const next = order[(index + delta + order.length) % order.length];
+          switchTab(next);
+          document.querySelector<HTMLElement>(`[data-testid="ops-logs-tab-${next}"]`)?.focus();
+        }}
+      >
         {(["overview", "search", "trace", "audit"] as const).map((key) => (
           <button
             key={key}
             type="button"
             role="tab"
             aria-selected={activeTab === key}
-            className={`tab ${activeTab === key ? "is-active" : ""}`}
+            tabIndex={activeTab === key ? 0 : -1}
+            className={activeTab === key ? "button" : "button button--ghost"}
             onClick={() => switchTab(key)}
             data-testid={`ops-logs-tab-${key}`}
           >
@@ -244,9 +270,10 @@ export function OpsLogsPage({
           {summaryQuery.error && <ErrorState error={summaryQuery.error} />}
           <Panel title={t("opsLogs.insight.title")} testId="ops-insight-panel">
             <p className="muted">{t("opsLogs.insight.hint")}</p>
-            <div className="inline" style={{ flexWrap: "wrap", gap: "0.75rem", marginBottom: "0.75rem" }}>
+            <div className="inline ops-log-actions">
               <button
                 type="button"
+                className="button"
                 data-testid="ops-insight-generate"
                 disabled={insightMutation.isPending}
                 onClick={() => insightMutation.mutate()}
@@ -333,7 +360,7 @@ export function OpsLogsPage({
                 </span>
               </div>
 
-              <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: "1rem" }}>
+              <div className="grid-2">
                 {summaryQuery.data.modules.map((mod) => {
                   const isEventDriven = mod.producer === "B5";
                   const isSilent = !isEventDriven && mod.silent_minutes !== null && mod.silent_minutes >= 60;
@@ -379,7 +406,7 @@ export function OpsLogsPage({
 
       {activeTab === "search" && (
         <Panel title={t("opsLogs.tab.search")} testId="ops-logs-search">
-          <div className="inline" style={{ flexWrap: "wrap", gap: "0.5rem", marginBottom: "1rem" }}>
+          <div className="ops-log-filters">
             <select
               aria-label={t("opsLogs.search.producer")}
               value={producer}
@@ -408,6 +435,7 @@ export function OpsLogsPage({
             </select>
             <input
               type="text"
+              aria-label={t("opsLogs.search.event")}
               placeholder={t("opsLogs.search.event")}
               value={eventFilter}
               onChange={(e) => {
@@ -417,6 +445,7 @@ export function OpsLogsPage({
             />
             <input
               type="text"
+              aria-label={t("opsLogs.search.correlationId")}
               placeholder={t("opsLogs.search.correlationId")}
               value={traceFilter}
               onChange={(e) => {
@@ -426,6 +455,7 @@ export function OpsLogsPage({
             />
             <input
               type="text"
+              aria-label={t("opsLogs.search.ioType")}
               placeholder={t("opsLogs.search.ioType")}
               value={ioTypeFilter}
               onChange={(e) => {
@@ -435,6 +465,7 @@ export function OpsLogsPage({
             />
             <input
               type="text"
+              aria-label={t("opsLogs.search.keyword")}
               placeholder={t("opsLogs.search.keyword")}
               value={keyword}
               onChange={(e) => {
@@ -444,7 +475,7 @@ export function OpsLogsPage({
             />
             <button
               type="button"
-              className="button button-secondary"
+              className="button button--ghost"
               disabled={exporting}
               onClick={() => void handleExport("jsonl")}
               data-testid="ops-export-jsonl"
@@ -453,7 +484,7 @@ export function OpsLogsPage({
             </button>
             <button
               type="button"
-              className="button button-secondary"
+              className="button button--ghost"
               disabled={exporting}
               onClick={() => void handleExport("csv")}
               data-testid="ops-export-csv"
@@ -472,7 +503,7 @@ export function OpsLogsPage({
               </span>
               <button
                 type="button"
-                className="button button-secondary"
+                className="button button--ghost"
                 data-testid="ops-submission-clear"
                 onClick={() => setSubmissionFilter("")}
               >
@@ -486,44 +517,55 @@ export function OpsLogsPage({
           )}
 
           {visibleRows.length > 0 && (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>时间</th>
-                  <th>模块</th>
-                  <th>进程</th>
-                  <th>级别</th>
-                  <th>事件</th>
-                  <th>关联 ID</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleRows.map((row) => (
-                  <tr
-                    key={row.log_id}
-                    onClick={() => setSelectedRecord(row)}
-                    style={{ cursor: "pointer" }}
-                    data-testid={`ops-log-row-${row.log_id}`}
-                  >
-                    <td>{formatDateTime(row.timestamp, "-")}</td>
-                    <td>{row.producer}</td>
-                    <td>{row.process}</td>
-                    <td>
-                      <StatusPill tone={LEVEL_TONE[row.level]}>{row.level}</StatusPill>
-                    </td>
-                    <td><code>{row.event}</code></td>
-                    <td><code>{row.correlation_id ?? row.request_id ?? "-"}</code></td>
+            /* 表格必须待在 `.table__wrap` 里：长 UUID 与长事件名在窄屏上靠它横向滚动，
+               而不是把面板和整页撑出视口（这正是这一页此前的表现）。 */
+            <div className="table__wrap ops-log-scroll">
+              <table className="table ops-log-table ops-log-table--search">
+                <thead>
+                  <tr>
+                    <th>时间</th>
+                    <th>模块</th>
+                    <th>进程</th>
+                    <th>级别</th>
+                    <th>事件</th>
+                    <th>关联 ID</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {visibleRows.map((row) => {
+                    const correlation = row.correlation_id ?? row.request_id ?? "-";
+                    return (
+                      <tr
+                        key={row.log_id}
+                        onClick={() => setSelectedRecord(row)}
+                        data-testid={`ops-log-row-${row.log_id}`}
+                      >
+                        <td className="ops-log-time">{formatDateTime(row.timestamp, "-")}</td>
+                        <td>{row.producer}</td>
+                        <td>{row.process}</td>
+                        <td>
+                          <StatusPill tone={LEVEL_TONE[row.level]}>{row.level}</StatusPill>
+                        </td>
+                        <td>
+                          <code className="ops-log-event" title={row.event}>{row.event}</code>
+                        </td>
+                        <td>
+                          {/* 完整值留在 DOM 与 title 里；视觉上截断，点行可在抽屉里看全量 JSON。 */}
+                          <code className="ops-log-id" title={correlation}>{correlation}</code>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           )}
 
           {searchQuery.data?.next_cursor && (
             <div style={{ marginTop: "1rem" }}>
               <button
                 type="button"
-                className="button button-secondary"
+                className="button button--ghost"
                 onClick={() => setCursor(searchQuery.data.next_cursor ?? undefined)}
               >
                 {t("opsLogs.search.loadMore")}
@@ -536,8 +578,7 @@ export function OpsLogsPage({
       {activeTab === "trace" && (
         <Panel title={t("opsLogs.tab.trace")} testId="ops-logs-trace">
           <form
-            className="inline"
-            style={{ gap: "0.5rem", marginBottom: "1rem" }}
+            className="ops-log-filters"
             onSubmit={(e) => {
               e.preventDefault();
               const next = traceInput.trim();
@@ -547,7 +588,7 @@ export function OpsLogsPage({
           >
             <input
               type="text"
-              style={{ minWidth: "22rem" }}
+              className="ops-log-trace-input"
               placeholder={t("opsLogs.trace.placeholder")}
               value={traceInput}
               onChange={(e) => setTraceInput(e.target.value)}
@@ -572,16 +613,18 @@ export function OpsLogsPage({
                 {traceQuery.data.items.map((item) => (
                   <li
                     key={item.log_id}
-                    className="card"
-                    style={{
-                      padding: "0.75rem",
-                      borderLeft: item.level === "error" ? "4px solid var(--bad, #d32f2f)" : item.level === "warn" ? "4px solid var(--warn, #ed6c02)" : undefined,
-                      cursor: "pointer",
-                    }}
+                    className={`ops-log-item${item.level === "error" ? " ops-log-item--bad" : item.level === "warn" ? " ops-log-item--warn" : ""}`}
+                    role="button"
+                    tabIndex={0}
                     onClick={() => setSelectedRecord(item)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      setSelectedRecord(item);
+                    }}
                   >
                     <div className="inline" style={{ justifyContent: "space-between" }}>
-                      <span>
+                      <span className="ops-log-item__title">
                         <strong>{item.producer}</strong> ({item.process}) · <code>{item.event}</code>
                       </span>
                       <StatusPill tone={LEVEL_TONE[item.level]}>{item.level}</StatusPill>
@@ -608,82 +651,96 @@ export function OpsLogsPage({
             <EmptyState>{t("opsLogs.audit.empty")}</EmptyState>
           )}
           {auditQuery.data && auditQuery.data.items.length > 0 && (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>时间</th>
-                  <th>动作</th>
-                  <th>结果</th>
-                  <th>目标</th>
-                  <th>详情</th>
-                </tr>
-              </thead>
-              <tbody>
-                {auditQuery.data.items.map((rec: AuditRecord) => (
-                  <tr key={rec.audit_id}>
-                    <td>{formatDateTime(rec.occurred_at, "-")}</td>
-                    <td><code>{rec.action}</code></td>
-                    <td>{rec.outcome}</td>
-                    <td>{rec.target_type} {rec.target_id ? `(${rec.target_id.slice(0, 8)})` : ""}</td>
-                    <td>{rec.detail}</td>
+            <div className="table__wrap ops-log-scroll">
+              <table className="table ops-log-table ops-log-table--audit">
+                <thead>
+                  <tr>
+                    <th>时间</th>
+                    <th>动作</th>
+                    <th>结果</th>
+                    <th>目标</th>
+                    <th>详情</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {auditQuery.data.items.map((rec: AuditRecord) => (
+                    <tr key={rec.audit_id}>
+                      <td className="ops-log-time">{formatDateTime(rec.occurred_at, "-")}</td>
+                      <td><code className="ops-log-event" title={rec.action}>{rec.action}</code></td>
+                      <td>{rec.outcome}</td>
+                      <td>
+                        <span className="ops-log-id" title={rec.target_id ?? undefined}>
+                          {rec.target_type} {rec.target_id ? `(${rec.target_id.slice(0, 8)})` : ""}
+                        </span>
+                      </td>
+                      <td><span className="ops-log-detail" title={rec.detail ?? undefined}>{rec.detail}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </Panel>
       )}
 
-      {selectedRecord && (
-        <div
-          className="drawer-backdrop"
-          data-testid="ops-log-drawer-backdrop"
-          onMouseDown={(event) => {
-            // 点抽屉外部（遮罩）收起；抽屉内部的点击不会冒泡到这里。
-            if (event.target === event.currentTarget) setSelectedRecord(null);
-          }}
-        />
-      )}
-      {selectedRecord && (
-        <aside
-          className="card drawer"
-          role="dialog"
-          aria-modal="true"
-          aria-label={t("opsLogs.drawer.title")}
-          data-testid="ops-log-drawer"
-        >
-          <div className="inline drawer__head">
-            <div className="inline" style={{ gap: "0.5rem" }}>
-              <strong>{t("opsLogs.drawer.title")}</strong>
-              <StatusPill tone="ok">{t("opsLogs.drawer.redactedBadge")}</StatusPill>
-            </div>
-            <button
-              type="button"
-              className="button button-secondary"
-              data-testid="ops-log-drawer-close"
-              onClick={() => setSelectedRecord(null)}
+      {/*
+        抽屉挂在 `document.body` 上（而不是页面 tree 里）：页头的 `backdrop-filter` 会形成自己的
+        层叠上下文，页面内的 fixed 元素会被它压在下面——遮罩盖不住页头是这么来的。portal 之后
+        「遮罩 + 抽屉」永远在最上层，且不参与页面布局。
+      */}
+      {selectedRecord &&
+        createPortal(
+          <>
+            <div
+              className="ops-log-backdrop"
+              data-testid="ops-log-drawer-backdrop"
+              onMouseDown={(event) => {
+                // 点抽屉外部（遮罩）收起；抽屉内部的点击不会冒泡到这里。
+                if (event.target === event.currentTarget) setSelectedRecord(null);
+              }}
+            />
+            <aside
+              className="ops-log-drawer"
+              role="dialog"
+              aria-modal="true"
+              aria-label={t("opsLogs.drawer.title")}
+              tabIndex={-1}
+              ref={drawerRef}
+              data-testid="ops-log-drawer"
             >
-              {t("opsLogs.drawer.close")}
-            </button>
-          </div>
-          {(selectedRecord.correlation_id || selectedRecord.request_id) && (
-            <button
-              type="button"
-              className="button button-secondary"
-              style={{ marginBottom: "0.75rem" }}
-              onClick={() =>
-                jumpToTrace(selectedRecord.correlation_id ?? selectedRecord.request_id ?? "")
-              }
-            >
-              {t("opsLogs.drawer.traceAction")}
-            </button>
-          )}
-          {/* 敏感字段（密码、令牌、参考答案、用例内容…）统一显示 [REDACTED]。 */}
-          <pre className="drawer__json" data-testid="ops-log-drawer-json">
-            {JSON.stringify(redactSensitive(selectedRecord), null, 2)}
-          </pre>
-        </aside>
-      )}
+              <div className="ops-log-drawer__head">
+                <div className="inline" style={{ gap: "0.5rem" }}>
+                  <strong>{t("opsLogs.drawer.title")}</strong>
+                  <StatusPill tone="ok">{t("opsLogs.drawer.redactedBadge")}</StatusPill>
+                </div>
+                <button
+                  type="button"
+                  className="button button--ghost"
+                  data-testid="ops-log-drawer-close"
+                  onClick={() => setSelectedRecord(null)}
+                >
+                  {t("opsLogs.drawer.close")}
+                </button>
+              </div>
+              {(selectedRecord.correlation_id || selectedRecord.request_id) && (
+                <button
+                  type="button"
+                  className="button button--ghost"
+                  onClick={() =>
+                    jumpToTrace(selectedRecord.correlation_id ?? selectedRecord.request_id ?? "")
+                  }
+                >
+                  {t("opsLogs.drawer.traceAction")}
+                </button>
+              )}
+              {/* 敏感字段（密码、令牌、参考答案、用例内容…）统一显示 [REDACTED]。 */}
+              <pre className="ops-log-json" data-testid="ops-log-drawer-json">
+                {JSON.stringify(redactSensitive(selectedRecord), null, 2)}
+              </pre>
+            </aside>
+          </>,
+          document.body,
+        )}
     </div>
   );
 }
