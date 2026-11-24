@@ -56,7 +56,12 @@ class ExportLabelResolver:
     ) -> dict[str, dict[str, str]]:
         row_list = list(rows)
         course_ids = sorted({str(row.course_id) for row in row_list if row.course_id})
-        section_ids = sorted({str(row.section_id) for row in row_list if row.section_id})
+        section_course = {
+            str(row.section_id): str(row.course_id)
+            for row in row_list
+            if row.section_id and row.course_id
+        }
+        section_ids = sorted(section_course)
         assignment_ids = sorted(
             {str(row.assignment_id) for row in row_list if row.assignment_id}
         )
@@ -72,21 +77,25 @@ class ExportLabelResolver:
         b4_headers = self._headers(authorization)
         b3_headers = self._headers(self._b3_authorization or authorization)
 
-        for course_id in course_ids:
+        # 课程目录一次拉全：逐门调用详情接口时，一门 404/403 会把整批标签拖空。
+        if self._b4 is not None and course_ids:
+            courses = self._maybe_json(f"{self._b4}/api/v1/courses?limit=200", b4_headers)
+            for item in _items(courses):
+                course_id = str(item.get("course_id"))
+                title = item.get("title")
+                if course_id in course_ids and isinstance(title, str) and title:
+                    labels["course_id"][course_id] = title
+        # 课序按课程批量取；某门课失败只影响该门课，不影响其它列。
+        sections_by_course: dict[str, Any] = {}
+        for course_id in sorted(set(section_course.values())):
             if self._b4 is None:
                 break
-            course = self._get_json(f"{self._b4}/api/v1/courses/{course_id}", b4_headers)
-            title = course.get("title") if isinstance(course, Mapping) else None
-            if isinstance(title, str) and title:
-                labels["course_id"][course_id] = title
-        for section_id in section_ids:
-            if self._b4 is None:
-                break
-            sections = self._get_json(
-                f"{self._b4}/api/v1/courses/{self._course_of(section_id, row_list)}/sections",
-                b4_headers,
+            sections_by_course[course_id] = self._maybe_json(
+                f"{self._b4}/api/v1/courses/{course_id}/sections", b4_headers
             )
-            for item in _items(sections):
+        for section_id in section_ids:
+            document = sections_by_course.get(section_course[section_id])
+            for item in _items(document):
                 if str(item.get("section_id")) != section_id:
                     continue
                 label = item.get("label") or item.get("section_code")
@@ -96,7 +105,7 @@ class ExportLabelResolver:
         for assignment_id in assignment_ids:
             if self._b3 is None:
                 break
-            assignment = self._get_json(
+            assignment = self._maybe_json(
                 f"{self._b3}/api/v1/assignments/{assignment_id}", b3_headers
             )
             title = assignment.get("title") if isinstance(assignment, Mapping) else None
@@ -105,13 +114,13 @@ class ExportLabelResolver:
         for version_id in version_ids:
             if self._b3 is None:
                 break
-            version = self._get_json(
+            version = self._maybe_json(
                 f"{self._b3}/api/v1/question-versions/{version_id}", b3_headers
             )
             question_id = version.get("question_id") if isinstance(version, Mapping) else None
             if not isinstance(question_id, str):
                 continue
-            question = self._get_json(
+            question = self._maybe_json(
                 f"{self._b3}/api/v1/questions/{question_id}", b3_headers
             )
             title = question.get("title") if isinstance(question, Mapping) else None
@@ -126,12 +135,12 @@ class ExportLabelResolver:
             headers["Authorization"] = authorization
         return headers
 
-    @staticmethod
-    def _course_of(section_id: str, rows: Iterable[Any]) -> str:
-        for row in rows:
-            if str(row.section_id) == section_id:
-                return str(row.course_id)
-        raise KeyError(section_id)
+    def _maybe_json(self, url: str, headers: Mapping[str, str]) -> Any:
+        """单次查询失败只让该列回退 ID，不把整份标签结果清空。"""
+        try:
+            return self._get_json(url, headers)
+        except Exception:  # noqa: BLE001 - optional enrichment, never fail the export
+            return None
 
     def _get_json(self, url: str, headers: Mapping[str, str]) -> Any:
         request = urllib.request.Request(url, method="GET", headers=dict(headers))
