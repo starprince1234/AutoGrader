@@ -100,7 +100,7 @@ export function GradeDrilldown({
           <div className="inline">
             <a
               className="button button--ghost"
-              href={`/app/ops/logs?tab=trace&trace=${encodeURIComponent(data.submission_id ?? runId)}`}
+              href={`/app/ops/logs?tab=search&submission_id=${encodeURIComponent(data.submission_id ?? runId)}`}
               data-testid="view-related-logs"
             >
               {t("opsLogs.deepLink.viewLogs")}
