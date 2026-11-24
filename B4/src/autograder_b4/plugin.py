@@ -63,6 +63,8 @@ DESCRIPTOR = ModuleDescriptor(
         # Unified log center routes served by host (declared here so contract_paths
         # and module route prefixes agree in both static checks and B5 conformance).
         "/api/v1/ops/logs",
+        # AI operational report (contract 0.45.0): host-level endpoint beside /ops/logs.
+        "/api/v1/ops/insights",
         "/api/v1/logs/client",
     ),
     events=("autograder.v1.roster.import.completed",),
