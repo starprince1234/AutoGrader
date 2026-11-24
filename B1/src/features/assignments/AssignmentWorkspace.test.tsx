@@ -29,6 +29,7 @@ import {
   emailVerificationChallengeRecordPage,
   emailVerificationChallengeStatus,
   evaluationCommentary,
+  evaluationReport,
   gradePage,
   gradeRow,
   myMembership,
@@ -242,6 +243,10 @@ function baseRoutes(options: {
           headers: { "content-type": "text/plain; charset=utf-8" },
         });
       },
+    },
+    {
+      path: /^\/api\/v1\/evaluation-runs\/[^/]+\/report$/,
+      respond: () => jsonResponse(evaluationReport()),
     },
     {
       path: /^\/api\/v1\/evaluation-runs\/[^/]+\/commentary$/,
@@ -706,5 +711,40 @@ describe("学生作业工作区（CHG-0032）", () => {
       draft_code: "x = 1\n",
       student_question: null,
     });
+  });
+
+  it("点击提交时间旁的查看详细在当前作业页弹出详情弹窗，关闭后仍留在当前作业页（不跳去成绩页）", async () => {
+    await openWorkspace({
+      grades: [
+        gradeRow({
+          submission_id: "00000000-0000-4000-8000-0000000000f1",
+          assignment_id: UUID_A,
+          question_version_id: V1,
+          student_id: STUDENT,
+          state: "completed",
+          score: 90,
+          max_score: 100,
+          is_pass: true,
+          evaluation_run_id: UUID_RUN,
+        }),
+      ],
+    });
+
+    const user = userEvent.setup();
+    const detailBtn = await screen.findByTestId("workspace-open-result");
+    expect(detailBtn.tagName).toBe("BUTTON");
+    await user.click(detailBtn);
+
+    const modal = await screen.findByTestId("drilldown-modal");
+    expect(await within(modal).findByTestId("authoritative-score")).toHaveTextContent(
+      "AI 评分：86 / 100",
+    );
+    expect(screen.queryByText("grades target")).toBeNull();
+
+    await user.click(within(modal).getByRole("button", { name: "关闭" }));
+    expect(screen.queryByTestId("drilldown-modal")).toBeNull();
+    expect(screen.getByTestId("workspace-current-result")).toBeInTheDocument();
+    expect(screen.getByTestId("workspace-answer-text")).toBeInTheDocument();
+    expect(screen.queryByText("grades target")).toBeNull();
   });
 });

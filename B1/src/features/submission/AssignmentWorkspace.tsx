@@ -6,7 +6,6 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
-import { Link } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { t } from "../../i18n";
 import { describeApiError, isApiError } from "../../api/problem";
@@ -43,6 +42,7 @@ import { EmailSubmissionPanel } from "./EmailSubmissionPanel";
 import { EmailSubmissionStatus } from "./EmailSubmissionStatus";
 import { clearDraft, loadDraft, saveDraft } from "./draft";
 import { ProgressPanel } from "./ProgressPanel";
+import { GradeDrilldown } from "../grades/GradeDrilldown";
 import type { GradeRow } from "../../api/types";
 
 const STATE_KEY: Record<string, Parameters<typeof t>[0]> = {
@@ -221,12 +221,16 @@ export function AssignmentWorkspace({
   const idempotencyKeys = useRef<Map<string, string>>(new Map());
   const gutterRef = useRef<HTMLDivElement | null>(null);
 
-  // ---- 右下角双标签（AI 评价 vs AI 助教） ----------------------------------
+  // ---- 右下角双标签（AI 评价 vs AI 助教）与当前页评测详情弹窗 ----------------
   const [bottomTab, setBottomTab] = useState<"evaluation" | "assistant">("evaluation");
   const [assistantQuestion, setAssistantQuestion] = useState("");
   const [assistantReplies, setAssistantReplies] = useState<
     Record<string, DraftAiAssistantResponse>
   >({});
+  const [detailRun, setDetailRun] = useState<{
+    runId: string;
+    runState?: GradeRow["state"];
+  } | null>(null);
 
   // 切题时读取该题的本地草稿：先问再恢复，绝不静默覆盖尚未决策的内容。
   useEffect(() => {
@@ -244,6 +248,7 @@ export function AssignmentWorkspace({
     setSyncedSubmissionId(null);
     syncedSubmissionRef.current = null;
     setAssistantQuestion("");
+    setDetailRun(null);
     assistant.reset();
     setDraftCandidate(
       draft !== null && draft.content.trim() !== ""
@@ -1085,14 +1090,16 @@ export function AssignmentWorkspace({
                     />
                     {terminal === "completed" ? (
                       <div className="inline">
-                        <Link
+                        <button
+                          type="button"
                           className="button"
-                          to="/grades"
-                          search={{ evaluation_run_id: currentRunId }}
                           data-testid="open-result"
+                          onClick={() =>
+                            setDetailRun({ runId: currentRunId, runState: "completed" })
+                          }
                         >
                           {t("submit.openResult")}
-                        </Link>
+                        </button>
                       </div>
                     ) : null}
                   </div>
@@ -1126,14 +1133,19 @@ export function AssignmentWorkspace({
                         {formatDateTime(resultSubmittedAt, t("common.none"))}
                       </span>
                       {knownRunId !== null ? (
-                        <Link
+                        <button
+                          type="button"
                           className="button button--ghost"
-                          to="/grades"
-                          search={{ evaluation_run_id: knownRunId }}
                           data-testid="workspace-open-result"
+                          onClick={() =>
+                            setDetailRun({
+                              runId: knownRunId,
+                              runState: (resultState as GradeRow["state"] | null) ?? undefined,
+                            })
+                          }
                         >
                           {t("workspace.viewDetail")}
-                        </Link>
+                        </button>
                       ) : null}
                     </div>
                   </div>
@@ -1308,6 +1320,21 @@ export function AssignmentWorkspace({
             currentUser={currentUser.data}
             questionRows={rows}
             onReceived={refreshGradesAndFiles}
+          />
+        </Modal>
+      ) : null}
+
+      {detailRun !== null ? (
+        <Modal
+          title={t("grades.drilldownTitle")}
+          testId="drilldown-modal"
+          onClose={() => setDetailRun(null)}
+        >
+          <GradeDrilldown
+            runId={detailRun.runId}
+            view="student"
+            runState={detailRun.runState}
+            questionVersionId={selectedVersionId ?? undefined}
           />
         </Modal>
       ) : null}

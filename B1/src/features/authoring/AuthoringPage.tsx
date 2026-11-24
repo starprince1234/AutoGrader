@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
+import { useSession } from "../../auth/sessionContext";
 import { t } from "../../i18n";
+import { formatDateTime } from "../../ui/format";
 import { courseLabel as formatCourseLabel, loadedCourses, useCourses } from "../../api/directory";
 import type { IoType, QuestionDraftProposal } from "../../api/types";
 import { IO_TYPE_OPTIONS, ioTypeDescription, ioTypeLabel } from "../questions/ioType";
@@ -46,6 +48,12 @@ import {
   type DraftIssue,
 } from "./draft";
 import {
+  clearAiAuthoringDraft,
+  clearAuthoringDraft,
+  loadAuthoringDraft,
+  saveAuthoringDraft,
+} from "./localDraft";
+import {
   useCreateQuestion,
   useDraftContent,
   usePublishQuestionVersion,
@@ -90,6 +98,11 @@ export function AuthoringPage({
    */
   backTo?: "questions" | "detail";
 }) {
+  const session = useSession();
+  const ownerId = session.subject ?? session.username;
+  const draftScope = questionId ?? "new";
+  const draftKey = ownerId ? `${ownerId}:${draftScope}` : null;
+
   const courses = useCourses();
   const courseOptions = loadedCourses(courses.data?.pages);
   const question = useQuestion(questionId ?? "");
@@ -109,6 +122,16 @@ export function AuthoringPage({
   const [savedVersionId, setSavedVersionId] = useState<string | null>(null);
   const [leaveConfirm, setLeaveConfirm] = useState(false);
   const [step, setStep] = useState<StepId>("basic");
+  const [localRestoredAt, setLocalRestoredAt] = useState<string | null>(null);
+  const hydratedKeyRef = useRef<string | null>(null);
+  const latestDraftRef = useRef<{
+    ownerId: string;
+    scope: string;
+    courseId: string;
+    step: StepId;
+    form: DraftForm;
+    hasLocalEdits: boolean;
+  } | null>(null);
 
   const handleCourseChange = useCallback(
     (nextCourseId: string) => {
@@ -185,23 +208,34 @@ export function AuthoringPage({
   // 教师读"哪门课"，不是内部编号：能查到就显示代码与名称，查不到留白。
   // 原题（另存为新版本时的源）的课程：只用来判断下拉里是否真的换了课程。
   const originalCourseId = question.data?.course_id ?? "";
+  const localDraftReady =
+    draftKey !== null &&
+    (questionId === null || (seeded && (!contentReadable || protectedSeeded || draftContent.isError)));
+  const hasLocalEdits =
+    dirty ||
+    (questionId === null && (courseId !== "" || step !== "basic")) ||
+    (questionId !== null &&
+      ((courseId !== "" && courseId !== originalCourseId) || step !== "basic"));
 
-  // 浏览器级离开提示：只对"表单已改动"的页面生效，且只在真正可能丢失内容时出现。
-  useEffect(() => {
-    if (!dirty) return;
-    const handler = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      // 现代浏览器忽略自定义文案，但设置 returnValue 是启用提示的条件。
-      event.returnValue = "";
-    };
-    window.addEventListener("beforeunload", handler);
-    return () => window.removeEventListener("beforeunload", handler);
-  }, [dirty]);
+  latestDraftRef.current =
+    ownerId !== null
+      ? {
+          ownerId,
+          scope: draftScope,
+          courseId,
+          step,
+          form,
+          hasLocalEdits,
+        }
+      : null;
 
   // 「请先选择课程」：新建且还没选课进入页面时提示一次（原来常驻在顶部白框里）。
   useEffect(() => {
     if (questionId === null && courseId === "" && !aiView) {
-      showToast(t("authoring.courseRequired"));
+      const existing = ownerId ? loadAuthoringDraft(ownerId, draftScope) : null;
+      if (!existing || existing.courseId === "") {
+        showToast(t("authoring.courseRequired"));
+      }
     }
     // 只在进入页面那一刻提示一次：之后由老师自己切换课程。
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -213,6 +247,94 @@ export function AuthoringPage({
     if (dirty && !wasDirty.current) showToast(t("authoring.unsaved"));
     wasDirty.current = dirty;
   }, [dirty, showToast]);
+
+  // 恢复本地未保存的草稿（等待服务端基线加载完成后再叠加，保证取消或放弃时仍可回到服务端原值）。
+  useEffect(() => {
+    if (!localDraftReady || ownerId === null || draftKey === null) return;
+    if (hydratedKeyRef.current === draftKey) return;
+    hydratedKeyRef.current = draftKey;
+    const saved = loadAuthoringDraft(ownerId, draftScope);
+    if (!saved) return;
+    const restoredForm =
+      questionId !== null
+        ? { ...saved.form, adapterKind: baseline.adapterKind }
+        : saved.form;
+    wasDirty.current = isDirty(restoredForm, baseline);
+    setForm(restoredForm);
+    setStep(saved.step);
+    if (saved.courseId !== "") {
+      setCourseId(saved.courseId);
+    } else if (questionId !== null) {
+      setCourseId(originalCourseId);
+    }
+    setLocalRestoredAt(saved.updatedAt);
+  }, [baseline, draftKey, draftScope, localDraftReady, originalCourseId, ownerId, questionId]);
+
+  // 自动保存到浏览器本地（300ms 防抖）：刷新后仍可继续当前步骤与填写内容。
+  useEffect(() => {
+    if (draftKey === null || ownerId === null || hydratedKeyRef.current !== draftKey) return;
+    if (!hasLocalEdits) {
+      clearAuthoringDraft(ownerId, draftScope);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      saveAuthoringDraft({
+        ownerId,
+        scope: draftScope,
+        courseId,
+        step,
+        form,
+        updatedAt: new Date().toISOString(),
+      });
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [courseId, draftKey, draftScope, form, hasLocalEdits, ownerId, step]);
+
+  // 页面刷新或标签页隐藏前同步落盘，避免刚输入完立即按 F5 时 300ms 防抖尚未触发。
+  useEffect(() => {
+    const flushLocalDraft = () => {
+      const latest = latestDraftRef.current;
+      if (!latest || !latest.hasLocalEdits) return;
+      if (hydratedKeyRef.current !== `${latest.ownerId}:${latest.scope}`) return;
+      saveAuthoringDraft({
+        ownerId: latest.ownerId,
+        scope: latest.scope,
+        courseId: latest.courseId,
+        step: latest.step,
+        form: latest.form,
+        updatedAt: new Date().toISOString(),
+      });
+    };
+    window.addEventListener("pagehide", flushLocalDraft);
+    return () => window.removeEventListener("pagehide", flushLocalDraft);
+  }, []);
+
+  // 浏览器级离开提示：只对"表单已改动"的页面生效，且只在真正可能丢失内容时出现。
+  useEffect(() => {
+    if (!dirty) return;
+    const handler = (event: BeforeUnloadEvent) => {
+      const latest = latestDraftRef.current;
+      if (
+        latest &&
+        latest.hasLocalEdits &&
+        hydratedKeyRef.current === `${latest.ownerId}:${latest.scope}`
+      ) {
+        saveAuthoringDraft({
+          ownerId: latest.ownerId,
+          scope: latest.scope,
+          courseId: latest.courseId,
+          step: latest.step,
+          form: latest.form,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+      event.preventDefault();
+      // 现代浏览器忽略自定义文案，但设置 returnValue 是启用提示的条件。
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [dirty]);
 
   // 应用候选：先算出结果，再分别 set 两个 state。
   //
@@ -265,6 +387,12 @@ export function AuthoringPage({
           });
         }
         setBaseline(effectiveForm);
+        if (ownerId !== null) {
+          latestDraftRef.current = null;
+          clearAuthoringDraft(ownerId, draftScope);
+          clearAiAuthoringDraft(ownerId);
+        }
+        setLocalRestoredAt(null);
         void navigate({
           to: "/questions/$questionId",
           params: { questionId: created.question_id },
@@ -289,6 +417,12 @@ export function AuthoringPage({
       }
       setSavedVersionId(versionId);
       setBaseline(effectiveForm);
+      if (ownerId !== null) {
+        latestDraftRef.current = null;
+        clearAuthoringDraft(ownerId, draftScope);
+        if (questionId === null) clearAiAuthoringDraft(ownerId);
+      }
+      setLocalRestoredAt(null);
       void navigate({
         to: "/questions/$questionId",
         params: { questionId: result.question_id },
@@ -351,7 +485,23 @@ export function AuthoringPage({
       setLeaveConfirm(true);
       return;
     }
+    if (ownerId !== null) {
+      latestDraftRef.current = null;
+      clearAuthoringDraft(ownerId, draftScope);
+    }
+    setLocalRestoredAt(null);
     leaveTo();
+  };
+
+  const discardLocalDraft = () => {
+    if (ownerId !== null) {
+      clearAuthoringDraft(ownerId, draftScope);
+    }
+    wasDirty.current = false;
+    setForm(baseline);
+    setCourseId(questionId !== null ? originalCourseId : "");
+    setStep("basic");
+    setLocalRestoredAt(null);
   };
 
   /**
@@ -494,6 +644,26 @@ export function AuthoringPage({
 
       {mutation.isError || publishQuestionVersion.isError ? (
         <ErrorState error={(mutation.error ?? publishQuestionVersion.error)!} />
+      ) : null}
+
+      {localRestoredAt !== null ? (
+        <Banner tone="info" testId="authoring-local-draft-restored">
+          <div className="inline">
+            <span>
+              {t("authoring.localDraftRestored", {
+                time: formatDateTime(localRestoredAt, t("common.none")),
+              })}
+            </span>
+            <button
+              type="button"
+              className="button button--ghost"
+              data-testid="authoring-discard-local-draft"
+              onClick={discardLocalDraft}
+            >
+              {t("authoring.localDraftDiscard")}
+            </button>
+          </div>
+        </Banner>
       ) : null}
 
       <div className="wizard">
@@ -1085,6 +1255,11 @@ export function AuthoringPage({
               data-testid="authoring-leave-confirm"
               onClick={() => {
                 setLeaveConfirm(false);
+                if (ownerId !== null) {
+                  latestDraftRef.current = null;
+                  clearAuthoringDraft(ownerId, draftScope);
+                }
+                setLocalRestoredAt(null);
                 leaveTo();
               }}
             >

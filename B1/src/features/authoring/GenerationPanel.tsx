@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useSession } from "../../auth/sessionContext";
 import { t } from "../../i18n";
 import { isApiError } from "../../api/problem";
 import type { Language, QuestionDraftGeneration, QuestionDraftProposal } from "../../api/types";
@@ -18,6 +19,11 @@ import {
   useGeneration,
   useGenerationCapabilities,
 } from "./useGeneration";
+import {
+  clearAiAuthoringDraft,
+  loadAiAuthoringDraft,
+  saveAiAuthoringDraft,
+} from "./localDraft";
 import { Select } from "../../ui/Select";
 
 /**
@@ -179,6 +185,8 @@ export function GenerationPanel({
   /** 教师**主动**点「填进编辑器」之后回调；刷新恢复候选时不触发。 */
   onApplied?: () => void;
 }) {
+  const session = useSession();
+  const ownerId = session.subject ?? session.username;
   const capabilities = useGenerationCapabilities(courseId);
   const restored = useGeneration(generationId);
   const create = useCreateGeneration();
@@ -195,6 +203,68 @@ export function GenerationPanel({
   const [discardedId, setDiscardedId] = useState<string | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const appliedOnce = useRef<string | null>(null);
+  const aiHydratedOwnerRef = useRef<string | null>(null);
+  const latestAiDraftRef = useRef<{
+    ownerId: string;
+    objective: string;
+    difficulty: string;
+    referenceTiersCount: number;
+    constraints: string;
+  } | null>(null);
+
+  latestAiDraftRef.current =
+    ownerId !== null
+      ? { ownerId, objective, difficulty, referenceTiersCount, constraints }
+      : null;
+
+  useEffect(() => {
+    if (ownerId === null || aiHydratedOwnerRef.current === ownerId) return;
+    aiHydratedOwnerRef.current = ownerId;
+    const saved = loadAiAuthoringDraft(ownerId);
+    if (!saved) return;
+    setObjective(saved.objective);
+    setDifficulty(saved.difficulty);
+    setReferenceTiersCount(saved.referenceTiersCount);
+    setConstraints(saved.constraints);
+  }, [ownerId]);
+
+  useEffect(() => {
+    if (ownerId === null || aiHydratedOwnerRef.current !== ownerId) return;
+    if (objective.trim() === "" && constraints.trim() === "") {
+      clearAiAuthoringDraft(ownerId);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      saveAiAuthoringDraft({
+        ownerId,
+        objective,
+        difficulty,
+        referenceTiersCount,
+        constraints,
+        updatedAt: new Date().toISOString(),
+      });
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [constraints, difficulty, objective, ownerId, referenceTiersCount]);
+
+  useEffect(() => {
+    const flushAiDraft = () => {
+      const latest = latestAiDraftRef.current;
+      if (!latest) return;
+      if (aiHydratedOwnerRef.current !== latest.ownerId) return;
+      if (latest.objective.trim() === "" && latest.constraints.trim() === "") return;
+      saveAiAuthoringDraft({
+        ...latest,
+        updatedAt: new Date().toISOString(),
+      });
+    };
+    window.addEventListener("pagehide", flushAiDraft);
+    window.addEventListener("beforeunload", flushAiDraft);
+    return () => {
+      window.removeEventListener("pagehide", flushAiDraft);
+      window.removeEventListener("beforeunload", flushAiDraft);
+    };
+  }, []);
 
   const selectedCourseCode =
     courses.find((course) => course.course_id === courseId)?.course_code ?? null;
@@ -622,6 +692,7 @@ export function GenerationPanel({
                       setAppliedId(null);
                       appliedOnce.current = null;
                       setDiscardedId(generation.generation_id ?? null);
+                      if (ownerId !== null) clearAiAuthoringDraft(ownerId);
                       onGenerationId(null);
                     },
                   },

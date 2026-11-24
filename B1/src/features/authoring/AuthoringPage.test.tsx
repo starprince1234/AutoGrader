@@ -53,6 +53,7 @@ let stub: FetchStub | null = null;
 afterEach(() => {
   stub?.restore();
   stub = null;
+  localStorage.clear();
 });
 
 function draftQuestion() {
@@ -2308,5 +2309,108 @@ describe("AI 出题双轨 1+10 用例与直接发布闭环", () => {
     });
     expect(publishReq).toBeDefined();
     expect(await screen.findByText("detail target")).toBeInTheDocument();
+  });
+});
+
+describe("刷新恢复本地草稿", () => {
+  it("新建题目填写后未保存，刷新（重新挂载）仍保留课程、步骤、标题与题干；放弃或保存后清理", async () => {
+    stub = installFetchStub(
+      baseRoutes([
+        {
+          method: "POST",
+          path: "/api/v1/questions",
+          respond: () => jsonResponse(draftQuestion(), 201),
+        },
+      ]),
+    );
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    const first = renderAuthoring(null);
+
+    await selectCourse(user);
+    await user.type(screen.getByLabelText("题目标题"), "未保存的新题标题");
+    await goToStep(user, "stem");
+    await user.type(screen.getByLabelText("题干"), "# 未保存题干");
+
+    // 模拟浏览器刷新前触发的 pagehide 同步落盘并重新挂载页面。
+    window.dispatchEvent(new Event("pagehide"));
+    first.unmount();
+
+    renderAuthoring(null);
+    expect(await screen.findByTestId("authoring-local-draft-restored")).toBeInTheDocument();
+    expect(await screen.findByTestId("step-stem")).toBeInTheDocument();
+    expect(screen.getByLabelText("题干")).toHaveValue("# 未保存题干");
+
+    await goToStep(user, "basic");
+    expect(screen.getByLabelText("题目标题")).toHaveValue("未保存的新题标题");
+    expect(screen.getByLabelText("课程")).toHaveValue(UUID_A);
+
+    // 点「放弃本地草稿」后回到干净状态并移除本地草稿。
+    await user.click(screen.getByTestId("authoring-discard-local-draft"));
+    expect(screen.queryByTestId("authoring-local-draft-restored")).toBeNull();
+    expect(screen.getByLabelText("题目标题")).toHaveValue("");
+
+    // 再次填写、刷新并提交保存：保存成功后本地草稿被清空。
+    await selectCourse(user);
+    await user.type(screen.getByLabelText("题目标题"), "提交清空测试");
+    await goToStep(user, "stem");
+    await user.type(screen.getByLabelText("题干"), "题干正文");
+    await goToStep(user, "preview");
+    await user.click(screen.getByTestId("authoring-save"));
+    expect(await screen.findByText("detail target")).toBeInTheDocument();
+
+    const third = renderAuthoring(null);
+    expect(await screen.findByTestId("step-basic")).toBeInTheDocument();
+    expect(screen.queryByTestId("authoring-local-draft-restored")).toBeNull();
+    third.unmount();
+  });
+
+  it("编辑既有题目修改后未保存，刷新恢复修改内容而不丢失服务端基线", async () => {
+    stub = installFetchStub(
+      baseRoutes([
+        {
+          method: "GET",
+          path: `/api/v1/questions/${QUESTION_ID}`,
+          respond: () => jsonResponse(draftQuestion()),
+        },
+        {
+          path: `/api/v1/question-versions/${DRAFT_VERSION}`,
+          respond: () =>
+            jsonResponse(
+              questionVersionPublic({
+                question_version_id: DRAFT_VERSION,
+                version: 1,
+                status: "draft",
+                content_digest: SHA_A,
+              }),
+            ),
+        },
+        {
+          path: `/api/v1/question-versions/${DRAFT_VERSION}/draft-content`,
+          respond: () =>
+            jsonResponse({
+              reference_answer: "print(2)",
+              reference_answers: [{ label: "标准解法", body: "print(2)" }],
+              grading_prompt: "",
+              cases: [],
+            }),
+        },
+      ]),
+    );
+    const user = userEvent.setup();
+    await signIn("teacher1", "pw");
+    const first = renderAuthoring(QUESTION_ID);
+
+    const titleBox = await screen.findByTestId("authoring-title");
+    await waitFor(() => expect(titleBox).toHaveValue("统计文件行数"));
+    await user.clear(titleBox);
+    await user.type(titleBox, "改了一半的标题");
+
+    window.dispatchEvent(new Event("pagehide"));
+    first.unmount();
+
+    renderAuthoring(QUESTION_ID);
+    expect(await screen.findByTestId("authoring-local-draft-restored")).toBeInTheDocument();
+    expect(await screen.findByTestId("authoring-title")).toHaveValue("改了一半的标题");
   });
 });

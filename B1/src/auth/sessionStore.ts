@@ -2,6 +2,7 @@ import { apiRequest, configureApiAuth } from "../api/client";
 import { isApiError } from "../api/problem";
 import type { CourseScope, Role, SessionCreated, SessionRefreshed } from "../api/types";
 import { clearAllDrafts } from "../features/submission/draft";
+import { clearAllAuthoringDrafts } from "../features/authoring/localDraft";
 import { log, newRequestId } from "../logging/logger";
 
 /**
@@ -290,14 +291,16 @@ export async function signOut(): Promise<void> {
     });
   } finally {
     clearSession();
-    // 共用机器上的隐私边界：退出后下一个登录的学生不得读到上一个人的未提交草稿。
+    // 共用机器上的隐私边界：退出后下一个登录的用户不得读到上一个人的未提交草稿。
     // 无论退出请求成功与否都要清——这是本地状态，与服务端会话是否已失效无关。
     clearAllDrafts();
+    clearAllAuthoringDrafts();
     log({ event: "session_signed_out", request_id: requestId });
   }
 }
 
 export function resetSessionForTests(): void {
   clearSession();
+  clearAllAuthoringDrafts();
   listeners.clear();
 }

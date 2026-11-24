@@ -693,6 +693,8 @@ export const messages = {
 "authoring.saving": "保存中…",
 "authoring.actions": "保存",
 "authoring.unsaved": "有还没保存的修改：离开或刷新后这些修改不会保留。",
+"authoring.localDraftRestored": "已自动恢复上次未保存的草稿（保存于 {time}）。",
+"authoring.localDraftDiscard": "放弃本地草稿",
 "authoring.leaveTitle": "放弃未保存的编辑？",
 "authoring.leaveConfirm": "这些编辑尚未保存，离开后会丢失。返回后重新打开题目或 AI 候选时，看到的是服务器上的内容，不是你现在改过的版本。",
 "authoring.leaveAction": "放弃并离开",
