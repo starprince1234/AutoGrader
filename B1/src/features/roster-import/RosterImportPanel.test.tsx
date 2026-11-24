@@ -134,7 +134,7 @@ async function selectClass(user: ReturnType<typeof userEvent.setup>) {
 
 async function uploadFile(user: ReturnType<typeof userEvent.setup>, name = "roster.xlsx") {
   await user.upload(
-    screen.getByLabelText("名单文件（CSV / XLSX）"),
+    screen.getByLabelText("名单文件（CSV / XLSX / XLS / PDF）"),
     new File(["roster"], name, {
       type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     }),
@@ -153,7 +153,7 @@ describe("名单导入向导（RQ-B-1-10 / v0.32.0 班级级）", () => {
       "选择课程、课序和班级后才能上传名单",
     );
     await user.upload(
-      screen.getByLabelText("名单文件（CSV / XLSX）"),
+      screen.getByLabelText("名单文件（CSV / XLSX / XLS / PDF）"),
       new File(["roster"], "roster.csv", { type: "text/csv" }),
     );
     expect(screen.getByTestId("upload-submit")).toBeDisabled();

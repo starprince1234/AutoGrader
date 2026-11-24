@@ -19,15 +19,14 @@ Nothing here stores a password or a code in plaintext: the password is hashed by
 
 from __future__ import annotations
 
-import csv
 import hashlib
 import hmac
-import io
 import re
 import secrets
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from pathlib import PurePosixPath
 
 from sqlalchemy import Connection, and_, delete, func, insert, select, update
 
@@ -44,6 +43,9 @@ from .db.tables import (
 )
 from .db.tables import roles as roles_table
 from .errors import unprocessable
+from .roster.mapping import propose_mapping
+from .roster.parsers import UnsupportedDocument, detect_media_type, parse_roster
+from .roster.table import FIELD_DISPLAY_NAME, FIELD_STUDENT_NUMBER, RosterParseError
 from .security.passwords import hash_password
 
 #: Lowercase, starts with a letter, no `@`: the login field is matched verbatim against this
@@ -57,19 +59,9 @@ MAX_PASSWORD_LENGTH = 128
 MAX_DISPLAY_NAME_LENGTH = 50
 MAX_ALLOWLIST_ROWS = 20000
 
-_NAME_HEADERS = {"姓名", "name", "display_name", "display name", "学生姓名"}
-_NUMBER_HEADERS = {
-    "学号",
-    "student_number",
-    "student number",
-    "student_id",
-    "student id",
-    "学号(13位)",
-}
-
 
 class AllowlistError(ValueError):
-    """The uploaded CSV cannot be used as an allowlist; the message says why."""
+    """The uploaded roster file cannot be used as an allowlist; the message says why."""
 
 
 @dataclass(frozen=True)
@@ -135,76 +127,71 @@ def code_matches(code_id: uuid.UUID, code: str, stored_digest: str) -> bool:
     return hmac.compare_digest(hash_code(code_id, code), stored_digest)
 
 
-# ---------------------------------------------------------------------------- allowlist CSV
-def _decode_csv(content: bytes) -> str:
-    """UTF-8 (with or without BOM) first, then GB18030.
-
-    Excel on a Chinese Windows writes GBK by default, which is what the roster files in this
-    project look like. A wrong guess is not silently accepted: the caller validates the header
-    and the 13-digit column, so a mis-decode fails loudly instead of importing garbage.
-    """
-    for encoding in ("utf-8-sig", "utf-8", "gb18030"):
-        try:
-            return content.decode(encoding)
-        except UnicodeDecodeError:
-            continue
-    raise AllowlistError("文件编码无法识别:请用 UTF-8 或 GBK 保存 CSV。")
-
-
-def _normalize_header(value: str) -> str:
-    return value.strip().lower().replace("　", "")
-
-
-def parse_allowlist_csv(content: bytes) -> list[AllowlistRow]:
-    """Parse `姓名,学号` rows located **by header name**, never by column position."""
+# ---------------------------------------------------------------------------- allowlist file
+def parse_allowlist_file(*, filename: str, content: bytes) -> list[AllowlistRow]:
+    """Parse allowlist rows from CSV, XLSX, XLS, or text PDF by header name."""
     if not content:
-        raise AllowlistError("上传的 CSV 是空文件。")
+        raise AllowlistError("上传的名单是空文件。")
 
-    text = _decode_csv(content)
-    rows = [
-        row
-        for row in csv.reader(io.StringIO(text, newline=""))
-        if any(cell.strip() for cell in row)
-    ]
-    if not rows:
-        raise AllowlistError("上传的 CSV 没有数据行。")
-
-    header = [_normalize_header(cell) for cell in rows[0]]
-    name_index = next((i for i, h in enumerate(header) if h in _NAME_HEADERS), None)
-    number_index = next((i for i, h in enumerate(header) if h in _NUMBER_HEADERS), None)
-    if name_index is None or number_index is None:
+    try:
+        media_type = detect_media_type(filename, content)
+    except UnsupportedDocument as error:
         raise AllowlistError(
-            "CSV 表头必须包含“姓名”和“学号”两列(按列名定位,不按列序)。"
-            f"实际表头:{', '.join(cell.strip() for cell in rows[0])}"
+            "支持的文件格式为 CSV、XLSX、XLS、PDF(请确认文件扩展名与实际内容一致)。"
+        ) from error
+
+    try:
+        table = parse_roster(content, media_type)
+    except (UnsupportedDocument, RosterParseError) as error:
+        raise AllowlistError(f"名单解析失败:{error}") from error
+
+    if not table.rows:
+        raise AllowlistError("上传的名单没有学生数据行。")
+
+    proposal = propose_mapping(table)
+    name_col = proposal.mapping.get(FIELD_DISPLAY_NAME)
+    number_col = proposal.mapping.get(FIELD_STUDENT_NUMBER)
+    if not proposal.is_complete or not name_col or not number_col:
+        headers_preview = ", ".join(col for col in table.columns if col)
+        raise AllowlistError(
+            "名单表头必须包含“姓名”和“学号”两列(按列名定位,不按列序)。"
+            f"实际表头:{headers_preview}"
         )
 
     parsed: list[AllowlistRow] = []
     seen: dict[str, int] = {}
-    for line_number, row in enumerate(rows[1:], start=2):
-        if len(row) <= max(name_index, number_index):
-            raise AllowlistError(f"第 {line_number} 行列数不足。")
-        student_number = row[number_index].strip()
-        display_name = row[name_index].strip()
-        if not STUDENT_NUMBER_PATTERN.match(student_number):
-            raise AllowlistError(f"第 {line_number} 行的学号不是 13 位数字:{student_number!r}")
+    for row in table.rows:
+        student_number = table.value(row, number_col)
+        display_name = table.value(row, name_col)
+        if number_col in row.non_integer_columns or not STUDENT_NUMBER_PATTERN.match(
+            student_number
+        ):
+            raise AllowlistError(
+                f"第 {row.row_number} 行的学号不是 13 位数字:{student_number!r}"
+            )
         if not display_name:
-            raise AllowlistError(f"第 {line_number} 行的姓名为空。")
+            raise AllowlistError(f"第 {row.row_number} 行的姓名为空。")
         if len(display_name) > MAX_DISPLAY_NAME_LENGTH:
             raise AllowlistError(
-            f"第 {line_number} 行的姓名超过 {MAX_DISPLAY_NAME_LENGTH} 个字符。"
-        )
+                f"第 {row.row_number} 行的姓名超过 {MAX_DISPLAY_NAME_LENGTH} 个字符。"
+            )
         if student_number in seen:
             raise AllowlistError(
-                f"第 {line_number} 行与第 {seen[student_number]} 行的学号重复:{student_number}"
+                f"第 {row.row_number} 行与第 {seen[student_number]} 行的学号重复:{student_number}"
             )
-        seen[student_number] = line_number
+        seen[student_number] = row.row_number
         parsed.append(AllowlistRow(student_number=student_number, display_name=display_name))
 
     if not parsed:
-        raise AllowlistError("上传的 CSV 只有表头,没有学生。")
+        raise AllowlistError("上传的名单只有表头,没有学生。")
     if len(parsed) > MAX_ALLOWLIST_ROWS:
         raise AllowlistError(f"一次最多导入 {MAX_ALLOWLIST_ROWS} 行,当前 {len(parsed)} 行。")
     return parsed
+
+
+def parse_allowlist_csv(content: bytes) -> list[AllowlistRow]:
+    """Parse `姓名,学号` CSV rows located **by header name**, never by column position."""
+    return parse_allowlist_file(filename="allowlist.csv", content=content)
 
 
 def allowlist_entry(
@@ -381,14 +368,15 @@ def create_account(
 
 
 def class_name_of(filename: str) -> str:
-    """Class name = file name without the extension.
+    """Class name = file name without the roster extension.
 
     A teacher names the file after the class, so the class needs no second input; this turns
-    ``01ban.csv`` into ``01ban`` and guesses nothing else.
+    ``01ban.csv`` or ``01ban.xlsx`` into ``01ban`` and guesses nothing else.
     """
-    stem = filename.strip().rsplit("/", 1)[-1]
-    for suffix in (".csv", ".CSV"):
-        if stem.endswith(suffix):
+    stem = PurePosixPath(filename.strip().replace("\\", "/")).name
+    lowered = stem.lower()
+    for suffix in (".csv", ".xlsx", ".xls", ".pdf"):
+        if lowered.endswith(suffix):
             return stem[: -len(suffix)].strip() or stem
     return stem
 

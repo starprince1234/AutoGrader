@@ -167,12 +167,64 @@ def test_allowlist_rejects_a_wrong_shape(client, factory) -> None:
     )
     assert duplicated.status_code == 422
 
-    wrong_suffix = client.post(
+    spoofed_extension = client.post(
         "/api/v1/registration-allowlists",
         files={"file": ("名单.xlsx", b"whatever", "application/vnd.ms-excel")},
         headers=headers,
     )
-    assert wrong_suffix.status_code == 422
+    assert spoofed_extension.status_code == 422
+
+
+def test_allowlist_accepts_xlsx_and_multipage_pdf(client, factory) -> None:
+    from tests.documents import multi_page_pdf_bytes, xlsx_bytes
+
+    headers = _admin(client, factory)
+
+    xlsx = xlsx_bytes(
+        [
+            ["2026-2027学年秋选课学生名单"],
+            ["序号", "学号(13位)", "姓名", "班级"],
+            [1, "2024141460192", "黄俊杰", "软工1班"],
+            [2, 2024141460472, "付明煜", "软工1班"],
+        ]
+    )
+    xlsx_res = client.post(
+        "/api/v1/registration-allowlists",
+        files={
+            "file": (
+                "软工01班.xlsx",
+                xlsx,
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+        },
+        headers=headers,
+    )
+    assert xlsx_res.status_code == 200, xlsx_res.text
+    assert xlsx_res.json()["class_name"] == "软工01班"
+    assert xlsx_res.json()["row_count"] == 2
+
+    pdf = multi_page_pdf_bytes(
+        [
+            [
+                "student_number  display_name  remarks",
+                "2024141460230  HuLiangjun  normal",
+                "Page 1 of 2",
+            ],
+            [
+                "student_number  display_name  remarks",
+                "2024141460231  ChenWei  normal",
+                "Page 2 of 2",
+            ],
+        ]
+    )
+    pdf_res = client.post(
+        "/api/v1/registration-allowlists",
+        files={"file": ("软工02班.pdf", pdf, "application/pdf")},
+        headers=headers,
+    )
+    assert pdf_res.status_code == 200, pdf_res.text
+    assert pdf_res.json()["class_name"] == "软工02班"
+    assert pdf_res.json()["row_count"] == 2
 
 
 # ---------------------------------------------------------------------------- code request

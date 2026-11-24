@@ -30,6 +30,7 @@ from .table import (
 HEADER_ALIASES: dict[str, tuple[str, ...]] = {
     FIELD_STUDENT_NUMBER: (
         "学号",
+        "学号13位",
         "学生学号",
         "学籍号",
         "studentnumber",

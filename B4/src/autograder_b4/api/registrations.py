@@ -379,11 +379,9 @@ def build_registration_router(state: B4State, dependencies: Dependencies) -> API
         caller=Depends(dependencies.administrator),
     ) -> dict[str, object]:
         filename = (file.filename or "").strip()
-        if not filename.lower().endswith(".csv"):
-            raise unprocessable("注册名单必须是 .csv 文件。")
         content = await _read_bounded(file, settings.registration_allowlist_max_bytes)
         try:
-            rows = domain.parse_allowlist_csv(content)
+            rows = domain.parse_allowlist_file(filename=filename, content=content)
         except domain.AllowlistError as error:
             raise unprocessable(str(error)) from error
 

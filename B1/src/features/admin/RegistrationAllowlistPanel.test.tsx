@@ -139,6 +139,10 @@ describe("注册名单面板", () => {
   it("添加名单：选中文件即上传，成功后提示班级与人数", async () => {
     const panel = await openPanel();
     const input = within(panel).getByTestId("allowlist-add-input") as HTMLInputElement;
+    expect(input.accept).toContain(".csv");
+    expect(input.accept).toContain(".xlsx");
+    expect(input.accept).toContain(".xls");
+    expect(input.accept).toContain(".pdf");
     await userEvent.upload(input, csvFile());
     expect(await screen.findByTestId("allowlist-notice")).toHaveTextContent("已添加「软工01班」");
     const posted = stub?.requests.find(

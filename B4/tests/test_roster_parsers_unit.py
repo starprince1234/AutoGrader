@@ -9,6 +9,7 @@ from pathlib import Path
 import pytest
 from pypdf import PdfWriter
 
+from autograder_b4.registration import AllowlistError, class_name_of, parse_allowlist_file
 from autograder_b4.roster.mapping import propose_mapping
 from autograder_b4.roster.parsers import (
     MAX_PDF_PAGES,
@@ -30,7 +31,7 @@ from autograder_b4.roster.validation import (
     validate_rows,
     verify_course_metadata,
 )
-from tests.documents import simple_pdf_bytes, xlsx_bytes
+from tests.documents import multi_page_pdf_bytes, simple_pdf_bytes, xlsx_bytes
 
 FIXTURE_XLS = Path(__file__).parent / "fixtures" / "synthetic_course_roster.xls"
 
@@ -264,3 +265,121 @@ def test_bounds_and_pdf_security_rejections():
     page_writer.write(page_buf)
     with pytest.raises(RosterParseError, match="pages"):
         parse_roster(page_buf.getvalue(), MEDIA_TYPE_PDF)
+
+
+def test_multipage_pdf_skips_footers_and_repeated_headers():
+    pdf = multi_page_pdf_bytes(
+        [
+            [
+                "student_number  display_name  remarks",
+                "2024141460192  Alice  normal",
+                "2024141460193  Bob  normal",
+                "Page 1 of 2",
+            ],
+            [
+                "student_number  display_name  remarks",
+                "2024141460194 Carol normal",
+                "Page 2 of 2",
+            ],
+        ]
+    )
+    table = parse_roster(pdf, MEDIA_TYPE_PDF)
+    assert [(r.cells["student_number"], r.cells["display_name"]) for r in table.rows] == [
+        ("2024141460192", "Alice"),
+        ("2024141460193", "Bob"),
+        ("2024141460194", "Carol"),
+    ]
+
+
+def test_multipage_chinese_pdf_layout_and_trailing_fragments(monkeypatch):
+    pages_text = [
+        "\n".join(
+            [
+                "2026-2027学年秋选课学生名单",
+                "课程信息\uff1a现代软件工程\uff08双语\uff09(304064030-04)",
+                "上课地点\uff1a望江基教楼A座A406    任课教师\uff1a杨凯",
+                "序号 学号 姓名 性别 备注",
+                "1  2023141460730  毛文  女  正常",
+                "2  2024141411189  周刚妍  女  正常",
+                "2023级人工智能2班",
+                "QQ号",
+                "第 1 页 / 共 2 页",
+            ]
+        ),
+        "\n".join(
+            [
+                "序号 学号 姓名 性别 备注",
+                "3 2025141437849 卢春俊 男 正常",
+                "课程信息\uff1a现代软件工程\uff08双语\uff09(304064030-04)",
+                "第 2 页 / 共 2 页",
+            ]
+        ),
+    ]
+
+    class _FakePage:
+        def __init__(self, text: str) -> None:
+            self._text = text
+
+        def __contains__(self, key: object) -> bool:
+            return key == "/Contents"
+
+        def extract_text(self, extraction_mode: str | None = None) -> str:
+            return self._text
+
+    class _FakeReader:
+        def __init__(self) -> None:
+            self.is_encrypted = False
+            self.pages = [_FakePage(text) for text in pages_text]
+
+    monkeypatch.setattr("autograder_b4.roster.parsers.PdfReader", lambda _bio: _FakeReader())
+
+    table = parse_roster(b"%PDF-1.4\n", MEDIA_TYPE_PDF)
+    assert table.metadata is not None
+    assert table.metadata.course_code == "304064030"
+    assert table.metadata.section_code == "04"
+    assert table.metadata.semester == "2026-2027学年秋"
+    assert table.metadata.instructor == "杨凯"
+    assert [(r.cells["学号"], r.cells["姓名"]) for r in table.rows] == [
+        ("2023141460730", "毛文"),
+        ("2024141411189", "周刚妍"),
+        ("2025141437849", "卢春俊"),
+    ]
+
+    rows = parse_allowlist_file(filename="软工04班.pdf", content=b"%PDF-1.4\n")
+    assert [(r.student_number, r.display_name) for r in rows] == [
+        ("2023141460730", "毛文"),
+        ("2024141411189", "周刚妍"),
+        ("2025141437849", "卢春俊"),
+    ]
+
+
+def test_parse_allowlist_file_formats_and_class_name():
+    assert class_name_of("软工01班.csv") == "软工01班"
+    assert class_name_of("软工01班.XLSX") == "软工01班"
+    assert class_name_of("courseStudentList.xls") == "courseStudentList"
+    assert class_name_of("folder\\软工04班.PDF") == "软工04班"
+
+    csv_bytes = (
+        "2026-2027选课名单\n序号,学号(13位),姓名\n1,2024141460192,黄俊杰\n"
+    ).encode("gb18030")
+    csv_rows = parse_allowlist_file(filename="a.csv", content=csv_bytes)
+    assert [(r.student_number, r.display_name) for r in csv_rows] == [
+        ("2024141460192", "黄俊杰")
+    ]
+
+    xlsx = xlsx_bytes(
+        [["学号(13位)", "姓名"], ["2024141460192", "黄俊杰"], [2024141460472, "付明煜"]]
+    )
+    xlsx_rows = parse_allowlist_file(filename="a.xlsx", content=xlsx)
+    assert [(r.student_number, r.display_name) for r in xlsx_rows] == [
+        ("2024141460192", "黄俊杰"),
+        ("2024141460472", "付明煜"),
+    ]
+
+    # Spoofed extension is rejected cleanly
+    with pytest.raises(AllowlistError, match="CSV、XLSX、XLS、PDF"):
+        parse_allowlist_file(filename="名单.xlsx", content=FIXTURE_XLS.read_bytes())
+
+    # Real BIFF XLS is parsed cleanly (and rejects non-13-digit student numbers cleanly)
+    with pytest.raises(AllowlistError, match="13 位数字"):
+        parse_allowlist_file(filename="synthetic.xls", content=FIXTURE_XLS.read_bytes())

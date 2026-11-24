@@ -86,7 +86,7 @@ export function RegistrationAllowlistPanel() {
             <input
               ref={fileInputRef}
               type="file"
-              accept=".csv,text/csv"
+              accept=".csv,.xlsx,.xls,.pdf,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,application/pdf"
               data-testid="allowlist-add-input"
               hidden
               onChange={pickFile}

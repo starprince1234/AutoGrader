@@ -295,16 +295,19 @@ export interface paths {
         get: operations["getRegistrationAllowlist"];
         put?: never;
         /**
-         * Replace the registration allowlist from a CSV file (admin only)
-         * @description The CSV carries the identity anchor used by self-service registration: a
-         *     `姓名`/`学号` header (a `name`/`student_number` header is accepted too) and one
-         *     row per student. The upload **replaces** the allowlist in one transaction: rows
-         *     absent from the new file can no longer register, and previous batches stay
-         *     recorded for traceability.
+         * Add or replace a class registration allowlist from CSV, XLSX, XLS, or PDF (admin only)
+         * @description The uploaded roster file (CSV, XLSX, XLS, or text-based PDF) carries the identity
+         *     anchor used by self-service registration: a `姓名`/`学号` header (a `name`/
+         *     `student_number` header is accepted too, including with leading course metadata rows
+         *     and multi-page PDF headers/footers) and one row per student. Uploading for the
+         *     same class name (`filename` without extension) **replaces** that class's allowlist
+         *     in one transaction: rows absent from the new file can no longer register, and previous
+         *     batches stay recorded for traceability.
          *
-         *     Encoding: UTF-8 (with or without BOM) or GBK/GB18030. A file that decodes into
-         *     something other than 13-digit student numbers is rejected rather than imported
-         *     partially. Columns are located by header name, never by position.
+         *     Binary formats (XLSX/XLS/PDF) are detected by magic bytes and extension, and CSV
+         *     supports UTF-8 (with or without BOM) or GBK/GB18030. A file containing anything
+         *     other than 13-digit student numbers is rejected rather than imported partially.
+         *     Columns are located by header name, never by position.
          */
         post: operations["addRegistrationAllowlistBatch"];
         delete?: never;

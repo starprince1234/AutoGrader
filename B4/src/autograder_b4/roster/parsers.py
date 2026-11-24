@@ -20,6 +20,7 @@ import math
 import re
 import zipfile
 from collections.abc import Iterable
+from dataclasses import replace
 
 import xlrd
 from openpyxl import load_workbook
@@ -35,6 +36,7 @@ from .table import (
     RosterParseError,
     RosterTable,
     clean_cell,
+    normalize_header,
 )
 
 MEDIA_TYPE_CSV = "text/csv"
@@ -63,6 +65,14 @@ _COURSE_INFO_RE = re.compile(
 _SEMESTER_RE = re.compile(r"(\d{4}-\d{4}学年[^\s选名]*)")
 _INSTRUCTOR_RE = re.compile(r"任课教师[\uff1a:]\s*([^\s]+(?:\s+[^\s]+)*?)(?:\s{2,}|上课|$)")
 _PDF_COL_SPLIT_RE = re.compile(r"\t+|\s{2,}")
+_PDF_PAGE_FOOTER_RE = re.compile(
+    r"^(?:第\s*\d+\s*页(?:\s*/\s*共\s*\d+\s*页)?|page\s+\d+(?:\s*(?:/|of)\s*\d+)?|\d+\s*/\s*\d+)$",
+    re.IGNORECASE,
+)
+_PDF_METADATA_LINE_RE = re.compile(
+    r"^(?:(?:课程信息|上课时间|上课地点|任课教师)[\uff1a:]|\d{4}-\d{4}学年[^\n]*名单)"
+)
+_PDF_STUDENT_NUMBER_HINT_RE = re.compile(r"\d{8,}")
 
 
 class UnsupportedDocument(ValueError):
@@ -458,15 +468,89 @@ def parse_pdf(content: bytes) -> RosterTable:
             "the PDF contains no extractable text (scanned or image-only PDFs are not supported)"
         )
 
+    detected_norm_header: list[str] | None = None
+    extra_metadata_rows: list[list[str]] = []
+    pre_header_seen = 0
+
+    def _norm_cells(cells: list[str]) -> list[str]:
+        return [normalize_header(cell) for cell in _trim_row(cells)]
+
+    def _is_repeated_header(cells: list[str], target_norm: list[str]) -> bool:
+        trimmed = _trim_row(cells)
+        if len(trimmed) < 2:
+            return False
+        norm = [normalize_header(cell) for cell in trimmed]
+        if norm == target_norm:
+            return True
+        non_empty = {cell for cell in norm if cell}
+        return bool(non_empty) and non_empty <= set(target_norm) and is_header_candidate(trimmed)
+
     def _iter_rows() -> Iterable[tuple[int, list[str], set[int], set[int]]]:
+        nonlocal detected_norm_header, pre_header_seen
         for index, line in enumerate(lines, start=1):
             if not line:
+                if detected_norm_header is None:
+                    pre_header_seen += 1
                 yield index, [], set(), set()
                 continue
+            if _PDF_PAGE_FOOTER_RE.match(line):
+                continue
+
             parts = [clean_cell(part) for part in _PDF_COL_SPLIT_RE.split(line)]
+            if detected_norm_header is None:
+                if pre_header_seen < HEADER_SCAN_LIMIT:
+                    if len(parts) == 1 and not _PDF_METADATA_LINE_RE.match(line):
+                        ws_parts = [clean_cell(part) for part in line.split()]
+                        if len(ws_parts) >= 2 and is_header_candidate(ws_parts):
+                            parts = ws_parts
+                    if is_header_candidate(parts):
+                        detected_norm_header = _norm_cells(parts)
+                    pre_header_seen += 1
+                yield index, parts, set(), set()
+                continue
+
+            if _PDF_METADATA_LINE_RE.match(line):
+                extra_metadata_rows.append([line])
+                continue
+            if _is_repeated_header(parts, detected_norm_header):
+                continue
+            if len(parts) == 1:
+                ws_parts = [clean_cell(part) for part in line.split()]
+                if _is_repeated_header(ws_parts, detected_norm_header):
+                    continue
+                if len(ws_parts) >= 2 and (
+                    len(ws_parts) >= min(len(detected_norm_header), 3)
+                    or any(_PDF_STUDENT_NUMBER_HINT_RE.search(token) for token in ws_parts)
+                ):
+                    parts = ws_parts
+                elif len(detected_norm_header) >= 3 and not _PDF_STUDENT_NUMBER_HINT_RE.search(
+                    parts[0]
+                ):
+                    continue
             yield index, parts, set(), set()
 
-    return _build_table_from_rows(_iter_rows())
+    table = _build_table_from_rows(_iter_rows())
+    if extra_metadata_rows:
+        merged = _merge_metadata(table.metadata, _extract_document_metadata(extra_metadata_rows))
+        if merged != table.metadata:
+            table = replace(table, metadata=merged)
+    return table
+
+
+def _merge_metadata(
+    primary: DocumentMetadata | None, secondary: DocumentMetadata | None
+) -> DocumentMetadata | None:
+    if primary is None:
+        return secondary
+    if secondary is None:
+        return primary
+    return DocumentMetadata(
+        course_name=primary.course_name or secondary.course_name,
+        course_code=primary.course_code or secondary.course_code,
+        section_code=primary.section_code or secondary.section_code,
+        semester=primary.semester or secondary.semester,
+        instructor=primary.instructor or secondary.instructor,
+    )
 
 
 def _blank_note(blank: int) -> tuple[str, ...]:
