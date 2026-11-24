@@ -260,7 +260,10 @@ class SinkHandler(logging.Handler):
                 "event": "logs.sink.degraded",
                 "outcome": "degraded",
                 "error_type": type(error).__name__,
-                "error_detail": str(error)[:160],
+                # `detail` is the field the log normalizer keeps as free text; a custom
+                # `error_detail` key is dropped by redaction, which is how the first version of
+                # this event reported a type but no reason.
+                "detail": str(error)[:280],
             },
         )
 
