@@ -242,7 +242,7 @@ def test_single_pass_provider_builds_the_whole_candidate_in_one_call(monkeypatch
                         "expected_stdout": f"{2 * i + 1}\n",
                         "expected_exit_code": 0,
                     }
-                    for i in range(1, 11)
+                    for i in range(1, 13)
                 ],
             },
             TokenUsage(490, 400, 890),
@@ -276,6 +276,8 @@ def test_single_pass_provider_builds_the_whole_candidate_in_one_call(monkeypatch
     # the edge's request budget so a slow provider becomes a retryable 502, never a 524.
     assert calls[0]["deadline_seconds"] <= 90.0
     assert "b3-draft-generation-v5-fast-single-pass" in calls[0]["user_prompt"]
+    assert "1+12" in calls[0]["user_prompt"]
+    assert "EXACTLY 12" in calls[0]["user_prompt"]
     assert "Single pass" in calls[0]["user_prompt"]
     assert "计算两个整数之和" in calls[0]["user_prompt"]
     assert (answer.usage.prompt_tokens, answer.usage.completion_tokens, answer.usage.total_tokens) == (
