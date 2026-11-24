@@ -227,6 +227,12 @@ def test_the_report_accounts_for_every_module_exactly_once(api, monkeypatch):
             assert item["layer"] == name
             assert item["module"] in insights.MODULES
             assert item["title"].strip() and item["detail"].strip()
+    # "Nothing to do" is null, not an empty sentence the panel would have to second-guess.
+    assert all(
+        item["suggestion"] is None or item["suggestion"].strip()
+        for name in layers
+        for item in layers[name]
+    )
 
 
 def test_the_facts_given_to_the_model_are_measured_and_scoped(api, monkeypatch):
@@ -261,6 +267,10 @@ def test_the_facts_given_to_the_model_are_measured_and_scoped(api, monkeypatch):
     # levers, so they are pinned: the operator waits for this button.
     assert captured["kwargs"]["deadline_seconds"] <= 45
     assert captured["kwargs"]["max_output_tokens"] <= 800
+    # One retry, and a floor low enough that a ~17 s answer still gets a second chance inside
+    # the 45 s budget: a cut-off answer costs one extra call, never a failed click.
+    assert captured["kwargs"]["max_attempts"] == 2
+    assert captured["kwargs"]["min_retry_seconds"] <= 20
     # The prompt tells the model to translate jargon instead of quoting it back.
     assert "level=" in captured["system_prompt"]
     assert "禁止" in captured["system_prompt"]

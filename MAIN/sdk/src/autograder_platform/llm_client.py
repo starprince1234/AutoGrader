@@ -302,6 +302,7 @@ def complete_json(
     timeout_seconds: float | None = None,
     max_attempts: int = 1,
     deadline_seconds: float | None = None,
+    min_retry_seconds: float = MIN_RETRY_SECONDS,
 ) -> tuple[Mapping[str, Any], TokenUsage]:
     """Call the provider and return ``(json object, usage)``.
 
@@ -310,6 +311,10 @@ def complete_json(
     retry only helps when there is time left for it, and a slow attempt must not eat the budget a
     second attempt was supposed to have (measured in production: without a shared deadline a
     retried call ran 155 s and the browser saw an edge `524` instead of any answer).
+
+    ``min_retry_seconds`` is how much budget a retry needs to be worth attempting. The default
+    (40 s) is tuned for a single large answer; a caller whose answer takes ~15 s can pass a
+    lower floor, because for it a 20 s retry is a real chance rather than a guaranteed timeout.
 
     Failures raise :class:`LlmCallError` with a *classification*, never with the response
     body: ``configuration`` / ``network`` / ``timeout`` / ``http_<status>`` / ``response_error``
@@ -347,8 +352,8 @@ def complete_json(
                     str(exc),
                     usage=combine_usage(*accumulated) if accumulated else exc.usage,
                 ) from exc
-            if deadline is not None and deadline - time.monotonic() < MIN_RETRY_SECONDS:
-                # A retry shorter than MIN_RETRY_SECONDS is a guaranteed second timeout; report
+            if deadline is not None and deadline - time.monotonic() < min_retry_seconds:
+                # A retry shorter than the caller's floor is a guaranteed second timeout; report
                 # the first failure now so the caller can answer inside its own budget.
                 raise LlmCallError(
                     exc.category,

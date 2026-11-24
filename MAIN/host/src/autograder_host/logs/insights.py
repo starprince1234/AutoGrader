@@ -51,6 +51,11 @@ MAX_OUTPUT_TOKENS = 800
 #: shorter than the previous 60 s so a slow provider fails fast enough to retry by hand.
 DEADLINE_SECONDS = 45.0
 
+#: One retry inside that budget. A cut-off JSON answer (the model occasionally truncates) is
+#: worth resending; a slow one is not, so the retry also needs MIN_RETRY_SECONDS of room.
+MAX_ATTEMPTS = 2
+MIN_RETRY_SECONDS = 15.0
+
 _SYSTEM_PROMPT = (
     "你是 AutoGrader 的运维助手，读者是不懂技术的教务老师或管理员。"
     "你要用**日常中文**告诉他：平台现在能不能用、哪里不对劲、他该做什么。\n"
@@ -68,6 +73,8 @@ _SYSTEM_PROMPT = (
     "5. 每个模块 B1、B2、B3、B4、B5、MAIN 恰好出现在四层之一："
     "critical（用户现在用不了 / 可能丢数据）、warning（用户会碰到但不影响整体）、"
     "notice（苗头、趋势、偶发）、healthy（没发现问题）。没问题的模块放 healthy，别漏也别重复。\n"
+    "5b. 结论要和分层一致：只要 critical / warning / notice 里有任何一条，summary 就不能说"
+    "「全部正常」「都没问题」，要如实说「整体可用，但…」。\n"
     "6. 只输出一个 JSON 对象，不要 markdown、不要解释："
     '{"summary": "...", "layers": {"critical": [], "warning": [], "notice": [], "healthy": []}}；'
     "每个条目是 {\"layer\", \"module\", \"title\", \"detail\", \"suggestion\"}。\n"
@@ -111,6 +118,10 @@ def generate_report(
             user_prompt=user_prompt,
             max_output_tokens=MAX_OUTPUT_TOKENS,
             deadline_seconds=DEADLINE_SECONDS,
+            # One retry, and only while a second ~17 s answer still fits: a cut-off JSON answer
+            # is worth resending, a slow one is not.
+            max_attempts=MAX_ATTEMPTS,
+            min_retry_seconds=MIN_RETRY_SECONDS,
         )
     except LlmCallError as error:
         # The category is safe to return; provider text and request bodies are not.
@@ -306,10 +317,13 @@ def _finding(
     detail: str,
     suggestion: Any = None,
 ) -> dict[str, Any]:
+    # A blank string is not a suggestion: the panel shows nothing for it, and "there is nothing
+    # to do" belongs in the contract as null rather than as an empty sentence.
+    cleaned = suggestion.strip() if isinstance(suggestion, str) else None
     return {
         "layer": layer,
         "module": module,
         "title": title,
         "detail": detail,
-        "suggestion": suggestion if isinstance(suggestion, str) else None,
+        "suggestion": cleaned or None,
     }
