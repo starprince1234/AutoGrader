@@ -257,13 +257,19 @@ def test_the_facts_given_to_the_model_are_measured_and_scoped(api, monkeypatch):
     # Measured facts travel: the seeded failures are in the prompt by event name and count.
     assert "evaluation.run.failed" in prompt
     assert '"occurrences": 2' in prompt
-    # The answer stays inside the edge's budget and the ledger's token ceiling.
-    assert captured["kwargs"]["deadline_seconds"] <= 60
-    assert captured["kwargs"]["max_output_tokens"] <= 2000
+    # The answer stays inside the edge's budget and the ledger's token ceiling. Both are latency
+    # levers, so they are pinned: the operator waits for this button.
+    assert captured["kwargs"]["deadline_seconds"] <= 45
+    assert captured["kwargs"]["max_output_tokens"] <= 800
+    # The prompt tells the model to translate jargon instead of quoting it back.
+    assert "level=" in captured["system_prompt"]
+    assert "禁止" in captured["system_prompt"]
     # Nothing that identifies a submission or a course travels: no UUIDs at all.
     assert ids["submission_a"] not in prompt
     assert ids["course_a"] not in prompt
     assert ids["course_b"] not in prompt
+    # A release directory in a plugin's health text is redacted before it can be quoted back.
+    assert "/opt/autograder" not in prompt
 
     # A teacher scoped to one course does not see the other course's failure in their facts.
     teacher = _sign_token(
@@ -290,6 +296,91 @@ def test_the_facts_given_to_the_model_are_measured_and_scoped(api, monkeypatch):
     assert "evaluation.run.failed" in scoped["user_prompt"]
     assert '"occurrences": 3' not in scoped["user_prompt"]
     assert '"occurrences": 2' in scoped["user_prompt"]
+
+
+def test_only_the_largest_problems_travel_and_paths_are_redacted(api, monkeypatch):
+    """Latency and readability have the same lever: send less, and send nothing unreadable.
+
+    A 24 h window groups into hundreds of (module, event, level) rows; listing them all made the
+    call slow and the report technical. The top few plus per-module totals keep the magnitude.
+    """
+    client, engine, headers, _key = api
+    now = datetime.now(UTC)
+    rows = [
+        {
+            "occurred_at": now - timedelta(minutes=index + 1),
+            "level": "warn",
+            "event": f"demo.noise_{index:02d}",
+            "producer": "B2",
+            "process": "worker",
+            "request_id": None,
+            "correlation_id": None,
+            "course_id": None,
+            "submission_id": None,
+            "fields": {},
+            "truncated": False,
+            "approx_bytes": 80,
+        }
+        for index in range(20)
+    ]
+    rows.append(
+        {
+            "occurred_at": now - timedelta(minutes=1),
+            "level": "info",
+            "event": "demo.info_noise",
+            "producer": "B2",
+            "process": "worker",
+            "request_id": None,
+            "correlation_id": None,
+            "course_id": None,
+            "submission_id": None,
+            "fields": {},
+            "truncated": False,
+            "approx_bytes": 80,
+        }
+    )
+    with engine.begin() as conn:
+        conn.execute(log_events.insert(), rows)
+
+    # A plugin whose health text names a release directory: the report must not quote it.
+    client.app.state.modules = [
+        _FakeModule("B2", healthy=True, detail="worker idle"),
+        _FakeModule("B3", healthy=True, detail="question bank ready"),
+        _FakeModule("B4", healthy=True, detail="identity ready"),
+        _FakeModule(
+            "B5",
+            healthy=True,
+            detail="103 contract paths under /opt/autograder/releases/abcdef-1/MAIN/contracts",
+        ),
+    ]
+    captured: dict = {}
+    _fake_provider(
+        monkeypatch,
+        {
+            "summary": "整体正常。",
+            "layers": {
+                "critical": [],
+                "warning": [],
+                "notice": [],
+                "healthy": [
+                    _finding("healthy", module, f"{module} 未见异常", "窗口内没有异常记录。")
+                    for module in insights.MODULES
+                ],
+            },
+        },
+        captured,
+    )
+
+    response = client.post("/api/v1/ops/insights", headers=headers)
+    assert response.status_code == 200, response.text
+    prompt = captured["user_prompt"]
+
+    assert prompt.count('"event"') <= insights.MAX_EVENT_GROUPS
+    assert "demo.info_noise" not in prompt  # info rows are not enumerated at all
+    # The magnitude survives even though the long tail does not: B2's totals are present.
+    assert '"warn_total": 20' in prompt
+    assert "/opt/autograder" not in prompt
+    assert "（部署目录）" in prompt
 
 
 def test_an_unconfigured_deployment_is_a_state_not_an_error(api, monkeypatch):

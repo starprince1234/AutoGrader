@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -24,24 +25,60 @@ from autograder_platform.llm_client import (
 )
 
 from .auth import LogPrincipal, OpsLogAuthError
-from .redaction import rfc3339_millis
+from .redaction import rfc3339_millis, sanitize_text
 from .schema import log_events
 
 WINDOW_HOURS = 24
-OPS_INSIGHT_PROMPT_VERSION = "ops-insights-v1"
+OPS_INSIGHT_PROMPT_VERSION = "ops-insights-v2-plain"
 
 #: Every module the report must mention. B1 and MAIN do not expose a plugin health endpoint
 #: in this host, so they are rendered as healthy unless the model reports otherwise.
 MODULES: tuple[str, ...] = ("B1", "B2", "B3", "B4", "B5", "MAIN")
 LAYERS: tuple[str, ...] = ("critical", "warning", "notice", "healthy")
 
+#: How many distinct warn/error event kinds travel to the model. The answer only needs the
+#: biggest few: a 24 h window can group into hundreds of (module, event, level) rows, and sending
+#: all of them bought nothing the reader could use while making every call slower (the prompt is
+#: the input half of the latency) and the report more technical.
+MAX_EVENT_GROUPS = 10
+
+#: The answer is a short report: three fields per module, four layers, ~200 Chinese characters
+#: in total. A tight ceiling is also the biggest single latency lever -- output tokens are what
+#: the model spends its time producing.
+MAX_OUTPUT_TOKENS = 800
+
+#: Wall-clock budget for the whole call. Well inside the edge's ~100 s request budget, and
+#: shorter than the previous 60 s so a slow provider fails fast enough to retry by hand.
+DEADLINE_SECONDS = 45.0
+
 _SYSTEM_PROMPT = (
-    "你是 AutoGrader 的运维分析助手。根据给定的、已经去标识化的运行事实写一份中文报告。"
-    "只能使用输入中的事实；不要编造日志、课程、学生或分数。"
-    "把每个模块恰好放进 critical / warning / notice / healthy 四层中的一层。"
-    "返回 JSON：{\"summary\": string, \"layers\": {\"critical\": [...], "
-    "\"warning\": [...], \"notice\": [...], \"healthy\": [...]}}；"
-    "每个条目必须是 {\"layer\", \"module\", \"title\", \"detail\", \"suggestion\"}。"
+    "你是 AutoGrader 的运维助手，读者是不懂技术的教务老师或管理员。"
+    "你要用**日常中文**告诉他：平台现在能不能用、哪里不对劲、他该做什么。\n"
+    "硬性要求（违反即视为错误）：\n"
+    "1. 只使用给定事实；不编造事件、模块、原因或处理办法。事实解释不了的，就说"
+    "「原因不明」，不要猜。\n"
+    "2. **禁止出现技术黑话**：不要写英文事件名（request.failed、api_error、auth.token_rejected"
+    " 等）、不要写 `level=error`、不要写代码标识符（如 JWKS）、不要写服务器路径（如 /opt/…）"
+    "、不要写 UUID。必须提到某个技术名词时，先用中文说清它是什么，"
+    "例如把 auth.token_rejected 说成「登录凭证被拒绝」、把 evaluation.run_failed 说成"
+    "「一次作业评测没跑完」。\n"
+    "3. 每条：title（≤24 字，说清哪个模块 + 用户会遇到什么）、detail（≤80 字，一句人话，"
+    "说清影响和次数）、suggestion（≤60 字，一个具体动作；没事可做就给 null）。\n"
+    "4. summary ≤100 字：先给结论（能不能正常用），再说最值得注意的一件事。\n"
+    "5. 每个模块 B1、B2、B3、B4、B5、MAIN 恰好出现在四层之一："
+    "critical（用户现在用不了 / 可能丢数据）、warning（用户会碰到但不影响整体）、"
+    "notice（苗头、趋势、偶发）、healthy（没发现问题）。没问题的模块放 healthy，别漏也别重复。\n"
+    "6. 只输出一个 JSON 对象，不要 markdown、不要解释："
+    '{"summary": "...", "layers": {"critical": [], "warning": [], "notice": [], "healthy": []}}；'
+    "每个条目是 {\"layer\", \"module\", \"title\", \"detail\", \"suggestion\"}。\n"
+    "对照示例——\n"
+    "反面（太技术，读者看不懂）：title「api_error 警告 108 次」，"
+    "detail「B1 模块产生 108 次 level=warn 的 api_error 事件，与 request.completed 5031 次"
+    "相比占比约 2%」。\n"
+    "正面：title「B1：前端有 108 次请求没成功」，"
+    "detail「近 24 小时里用户打开页面时偶尔会加载不出内容，重试一般能好；这是本次最多的告警」，"
+    "suggestion「先看集中在哪几个页面，把那几个页面修掉」。\n"
+    "读者看完应该知道：现在能不能用、哪里有问题、下一步做什么。"
 )
 
 
@@ -72,8 +109,8 @@ def generate_report(
             config=config,
             system_prompt=_SYSTEM_PROMPT,
             user_prompt=user_prompt,
-            max_output_tokens=2000,
-            deadline_seconds=60,
+            max_output_tokens=MAX_OUTPUT_TOKENS,
+            deadline_seconds=DEADLINE_SECONDS,
         )
     except LlmCallError as error:
         # The category is safe to return; provider text and request bodies are not.
@@ -124,12 +161,34 @@ def _config_from_environment() -> LlmConfig | None:
     )
 
 
+_PATH_RE = re.compile(r"/[A-Za-z0-9._\-/]{4,}")
+
+
+def _plain_detail(text: str) -> str:
+    """Strip things a non-engineer cannot read from a health sentence.
+
+    A plugin's health text is written for operators: it names release directories and contract
+    paths ("103 contract paths under /opt/autograder/releases/<sha>/MAIN/contracts"). The model
+    copies what it is given, so the report ended up quoting paths at a teacher. Redacting the
+    paths here -- not in the prompt -- is what makes that impossible rather than discouraged.
+    """
+    cleaned = _PATH_RE.sub("（部署目录）", sanitize_text(text, max_length=160))
+    return cleaned.strip()
+
+
 def _facts(
     engine: sa.Engine,
     principal: LogPrincipal,
     modules: Sequence[Any],
     contexts: Mapping[str, Any],
 ) -> dict[str, Any]:
+    """The measured picture, small on purpose.
+
+    Only warn/error rows and only the largest few of them travel: a 24 h window groups into
+    hundreds of (module, event, level) rows, most of them info level, and none of the long tail
+    changes the conclusion. Per-module totals keep the magnitude visible even when an event kind
+    is not in the top list, so "smaller is faster" does not become "smaller is blind".
+    """
     since = datetime.now(UTC) - timedelta(hours=WINDOW_HOURS)
     occurrences = sa.func.count().label("occurrences")
     query = (
@@ -139,35 +198,62 @@ def _facts(
             log_events.c.level,
             occurrences,
         )
-        .where(log_events.c.occurred_at >= since)
+        .where(log_events.c.occurred_at >= since, log_events.c.level.in_(("warn", "error")))
         .group_by(log_events.c.producer, log_events.c.event, log_events.c.level)
         .order_by(sa.desc(occurrences))
+        .limit(MAX_EVENT_GROUPS)
     )
+    totals_query = sa.select(
+        log_events.c.producer,
+        sa.func.sum(sa.case((log_events.c.level == "warn", 1), else_=0)).label("warn_total"),
+        sa.func.sum(sa.case((log_events.c.level == "error", 1), else_=0)).label("error_total"),
+        sa.func.count().label("event_total"),
+    ).where(log_events.c.occurred_at >= since).group_by(log_events.c.producer)
     if not principal.is_admin:
-        query = query.where(log_events.c.course_id.in_(sorted(principal.scoped_course_ids)))
+        scoped = log_events.c.course_id.in_(sorted(principal.scoped_course_ids))
+        query = query.where(scoped)
+        totals_query = totals_query.where(scoped)
     with engine.connect() as connection:
         event_rows = connection.execute(query).mappings().all()
+        total_rows = connection.execute(totals_query).mappings().all()
 
+    totals = {
+        str(row["producer"]): {
+            "warn_total": int(row["warn_total"] or 0),
+            "error_total": int(row["error_total"] or 0),
+            "event_total": int(row["event_total"] or 0),
+        }
+        for row in total_rows
+    }
     module_facts: list[dict[str, Any]] = []
     for item in modules:
         name = str(item.descriptor.module)
+        counts = totals.get(name, {"warn_total": 0, "error_total": 0, "event_total": 0})
         try:
             report = item.health(contexts.get(name))
             module_facts.append(
                 {
                     "module": name,
                     "healthy": bool(report.healthy),
-                    "detail": str(report.detail),
+                    "detail": _plain_detail(str(report.detail)),
+                    **counts,
                 }
             )
         except Exception:  # noqa: BLE001 - a probe failure is itself a fact
-            module_facts.append({"module": name, "healthy": False, "detail": "健康检查不可用"})
+            module_facts.append(
+                {
+                    "module": name,
+                    "healthy": False,
+                    "detail": "这个模块的健康检查没有响应",
+                    **counts,
+                }
+            )
 
     return {
         "window_hours": WINDOW_HOURS,
-        "events": [
+        "biggest_warn_error_events": [
             {
-                "producer": str(row["producer"]),
+                "module": str(row["producer"]),
                 "event": str(row["event"]),
                 "level": str(row["level"]),
                 "occurrences": int(row["occurrences"]),
@@ -180,10 +266,11 @@ def _facts(
 
 def _user_prompt(facts: Mapping[str, Any]) -> str:
     return (
-        "以下是最近 "
-        f"{WINDOW_HOURS} 小时的去标识化运行事实（只有事件名、级别、次数与模块健康）：\n"
+        f"最近 {WINDOW_HOURS} 小时的运行情况（已去标识化：只有模块健康、每个模块的告警/错误"
+        "次数、以及告警和错误里最大的几项；`occurrences` 是次数）：\n"
         + json.dumps(facts, ensure_ascii=False, sort_keys=True)
-        + "\n请按系统提示返回 JSON 报告。"
+        + "\n请写给人看的报告：不要出现英文事件名、level=、路径或代码标识符；"
+        "把每件事都翻译成「用户会遇到什么」。只输出 JSON。"
     )
 
 
