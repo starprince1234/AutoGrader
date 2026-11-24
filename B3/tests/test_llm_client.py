@@ -422,3 +422,120 @@ def test_urlerror_wrapping_timeout_is_classified_as_timeout(monkeypatch):
             user_prompt="USER",
         )
     assert error.value.category == "timeout"
+
+
+def test_complete_json_reserves_budget_for_retry_when_attempt_timeout_is_unset(monkeypatch):
+    from autograder_platform import llm_client
+
+    timeouts: list[float | None] = []
+    outcomes = [
+        LlmCallError("timeout", "first attempt hung"),
+        ({"ok": True}, llm_client.TokenUsage(1, 1, 2)),
+    ]
+
+    def fake_once(*, config, system_prompt, user_prompt, max_output_tokens, timeout_seconds):  # noqa: ARG001
+        timeouts.append(timeout_seconds)
+        outcome = outcomes.pop(0)
+        if isinstance(outcome, LlmCallError):
+            raise outcome
+        return outcome
+
+    monkeypatch.setattr(llm_client, "_complete_json_once", fake_once)
+    # 85 s deadline, 25 s min_retry_seconds -> attempt 1 capped at 60 s so >= 25 s stays for retry.
+    clock = iter([0.0, 0.0, 60.0, 60.0])
+    monkeypatch.setattr(llm_client.time, "monotonic", lambda: next(clock))
+
+    document, _usage = complete_json(
+        config=LlmConfig(base_url="https://api.xiaomimimo.com", model="m", api_key="k"),
+        system_prompt="SYS",
+        user_prompt="USER",
+        max_attempts=2,
+        deadline_seconds=85.0,
+        min_retry_seconds=25.0,
+    )
+    assert document == {"ok": True}
+    assert timeouts[0] == pytest.approx(60.0)
+    assert timeouts[1] == pytest.approx(25.0)
+
+
+def test_xiaomi_mimo_tries_direct_before_proxy_and_fails_over_on_timeout(monkeypatch):
+    from autograder_platform import llm_client
+
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:7893")
+    calls: list[bool] = []
+
+    def fake_once(
+        *,
+        config,  # noqa: ARG001
+        system_prompt,  # noqa: ARG001
+        user_prompt,  # noqa: ARG001
+        max_output_tokens,  # noqa: ARG001
+        timeout_seconds,  # noqa: ARG001
+        bypass_proxy=False,
+    ):
+        calls.append(bypass_proxy)
+        if len(calls) == 1:
+            raise LlmCallError("timeout", "direct path timed out")
+        return {"ok": True}, llm_client.TokenUsage(10, 5, 15)
+
+    monkeypatch.setattr(llm_client, "_complete_json_once", fake_once)
+    document, usage = complete_json(
+        config=LlmConfig(
+            base_url="https://api.xiaomimimo.com",
+            model="m",
+            api_key="k",
+            provider_name="xiaomi-mimo",
+        ),
+        system_prompt="SYS",
+        user_prompt="USER",
+        max_attempts=2,
+        deadline_seconds=85.0,
+        min_retry_seconds=25.0,
+    )
+    assert document == {"ok": True}
+    assert calls == [True, False]
+    assert usage.total_tokens == 15
+
+
+def test_exchange_with_deadline_uses_empty_proxy_handler_when_bypass_proxy_enabled(monkeypatch):
+    import urllib.request
+    from autograder_platform import llm_client
+
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:7893")
+    monkeypatch.setattr(llm_client, "_STDLIB_URLOPEN", urllib.request.urlopen)
+
+    captured: list[object] = []
+
+    class _FakeResp:
+        def read(self) -> bytes:
+            return b'{"status":"completed","output_text":"{\\"ok\\":true}"}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args) -> None:
+            return None
+
+    class _FakeOpener:
+        def open(self, request, timeout=None):  # noqa: ARG002
+            return _FakeResp()
+
+    def fake_proxy_handler(proxies):
+        captured.append(proxies)
+        return proxies
+
+    monkeypatch.setattr(llm_client.urllib.request, "ProxyHandler", fake_proxy_handler)
+    monkeypatch.setattr(llm_client.urllib.request, "build_opener", lambda _handler: _FakeOpener())
+
+    document, _usage = complete_json(
+        config=LlmConfig(
+            base_url="https://api.xiaomimimo.com",
+            model="m",
+            api_key="k",
+            provider_name="xiaomi-mimo",
+        ),
+        system_prompt="SYS",
+        user_prompt="USER",
+    )
+    assert document == {"ok": True}
+    assert captured == [{}]

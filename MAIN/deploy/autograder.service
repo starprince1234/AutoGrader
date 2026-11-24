@@ -15,8 +15,8 @@ Environment=HTTP_PROXY=http://127.0.0.1:7893
 Environment=HTTPS_PROXY=http://127.0.0.1:7893
 Environment=http_proxy=http://127.0.0.1:7893
 Environment=https_proxy=http://127.0.0.1:7893
-Environment=NO_PROXY=localhost,127.0.0.1,::1
-Environment=no_proxy=localhost,127.0.0.1,::1
+Environment=NO_PROXY=localhost,127.0.0.1,::1,api.xiaomimimo.com
+Environment=no_proxy=localhost,127.0.0.1,::1,api.xiaomimimo.com
 ExecStart=/opt/autograder/current/MAIN/.venv/bin/uvicorn autograder_host.main:app --host 127.0.0.1 --port 18000 --workers 1
 Restart=on-failure
 RestartSec=5s

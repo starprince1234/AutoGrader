@@ -240,6 +240,7 @@ def request_generation(
         answer = resolved.generate(payload=outbound)
     except DraftGenerationProviderError as error:
         elapsed_ms = int((time.perf_counter() - started) * 1000)
+        failure_category = error.provider_category or "provider"
         # The paid attempt is recorded even though no candidate exists: "the model was called
         # and failed" is what the ledger is for. The error text is a classification, never
         # the provider body.
@@ -256,13 +257,13 @@ def request_generation(
                 requested_at=now,
                 duration_ms=elapsed_ms,
                 status="failed",
-                error_category="provider",
+                error_category=failure_category,
             )
         log_event(
             get_logger("domain.draft_generation"),
             "question.draft.generation_failed",
             course_id=str(course_id),
-            error_category="provider",
+            error_category=failure_category,
             duration_ms=elapsed_ms,
         )
         raise error

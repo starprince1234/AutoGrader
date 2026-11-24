@@ -270,9 +270,12 @@ def test_single_pass_provider_builds_the_whole_candidate_in_one_call(monkeypatch
     assert len(calls) == 1
     assert calls[0]["max_attempts"] == 2
     assert calls[0]["max_output_tokens"] == 8192
+    assert calls[0]["timeout_seconds"] == 45.0
+    assert calls[0]["min_retry_seconds"] == 25.0
     # The whole exchange (retries included) is bounded by one deadline, and it must stay inside
     # the edge's request budget so a slow provider becomes a retryable 502, never a 524.
     assert calls[0]["deadline_seconds"] <= 90.0
+    assert "b3-draft-generation-v5-fast-single-pass" in calls[0]["user_prompt"]
     assert "Single pass" in calls[0]["user_prompt"]
     assert "计算两个整数之和" in calls[0]["user_prompt"]
     assert (answer.usage.prompt_tokens, answer.usage.completion_tokens, answer.usage.total_tokens) == (
@@ -391,3 +394,33 @@ def test_single_pass_provider_drops_unusable_cases_instead_of_paying_for_a_repai
     assert outcome.proposal.adapter.callable_arguments_json is None
     assert outcome.proposal.cases[0].args == ("3", "5")
     assert answer.usage.total_tokens == 20
+
+
+def test_provider_error_preserves_classified_category(monkeypatch):
+    from autograder_b3.draft_generation import (
+        DraftGenerationProviderError,
+        ResponsesDraftGenerationProvider,
+        build_generation_payload,
+    )
+    from autograder_platform.llm_client import LlmCallError, LlmConfig
+    import autograder_b3.draft_generation as dg_mod
+
+    def failing_complete_json(**_kwargs):
+        raise LlmCallError("timeout", "exceeded budget")
+
+    monkeypatch.setattr(dg_mod, "complete_json", failing_complete_json)
+    provider = ResponsesDraftGenerationProvider(
+        LlmConfig(base_url="https://api.xiaomimimo.com", model="m", api_key="k")
+    )
+    payload = build_generation_payload(
+        learning_objective="实现加法函数",
+        language="python",
+        adapter_kind="stdin",
+        difficulty="简单",
+        tags=[],
+        desired_reference_tiers=2,
+    )
+    with pytest.raises(DraftGenerationProviderError) as exc:
+        provider.generate(payload=payload)
+    assert exc.value.provider_category == "timeout"
+    assert "timeout" in exc.value.detail

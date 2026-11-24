@@ -27,7 +27,9 @@ request, and the request carries the teacher's own text.
 from __future__ import annotations
 
 import http.client
+import inspect
 import json
+import os
 import threading
 import time
 import urllib.error
@@ -53,6 +55,15 @@ _RETRYABLE_CATEGORIES = frozenset(
 #: A retry shorter than this is a guaranteed second timeout, so it is not attempted: reporting
 #: the first failure immediately is what keeps a synchronous request inside its own budget.
 MIN_RETRY_SECONDS = 40.0
+
+_STDLIB_URLOPEN = urllib.request.urlopen
+
+
+def _has_proxy_env() -> bool:
+    return any(
+        (os.environ.get(name) or "").strip()
+        for name in ("HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy")
+    )
 
 
 @dataclass(frozen=True)
@@ -171,7 +182,12 @@ def build_request_body(
     }
 
 
-def _exchange_with_deadline(request: urllib.request.Request, *, timeout_seconds: float) -> bytes:
+def _exchange_with_deadline(
+    request: urllib.request.Request,
+    *,
+    timeout_seconds: float,
+    bypass_proxy: bool = False,
+) -> bytes:
     """Run the whole HTTP exchange in a worker thread and enforce a wall-clock bound.
 
     ``urlopen(timeout=...)`` bounds a single socket operation and nothing else: the name lookup,
@@ -183,13 +199,20 @@ def _exchange_with_deadline(request: urllib.request.Request, *, timeout_seconds:
 
     The worker is a daemon and owns the response object, so an abandoned attempt closes its socket
     when the exchange finally ends (the socket timeout is the same value, so it cannot linger
-    forever).
+    forever). When ``bypass_proxy`` is enabled and tests have not patched ``urlopen``, it opens
+    the request with an empty ``ProxyHandler({})`` so mainland providers skip a local proxy.
     """
     outcome: dict[str, object] = {}
 
+    def _open_response():
+        if bypass_proxy and _has_proxy_env() and urllib.request.urlopen is _STDLIB_URLOPEN:
+            opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+            return opener.open(request, timeout=timeout_seconds)
+        return urllib.request.urlopen(request, timeout=timeout_seconds)
+
     def worker() -> None:
         try:
-            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+            with _open_response() as response:
                 outcome["body"] = response.read()
         except BaseException as exc:  # noqa: BLE001 - re-raised in the calling thread
             outcome["error"] = exc
@@ -226,6 +249,7 @@ def _complete_json_once(
     user_prompt: str,
     max_output_tokens: int,
     timeout_seconds: float | None,
+    bypass_proxy: bool = False,
 ) -> tuple[Mapping[str, Any], TokenUsage]:
     body = json.dumps(
         build_request_body(
@@ -248,7 +272,9 @@ def _complete_json_once(
     )
     effective_timeout = config.timeout_seconds if timeout_seconds is None else timeout_seconds
     try:
-        raw = _exchange_with_deadline(request, timeout_seconds=effective_timeout).decode("utf-8")
+        raw = _exchange_with_deadline(
+            request, timeout_seconds=effective_timeout, bypass_proxy=bypass_proxy
+        ).decode("utf-8")
     except urllib.error.HTTPError as exc:
         raise LlmCallError(f"http_{exc.code}", f"the provider answered HTTP {exc.code}") from exc
     except (TimeoutError, urllib.error.URLError, http.client.HTTPException, OSError) as exc:
@@ -303,6 +329,7 @@ def complete_json(
     max_attempts: int = 1,
     deadline_seconds: float | None = None,
     min_retry_seconds: float = MIN_RETRY_SECONDS,
+    bypass_proxy: bool | None = None,
 ) -> tuple[Mapping[str, Any], TokenUsage]:
     """Call the provider and return ``(json object, usage)``.
 
@@ -323,6 +350,14 @@ def complete_json(
     attempts = max(1, max_attempts)
     deadline = None if deadline_seconds is None else time.monotonic() + deadline_seconds
     accumulated: list[TokenUsage] = []
+    proxy_configured = _has_proxy_env()
+    active_bypass = (
+        bypass_proxy
+        if bypass_proxy is not None
+        else (config.provider_name == "xiaomi-mimo" and proxy_configured)
+    )
+    supports_bypass_arg = "bypass_proxy" in inspect.signature(_complete_json_once).parameters
+
     for attempt in range(1, attempts + 1):
         per_attempt = timeout_seconds
         if deadline is not None:
@@ -332,15 +367,26 @@ def complete_json(
                     "timeout",
                     "the provider budget was exhausted before another attempt could start",
                 )
-            per_attempt = remaining if per_attempt is None else min(per_attempt, remaining)
+            if (
+                per_attempt is None
+                and attempt < attempts
+                and remaining > min_retry_seconds
+                and (remaining - min_retry_seconds) >= 10.0
+            ):
+                per_attempt = max(min_retry_seconds, remaining - min_retry_seconds)
+            else:
+                per_attempt = remaining if per_attempt is None else min(per_attempt, remaining)
         try:
-            document, usage = _complete_json_once(
-                config=config,
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                max_output_tokens=max_output_tokens,
-                timeout_seconds=per_attempt,
-            )
+            call_kwargs: dict[str, Any] = {
+                "config": config,
+                "system_prompt": system_prompt,
+                "user_prompt": user_prompt,
+                "max_output_tokens": max_output_tokens,
+                "timeout_seconds": per_attempt,
+            }
+            if active_bypass and supports_bypass_arg:
+                call_kwargs["bypass_proxy"] = True
+            document, usage = _complete_json_once(**call_kwargs)
             accumulated.append(usage)
             return document, combine_usage(*accumulated)
         except LlmCallError as exc:
@@ -360,6 +406,8 @@ def complete_json(
                     f"{exc} (no budget left for a retry)",
                     usage=combine_usage(*accumulated) if accumulated else exc.usage,
                 ) from exc
+            if proxy_configured and exc.category in {"timeout", "network"}:
+                active_bypass = not active_bypass
             time.sleep(0.5 if exc.category == "http_429" else 0.15)
     raise AssertionError("unreachable")  # pragma: no cover
 
