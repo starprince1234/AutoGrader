@@ -1625,9 +1625,9 @@ def test_export_headers_and_rows_match_the_contract(
     xlsx = client.get(GRADES_EXPORT, params={"course_id": world.course}, headers=token)
     assert xlsx.status_code == 200, xlsx.text
     assert xlsx.headers["content-type"].startswith(XLSX_MEDIA_TYPE)
-    assert xlsx.headers["content-disposition"] == (
-        f'attachment; filename="grades-{world.course}.xlsx"'
-    )
+    disposition = xlsx.headers["content-disposition"]
+    assert disposition.startswith('attachment; filename="grades.xlsx"; filename*=UTF-8\'\'')
+    assert "%E6%88%90%E7%BB%A9-" in disposition
     sheet = load_workbook(io.BytesIO(xlsx.content)).active
     headers = [header for _, header in GRADE_EXPORT_COLUMNS]
     assert [cell.value for cell in sheet[1]] == headers

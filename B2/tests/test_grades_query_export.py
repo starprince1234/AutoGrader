@@ -656,8 +656,10 @@ def test_export_filename_and_media_types(
     xlsx_file = _export(exporter, principal=teacher, course_id=str(course), fmt="xlsx")
     assert csv_file.media_type == "text/csv"
     assert xlsx_file.media_type.endswith("spreadsheetml.sheet")
-    assert csv_file.filename == f"grades-{course}.csv"
-    assert csv_file.content_disposition == f'attachment; filename="grades-{course}.csv"'
+    assert csv_file.filename.startswith("成绩-")
+    assert csv_file.filename.endswith(".csv")
+    assert "filename*=UTF-8''" in csv_file.content_disposition
+    assert "%E6%88%90%E7%BB%A9-" in csv_file.content_disposition
     assert csv_file.row_count == 0
     with pytest.raises(ValueError, match="format must be one of"):
         _export(exporter, principal=teacher, course_id=str(course), fmt="pdf")
