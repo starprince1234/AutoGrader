@@ -48,13 +48,14 @@ MAX_EVENT_GROUPS = 10
 MAX_OUTPUT_TOKENS = 800
 
 #: Wall-clock budget for the whole call. Well inside the edge's ~100 s request budget, and
-#: shorter than the previous 60 s so a slow provider fails fast enough to retry by hand.
-DEADLINE_SECONDS = 45.0
+#: allows a full retry when Attempt 1 fails quickly or hits a transient upstream hiccup.
+DEADLINE_SECONDS = 65.0
+ATTEMPT_TIMEOUT_SECONDS = 45.0
 
 #: One retry inside that budget. A cut-off JSON answer (the model occasionally truncates) is
 #: worth resending; a slow one is not, so the retry also needs MIN_RETRY_SECONDS of room.
 MAX_ATTEMPTS = 2
-MIN_RETRY_SECONDS = 15.0
+MIN_RETRY_SECONDS = 18.0
 
 _SYSTEM_PROMPT = (
     "你是 AutoGrader 的运维助手，读者是不懂技术的教务老师或管理员。"
@@ -117,8 +118,9 @@ def generate_report(
             system_prompt=_SYSTEM_PROMPT,
             user_prompt=user_prompt,
             max_output_tokens=MAX_OUTPUT_TOKENS,
+            timeout_seconds=ATTEMPT_TIMEOUT_SECONDS,
             deadline_seconds=DEADLINE_SECONDS,
-            # One retry, and only while a second ~17 s answer still fits: a cut-off JSON answer
+            # One retry, and only while a second attempt still fits: a cut-off JSON answer
             # is worth resending, a slow one is not.
             max_attempts=MAX_ATTEMPTS,
             min_retry_seconds=MIN_RETRY_SECONDS,

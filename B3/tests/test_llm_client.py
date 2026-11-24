@@ -441,8 +441,8 @@ def test_complete_json_reserves_budget_for_retry_when_attempt_timeout_is_unset(m
         return outcome
 
     monkeypatch.setattr(llm_client, "_complete_json_once", fake_once)
-    # 85 s deadline, 25 s min_retry_seconds -> attempt 1 capped at 60 s so >= 25 s stays for retry.
-    clock = iter([0.0, 0.0, 60.0, 60.0])
+    # 85 s deadline, 25 s min_retry_seconds + 1 s safety margin -> attempt 1 capped at 59 s so 26 s stays for retry.
+    clock = iter([0.0, 0.0, 59.0, 59.0])
     monkeypatch.setattr(llm_client.time, "monotonic", lambda: next(clock))
 
     document, _usage = complete_json(
@@ -454,8 +454,8 @@ def test_complete_json_reserves_budget_for_retry_when_attempt_timeout_is_unset(m
         min_retry_seconds=25.0,
     )
     assert document == {"ok": True}
-    assert timeouts[0] == pytest.approx(60.0)
-    assert timeouts[1] == pytest.approx(25.0)
+    assert timeouts[0] == pytest.approx(59.0)
+    assert timeouts[1] == pytest.approx(26.0)
 
 
 def test_xiaomi_mimo_tries_direct_before_proxy_and_fails_over_on_timeout(monkeypatch):
@@ -494,6 +494,48 @@ def test_xiaomi_mimo_tries_direct_before_proxy_and_fails_over_on_timeout(monkeyp
     )
     assert document == {"ok": True}
     assert calls == [True, False]
+    assert usage.total_tokens == 15
+
+
+def test_xiaomi_mimo_keeps_direct_on_slow_generation_timeout(monkeypatch):
+    from autograder_platform import llm_client
+
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:7893")
+    calls: list[bool] = []
+
+    def fake_once(
+        *,
+        config,  # noqa: ARG001
+        system_prompt,  # noqa: ARG001
+        user_prompt,  # noqa: ARG001
+        max_output_tokens,  # noqa: ARG001
+        timeout_seconds,  # noqa: ARG001
+        bypass_proxy=False,
+    ):
+        calls.append(bypass_proxy)
+        if len(calls) == 1:
+            raise LlmCallError("timeout", "slow generation attempt timed out")
+        return {"ok": True}, llm_client.TokenUsage(10, 5, 15)
+
+    monkeypatch.setattr(llm_client, "_complete_json_once", fake_once)
+    clock = iter([0.0, 0.0, 45.0, 45.0])
+    monkeypatch.setattr(llm_client.time, "monotonic", lambda: next(clock))
+
+    document, usage = complete_json(
+        config=LlmConfig(
+            base_url="https://api.xiaomimimo.com",
+            model="m",
+            api_key="k",
+            provider_name="xiaomi-mimo",
+        ),
+        system_prompt="SYS",
+        user_prompt="USER",
+        max_attempts=2,
+        deadline_seconds=85.0,
+        min_retry_seconds=25.0,
+    )
+    assert document == {"ok": True}
+    assert calls == [True, True]
     assert usage.total_tokens == 15
 
 

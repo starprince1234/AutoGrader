@@ -270,12 +270,13 @@ def test_single_pass_provider_builds_the_whole_candidate_in_one_call(monkeypatch
     assert len(calls) == 1
     assert calls[0]["max_attempts"] == 2
     assert calls[0]["max_output_tokens"] == 8192
-    assert calls[0]["timeout_seconds"] == 45.0
+    assert calls[0]["timeout_seconds"] == 80.0
     assert calls[0]["min_retry_seconds"] == 25.0
     # The whole exchange (retries included) is bounded by one deadline, and it must stay inside
     # the edge's request budget so a slow provider becomes a retryable 502, never a 524.
     assert calls[0]["deadline_seconds"] <= 90.0
-    assert "b3-draft-generation-v5-fast-single-pass" in calls[0]["user_prompt"]
+    assert "b3-draft-generation-v6-fast-single-pass" in calls[0]["user_prompt"]
+    assert "<= 6 short lines" in calls[0]["system_prompt"]
     assert "1+12" in calls[0]["user_prompt"]
     assert "EXACTLY 12" in calls[0]["user_prompt"]
     assert "Single pass" in calls[0]["user_prompt"]

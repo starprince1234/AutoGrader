@@ -55,6 +55,12 @@ _RETRYABLE_CATEGORIES = frozenset(
 #: A retry shorter than this is a guaranteed second timeout, so it is not attempted: reporting
 #: the first failure immediately is what keeps a synchronous request inside its own budget.
 MIN_RETRY_SECONDS = 40.0
+#: Reserve an extra 1 s margin above ``min_retry_seconds`` when capping Attempt 1 so an Attempt 1
+#: timeout right on its own boundary does not land at ``min_retry_seconds - epsilon`` and abort retry.
+_RETRY_SAFETY_MARGIN_SECONDS = 1.0
+#: Only failover between direct and proxy on fast hangs (< 15 s, e.g. connect/DNS/TLS stalls);
+#: slower generation timeouts already reached the provider and should stay on the direct path.
+_FAST_TIMEOUT_FAILOVER_SECONDS = 15.0
 
 _STDLIB_URLOPEN = urllib.request.urlopen
 
@@ -360,20 +366,24 @@ def complete_json(
 
     for attempt in range(1, attempts + 1):
         per_attempt = timeout_seconds
+        attempt_started: float | None = None
         if deadline is not None:
-            remaining = deadline - time.monotonic()
+            now = time.monotonic()
+            attempt_started = now
+            remaining = deadline - now
             if remaining <= 0.0:
                 raise LlmCallError(
                     "timeout",
                     "the provider budget was exhausted before another attempt could start",
                 )
+            retry_floor_with_margin = min_retry_seconds + _RETRY_SAFETY_MARGIN_SECONDS
             if (
                 per_attempt is None
                 and attempt < attempts
-                and remaining > min_retry_seconds
-                and (remaining - min_retry_seconds) >= 10.0
+                and remaining > retry_floor_with_margin
+                and (remaining - retry_floor_with_margin) >= 10.0
             ):
-                per_attempt = max(min_retry_seconds, remaining - min_retry_seconds)
+                per_attempt = remaining - retry_floor_with_margin
             else:
                 per_attempt = remaining if per_attempt is None else min(per_attempt, remaining)
         try:
@@ -398,15 +408,23 @@ def complete_json(
                     str(exc),
                     usage=combine_usage(*accumulated) if accumulated else exc.usage,
                 ) from exc
-            if deadline is not None and deadline - time.monotonic() < min_retry_seconds:
-                # A retry shorter than the caller's floor is a guaranteed second timeout; report
-                # the first failure now so the caller can answer inside its own budget.
-                raise LlmCallError(
-                    exc.category,
-                    f"{exc} (no budget left for a retry)",
-                    usage=combine_usage(*accumulated) if accumulated else exc.usage,
-                ) from exc
-            if proxy_configured and exc.category in {"timeout", "network"}:
+            attempt_elapsed = 0.0
+            if deadline is not None:
+                failed_at = time.monotonic()
+                if attempt_started is not None:
+                    attempt_elapsed = failed_at - attempt_started
+                if deadline - failed_at < min_retry_seconds:
+                    # A retry shorter than the caller's floor is a guaranteed second timeout; report
+                    # the first failure now so the caller can answer inside its own budget.
+                    raise LlmCallError(
+                        exc.category,
+                        f"{exc} (no budget left for a retry)",
+                        usage=combine_usage(*accumulated) if accumulated else exc.usage,
+                    ) from exc
+            if proxy_configured and (
+                exc.category == "network"
+                or (exc.category == "timeout" and attempt_elapsed < _FAST_TIMEOUT_FAILOVER_SECONDS)
+            ):
                 active_bypass = not active_bypass
             time.sleep(0.5 if exc.category == "http_429" else 0.15)
     raise AssertionError("unreachable")  # pragma: no cover

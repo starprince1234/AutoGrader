@@ -55,7 +55,7 @@ WarningSeverity = Literal["error", "warning", "info"]
 
 #: Bumped whenever the prompt text changes; the response carries it as provenance so a
 #: candidate can always be traced to the instructions that produced it.
-DRAFT_PROMPT_VERSION = "b3-draft-generation-v5-fast-single-pass"
+DRAFT_PROMPT_VERSION = "b3-draft-generation-v6-fast-single-pass"
 
 #: Publish completeness contract (per_case): exactly 1 public example + 10 hidden evaluation cases.
 REQUIRED_PUBLIC_CASES = 1
@@ -90,8 +90,8 @@ _COMBINED_SYSTEM_PROMPT = (
     "Be concise so generation finishes quickly while keeping solutions and test cases exact.\n"
     "REQUIRED fields:\n"
     "- title (string): concise Chinese title.\n"
-    "- stem_markdown (string): crisp Chinese Markdown with brief problem statement (1-2 "
-    "sentences), bulleted I/O format, constraints/edge rules, and concrete Example 1.\n"
+    "- stem_markdown (string): concise Chinese Markdown (<= 500 Chinese chars) with brief "
+    "problem statement (1-2 sentences), bulleted I/O format, constraints/edge rules, and Example 1.\n"
     "- tags (array): 2-4 lowercase hyphenated strings (^[a-z0-9][a-z0-9-]*$).\n"
     "- difficulty (string): requested difficulty.\n"
     "- canonical_io_rules (string): 2-4 concise sentences specifying exact stdin/args format, "
@@ -107,8 +107,9 @@ _COMBINED_SYSTEM_PROMPT = (
     "args in `args` and keep `stdin` null).\n"
     "- fixtures (optional array): ONLY when adapter_kind is \"file\", small UTF-8 sample files "
     "[{\"path\": \"data/input.txt\", \"mount\": \"input\", \"content_text\": \"...\"}].\n"
-    "- reference_answers (array of {label, body}): exact requested count of complete runnable "
-    "solutions ordered baseline -> optimal, all matching every case's expected_stdout.\n"
+    "- reference_answers (array of {label, body}): exact requested count of concise complete "
+    "runnable solutions ordered baseline -> optimal without verbose comments, all matching every "
+    "case's expected_stdout.\n"
     "- reference_answer (string): highest tier solution.\n"
     "- grading_prompt (string): compact Chinese rubric (<= 600 Chinese chars). Line 1 MUST be "
     "`权重：用例 60% + AI 40%`, followed by 5 short bullets for: 解法梯度(90-100/70-85/40-65/0-30), "
@@ -120,7 +121,9 @@ _COMBINED_SYSTEM_PROMPT = (
     "ACCURACY RULES:\n"
     "1. Hand-trace every case so `expected_stdout` matches solutions 100%.\n"
     "2. Every case MUST have non-empty visible `expected_stdout` (never \"\", null, or whitespace).\n"
-    "3. Keep test inputs compact while covering basic, boundary, negative/zero, and edge traps.\n"
+    "3. Keep every case `stdin` compact (<= 6 short lines and <= 200 chars; for log/text "
+    "exercises use short synthetic lines/codes instead of verbose timestamps) while covering basic, "
+    "boundary, negative/zero, and edge traps.\n"
     "4. For callable put string `args` and null `stdin`; for stdin/file put `stdin` ending with \\n "
     "and `args: []`.\n"
     "Use standard JSON escapes (\\n for newlines)."
@@ -736,9 +739,10 @@ _COMBINED_MAX_OUTPUT_TOKENS = 8192
 #: Hard deadline for the whole provider exchange, retries included. The browser request crosses
 #: an edge proxy whose request budget is ~100 s, so a call that outlives it never becomes a
 #: response the teacher can read -- they get an edge timeout (524) instead of a problem document.
-#: Stopping at 85 s turns that into a real, retryable `502` and keeps every attempt inside the
-#: budget. Attempt 1 is capped at 45 s so a hung proxy/socket leaves >= 25 s for direct/proxy failover.
-_PROVIDER_ATTEMPT_TIMEOUT_SECONDS = 45.0
+#: Stopping at 85 s turns that into a real `502` and keeps every attempt inside the budget.
+#: Attempt 1 gets up to 80 s so legitimate generations finish without premature cutoff, while
+#: fast failures under ~60 s still leave >= 25 s for Attempt 2 inside the 85 s deadline.
+_PROVIDER_ATTEMPT_TIMEOUT_SECONDS = 80.0
 _PROVIDER_DEADLINE_SECONDS = 85.0
 _PROVIDER_MIN_RETRY_SECONDS = 25.0
 

@@ -265,10 +265,10 @@ def test_the_facts_given_to_the_model_are_measured_and_scoped(api, monkeypatch):
     assert '"occurrences": 2' in prompt
     # The answer stays inside the edge's budget and the ledger's token ceiling. Both are latency
     # levers, so they are pinned: the operator waits for this button.
-    assert captured["kwargs"]["deadline_seconds"] <= 45
+    assert captured["kwargs"]["deadline_seconds"] <= 65
     assert captured["kwargs"]["max_output_tokens"] <= 800
-    # One retry, and a floor low enough that a ~17 s answer still gets a second chance inside
-    # the 45 s budget: a cut-off answer costs one extra call, never a failed click.
+    # One retry, and a floor low enough that a retry still fits inside the 65 s budget:
+    # a cut-off or transient failure gets a second chance without risking an edge 524.
     assert captured["kwargs"]["max_attempts"] == 2
     assert captured["kwargs"]["min_retry_seconds"] <= 20
     # The prompt tells the model to translate jargon instead of quoting it back.
@@ -453,3 +453,22 @@ def test_a_garbage_answer_is_a_502_not_an_empty_report(api, monkeypatch):
     response = client.post("/api/v1/ops/insights", headers=headers)
     assert response.status_code == 502, response.text
     assert response.headers["content-type"].startswith("application/problem+json")
+
+
+def test_ops_insights_uses_configured_attempt_and_retry_budgets(api, monkeypatch):
+    client, engine, headers, _key = api
+    _seed(engine)
+    captured: dict = {}
+    _fake_provider(
+        monkeypatch,
+        {"summary": "整体正常。", "layers": {"critical": [], "warning": [], "notice": [], "healthy": []}},
+        captured,
+    )
+
+    response = client.post("/api/v1/ops/insights", headers=headers)
+    assert response.status_code == 200, response.text
+    kwargs = captured["kwargs"]
+    assert kwargs["timeout_seconds"] == insights.ATTEMPT_TIMEOUT_SECONDS
+    assert kwargs["deadline_seconds"] == insights.DEADLINE_SECONDS
+    assert kwargs["min_retry_seconds"] == insights.MIN_RETRY_SECONDS
+    assert kwargs["max_attempts"] == insights.MAX_ATTEMPTS
