@@ -349,6 +349,7 @@ describe("/review 邮件记录（只读）", () => {
       category: "processed",
       assignment_id: UUID_A,
       student_id: UUID_D,
+      reason_code: null,
     });
     stub = installFetchStub(routesFor({ rows: [row] }));
     await signIn("teacher1", "pw");
@@ -358,6 +359,38 @@ describe("/review 邮件记录（只读）", () => {
     const panel = await screen.findByTestId("review-records-panel-processed");
     expect(within(panel).queryByTestId(`review-record-reject-${UUID_C}`)).toBeNull();
     expect(within(panel).queryByTestId(`review-record-dismiss-${UUID_C}`)).toBeNull();
+  });
+
+  it("已处理里的人工处置记录说明原因，不提供「查看作业」（那封信没有提交）", async () => {
+    const row = mailRecordView({
+      record_id: UUID_C,
+      category: "processed",
+      // 打回/作废后的记录：`reason_code` 保留收件时的原因，`assignment_id` 只是它曾尝试的作业。
+      reason_code: "no_attachments",
+      assignment_id: UUID_A,
+      student_id: UUID_D,
+    });
+    stub = installFetchStub(
+      routesFor({
+        rows: [row],
+        assignments: [
+          assignmentPublic({ assignment_id: UUID_A, course_id: UUID_A, title: "第一次作业" }),
+        ],
+      }),
+    );
+    await signIn("teacher1", "pw");
+    renderTab({ ...MAIL_PATH, status: "processed" });
+
+    const panel = await screen.findByTestId("review-records-panel-processed");
+    // 先等表格出现（数据到位），否则断言会落在加载态上。
+    const table = await within(panel).findByTestId("review-records-table");
+    expect(within(table).getByText("已处置（未成为提交）")).toBeInTheDocument();
+    expect(within(table).getByTestId(`review-reason-${UUID_C}`)).toHaveTextContent(
+      "邮件里没有可提交的附件",
+    );
+    // 没有提交可看：绝不能把人带到一份并不存在的提交上。
+    expect(within(table).queryByTestId(`review-view-assignment-${UUID_C}`)).toBeNull();
+    expect(within(table).queryByTestId(`review-assignment-${UUID_C}`)).toBeNull();
   });
 
   it("403 显示权限说明而不是空列表", async () => {

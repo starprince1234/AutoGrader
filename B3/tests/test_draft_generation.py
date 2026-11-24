@@ -38,7 +38,7 @@ from autograder_b3.draft_generation import (
     normalize_proposal,
     provider_from_settings,
 )
-from autograder_b3.llm_client import TokenUsage
+from autograder_platform.llm_client import TokenUsage
 from autograder_b3.dto.internal import PROTECTED_FIELD_NAMES
 from autograder_b3.dto.public import PUBLIC_DTO_TYPES, QuestionLearningContextPublic
 from autograder_b3.infra.models import AIGenerationUsage, QuestionDraftGeneration

@@ -118,6 +118,36 @@ vi.mock("./api", () => ({
     truncated: false,
   }),
   fetchAuditRecords: vi.fn().mockResolvedValue({ items: [], next_cursor: null }),
+  fetchOpsInsight: vi.fn().mockResolvedValue({
+    status: "ready",
+    generated_at: "2026-11-18T10:05:00.000Z",
+    model: "mimo-v2.6-flash",
+    prompt_version: "main-ops-insight-v1",
+    window_hours: 24,
+    summary: "整体正常，只有 B2 出现过一次可重试的评测失败。",
+    layers: {
+      critical: [],
+      warning: [
+        {
+          layer: "warning",
+          module: "B2",
+          title: "有一条评测失败，可重试",
+          detail: "最近 24 小时有 2 次评测失败，没有影响其他提交。",
+          suggestion: "在日志检索里按 evaluation.run.failed 过滤，确认是否同一份提交。",
+        },
+      ],
+      notice: [],
+      healthy: [
+        {
+          layer: "healthy",
+          module: "B1",
+          title: "B1 未见异常",
+          detail: "本次检查窗口内没有发现该模块的异常记录。",
+          suggestion: null,
+        },
+      ],
+    },
+  }),
   downloadOpsLogExport: vi.fn().mockResolvedValue(undefined),
 }));
 
@@ -191,5 +221,45 @@ describe("OpsLogsPage and visibility", () => {
       expect(screen.getByText("submission.created")).toBeInTheDocument();
       expect(screen.getByText("evaluation.run.failed")).toBeInTheDocument();
     });
+  });
+
+  it("renders the AI status report in four layers, with 无 for the empty ones", async () => {
+    const user = userEvent.setup();
+    renderWithQuery(<OpsLogsPage tab="overview" />);
+
+    // Nothing is requested until the operator asks: the panel starts with just its button.
+    expect(screen.queryByTestId("ops-insight-report")).not.toBeInTheDocument();
+
+    await user.click(screen.getByTestId("ops-insight-generate"));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("ops-insight-report")).toBeInTheDocument();
+    });
+
+    expect(screen.getByTestId("ops-insight-summary")).toHaveTextContent(
+      "整体正常，只有 B2 出现过一次可重试的评测失败。",
+    );
+
+    // The four layers are always present, in descending urgency, even when they are empty.
+    const headers = screen.getAllByText(/^(严重告警|中度告警|轻度告警|完全健康)$/);
+    expect(headers.map((node) => node.textContent)).toEqual([
+      "严重告警",
+      "中度告警",
+      "轻度告警",
+      "完全健康",
+    ]);
+
+    // An empty layer says 无 rather than rendering nothing.
+    expect(screen.getByTestId("ops-insight-layer-critical-none")).toHaveTextContent("无");
+    expect(screen.getByTestId("ops-insight-layer-notice-none")).toHaveTextContent("无");
+
+    // A finding names its module, its plain-language title, and the suggested next step.
+    const warning = screen.getByTestId("ops-insight-finding-warning-B2");
+    expect(warning).toHaveTextContent("B2");
+    expect(warning).toHaveTextContent("有一条评测失败，可重试");
+    expect(warning).toHaveTextContent("建议：在日志检索里按 evaluation.run.failed 过滤");
+
+    // A healthy module is listed too, so the report accounts for the whole platform.
+    expect(screen.getByTestId("ops-insight-finding-healthy-B1")).toHaveTextContent("B1 未见异常");
   });
 });

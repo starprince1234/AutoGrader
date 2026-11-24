@@ -136,6 +136,23 @@
 `unavailable` 用 200 表达而不是 `503`：它是一句部署事实，需要和"生成失败"分开显示在按钮旁；
 **配置了** provider 却失败才是 `502`（`draft-generation-provider-failed`），预算用尽才是 `429`。
 
+**为什么 provider 只调用一次**（2026-11，线上实测）：这个端点是同步的，浏览器请求要穿过边缘代理，
+而边缘的**请求预算是 ~100 s**——超过就返回 `524`，教师连问题详情都拿不到。之前"先出题面、再并行出
+解法与两批用例、最后补齐"的 DAG 实测 75–90 s（繁忙时 146–189 s），provider 一忙就越界。现在
+一次请求就要完整候选（题面 + I/O 规则 + adapter + 公开示例 + 分档参考解 + 双轨评分细则 + 1+10 用例），
+单次调用**总预算 85 s（含重试）**：慢就变成一次可重试的 `502`，而不是一个读不到的边缘超时；
+重试只在预算还剩足够时间时才发起（`MIN_RETRY_SECONDS`），否则立刻返回第一次的失败分类。
+
+这个上限是**墙钟**意义上的，而不是 `urlopen(timeout=)` 那个数字：后者只管单次 socket 操作，
+且要从「连上之后」才开始计时——DNS 解析与 TLS 握手都在它之外，慢速吐出的响应还会不断重置它
+（实测：55 s 的上限变成过 146 s 的请求，85 s 的预算下出现过 171 s 的失败）。因此整次交换
+（解析/连接/TLS/请求/读响应）在 worker 线程里跑，调用方按预算 `join`，超时即按 `timeout` 处理，
+统一由 `autograder_platform.llm_client` 实现（唯一实现处）。
+
+缺字段不再触发"再调一次模型"，而是由 `normalize_proposal` 变成 `needs_review` 的字段级 warning
+（教师侧补比再等一轮快）。`DRAFT_PROMPT_VERSION` 随之升到 `b3-draft-generation-v4-single-pass`，
+provenance 里可区分。
+
 **边界（每条都能被测试断言）**：
 
 1. 只写候选，不写题库：生成路径不创建 question/question_version/test_case。

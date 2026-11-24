@@ -30,7 +30,7 @@ from collections.abc import Mapping, Sequence
 from .config import Settings
 from .dto.internal import PROTECTED_FIELD_NAMES
 from .errors import B3Error, Conflict
-from .llm_client import LlmCallError, LlmConfig, complete_json, provider_name_for
+from autograder_platform.llm_client import LlmCallError, LlmConfig, complete_json, provider_name_for
 
 Topic = Literal["quality", "comparison_policy", "wording", "difficulty", "coverage"]
 
@@ -262,7 +262,7 @@ def assert_no_protected_terms(message: str) -> None:
 @dataclass
 @dataclass
 class ResponsesAuthoringProvider:
-    """One POST to the Responses endpoint, built by :mod:`autograder_b3.llm_client`.
+    """One POST to the Responses endpoint, built by :mod:`autograder_platform.llm_client`.
 
     Deliberately not a dependency: the whole feature stays optional (ADR-0009 decision 4),
     and real network calls happen only when the deployment configured the provider.

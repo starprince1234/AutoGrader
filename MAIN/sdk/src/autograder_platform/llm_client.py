@@ -1,8 +1,11 @@
 """The one place that talks to the model provider.
 
-Both AI features in B3 -- structured draft generation (``AI-FLOW-01A``) and prose advice
-(``RQ-T-10``) -- send the same shape of request to the same endpoint with the same
-credential, so the request construction lives here and nowhere else.
+Every AI feature sends the same shape of request to the same endpoint with the same credential,
+so the request construction lives here and nowhere else: the two B3 features -- structured draft
+generation (``AI-FLOW-01A``) and prose advice (``RQ-T-10``) -- and the host's operational
+status report (``ops-insights``), which runs in a different process from B3. That is why this
+module belongs to the Platform SDK rather than to a module: the provider is platform
+infrastructure, not one module's private detail.
 
 The provider is **MiMo's OpenAI-Responses-compatible API**
 (``https://api.xiaomimimo.com/v1/responses``). Two facts from that specification decide the
@@ -25,6 +28,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -45,6 +49,10 @@ MAX_OUTPUT_TOKENS = 12288
 _RETRYABLE_CATEGORIES = frozenset(
     {"timeout", "network", "http_429", "http_502", "http_503", "http_504", "incomplete", "not_json"}
 )
+
+#: A retry shorter than this is a guaranteed second timeout, so it is not attempted: reporting
+#: the first failure immediately is what keeps a synchronous request inside its own budget.
+MIN_RETRY_SECONDS = 40.0
 
 
 @dataclass(frozen=True)
@@ -163,6 +171,45 @@ def build_request_body(
     }
 
 
+def _exchange_with_deadline(request: urllib.request.Request, *, timeout_seconds: float) -> bytes:
+    """Run the whole HTTP exchange in a worker thread and enforce a wall-clock bound.
+
+    ``urlopen(timeout=...)`` bounds a single socket operation and nothing else: the name lookup,
+    the TLS handshake and a body that trickles each of them can outlive it. Measured in
+    production: an exchange with an 85 s budget ran 171 s (the teacher got an edge `524`, and the
+    backend logged the failure long after), and an earlier 55 s ceiling became a 146 s request.
+    Waiting on a worker thread with ``join(timeout)`` is the only way to bound every phase of the
+    exchange without adding a second HTTP library.
+
+    The worker is a daemon and owns the response object, so an abandoned attempt closes its socket
+    when the exchange finally ends (the socket timeout is the same value, so it cannot linger
+    forever).
+    """
+    outcome: dict[str, object] = {}
+
+    def worker() -> None:
+        try:
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                outcome["body"] = response.read()
+        except BaseException as exc:  # noqa: BLE001 - re-raised in the calling thread
+            outcome["error"] = exc
+
+    thread = threading.Thread(target=worker, name="llm-exchange", daemon=True)
+    thread.start()
+    thread.join(timeout_seconds)
+    if thread.is_alive():
+        raise TimeoutError(
+            f"the provider exchange did not finish within {timeout_seconds:.0f} s"
+        )
+    error = outcome.get("error")
+    if isinstance(error, BaseException):
+        raise error
+    body = outcome.get("body")
+    if not isinstance(body, bytes):  # pragma: no cover - the worker either sets body or error
+        raise OSError("the provider exchange produced no body")
+    return body
+
+
 def _is_timeout_error(exc: BaseException) -> bool:
     if isinstance(exc, TimeoutError):
         return True
@@ -201,8 +248,7 @@ def _complete_json_once(
     )
     effective_timeout = config.timeout_seconds if timeout_seconds is None else timeout_seconds
     try:
-        with urllib.request.urlopen(request, timeout=effective_timeout) as response:
-            raw = response.read().decode("utf-8")
+        raw = _exchange_with_deadline(request, timeout_seconds=effective_timeout).decode("utf-8")
     except urllib.error.HTTPError as exc:
         raise LlmCallError(f"http_{exc.code}", f"the provider answered HTTP {exc.code}") from exc
     except (TimeoutError, urllib.error.URLError, http.client.HTTPException, OSError) as exc:
@@ -255,23 +301,40 @@ def complete_json(
     max_output_tokens: int = MAX_OUTPUT_TOKENS,
     timeout_seconds: float | None = None,
     max_attempts: int = 1,
+    deadline_seconds: float | None = None,
 ) -> tuple[Mapping[str, Any], TokenUsage]:
     """Call the provider and return ``(json object, usage)``.
+
+    ``timeout_seconds`` bounds one attempt (one HTTP exchange); ``deadline_seconds`` bounds the
+    **whole call, retries included**. The second one is what a synchronous request needs: a fast
+    retry only helps when there is time left for it, and a slow attempt must not eat the budget a
+    second attempt was supposed to have (measured in production: without a shared deadline a
+    retried call ran 155 s and the browser saw an edge `524` instead of any answer).
 
     Failures raise :class:`LlmCallError` with a *classification*, never with the response
     body: ``configuration`` / ``network`` / ``timeout`` / ``http_<status>`` / ``response_error``
     / ``incomplete`` / ``not_json``.
     """
     attempts = max(1, max_attempts)
+    deadline = None if deadline_seconds is None else time.monotonic() + deadline_seconds
     accumulated: list[TokenUsage] = []
     for attempt in range(1, attempts + 1):
+        per_attempt = timeout_seconds
+        if deadline is not None:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.0:
+                raise LlmCallError(
+                    "timeout",
+                    "the provider budget was exhausted before another attempt could start",
+                )
+            per_attempt = remaining if per_attempt is None else min(per_attempt, remaining)
         try:
             document, usage = _complete_json_once(
                 config=config,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
                 max_output_tokens=max_output_tokens,
-                timeout_seconds=timeout_seconds,
+                timeout_seconds=per_attempt,
             )
             accumulated.append(usage)
             return document, combine_usage(*accumulated)
@@ -282,6 +345,14 @@ def complete_json(
                 raise LlmCallError(
                     exc.category,
                     str(exc),
+                    usage=combine_usage(*accumulated) if accumulated else exc.usage,
+                ) from exc
+            if deadline is not None and deadline - time.monotonic() < MIN_RETRY_SECONDS:
+                # A retry shorter than MIN_RETRY_SECONDS is a guaranteed second timeout; report
+                # the first failure now so the caller can answer inside its own budget.
+                raise LlmCallError(
+                    exc.category,
+                    f"{exc} (no budget left for a retry)",
                     usage=combine_usage(*accumulated) if accumulated else exc.usage,
                 ) from exc
             time.sleep(0.5 if exc.category == "http_429" else 0.15)

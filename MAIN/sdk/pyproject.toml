@@ -1,7 +1,7 @@
 [project]
 name = "autograder-platform"
 version = "0.1.0"
-description = "AutoGrader plugin protocol"
+description = "AutoGrader plugin protocol and shared provider client"
 requires-python = ">=3.12,<3.13"
 dependencies = ["fastapi>=0.115,<1"]
 

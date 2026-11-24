@@ -188,94 +188,74 @@ def test_proposal_from_storage_preserves_reference_tiers_and_grading_prompt() ->
     assert restored.grading_prompt == "精妙解法 90-100 分，暴力解法 70-85 分，兼顾代码简洁度。"
 
 
-def test_dag_provider_runs_stage1_then_parallel_stage2_and_builds_1_plus_10_cases(monkeypatch):
+def test_single_pass_provider_builds_the_whole_candidate_in_one_call(monkeypatch):
+    """One request, one answer: no stage chaining, no repair round trip.
+
+    The service is behind an edge proxy with a ~100 s request budget, so a generation that
+    needs several sequential model calls is not a slow feature but an unreachable one (the
+    teacher sees a 524 instead of a candidate). This test pins the shape that replaced it:
+    exactly one call, a single attempt, and the whole candidate asked for at once.
+    """
     import json
-    import threading
+
     from autograder_b3.draft_generation import (
         ResponsesDraftGenerationProvider,
         build_generation_payload,
     )
-    from autograder_b3.llm_client import LlmConfig, TokenUsage
+    from autograder_platform.llm_client import LlmConfig, TokenUsage
+    import autograder_b3.draft_generation as dg_mod
 
-    stage2_barrier = threading.Barrier(3, timeout=3.0)
-    call_stages: list[str] = []
+    calls: list[dict] = []
 
     def fake_complete_json(*, config, system_prompt, user_prompt, **kwargs):  # noqa: ARG001
-        if "Stage 1 (Spec)" in user_prompt:
-            call_stages.append("stage1")
-            return (
-                {
-                    "title": "整数加法",
-                    "stem_markdown": "读取两个整数，输出它们的和。\n\n示例：\n输入：`3 5`\n输出：`8`",
-                    "tags": ["python", "stdin"],
-                    "difficulty": "简单",
-                    "canonical_io_rules": "输入一行两个整数；输出一个整数加换行。",
-                    "adapter": {
-                        "expect_exit_code": 0,
-                        "comparison": {"stdout": "ignore_trailing_whitespace", "stderr": "ignored"},
-                        "callable": None,
-                    },
-                    "public_example": {
-                        "name": "公开示例",
-                        "stdin": "3 5\n",
-                        "args": [],
-                        "expected_stdout": "8\n",
-                        "expected_exit_code": 0,
-                    },
-                },
-                TokenUsage(100, 80, 180),
-            )
-
-        # All 3 Stage 2 branches must execute concurrently.
-        stage2_barrier.wait()
-        if "Stage 2A" in user_prompt:
-            call_stages.append("stage2_solutions")
-            return (
-                {
-                    "reference_answers": [
-                        {"label": "解法一：split 解包", "body": "a, b = map(int, input().split())\nprint(a + b)"},
-                        {"label": "解法二：sum 简洁写法", "body": "print(sum(map(int, input().split())))"},
-                    ],
-                    "reference_answer": "print(sum(map(int, input().split())))",
-                    "grading_prompt": "权重：用例 60% + AI 40%\n1. 正确使用输入解析并输出结果。",
-                },
-                TokenUsage(120, 90, 210),
-            )
-        if "public_example_and_5_basic_hidden_cases" in user_prompt:
-            call_stages.append("stage2_batch1")
-            return (
-                {
-                    "public_case": {
-                        "name": "公开示例",
-                        "stdin": "3 5\n",
-                        "args": [],
-                        "expected_stdout": "8\n",
-                        "expected_exit_code": 0,
-                    },
-                    "hidden_cases": [
-                        {"name": f"基础用例 {i}", "stdin": f"{i} {i + 1}\n", "args": [], "expected_stdout": f"{2 * i + 1}\n"}
-                        for i in range(1, 6)
-                    ],
-                },
-                TokenUsage(130, 110, 240),
-            )
-        assert "5_advanced_edge_hidden_cases" in user_prompt
-        call_stages.append("stage2_batch2")
+        calls.append({"system_prompt": system_prompt, "user_prompt": user_prompt, **kwargs})
         return (
             {
+                "title": "整数加法",
+                "stem_markdown": "读取两个整数，输出它们的和。\n\n示例：\n输入：`3 5`\n输出：`8`",
+                "tags": ["python", "stdin"],
+                "difficulty": "简单",
+                "canonical_io_rules": "输入一行两个整数；输出一个整数加换行。",
+                "adapter": {
+                    "expect_exit_code": 0,
+                    "comparison": {"stdout": "ignore_trailing_whitespace", "stderr": "ignored"},
+                    "callable": None,
+                },
+                "public_example": {
+                    "name": "公开示例",
+                    "stdin": "3 5\n",
+                    "args": [],
+                    "expected_stdout": "8\n",
+                    "expected_exit_code": 0,
+                },
+                "reference_answers": [
+                    {"label": "解法一：split 解包", "body": "a, b = map(int, input().split())\nprint(a + b)"},
+                    {"label": "解法二：sum 简洁写法", "body": "print(sum(map(int, input().split())))"},
+                ],
+                "reference_answer": "print(sum(map(int, input().split())))",
+                "grading_prompt": "权重：用例 60% + AI 40%\n1. 正确解析输入并输出结果。",
                 "hidden_cases": [
-                    {"name": f"边界用例 {i}", "stdin": f"-{i} {i * 2}\n", "args": [], "expected_stdout": f"{i}\n"}
-                    for i in range(1, 6)
-                ]
+                    {
+                        "name": f"隐藏用例 {i}",
+                        "stdin": f"{i} {i + 1}\n",
+                        "args": [],
+                        "expected_stdout": f"{2 * i + 1}\n",
+                        "expected_exit_code": 0,
+                    }
+                    for i in range(1, 11)
+                ],
             },
-            TokenUsage(140, 120, 260),
+            TokenUsage(490, 400, 890),
         )
-
-    import autograder_b3.draft_generation as dg_mod
 
     monkeypatch.setattr(dg_mod, "complete_json", fake_complete_json)
     provider = ResponsesDraftGenerationProvider(
-        LlmConfig(base_url="https://api.xiaomimimo.com", model="mimo-v2-flash", api_key="k")
+        LlmConfig(
+            base_url="https://api.xiaomimimo.com",
+            model="mimo-v2-flash",
+            api_key="k",
+            timeout_seconds=90.0,
+        )
     )
     payload = build_generation_payload(
         learning_objective="计算两个整数之和",
@@ -286,8 +266,15 @@ def test_dag_provider_runs_stage1_then_parallel_stage2_and_builds_1_plus_10_case
         desired_reference_tiers=2,
     )
     answer = provider.generate(payload=payload)
-    assert call_stages[0] == "stage1"
-    assert set(call_stages[1:]) == {"stage2_solutions", "stage2_batch1", "stage2_batch2"}
+
+    assert len(calls) == 1
+    assert calls[0]["max_attempts"] == 2
+    assert calls[0]["max_output_tokens"] == 8192
+    # The whole exchange (retries included) is bounded by one deadline, and it must stay inside
+    # the edge's request budget so a slow provider becomes a retryable 502, never a 524.
+    assert calls[0]["deadline_seconds"] <= 90.0
+    assert "Single pass" in calls[0]["user_prompt"]
+    assert "计算两个整数之和" in calls[0]["user_prompt"]
     assert (answer.usage.prompt_tokens, answer.usage.completion_tokens, answer.usage.total_tokens) == (
         490,
         400,
@@ -313,77 +300,61 @@ def test_dag_provider_runs_stage1_then_parallel_stage2_and_builds_1_plus_10_case
     assert json.loads(json.dumps(outcome.proposal.to_wire()))["cases"][0]["visible_to_student"] is True
 
 
-def test_dag_provider_repairs_short_hidden_cases_and_callable_args(monkeypatch):
+def test_single_pass_provider_drops_unusable_cases_instead_of_paying_for_a_repair(monkeypatch):
+    """A short or malformed answer becomes `needs_review`, never another model call.
+
+    Dropping the unusable cases is the same validation that always ran; what changed is that
+    nothing is *repaired* by a second paid round trip. The teacher gets the candidate and a
+    field-level warning they can act on in the editor.
+    """
     from autograder_b3.draft_generation import (
         ResponsesDraftGenerationProvider,
         build_generation_payload,
     )
-    from autograder_b3.llm_client import LlmConfig, TokenUsage
+    from autograder_platform.llm_client import LlmConfig, TokenUsage
     import autograder_b3.draft_generation as dg_mod
 
+    calls: list[dict] = []
+
     def fake_complete_json(*, config, system_prompt, user_prompt, **kwargs):  # noqa: ARG001
-        if "Stage 1 (Spec)" in user_prompt:
-            return (
-                {
-                    "title": "两数相加函数",
-                    "stem_markdown": "在 main.py 实现 add_two(a, b)。",
-                    "tags": ["python", "callable"],
-                    "canonical_io_rules": "接收两个字符串参数，返回整数和。",
-                    "adapter": {
-                        "expect_exit_code": 0,
-                        "comparison": {"stdout": "ignore_trailing_whitespace", "stderr": "ignored"},
-                        "callable": {"module": "main", "attribute": "add_two", "arguments_json": '["stale"]'},
-                    },
-                    "public_example": {
-                        "name": "公开示例",
-                        "stdin": None,
-                        "args": [3, 5],
-                        "expected_stdout": "8\n",
-                    },
-                },
-                TokenUsage(10, 10, 20),
-            )
-        if "Stage 2A" in user_prompt:
-            return (
-                {
-                    "reference_answers": [
-                        {"label": "基础解法", "body": "def add_two(a, b): return int(a) + int(b)"},
-                        {"label": "健壮解法", "body": "def add_two(a, b): return sum((int(a), int(b)))"},
-                    ],
-                    "reference_answer": "def add_two(a, b): return sum((int(a), int(b)))",
-                    "grading_prompt": "权重：用例 60% + AI 40%\n1. 正确导出 add_two。",
-                },
-                TokenUsage(10, 10, 20),
-            )
-        if "public_example_and_5_basic_hidden_cases" in user_prompt:
-            return (
-                {
-                    "public_case": {"name": "公开示例", "args": [3, 5], "expected_stdout": "8\n"},
-                    "hidden_cases": [
-                        {"name": "空白输出无效", "args": ["1", "1"], "expected_stdout": ""},
-                        {"name": "重复公开用例", "args": ["3", "5"], "expected_stdout": "8\n"},
-                        *[{"name": f"基础 {i}", "args": [i, 10], "expected_stdout": f"{i + 10}\n"} for i in range(4)],
-                    ],
-                },
-                TokenUsage(10, 10, 20),
-            )
-        if "5_advanced_edge_hidden_cases" in user_prompt:
-            return (
-                {
-                    "hidden_cases": [
-                        {"name": f"边界 {i}", "args": [-i, 20], "expected_stdout": f"{20 - i}\n"}
-                        for i in range(1, 5)
-                    ]
-                },
-                TokenUsage(10, 10, 20),
-            )
-        assert "Stage 3 (Repair Missing Cases)" in user_prompt
+        calls.append({"user_prompt": user_prompt})
         return (
             {
+                "title": "两数相加函数",
+                "stem_markdown": "在 main.py 实现 add_two(a, b)。",
+                "tags": ["python", "callable"],
+                "canonical_io_rules": "接收两个字符串参数，返回整数和。",
+                "adapter": {
+                    "expect_exit_code": 0,
+                    "comparison": {"stdout": "ignore_trailing_whitespace", "stderr": "ignored"},
+                    "callable": {
+                        "module": "main",
+                        "attribute": "add_two",
+                        "arguments_json": '["stale"]',
+                    },
+                },
+                "public_example": {
+                    "name": "公开示例",
+                    "stdin": None,
+                    "args": [3, 5],
+                    "expected_stdout": "8\n",
+                },
+                "reference_answers": [
+                    {"label": "基础解法", "body": "def add_two(a, b): return int(a) + int(b)"},
+                    {"label": "健壮解法", "body": "def add_two(a, b): return sum((int(a), int(b)))"},
+                ],
+                "reference_answer": "def add_two(a, b): return sum((int(a), int(b)))",
+                "grading_prompt": "权重：用例 60% + AI 40%\n1. 正确导出 add_two。",
                 "hidden_cases": [
-                    {"name": "补齐 1", "args": ["100", "200"], "expected_stdout": "300\n"},
-                    {"name": "补齐 2", "args": ["-99", "-1"], "expected_stdout": "-100\n"},
-                ]
+                    # Blank expected output: unusable, dropped.
+                    {"name": "空白输出无效", "args": ["1", "1"], "expected_stdout": ""},
+                    # Same input as the public example: a duplicate, dropped.
+                    {"name": "重复公开用例", "args": ["3", "5"], "expected_stdout": "8\n"},
+                    *[
+                        {"name": f"基础 {i}", "args": [i, 10], "expected_stdout": f"{i + 10}\n"}
+                        for i in range(1, 9)
+                    ],
+                ],
             },
             TokenUsage(10, 10, 20),
         )
@@ -401,6 +372,8 @@ def test_dag_provider_repairs_short_hidden_cases_and_callable_args(monkeypatch):
         desired_reference_tiers=2,
     )
     answer = provider.generate(payload=payload)
+    assert len(calls) == 1
+
     outcome = normalize_proposal(
         answer.document,
         language="python",
@@ -409,11 +382,12 @@ def test_dag_provider_repairs_short_hidden_cases_and_callable_args(monkeypatch):
         desired_reference_tiers=2,
         require_dual_track_cases=True,
     )
-    assert outcome.status == "ready"
+    # 1 public + 8 usable hidden cases: the shape is short, so the teacher must review it.
+    assert outcome.status == "needs_review"
     assert outcome.proposal is not None
+    assert outcome.warnings != ()
+    assert len(outcome.proposal.cases) == 9
     # Stale arguments_json must be cleared so per-case args apply.
     assert outcome.proposal.adapter.callable_arguments_json is None
-    assert len(outcome.proposal.cases) == 11
     assert outcome.proposal.cases[0].args == ("3", "5")
-    assert outcome.proposal.cases[1].args == ("0", "10")
-    assert (answer.usage.total_tokens) == 100
+    assert answer.usage.total_tokens == 20

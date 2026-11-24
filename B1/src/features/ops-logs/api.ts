@@ -6,6 +6,9 @@ export type OpsLogRecord = components["schemas"]["OpsLogRecord"];
 export type OpsLogPage = components["schemas"]["OpsLogPage"];
 export type OpsLogTrace = components["schemas"]["OpsLogTrace"];
 export type OpsLogSummary = components["schemas"]["OpsLogSummary"];
+export type OpsInsightLayer = components["schemas"]["OpsInsightLayer"];
+export type OpsInsightFinding = components["schemas"]["OpsInsightFinding"];
+export type OpsInsightReport = components["schemas"]["OpsInsightReport"];
 export type OpsLogExportRequest = components["schemas"]["OpsLogExportRequest"];
 export type LogProducer = components["schemas"]["LogProducer"];
 export type LogLevel = components["schemas"]["LogLevel"];
@@ -47,6 +50,19 @@ export type OpsLogsSearchParams = {
 
 export async function fetchOpsLogSummary(): Promise<OpsLogSummary> {
   return apiRequest<OpsLogSummary>("/api/v1/ops/logs/summary", {
+    requestId: newIdempotencyKey(),
+  });
+}
+
+/**
+ * One button in the log center: the server reads the operational picture and asks the model for
+ * a layered, plain-language report. POST because it spends money on a model call, not because it
+ * changes anything -- the report is advice.
+ */
+export async function fetchOpsInsight(): Promise<OpsInsightReport> {
+  return apiRequest<OpsInsightReport>("/api/v1/ops/insights", {
+    method: "POST",
+    body: {},
     requestId: newIdempotencyKey(),
   });
 }

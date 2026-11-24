@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
-import { t } from "../../i18n";
+import { t, type MessageKey } from "../../i18n";
 import {
   Banner,
   EmptyState,
@@ -15,12 +15,14 @@ import { formatDateTime } from "../../ui/format";
 import {
   downloadOpsLogExport,
   fetchAuditRecords,
+  fetchOpsInsight,
   fetchOpsLogs,
   fetchOpsLogSummary,
   fetchOpsLogTrace,
   type AuditRecord,
   type LogLevel,
   type LogProducer,
+  type OpsInsightLayer,
   type OpsLogRecord,
   type OpsLogsSearchParams,
 } from "./api";
@@ -40,6 +42,14 @@ const LEVEL_TONE: Record<LogLevel, "idle" | "warn" | "bad"> = {
   warn: "warn",
   error: "bad",
 };
+
+/** The four layers, most urgent first. The report itself never reorders them. */
+const INSIGHT_LAYERS: { key: OpsInsightLayer; labelKey: MessageKey; tone: "bad" | "warn" | "idle" | "ok" }[] = [
+  { key: "critical", labelKey: "opsLogs.insight.critical", tone: "bad" },
+  { key: "warning", labelKey: "opsLogs.insight.warning", tone: "warn" },
+  { key: "notice", labelKey: "opsLogs.insight.notice", tone: "idle" },
+  { key: "healthy", labelKey: "opsLogs.insight.healthy", tone: "ok" },
+];
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -92,6 +102,12 @@ export function OpsLogsPage({
     queryKey: ["ops-logs", "summary"],
     queryFn: fetchOpsLogSummary,
     enabled: activeTab === "overview",
+  });
+
+  // The AI report is a deliberate, paid action: nothing is requested until the operator asks for
+  // it, and asking again replaces the previous answer rather than accumulating stale reports.
+  const insightMutation = useMutation({
+    mutationFn: fetchOpsInsight,
   });
 
   const searchParams: OpsLogsSearchParams = {
@@ -190,6 +206,77 @@ export function OpsLogsPage({
         <div className="stack" data-testid="ops-logs-overview">
           {summaryQuery.isPending && <InlineLoader />}
           {summaryQuery.error && <ErrorState error={summaryQuery.error} />}
+          <Panel title={t("opsLogs.insight.title")} testId="ops-insight-panel">
+            <p className="muted">{t("opsLogs.insight.hint")}</p>
+            <div className="inline" style={{ flexWrap: "wrap", gap: "0.75rem", marginBottom: "0.75rem" }}>
+              <button
+                type="button"
+                data-testid="ops-insight-generate"
+                disabled={insightMutation.isPending}
+                onClick={() => insightMutation.mutate()}
+              >
+                {insightMutation.isPending
+                  ? t("opsLogs.insight.generating")
+                  : t("opsLogs.insight.generate")}
+              </button>
+              {insightMutation.isPending && <InlineLoader />}
+              {insightMutation.data && (
+                <span className="muted">
+                  {t("opsLogs.insight.generatedAt", {
+                    at: formatDateTime(insightMutation.data.generated_at, "-"),
+                    model: insightMutation.data.model ?? "-",
+                    hours: insightMutation.data.window_hours,
+                  })}
+                </span>
+              )}
+            </div>
+
+            {insightMutation.error && (
+              <Banner tone="error">
+                {t("opsLogs.insight.failed", { detail: String(insightMutation.error) })}
+              </Banner>
+            )}
+
+            {insightMutation.data?.status === "unavailable" && (
+              <Banner tone="warn">{t("opsLogs.insight.unavailable")}</Banner>
+            )}
+
+            {insightMutation.data?.status === "ready" && (
+              <div className="stack" data-testid="ops-insight-report">
+                <p data-testid="ops-insight-summary">{insightMutation.data.summary}</p>
+                {INSIGHT_LAYERS.map(({ key, labelKey, tone }) => {
+                  const findings = insightMutation.data?.layers[key] ?? [];
+                  return (
+                    <section key={key} className="stack" data-testid={`ops-insight-layer-${key}`}>
+                      <div className="inline" style={{ gap: "0.5rem" }}>
+                        <StatusPill tone={tone}>{t(labelKey)}</StatusPill>
+                        {findings.length === 0 && (
+                          <span className="muted" data-testid={`ops-insight-layer-${key}-none`}>
+                            {t("opsLogs.insight.none")}
+                          </span>
+                        )}
+                      </div>
+                      {findings.length > 0 && (
+                        <ul className="stack" style={{ margin: 0, paddingLeft: "1.2rem" }}>
+                          {findings.map((finding) => (
+                            <li key={`${key}-${finding.module}`} data-testid={`ops-insight-finding-${key}-${finding.module}`}>
+                              <strong>{finding.module}</strong> · {finding.title}
+                              <div className="muted">{finding.detail}</div>
+                              {finding.suggestion && (
+                                <div className="muted">
+                                  {t("opsLogs.insight.suggestion")}：{finding.suggestion}
+                                </div>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </section>
+                  );
+                })}
+              </div>
+            )}
+          </Panel>
           {summaryQuery.data && (
             <>
               {summaryQuery.data.db_degraded && (

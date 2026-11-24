@@ -15,7 +15,7 @@
 | `GET /api/v1/intake/quarantines` | 隔离区列表（`CHG-0014`）：教师能重新找到"没能变成提交"的邮件 | 是（JWT） | 教师/助教/管理员；staff 只返回**记录 scope 被令牌作用域覆盖**的行（NULL scope 仅管理员可见） | 已实现（`tests/test_intake_api.py`；见第 1d 节） |
 | `POST /api/v1/intake/quarantines/{intake_quarantine_id}/resolve` | 人工归属一条隔离记录（`CHG-0014`；写处理人/时间） | 是（JWT） | 同左；**行锁内**重查记录 scope：staff 对无 scope/跨课记录 403，管理员可处置未关联行 | 已实现（同上） |
 | `POST /api/v1/intake/quarantines/{intake_quarantine_id}/dismiss` | 驳回一条隔离记录（不归属学生；任何原因码都可） | 是（JWT） | 同左；行锁内重查 scope；已归属/已驳回 ⇒ 409 | 已实现（`0.23.0`，同上） |
-| `GET /api/v1/intake/mail-records` | 教师端「邮件记录」三态视图（契约 0.39.0）：已处理 / 待处理 / 其他 | 是（JWT） | 教师/助教/管理员，且 staff 令牌必须携带至少一个课程作用域；行级 `(course, section)` 作用域与隔离列表同语义（NULL 课程归属仅管理员可见） | 已实现（`tests/test_intake_api.py`；见第 1g 节） |
+| `GET /api/v1/intake/mail-records` | 教师端「邮件记录」三态视图（契约 0.39.0；处置语义 0.44.0）：已处理 / 待处理 / 其他 | 是（JWT） | 教师/助教/管理员，且 staff 令牌必须携带至少一个课程作用域；行级 `(course, section)` 作用域与隔离列表同语义（NULL 课程归属仅管理员可见） | 已实现（`tests/test_intake_api.py`；见第 1g 节） |
 | `POST /api/v1/reference-verifications` | 在沙箱执行参考解答并逐用例比对（`CHG-0019`；发布门禁的执行入口） | 是（JWT） | 教师/助教/管理员且令牌携带课程作用域（**按题目的课程判定做不到，见缺口 ⑦**） | 已实现（`tests/test_reference_verification.py`；见第 1f 节） |
 
 补充（受 `module.yaml` routes 前缀 `/api/v1/evaluation-runs` 覆盖，契约已锁定，详见 `../../../MAIN/contracts/openapi/b2.yaml` 与 [../../../MAIN/docs/workstreams/B2.md](../../../MAIN/docs/workstreams/B2.md) 第 4 节）：
@@ -229,21 +229,30 @@ B2 侧的四条纪律（每条都有测试，见 [../testing/cases.md](../testin
 | ⑧ | `CHG-0019` §7.2/7.3 的"验证草稿 → 存证 → `publish` 成功" | B3 的 `GET .../evaluation-package` 对**草稿**返回 `409`（`B3/domain/packages.py` 只在版本已发布时编译包，且 `load_published_snapshot` 要求 `published_at`），而 B3 的 `recordReferenceAttestation` **只接受草稿**（`status != draft` 即 409/422）。两者相遇时"验证草稿"拿不到用例与比较策略 ⇒ **发布门禁的出题闭环在当前 B3 上仍不成立**。本实现把草稿的 `409` 如实映射成 `422` 并给出指明原因的 `detail`，**不**假装成功；修复属 B3 侧（让草稿也能取到执行输入），已上报 |
 
 
-## 1g. 邮件记录三态（契约 0.39.0）
+## 1g. 邮件记录三态（契约 0.39.0；处置语义见 0.44.0）
 
 教师端原来的"邮件提交记录"是隔离区列表 + 人工处置状态的混合体：19 个原因码与
 resolved/held/打回/作废/归属状态混在一起，教师看不出"这封邮件到底变成作业了没有"。
-0.39.0 把该功能明确成**查看邮件记录**，只要三种状态，且三态**互斥并覆盖全部记录**：
+0.39.0 把该功能明确成**查看邮件记录**，只要三种状态，且三态**互斥并覆盖全部记录**。
+0.44.0 修掉一个线上 bug：人工处置（打回/作废）后的记录原本仍留在「待处理」里，待办队列永远排不空；
+现在处置是队列的终点，被决定的记录归入 `processed`。
 
 | 状态 | 含义 | 数据来源 |
 |---|---|---|
-| `processed`（已处理） | 邮件携带有效一次性核验码并被接受，已经变成（或正在变成）作业提交；`assignment_id` + `student_id` 就是教师从作业界面点进去的钥匙 | `b2.email_verifications` |
-| `pending`（待处理） | 是学生的真实提交尝试，但没列入作业。判据：①正文五行机器格式校验通过（作业编号与挑战一致；发件人恰为挑战所有者时姓名/学号与账号一致）；**或**②发件地址属于已注册账号（即使正文格式不对） | `b2.intake_quarantines` 的分类事实列 |
-| `other`（其他） | 剩余全部：广告垃圾、无核验码/未知码、正文格式不合格（且发件人未注册）、报文/附件闸门拒绝 | 同上 |
+| `processed`（已处理） | 已经**有结论**的邮件，两个来源：①携带有效一次性核验码并被接受，已经变成（或正在变成）作业提交，`assignment_id` + `student_id` 是教师从作业界面点进去的钥匙、`reason_code` 为 `null`；②教师已打回/作废（`rejected`/`dismissed`，或更早的手工归属）而**没有**生成提交，`reason_code` 保留收件原因 | `b2.email_verifications` ∪ `b2.intake_quarantines`（`resolved=true` 且 `resolution <> 'completed'`） |
+| `pending`（待处理） | 是学生的真实提交尝试、没列入作业，**且还没有被教师处置**——这是待办队列。判据：①正文五行机器格式校验通过（作业编号与挑战一致；发件人恰为挑战所有者时姓名/学号与账号一致）；**或**②发件地址属于已注册账号（即使正文格式不对） | `b2.intake_quarantines` 的分类事实列 + `resolved`/`resolution` |
+| `other`（其他） | 剩余全部：广告垃圾、无核验码/未知码、正文格式不合格（且发件人未注册）、报文/附件闸门拒绝 | 同上（且未处置） |
 
 | 方法 + 路径 | 语义 | 认证 / 角色 | 边界与取舍 |
 |---|---|---|---|
-| `GET /api/v1/intake/mail-records` | 按 `category=processed|pending|other` 分页列出调用者可见的邮件记录（时间倒序），可按 `course_id`/`section_id`/`cursor`/`limit` 过滤；视图为 `MailRecordView`（主题头、收件时间、三态、课程归属、能证明的作业/学生、原因码） | 是（JWT）；教师/助教/管理员，且 staff 令牌必须携带至少一个课程作用域 | `category` **必填**（缺失/非法 ⇒ 422，不静默列全部）；行级谓词先于排序/limit/游标；`course_id/section_id` 只缩小范围，staff 越界 ⇒ 403；NULL 课程归属的行仅管理员可见；响应不含正文/附件内容/发件地址 |
+| `GET /api/v1/intake/mail-records` | 按 `category=processed|pending|other` 分页列出调用者可见的邮件记录（时间倒序），可按 `course_id`/`section_id`/`cursor`/`limit` 过滤；视图为 `MailRecordView`（主题头、收件时间、三态、课程归属、能证明的作业/学生、原因码） | 是（JWT）；教师/助教/管理员，且 staff 令牌必须携带至少一个课程作用域 | `category` **必填**（缺失/非法 ⇒ 422，不静默列全部）；行级谓词先于排序/limit/游标；`course_id/section_id` 只缩小范围，staff 越界 ⇒ 403；NULL 课程归属的行仅管理员可见；响应不含正文/附件内容/发件地址。`processed` 是两来源的并集，分页在 SQL 里 `UNION ALL` 后统一按 `(时间, id)` 倒序取页（两个分支各自先按同一游标裁剪） |
+
+**为什么处置要影响分类**：`pending` 是给老师看的待办队列，它的定义必须是"还需要我处理"。
+0.39.0 只按"这封信是不是真实提交尝试"分类，于是打回/作废之后记录仍然留在待处理里——老师会以为
+处置没生效（线上实际报的就是这个）。处置是终点，而从 `pending` 消失并不等于抹掉事实：原因码、
+课程归属、证明过的作业/学生都原样保留，只是它现在归 `processed`。`resolution='completed'` 刻意
+**不**算 `disposed`：那封信确实有提交，已经由 `email_verifications` 列在 `processed`，两边都列
+会让同一封信在同一个 tab 出现两行。
 
 **分类事实为什么必须写在收件时**：邮件正文与附件原文不落库（平台有意不做第二个邮件仓库），
 事后无法从内容重算"这是不是真实提交尝试"。迁移 `20261117_0024` 给 `b2.intake_quarantines`
@@ -260,9 +269,10 @@ resolved/held/打回/作废/归属状态混在一起，教师看不出"这封邮
 标识与原因码。不返回正文、附件内容、发件地址，也不返回任何提交答案。`assignment_id`/`student_id`
 只用于让教师从作业界面打开提交，**绝不作授权依据**（授权只看行级 `(course, section)` 归属）。
 
-**与隔离区的分工**：隔离区仍是人工复核（归属/作废/暂存/打回）的工作台；「邮件记录」是只读
-总览。两者共用同一套行级课程作用域谓词（`intake.quarantine.row_scope_predicate`），因此不存在
-"隔离列表挡住的记录从这个视图漏出去"的偏差。
+**与隔离区的分工**：隔离区仍是人工复核（归属/作废/暂存/打回）的工作台；「邮件记录」是查看
+总览（处置动作只在待处理/其他行上提供，`processed` 里不再有动作）。两者共用同一套行级课程作用域
+谓词（`intake.quarantine.row_scope_predicate`），因此不存在"隔离列表挡住的记录从这个视图漏出去"
+的偏差。
 
 ## 2. 我消费的端点 / 事件
 

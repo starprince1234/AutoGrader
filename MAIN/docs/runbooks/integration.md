@@ -138,7 +138,7 @@ pwsh -File scripts\render_integration_env.ps1 -Config dev_personal -OutFile .env
 - **派生 provider 块**（`B2_COMMENTARY_*` 4 个 + `LLM_*` 3 个，共 7 个变量）由渲染器生成、**不存储** ——
   存它会把同一个 API key 放进三个地方。
 - 两处 base url 的用法必须分清：B2 取 **base**（它自己追加 `/chat/completions`），B3 也取 **base**
-  （它自己追加 `/v1/responses`，见 `B3/src/autograder_b3/llm_client.py` 的 `responses_endpoint`）。
+  （它自己追加 `/v1/responses`，见 `MAIN/sdk/src/autograder_platform/llm_client.py` 的 `responses_endpoint`）。
   只有把**完整端点**塞给 base 变量才会得到一个"存在但永远失败"的 provider。
 - 验证方式：删除该文件后重新渲染，应当**字节完全相同**（实测 SHA-256 相等）。
 

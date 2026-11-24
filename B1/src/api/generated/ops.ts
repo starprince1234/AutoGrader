@@ -92,6 +92,45 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/ops/insights": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Turn the current operational picture into a layered, plain-language status report
+         * @description The operator presses one button; the server assembles the operational picture -- per-module
+         *     readiness and health text, warn/error counts for the last hour and day, the log pipeline's
+         *     own storage and drop counters, and the most frequent recent warn/error events -- and asks
+         *     the configured model for a report a non-engineer can act on.
+         *
+         *     **The shape is contract, the wording is not.** Findings are sorted into four layers in
+         *     descending urgency (`critical` > `warning` > `notice` > `healthy`) and every finding names
+         *     exactly one module (`B1`..`B5`, `MAIN`). Each module appears **exactly once across all four
+         *     layers**, so the report accounts for the whole platform: an empty `critical` layer means
+         *     "nothing is critical", not "nobody looked", and a module with no evidence of a problem is
+         *     returned in `healthy` rather than omitted.
+         *
+         *     Severity is about **impact on users**, not about the log level of the evidence: a module
+         *     that cannot serve requests, loses data, or is out of storage is `critical`; an error that a
+         *     user would notice but that a retry can absorb is `warning`; a trend, an approaching limit,
+         *     or a single transient failure is `notice`.
+         *
+         *     The report is **advisory**: nothing it says changes routing, retries, or published state.
+         *     Facts are redacted with the same sanitizer the log store uses before they leave the
+         *     process, and a failed provider call never echoes its response body.
+         */
+        post: operations["generateOpsInsight"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -199,6 +238,40 @@ export interface components {
         ClientLogIngestResponse: {
             accepted: number;
             dropped: number;
+        };
+        /** @enum {string} */
+        OpsInsightLayer: "critical" | "warning" | "notice" | "healthy";
+        /**
+         * @description One statement about one module. `title` and `detail` are for a non-engineer: no log ids,
+         *     no stack traces, no unexplained jargon. `suggestion` is what to do next, and it is absent
+         *     exactly when there is nothing to do (a healthy module has no next step).
+         */
+        OpsInsightFinding: {
+            layer: components["schemas"]["OpsInsightLayer"];
+            module: components["schemas"]["LogProducer"];
+            title: string;
+            detail: string;
+            suggestion?: string | null;
+        };
+        /**
+         * @description The four layers. A layer with nothing to report is an **empty array**, never `null` and
+         *     never absent: the client renders "无" for it without guessing.
+         */
+        OpsInsightLayers: {
+            critical: components["schemas"]["OpsInsightFinding"][];
+            warning: components["schemas"]["OpsInsightFinding"][];
+            notice: components["schemas"]["OpsInsightFinding"][];
+            healthy: components["schemas"]["OpsInsightFinding"][];
+        };
+        OpsInsightReport: {
+            /** @enum {string} */
+            status: "ready" | "unavailable";
+            generated_at: components["schemas"]["Timestamp"];
+            model?: string | null;
+            prompt_version: string;
+            window_hours: number;
+            summary: string;
+            layers: components["schemas"]["OpsInsightLayers"];
         };
         /**
          * Format: date-time
@@ -442,6 +515,46 @@ export interface operations {
             422: components["responses"]["UnprocessableEntity"];
             /** @description Rate limit exceeded for client log ingestion. */
             429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ProblemDetails"];
+                };
+            };
+        };
+    };
+    generateOpsInsight: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Correlation identifier. Generated at the entry point when absent. */
+                "X-Request-ID"?: components["parameters"]["RequestId"];
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /**
+             * @description The report. `status: unavailable` means this deployment has no model configured, which
+             *     is a deployment fact rather than an error: the layers are empty and `summary` says so.
+             */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OpsInsightReport"];
+                };
+            };
+            401: components["responses"]["Unauthorized"];
+            403: components["responses"]["Forbidden"];
+            /**
+             * @description The configured model failed or did not finish inside the server's time budget. The
+             *     report body is never echoed, so the message is a classification only.
+             */
+            502: {
                 headers: {
                     [name: string]: unknown;
                 };

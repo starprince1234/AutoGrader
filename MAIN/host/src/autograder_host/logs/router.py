@@ -34,6 +34,7 @@ from .service import (
     list_logs,
     resolve_time_bounds,
 )
+from .insights import generate_report
 
 
 class ExportRequest(BaseModel):
@@ -164,6 +165,26 @@ def build_ops_logs_router(
             retention_info_days=info_days,
             retention_warn_error_days=warn_days,
             storage_limit_bytes=max_bytes,
+        )
+
+    @router.post("/api/v1/ops/insights")
+    def post_ops_insights(
+        request: Request,
+        principal: LogPrincipal = Depends(require_ops_log_principal),
+    ) -> dict[str, Any]:
+        """One button in the log center: facts in, a layered plain-language report out.
+
+        POST because it spends money on a model call, and idempotent in effect: it reads the
+        operational picture and never changes it. The caller's row scope travels into the facts,
+        so a teacher's report is about their own courses and an admin's about the platform.
+        """
+        modules = getattr(request.app.state, "modules", None) or []
+        contexts = getattr(request.app.state, "contexts", None) or {}
+        return generate_report(
+            reader_engine=_get_reader_engine(),
+            principal=principal,
+            modules=modules,
+            contexts=contexts,
         )
 
     @router.post("/api/v1/ops/logs/exports")

@@ -12,6 +12,76 @@
 
 ---
 
+## 0.45.0 — 运维播报：把各模块的运维信息变成分层、说人话的状态报告
+
+- **类型**：新增端点与 schema（`openapi/ops.yaml`），无字段删除、无迁移
+- **状态**：有效
+- **背景**：日志中心（0.42.0）给运维的是原料——计数、静默时长、存储占用、事件流。要据此判断
+  "到底坏没坏、有多严重、下一步做什么"，仍然要靠会看日志的人。新增 `POST /api/v1/ops/insights`：
+  一次点击，服务端把各模块的健康与近期错误聚成事实，交给模型写一份**非工程师也能读**的状态报告。
+- **变更**：
+  - 新端点 `POST /api/v1/ops/insights`（`operationId: generateOpsInsight`，标签 `ops-insights`，
+    权限与日志读取相同：管理员看全平台，教师只看自己课程范围）。
+  - 新 schema：`OpsInsightReport`、`OpsInsightLayers`、`OpsInsightFinding`、`OpsInsightLayer`。
+  - 全部契约版本同步至 `0.45.0`。
+- **语义**：
+  - 四层按**紧迫程度**降序：`critical` > `warning` > `notice` > `healthy`；层内为空是**空数组**
+    （不是 `null`、不是缺键），前端据此直接显示"无"。
+  - **每个模块（B1..B5、MAIN）在四层里恰好出现一次**：模型漏掉的模块由服务端补成 `healthy`，
+    重复的只保留第一次出现。因此"严重告警为空"说的是平台没有严重问题，而不是模型没提到。
+  - 严重度按**对用户的影响**判定，不按日志级别：模块不可用 / 可能丢数据 / 日志存储耗尽 /
+    日志管道本身在丢记录 → `critical`；用户会察觉但不阻塞、可重试的失败 → `warning`；
+    趋势、接近上限、一次性失败 → `notice`；窗口内无异常证据 → `healthy`。
+  - `status: unavailable` 表示本部署没配模型，是**部署事实而不是错误**（此时 `layers` 全空、
+    `summary` 说明原因）；模型调用失败才是 `502`（`application/problem+json`，只带分类，绝不回显响应体）。
+  - 报告是**建议**：不改路由、不改重试、不改任何已发布状态。
+- **影响**：
+  - **MAIN**：新增 `POST /api/v1/ops/insights`（`autograder_host/logs/insights.py` + 路由），
+    事实来自插件健康报告与 `logs.log_events`；模型客户端从 B3 移到 Platform SDK
+    （`autograder_platform.llm_client`），因为宿主与 B3 两个进程现在共用同一个 provider 合约。
+  - **B1**：日志中心新增「AI 运维播报」面板与按钮，按四层渲染，空层显示"无"。
+  - B2/B3/B4/B5：无接口影响；B3 只是把 `llm_client` 的导入来源换成 SDK（行为不变、
+    `DRAFT_PROMPT_VERSION` 不变）。
+
+---
+
+## 0.44.0 — 邮件记录：人工处置过的记录离开「待处理」
+
+- **类型**：语义修正（`MailRecordCategory` 的 `processed`/`pending` 判定；无字段删除、无迁移、无历史回填）
+- **状态**：有效
+- **背景**：教师端「邮件记录」（0.39.0）按"这封信是不是一次真实提交尝试"分类，**不看**老师有没有处置过。
+  「打回 / 标记作废」按钮恢复后问题暴露：打回或作废后的记录刷新后仍留在「待处理」，待办队列永远
+  排不空——而打回本身已经成功（处置落库、失败通知已发出）。根因是读侧分类与写侧处置是两套互不
+  相干的事实。
+- **变更**（只改描述，不动任何 schema、字段或枚举）：
+  - `openapi/b2.yaml` `listMailRecords`：`pending` 增加"**尚未**被教师处置"这一条；`processed`
+    扩为两类来源——(a) 变成提交的邮件（`reason_code` 为 `null`），(b) 教师已打回/作废的隔离记录
+    （`reason_code` 保留收件时的原因）；并写明处置是队列的终点、且不重写收件事实。
+  - `MailRecordView`：`reason_code`、`course_id`/`section_id`、`assignment_id`/`student_id` 的说明按
+    "提交来源 / 人工处置来源"分别写清（处置来源的 `assignment_id` 只是这封信曾尝试的作业，**不是**
+    一份存在提交的作业）。
+  - 全部契约版本同步至 `0.44.0`。
+- **语义**：
+  - `settled = resolved IS TRUE`（任何结论，含 `completed`）；`disposed = settled AND (resolution IS NULL
+    OR resolution <> 'completed')`；`pending = attempt AND NOT settled`；
+    `other = NOT attempt AND NOT settled`；`processed = 提交来源 ∪ disposed`。
+  - 用 `settled` 而不是 `disposed` 来排 `pending`：一封 `completed` 的信确实变成了提交（由
+    `email_verifications` 列在 `processed`），若只排 `disposed`，它会同时留在 `pending` 里——队列里
+    永远有一条谁也处理不掉的记录。`completed` 又不能算 `disposed`，否则同一封信会在同一个 tab
+    出现两行。
+  - 三态仍然互斥；`processed` 现在是**两个来源的并集**（提交 ∪ 人工处置），分页在 SQL 里
+    `UNION ALL` 后统一按 `(时间, id)` 倒序取页，两个分支各自先按同一个游标裁剪——在 Python 里
+    各取一页再合并会把"某一来源的第一页"当成全局第一页。
+  - 行级授权不变：提交来源按提交所属课程，人工处置来源按隔离记录自己证明的课程（与
+    `pending`/`other` 同一套谓词）。
+- **影响**：
+  - **B2**：`intake/mail_records.py` 的分类谓词与 `processed` 查询（此前只查 `email_verifications`）。
+  - **B1**：`processed` 行若 `reason_code` 非空，它就是人工处置过的记录——显示原因而不是
+    "查看作业"链接（那封信没有提交可看）；三态文案与测试同步。
+  - B3/B4/B5：无影响。
+
+---
+
 ## 0.43.0 — 名单导入支持 XLS/PDF、表头定位与课程信息核对
 
 - **类型**：最小新增（扩展 `media_type` 枚举与 `RosterImportPreview` 可选预览字段，无破坏性字段删除）

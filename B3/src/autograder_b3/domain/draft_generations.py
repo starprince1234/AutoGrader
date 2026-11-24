@@ -45,7 +45,7 @@ from ..draft_generation import (
 from ..dto.internal import QuestionDraftGenerationRequestModel
 from ..errors import Conflict, Forbidden, NotFound, TooManyRequests, UnprocessableEntity
 from ..infra.db import Database
-from ..llm_client import provider_name_for
+from autograder_platform.llm_client import provider_name_for
 from ..logging import get_logger, log_event
 from .tags import validate_tags
 

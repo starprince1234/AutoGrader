@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: AutoGrader MAIN Operational Log Center API
-  version: 0.43.0
+  version: 0.45.0
   description: |
     Unified operational log center served by the MAIN composition host.
     Provides log search, cross-module trace timeline, module health summary,
@@ -175,6 +175,52 @@ paths:
             application/problem+json:
               schema: {$ref: './common.yaml#/components/schemas/ProblemDetails'}
 
+  /api/v1/ops/insights:
+    post:
+      operationId: generateOpsInsight
+      summary: Turn the current operational picture into a layered, plain-language status report
+      description: |
+        The operator presses one button; the server assembles the operational picture -- per-module
+        readiness and health text, warn/error counts for the last hour and day, the log pipeline's
+        own storage and drop counters, and the most frequent recent warn/error events -- and asks
+        the configured model for a report a non-engineer can act on.
+
+        **The shape is contract, the wording is not.** Findings are sorted into four layers in
+        descending urgency (`critical` > `warning` > `notice` > `healthy`) and every finding names
+        exactly one module (`B1`..`B5`, `MAIN`). Each module appears **exactly once across all four
+        layers**, so the report accounts for the whole platform: an empty `critical` layer means
+        "nothing is critical", not "nobody looked", and a module with no evidence of a problem is
+        returned in `healthy` rather than omitted.
+
+        Severity is about **impact on users**, not about the log level of the evidence: a module
+        that cannot serve requests, loses data, or is out of storage is `critical`; an error that a
+        user would notice but that a retry can absorb is `warning`; a trend, an approaching limit,
+        or a single transient failure is `notice`.
+
+        The report is **advisory**: nothing it says changes routing, retries, or published state.
+        Facts are redacted with the same sanitizer the log store uses before they leave the
+        process, and a failed provider call never echoes its response body.
+      tags: [ops-insights]
+      parameters:
+        - $ref: './common.yaml#/components/parameters/RequestId'
+      responses:
+        '200':
+          description: |
+            The report. `status: unavailable` means this deployment has no model configured, which
+            is a deployment fact rather than an error: the layers are empty and `summary` says so.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OpsInsightReport'}
+        '401': {$ref: './common.yaml#/components/responses/Unauthorized'}
+        '403': {$ref: './common.yaml#/components/responses/Forbidden'}
+        '502':
+          description: |
+            The configured model failed or did not finish inside the server's time budget. The
+            report body is never echoed, so the message is a classification only.
+          content:
+            application/problem+json:
+              schema: {$ref: './common.yaml#/components/schemas/ProblemDetails'}
+
 components:
   schemas:
     LogLevel:
@@ -341,4 +387,66 @@ components:
       properties:
         accepted: {type: integer, minimum: 0}
         dropped: {type: integer, minimum: 0}
+      additionalProperties: false
+
+    OpsInsightLayer:
+      type: string
+      enum: [critical, warning, notice, healthy]
+
+    OpsInsightFinding:
+      type: object
+      description: |
+        One statement about one module. `title` and `detail` are for a non-engineer: no log ids,
+        no stack traces, no unexplained jargon. `suggestion` is what to do next, and it is absent
+        exactly when there is nothing to do (a healthy module has no next step).
+      required: [layer, module, title, detail]
+      properties:
+        layer: {$ref: '#/components/schemas/OpsInsightLayer'}
+        module: {$ref: '#/components/schemas/LogProducer'}
+        title: {type: string, minLength: 1, maxLength: 80}
+        detail: {type: string, minLength: 1, maxLength: 400}
+        suggestion: {type: [string, "null"], maxLength: 400}
+      additionalProperties: false
+
+    OpsInsightLayers:
+      type: object
+      description: |
+        The four layers. A layer with nothing to report is an **empty array**, never `null` and
+        never absent: the client renders "无" for it without guessing.
+      required: [critical, warning, notice, healthy]
+      properties:
+        critical:
+          type: array
+          maxItems: 10
+          items: {$ref: '#/components/schemas/OpsInsightFinding'}
+        warning:
+          type: array
+          maxItems: 10
+          items: {$ref: '#/components/schemas/OpsInsightFinding'}
+        notice:
+          type: array
+          maxItems: 10
+          items: {$ref: '#/components/schemas/OpsInsightFinding'}
+        healthy:
+          type: array
+          maxItems: 10
+          items: {$ref: '#/components/schemas/OpsInsightFinding'}
+      additionalProperties: false
+
+    OpsInsightReport:
+      type: object
+      required: [status, generated_at, prompt_version, window_hours, summary, layers]
+      properties:
+        status:
+          type: string
+          enum: [ready, unavailable]
+        generated_at: {$ref: './common.yaml#/components/schemas/Timestamp'}
+        model: {type: [string, "null"], maxLength: 100}
+        prompt_version: {type: string, minLength: 1, maxLength: 100}
+        window_hours:
+          type: integer
+          minimum: 1
+          maximum: 72
+        summary: {type: string, minLength: 1, maxLength: 400}
+        layers: {$ref: '#/components/schemas/OpsInsightLayers'}
       additionalProperties: false
