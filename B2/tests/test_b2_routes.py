@@ -1640,9 +1640,11 @@ def test_export_headers_and_rows_match_the_contract(
     )
     assert csv_response.status_code == 200, csv_response.text
     assert csv_response.headers["content-type"].startswith(CSV_MEDIA_TYPE)
-    assert csv_response.headers["content-disposition"] == (
-        f'attachment; filename="grades-{world.course}.csv"'
+    csv_disposition = csv_response.headers["content-disposition"]
+    assert csv_disposition.startswith(
+        'attachment; filename="grades.csv"; filename*=UTF-8\'\''
     )
+    assert "%E6%88%90%E7%BB%A9-" in csv_disposition
     assert csv_response.content.startswith("\ufeff".encode()), "CSV 必须带 BOM"
     assert b"\r\n" in csv_response.content
     records = _read_csv(csv_response.content)

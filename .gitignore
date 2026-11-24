@@ -73,7 +73,7 @@ playwright/.cache/
 .env.*.local
 
 # Logs
-logs/
+/logs/
 *.log
 
 # OS generated files
