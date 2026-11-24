@@ -373,7 +373,7 @@ def export_logs_stream(
 
     if fmt == "csv":
         def _csv_iter() -> Iterator[bytes]:
-            yield f"# {meta_header}\n".encode("utf-8")
+            yield f"# {meta_header}\n".encode()
             buf = io.StringIO()
             fieldnames = [
                 "log_id",
