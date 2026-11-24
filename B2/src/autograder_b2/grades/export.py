@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Literal
+from urllib.parse import quote
 
 from openpyxl import Workbook
 from openpyxl.styles import Font
@@ -194,8 +195,21 @@ class ExportFile:
 
     @property
     def content_disposition(self) -> str:
-        """`attachment; filename="..."`；文件名为纯 ASCII，因此无需 RFC 5987 编码。"""
-        return f'attachment; filename="{self.filename}"'
+        """ASCII 回退 + RFC 5987 中文文件名；浏览器优先使用 `filename*`。"""
+        fallback = f"grades.{self.format}"
+        return (
+            f'attachment; filename="{fallback}"; '
+            f"filename*=UTF-8''{quote(self.filename, safe='')}"
+        )
+
+
+def _safe_filename(value: str) -> str:
+    """课程名进入文件名：去掉路径分隔符与 Windows 保留字符，保留中文。"""
+    cleaned = "".join(
+        "_" if character in '/\\:*?"<>|' or ord(character) < 0x20 else character
+        for character in value
+    ).strip()
+    return (cleaned or "成绩")[:80]
 
 
 def escape_spreadsheet_cell(value: str) -> str:
@@ -403,10 +417,16 @@ class GradesExportService:
             render_xlsx(rows, selected, labels) if fmt == "xlsx" else render_csv(rows, selected, labels)
         )
         extension = "xlsx" if fmt == "xlsx" else "csv"
+        course_label = labels.get("course_id", {}).get(str(course_id)) or ""
+        stem = (
+            f"{_safe_filename(course_label)}-成绩"
+            if course_label
+            else f"成绩-{datetime.now(UTC).strftime('%Y%m%d')}"
+        )
         return ExportFile(
             content=content,
             media_type=XLSX_MEDIA_TYPE if fmt == "xlsx" else CSV_MEDIA_TYPE,
-            filename=f"grades-{course_id}.{extension}",
+            filename=f"{stem}.{extension}",
             format=fmt,
             row_count=len(rows),
         )
