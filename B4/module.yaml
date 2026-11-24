@@ -20,6 +20,8 @@ routes:
   - /api/v1/internal
   - /api/v1/registration-allowlists
   - /api/v1/ops/logs
+  # AI 运维播报（契约 0.45.0）：host 级端点，与 /api/v1/ops/logs 同属日志中心。
+  - /api/v1/ops/insights
   - /api/v1/logs/client
 events:
   publishes: [autograder.v1.roster.import.completed]
